@@ -151,6 +151,7 @@ mod tests {
                 shelter: default(),
                 forest_shadow: default(),
                 terrain_shadow: default(),
+                terrain_heights: default(),
                 mist: default(),
                 shore: default(),
             })

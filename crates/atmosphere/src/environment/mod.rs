@@ -40,6 +40,8 @@ pub struct EnvironmentAssets {
     pub forest_shadow: Handle<Image>,
     /// The terrain's horizon towards the sun and its sky share; see `crate::terrain_shadow`.
     pub terrain_shadow: Handle<Image>,
+    /// The relief that map is searched from.
+    pub terrain_heights: Handle<Image>,
     /// Where mist pools over the world; see `crate::valley_mist`.
     pub mist: Handle<Image>,
     /// How waves come ashore; see `crate::shore`.
@@ -168,14 +170,15 @@ impl Plugin for EnvironmentPlugin {
                 publish::publish::<crate::valley_mist::ValleyMist>,
                 publish::publish::<crate::shore::Shore>,
                 (
-                    crate::terrain_shadow::rebuild,
-                    publish::publish::<crate::terrain_shadow::TerrainShadow>,
+                    crate::terrain_shadow::follow_light,
+                    crate::terrain_shadow::publish,
                 )
                     .chain(),
             )
                 .after(ApplyAtmosphere),
         );
         surface::install(app);
+        crate::terrain_shadow::gpu::install(app);
     }
 }
 fn repeat() -> ImageSampler {
@@ -224,6 +227,7 @@ fn setup(
         shelter: images.add(crate::shelter::RainShelter::image()),
         forest_shadow: images.add(crate::forest_shadow::ForestShadow::image()),
         terrain_shadow: images.add(crate::terrain_shadow::TerrainShadow::image()),
+        terrain_heights: images.add(crate::terrain_shadow::TerrainShadow::heights_image()),
         mist: images.add(crate::valley_mist::ValleyMist::image()),
         shore: images.add(crate::shore::Shore::image()),
         parameters: buffers.add(ShaderBuffer::new(

@@ -1,10 +1,9 @@
-//! The environment's maps (rain shelter, forest shadow, valley mist, shore, terrain shadow) are
+//! The environment's maps (rain shelter, forest shadow, valley mist, shore) are
 //! rebuilt on the
 //! CPU and uploaded into their images only when a rebuild changed them.
 use super::EnvironmentAssets;
 use crate::{
-    forest_shadow::ForestShadow, shelter::RainShelter, shore::Shore, terrain_shadow::TerrainShadow,
-    valley_mist::ValleyMist,
+    forest_shadow::ForestShadow, shelter::RainShelter, shore::Shore, valley_mist::ValleyMist,
 };
 use bevy::{prelude::*, render::extract_resource::ExtractResource};
 
@@ -45,17 +44,6 @@ impl EnvironmentMap for ValleyMist {
     }
     fn image(assets: &EnvironmentAssets) -> &Handle<Image> {
         &assets.mist
-    }
-}
-impl EnvironmentMap for TerrainShadow {
-    fn revision(&self) -> u64 {
-        self.revision()
-    }
-    fn write(&self, image: &mut Image) {
-        self.write(image)
-    }
-    fn image(assets: &EnvironmentAssets) -> &Handle<Image> {
-        &assets.terrain_shadow
     }
 }
 impl EnvironmentMap for Shore {

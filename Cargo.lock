@@ -7175,6 +7175,7 @@ dependencies = [
  "bevy",
  "bytemuck",
  "half",
+ "yarra-shader-check",
  "yarra-world",
 ]
 
