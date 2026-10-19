@@ -1,5 +1,27 @@
 //! Texture demand uses rotation-independent texel size and 3D bounds, never geometry error.
 use super::*;
+use std::{cmp::Ordering, collections::BinaryHeap};
+
+/// A frontier node: the largest projected texel first, ties by the lower key.
+struct Candidate(f64, TerrainMaterialKey);
+impl PartialEq for Candidate {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == Ordering::Equal
+    }
+}
+impl Eq for Candidate {}
+impl PartialOrd for Candidate {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for Candidate {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.0
+            .total_cmp(&other.0)
+            .then_with(|| other.1.cmp(&self.1))
+    }
+}
 
 pub(super) struct Plan {
     pub keys: Vec<TerrainMaterialKey>,
@@ -34,17 +56,14 @@ pub(super) fn plan(
         metadata: BTreeSet::new(),
         limited: false,
     };
-    let mut frontier: Vec<_> = roots
+    // A heap: a linear search for the best node made planning quadratic in the atlas's
+    // capacity, about 9 ms a frame at 1536 tiles.
+    let mut frontier: BinaryHeap<_> = roots
         .iter()
         .filter_map(|k| descriptors.get(&TerrainMaterialKey(*k)))
-        .map(|d| (score(d, view, size), d.key))
+        .map(|d| Candidate(score(d, view, size), d.key))
         .collect();
-    while let Some((i, _)) = frontier
-        .iter()
-        .enumerate()
-        .max_by(|(_, a), (_, b)| a.0.total_cmp(&b.0).then_with(|| b.1.cmp(&a.1)))
-    {
-        let (pixels, key) = frontier.swap_remove(i);
+    while let Some(Candidate(pixels, key)) = frontier.pop() {
         if key.0.level <= minimum_level {
             continue;
         }
@@ -82,7 +101,7 @@ pub(super) fn plan(
             let pixels = score(&descriptors[&key], view, size);
             if pixels > 0. {
                 output.keys.push(key);
-                frontier.push((pixels, key));
+                frontier.push(Candidate(pixels, key));
             }
         }
     }

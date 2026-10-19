@@ -175,6 +175,14 @@ impl TerrainLodStream {
         cache.animate(&roots, dt);
         cache.cpu.retain(|k, _| cache.desired.contains(k));
         let mut uploads = vec![];
+        // Free layers, lowest first, found once rather than by a scan of every slot per layer.
+        let mut used = vec![false; DETAIL_SLOTS];
+        for slot in cache.slots.values() {
+            used[slot.layer as usize] = true;
+        }
+        let mut free = (0..DETAIL_SLOTS as u32)
+            .filter(|&i| !used[i as usize])
+            .peekable();
         for key in &plan.keys {
             // One atlas transaction carries at most four tiles; the rest wait a frame.
             if uploads.len() == atlas::MAX_UPLOADS {
@@ -183,12 +191,11 @@ impl TerrainLodStream {
             if cache.slots.contains_key(key) {
                 continue;
             }
-            let Some(layer) =
-                (0..DETAIL_SLOTS as u32).find(|i| cache.slots.values().all(|s| s.layer != *i))
-            else {
+            let Some(&layer) = free.peek() else {
                 break;
             };
             if let Some(tile) = cache.cpu.remove(key) {
+                free.next();
                 cache.slots.insert(
                     *key,
                     Slot {

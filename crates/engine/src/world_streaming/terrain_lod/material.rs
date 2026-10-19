@@ -7,7 +7,7 @@ use terrain_render::TerrainCompositeMaterial;
 use world::{TerrainComposite, TerrainMaterialKey};
 use world_db::TerrainCompositeDescriptor;
 
-pub(super) const MAX_MATERIAL_BYTES: u64 = 32 * 1024 * 1024;
+pub(super) const MAX_MATERIAL_BYTES: u64 = 128 * 1024 * 1024;
 pub(super) const MAX_MATERIAL_TILES: usize = 512;
 const MAX_MATERIAL_METADATA: usize = 2048;
 mod detail;
