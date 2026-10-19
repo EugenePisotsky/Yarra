@@ -208,7 +208,7 @@ class Field:
 
 
 class Plan:
-    def __init__(self, f, density):
+    def __init__(self, f, density, keep_open=()):
         self.f, self.density = f, density
         rng = f.rng
         h, mask = f.h, f.mask
@@ -220,8 +220,15 @@ class Plan:
         south = -gz / np.sqrt(1 + gx * gx + gz * gz) * 4  # +Z is south; about ±1 on a 14° slope
         hollow = h - nd.gaussian_filter(h, 40 / GRID)
         coast = nd.distance_transform_edt(f.land) * GRID
+        # Masks kept free of trees and shrubs, such as stream beds and wet meadows.
+        self.kept_open = np.zeros(h.shape, bool)
+        for name in keep_open:
+            if name not in mask:
+                raise SystemExit(f'the manifest has no {name} mask')
+            self.kept_open |= mask[name] > 0.35
         # Where trees can grow, and the meadows kept open.
         grows = f.land & (h > 1.5) & (sand < 0.35) & (rock < 0.35) & (scree < 0.5) & (self.slope < 38) & (coast > 20)
+        grows &= ~self.kept_open
         iz, ix = np.mgrid[0:f.shape[0], 0:f.shape[1]]
         wx, wz = f.world(iz, ix)
         start = np.hypot(wx - f.at[0], wz - f.at[1])
@@ -359,7 +366,7 @@ class Plan:
             placed.append((form, px, pz, scale, i))
         # Shrubs: a patchy fringe along every edge, and a light understory inside.
         patch = f.noise(25, 6) > -0.2
-        fringe = (((self.edge > 0) & (self.edge < FRINGE)) | ((self.outside > 0) & (self.outside < 5))) & patch & f.land
+        fringe = (((self.edge > 0) & (self.edge < FRINGE)) | ((self.outside > 0) & (self.outside < 5))) & patch & f.land & ~self.kept_open
         shrub_names, shrub_w = zip(*SHRUBS)
         shrub_w = np.array(shrub_w, float) / sum(shrub_w)
         cells = np.argwhere(fringe)
@@ -375,6 +382,8 @@ class Plan:
                 if wanted <= 0:
                     break
         for i, count in inner:
+            if self.area[i] <= 0:
+                continue
             cells = np.argwhere(self.stand == i)
             for pz, px in list((cells[rng.integers(len(cells), size=int(count) * 3 + 1)] + rng.random((int(count) * 3 + 1, 2))) * GRID)[:int(count) * 3]:
                 form = shrub_names[rng.choice(len(shrub_names) - 1)]  # no bay under the canopy
@@ -529,9 +538,11 @@ def main():
     parser.add_argument('--clear', action='store_true', help='only remove the kit from this landmass in --project, for comparisons')
     parser.add_argument('--project', type=Path, default=ROOT / 'content/world.project.sqlite')
     parser.add_argument('--roads', type=Path, help='keep trees off the roads of this road import')
+    parser.add_argument('--keep-open', action='append', default=[], metavar='MASK',
+                        help='keep trees and shrubs off this mask of the manifest (repeatable)')
     args = parser.parse_args()
     field = Field(args.manifest, args.at, args.seed)
-    plan = Plan(field, args.density)
+    plan = Plan(field, args.density, args.keep_open)
     plan.trees(road_samples(args.roads) if args.roads else None)
     stats = plan.stats()
     args.output.mkdir(parents=True, exist_ok=True)
