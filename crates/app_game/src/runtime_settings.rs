@@ -250,6 +250,8 @@ struct MeshOverrideState {
     override_active: bool,
     terrain: Option<Handle<TerrainMaterial>>,
     composite: Option<Handle<TerrainCompositeMaterial>>,
+    /// Terrain v2's patches (`--terrain v2`), which have no shading modes.
+    clipmap: bool,
 }
 
 fn sync_render_settings(
@@ -352,6 +354,7 @@ fn apply_meshes(
             Option<&MeshMaterial3d<TerrainMaterial>>,
             Option<&MeshMaterial3d<TerrainCompositeMaterial>>,
             Option<&mut MeshOverrideState>,
+            Has<MeshMaterial3d<terrain_render::clipmap::ClipmapTerrainMaterial>>,
         ),
         With<Mesh3d>,
     >,
@@ -364,7 +367,7 @@ fn apply_meshes(
     {
         return;
     }
-    for (entity, mut visibility, material, composite, saved) in &mut meshes {
+    for (entity, mut visibility, material, composite, saved, clipmap) in &mut meshes {
         if !s.is_changed() && saved.as_ref().is_some_and(|state| !state.override_active) {
             continue;
         }
@@ -373,12 +376,13 @@ fn apply_meshes(
             override_active: false,
             terrain: material.map(|m| m.0.clone()),
             composite: composite.map(|m| m.0.clone()),
+            clipmap,
         };
         let is_new = saved.is_none();
         let mut saved = saved;
         let mut initial = initial;
         let state = saved.as_deref_mut().unwrap_or(&mut initial);
-        let terrain = state.terrain.is_some() || state.composite.is_some();
+        let terrain = state.terrain.is_some() || state.composite.is_some() || state.clipmap;
         let forced = match s.scene {
             Scene::Current if (terrain && s.hide_terrain) || (!terrain && s.hide_objects) => {
                 Some(Visibility::Hidden)

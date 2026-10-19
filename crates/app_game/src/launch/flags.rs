@@ -160,7 +160,7 @@ const FLAGS: &[Flag] = &[
         "--terrain",
         "lod|v2",
         Scene,
-        "Ground renderer: the terrain LOD, or the clipmap spike (default lod)",
+        "Ground renderer: clipmaps with per-pixel materials, or the old terrain LOD (default v2)",
     ),
     flag(
         "--tree-shadow-lod",

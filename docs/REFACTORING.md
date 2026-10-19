@@ -262,6 +262,10 @@ Either the same material function runs at every distance (Witcher 3) or a cache 
 
 **Step 2 result.** `world::terrain_control`, `world_db::terrain_controls` (schema 31), `world_cook::control_cook`, the control clipmap and surface table in `terrain_render::clipmap`, `terrain_clipmap.wesl`. With full materials v2 draws central-far at 105 fps / 8.2 ms GPU against the terrain LOD's 91 / 9.2, journey 104 / 8.2 against 78 / 11.9 ([Experiments](EXPERIMENTS.md#terrain-v2-control-maps--october-19)). Ruts, puddles and the per-page grass cover move to step 3; world-space entry and iOS budgets stay in step 4.
 
+**Step 3 so far (October 20).** Roads near the camera from a 5×5-cell wear atlas (ruts by parallax, wheel grooves, worn edges, rain in rut dips) with bare road ground re-sharpened from the 12.5 cm wear field within 56 m; puddles from the height clipmap's hollows; biplanar colour on steep ground. Ruts recut for horses and carts (the user's note): a wobbling wheel groove in a shallow worn trough, doubled in patches, fading out over stretches, potholes. The user reviewed v2 and wants nothing changed; dual-scale tiling, slope snow and the per-page grass cover wait until something shows.
+
+**Step 4 so far.** The game draws v2 by default (`--terrain lod` for the old path): world-space switches and generation reloads go ahead without the old entry staging (v2 refills in about a second), F1's terrain toggles count v2 patches as terrain, and the story slice runs on the main world. Left: the editor (it still draws the terrain LOD and live-edits through it), iOS sizes on a device.
+
 ## Performance roadmap
 
 October 9, 2026. At native resolution the forest ran at about 43 fps uncapped on a cool M2 Max and lower once it heats (the user saw 35). Measurements and the fixes so far are in [Experiments](EXPERIMENTS.md#native-resolution--october-9). What remains, largest first:

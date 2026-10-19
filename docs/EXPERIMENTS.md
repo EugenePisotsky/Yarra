@@ -723,6 +723,16 @@ Step 2 of the [terrain rendering roadmap](REFACTORING.md#terrain-rendering-roadm
 | Whole frame vs terrain LOD | central-far 105 fps / 8.2 ms GPU (LOD 91 / 9.2); journey 104 / 8.2 (78 / 11.9); summit-far 92 / 9.6 (73 / 12.9). Main thread 1.9–2.1 ms (LOD 4.4–6.3). |
 | Not carried over yet | Wheel ruts and their parallax, worn-edge darkening and puddles (near detail); the per-page grass cover where blades actually grow (v2 tints by each surface's cover). Mid-distance meadow is smoother than the composites' speckle. For step 3. |
 
+## Terrain v2 look and default — October 20
+
+| Change | Decision / observation |
+| --- | --- |
+| Roads in v2 | **Retained.** The half-metre control samples blurred the cart tracks' structure (two bare tracks, grass between), which near detail draws from the 12.5 cm wear field. Within 56 m the surfaces roads wear bare to now scale by the fine wear over the wear the control samples saw (four taps half a sample out): as sharp as near detail, less beaded. Ruts, grooves, rims and rut puddles ported from near detail through a 5×5-cell wear atlas. |
+| Cart-wheel ruts | **Retained** (user: no cars, only horses and carts). A shallow worn trough per track with a wheel groove 0.2–0.4 m wide wobbling across it over about 3 m, a second groove beside it in patches, ruts fading to 30% over ~7 m stretches and potholes (+90%) every few metres. Grooves under two wear texels (12.5 cm) wide aliased into beads on diagonal roads. Both renderers; worlds recooked with `cook --full` (an incremental cook keeps old wear fields). |
+| Biplanar on steep ground | **Retained.** Colour and blend height partly from the vertical plane the slope faces (weight sharpened to the fourth power), one plain sample; vertical smearing on cliffs and snow walls gone. |
+| Step 3 cost | Alternated runs on journey against the previous shader: 9.2 / 11.2 ms vs 9.6 / 11.9 ms GPU, the same within noise. Absolute numbers that evening were ~25% above the morning's after three full cooks heated the machine. |
+| v2 by default | **Retained.** The story slice runs on the main world (actors on the ground, scenario progresses); world-space switches skip the old entry staging. |
+
 ## Open gates and maintenance
 
 The remaining gates are sustained terrain/whole-game power, Temporal cost and motion quality, field-scale grass lighting, target-PC acceptance, and physical-phone heat/60-FPS delivery. Keep correctness references until their replacements pass the relevant gate. Existing counters often identify less work without demonstrating better delivered frames or lower power.

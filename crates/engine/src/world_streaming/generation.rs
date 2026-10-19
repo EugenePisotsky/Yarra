@@ -120,10 +120,14 @@ pub(super) fn advance_reload(
     mut terrain: ResMut<terrain_lod::TerrainLodStream>,
     mut meshes: ResMut<Assets<Mesh>>,
     tracker: Res<terrain_lod::UploadTracker>,
+    renderer: Option<Res<super::TerrainRenderer>>,
 ) {
     let Some((id, expected)) = reload.in_flight.clone() else {
         return;
     };
+    // Terrain v2 refills its clipmaps for the new generation on its own; only the terrain LOD
+    // stages a destination cover first.
+    let staged = super::terrain_clipmap::lod_terrain(renderer);
     let Some(worker) = worker else {
         return;
     };
@@ -151,7 +155,7 @@ pub(super) fn advance_reload(
         space,
         local_position: [0.; 3],
     };
-    if !entry.ready_for(&expected, request) {
+    if staged && !entry.ready_for(&expected, request) {
         return;
     }
     if reload.commit.is_none() {
@@ -184,14 +188,16 @@ pub(super) fn advance_reload(
         &mut origin,
         &mut stream,
     );
-    entry.commit(
-        &mut terrain,
-        &mut commands,
-        &mut meshes,
-        &tracker,
-        origin.cell(),
-        size,
-    );
+    if staged {
+        entry.commit(
+            &mut terrain,
+            &mut commands,
+            &mut meshes,
+            &tracker,
+            origin.cell(),
+            size,
+        );
+    }
     reload.in_flight = None;
     reload.commit = None;
     reload.committed = false;

@@ -183,7 +183,7 @@ impl LaunchOptions {
             )?,
             terrain: args.choice(
                 "--terrain",
-                "lod",
+                "v2",
                 &[
                     ("lod", engine::TerrainRenderer::Lod),
                     ("v2", engine::TerrainRenderer::Clipmap),
