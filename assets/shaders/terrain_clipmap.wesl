@@ -1,9 +1,9 @@
 // Terrain v2's surface (crates/terrain_render/src/clipmap): one material function at every
-// distance. Per pixel, the control clipmap names the ground's three heaviest surfaces (filtered
+// distance. Per pixel, the control clipmap names the ground's three heaviest surfaces (dithered
 // between two levels by the pixel's footprint, world::terrain_control); they blend by their
-// heights as near detail blends them. Ground grass covers fully takes its field's colour, with
-// no texture reads; other surfaces sample the pack's textures, with anti-tiling and their normal
-// maps near the camera and one sample each further out. The normal under them comes per pixel
+// heights as near detail blends them. Ground grass mostly covers takes one plain colour sample
+// under its field's colour; other surfaces sample the pack's textures, with anti-tiling and their
+// normal maps near the camera and one sample each further out. The normal under them comes per pixel
 // from the height clipmap at the pixel's footprint.
 import package::shaders::lighting::pbr_lighting::apply_pbr_lighting;
 import package::shaders::terrain_clipmap_common::{clipmap_normal, leaf_spacing, levels, origin_samples, resident_level, settings};
@@ -165,15 +165,19 @@ fn surface(layer: u32, p: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, far: bool, un
     let s = surfaces[layer];
     let flat_normal = vec3(0.0, 0.0, 1.0);
     let rough = mix(s.material.x, s.material.y, 0.5);
-    // Covered ground: the grass hides it close by and is that colour from afar.
-    if s.material.z > 0.5 {
-        return Surface(vec4(s.grass.rgb * under.y, 0.5), flat_normal, 1.0, rough);
-    }
     let size = s.texture.x;
     let l = i32(layer);
     let uv = p / size;
     let uv_dx = dx / size;
     let uv_dy = dy / size;
+    let cover = clamp(s.grass.a, 0.0, 1.0);
+    // Covered ground: grass hides most of it, so its colour alone, one plain sample, under the
+    // field's colour and shade.
+    if s.material.z > 0.5 {
+        let color = textureSampleGrad(base_color, repeat_sampler, uv, l, uv_dx, uv_dy);
+        let ground = mix(color.rgb, s.grass.rgb, under.x * cover) * mix(1.0, under.y, cover);
+        return Surface(vec4(ground, color.a), flat_normal, 1.0, rough);
+    }
     var color: vec4<f32>;
     if s.texture.y >= 0.5 && far {
         color = stochastic_dominant(uv, triangular(uv), l, uv_dx, uv_dy);
@@ -183,7 +187,6 @@ fn surface(layer: u32, p: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, far: bool, un
         color = textureSampleGrad(base_color, repeat_sampler, uv, l, uv_dx, uv_dy);
     }
     // Ground partly grassed shows the field between its own texture.
-    let cover = clamp(s.grass.a, 0.0, 1.0);
     color = vec4(mix(color.rgb, s.grass.rgb, under.x * cover) * mix(1.0, under.y, cover), color.a);
     if far {
         return Surface(color, flat_normal, 1.0, rough);
