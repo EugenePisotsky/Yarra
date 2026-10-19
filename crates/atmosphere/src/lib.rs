@@ -13,6 +13,7 @@ pub mod shore;
 pub mod sky;
 pub mod sun_glare;
 pub mod sunlight;
+pub mod terrain_shadow;
 mod tonemapping;
 pub mod valley_mist;
 

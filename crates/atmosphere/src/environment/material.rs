@@ -20,6 +20,9 @@ pub struct EnvironmentExtension {
     #[texture(124)]
     #[sampler(125)]
     pub forest_shadow: Handle<Image>,
+    #[texture(126)]
+    #[sampler(127)]
+    pub terrain_shadow: Handle<Image>,
 }
 impl MaterialExtension for EnvironmentExtension {
     fn fragment_shader() -> ShaderRef {
@@ -115,6 +118,7 @@ fn convert(
                         shadows: assets.shadows.clone(),
                         shelter: assets.shelter.clone(),
                         forest_shadow: assets.forest_shadow.clone(),
+                        terrain_shadow: assets.terrain_shadow.clone(),
                     },
                 })
             })
@@ -146,6 +150,7 @@ mod tests {
                 noise: default(),
                 shelter: default(),
                 forest_shadow: default(),
+                terrain_shadow: default(),
                 mist: default(),
                 shore: default(),
             })

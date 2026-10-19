@@ -17,6 +17,7 @@ impl EnvironmentInputs for crate::TerrainMaterial {
         self.cloud_shadows = Some(environment.shadows.clone());
         self.rain_shelter = Some(environment.shelter.clone());
         self.forest_shadow = Some(environment.forest_shadow.clone());
+        self.terrain_shadow = Some(environment.terrain_shadow.clone());
     }
 }
 impl EnvironmentInputs for crate::TerrainCompositeMaterial {
@@ -28,6 +29,7 @@ impl EnvironmentInputs for crate::TerrainCompositeMaterial {
         self.cloud_shadows = Some(environment.shadows.clone());
         self.rain_shelter = Some(environment.shelter.clone());
         self.forest_shadow = Some(environment.forest_shadow.clone());
+        self.terrain_shadow = Some(environment.terrain_shadow.clone());
     }
 }
 

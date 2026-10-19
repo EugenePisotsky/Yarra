@@ -38,6 +38,8 @@ pub struct EnvironmentAssets {
     pub shelter: Handle<Image>,
     /// Crowns around the camera for distant forest shadows; see `crate::forest_shadow`.
     pub forest_shadow: Handle<Image>,
+    /// The terrain's horizon towards the sun and its sky share; see `crate::terrain_shadow`.
+    pub terrain_shadow: Handle<Image>,
     /// Where mist pools over the world; see `crate::valley_mist`.
     pub mist: Handle<Image>,
     /// How waves come ashore; see `crate::shore`.
@@ -117,6 +119,11 @@ pub(crate) struct EnvironmentParams {
     /// Unexposed light of the moonless night sky just above the horizon: airglow and
     /// starlight, so the sky never turns black.
     pub night_sky: [f32; 4],
+    /// Terrain shadow map (`crate::terrain_shadow`): first corner XZ in render coordinates,
+    /// metres per texel (0 off), published.
+    pub terrain_shadow: [f32; 4],
+    /// The compass direction its horizon looks towards, unit XZ.
+    pub terrain_light: [f32; 4],
     /// The channel's segments, ends in pairs (xyz, width): `crate::lightning::channel`.
     pub lightning_segments: [[f32; 4]; 2 * crate::lightning::SEGMENTS],
 }
@@ -137,6 +144,7 @@ impl Plugin for EnvironmentPlugin {
             .init_resource::<crate::forest_shadow::ForestSkyOcclusion>()
             .init_resource::<crate::valley_mist::ValleyMist>()
             .init_resource::<crate::shore::Shore>()
+            .init_resource::<crate::terrain_shadow::TerrainShadow>()
             .init_resource::<EnvironmentOrigin>()
             .init_resource::<EnvironmentParams>()
             .init_resource::<ForestSkyLevels>();
@@ -159,6 +167,11 @@ impl Plugin for EnvironmentPlugin {
                 publish::publish_forest_shadow,
                 publish::publish::<crate::valley_mist::ValleyMist>,
                 publish::publish::<crate::shore::Shore>,
+                (
+                    crate::terrain_shadow::rebuild,
+                    publish::publish::<crate::terrain_shadow::TerrainShadow>,
+                )
+                    .chain(),
             )
                 .after(ApplyAtmosphere),
         );
@@ -210,6 +223,7 @@ fn setup(
         shadows: images.add(shadows),
         shelter: images.add(crate::shelter::RainShelter::image()),
         forest_shadow: images.add(crate::forest_shadow::ForestShadow::image()),
+        terrain_shadow: images.add(crate::terrain_shadow::TerrainShadow::image()),
         mist: images.add(crate::valley_mist::ValleyMist::image()),
         shore: images.add(crate::shore::Shore::image()),
         parameters: buffers.add(ShaderBuffer::new(

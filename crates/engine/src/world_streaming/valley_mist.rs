@@ -1,7 +1,10 @@
-//! The valley mist map (`atmosphere::valley_mist`) and shore map (`atmosphere::shore`) of the
-//! active world space, from its terrain at one coarse level. Every node of that level is read once per runtime generation through
-//! the database worker, a few at a time beside the terrain LOD's own requests, and the map is
-//! built off the main thread. Reteya's 10 km takes 400 nodes and makes a 641² map at 16 m.
+//! The valley mist map (`atmosphere::valley_mist`), shore map (`atmosphere::shore`) and terrain
+//! relief for distant terrain shadows (`atmosphere::terrain_shadow`) of the active world space,
+//! from its terrain at one coarse level. Every node of that level is read once per runtime
+//! generation through the database worker, a few at a time beside the terrain LOD's own
+//! requests, and the maps are built off the main thread. Reteya's 10 km takes 1,600 nodes: an 8 m
+//! relief, and every other sample of it, 16 m, for the mist and shore maps (coarser levels
+//! decimate finer ones exactly, so they are the level-4 maps they always were).
 use super::{
     ActiveWorldSpace, WorldCatalog,
     database::{
@@ -10,6 +13,7 @@ use super::{
 };
 use atmosphere::{
     shore::{Shore, ShoreMap},
+    terrain_shadow::{TerrainRelief, TerrainShadow},
     valley_mist::{MistMap, ValleyMist},
 };
 use bevy::{
@@ -20,13 +24,14 @@ use std::{collections::HashMap, sync::Arc};
 use world::{TerrainNodeKey, WorldSpaceId};
 use world_db::{EncodedTerrainNode, TerrainNodeDescriptor};
 
-/// Terrain level the map samples: 16 m apart with 32 m cells and 33-sample nodes.
-const LEVEL: u8 = 4;
+/// Terrain level the maps sample: 8 m apart with 32 m cells and 33-sample nodes. The mist and
+/// shore maps take every other sample.
+const LEVEL: u8 = 3;
 /// Node requests in flight at once; the terrain LOD keeps up to 12.
 const IN_FLIGHT: usize = 4;
 
-/// The mist map, and the shore map of a world with a sea.
-type Maps = (MistMap, Option<ShoreMap>);
+/// The mist map, the shore map of a world with a sea, and the relief.
+type Maps = (MistMap, Option<ShoreMap>, TerrainRelief);
 
 #[derive(Resource, Default)]
 pub(super) struct MistTerrain {
@@ -129,8 +134,11 @@ pub(super) fn update(
     catalog: Res<WorldCatalog>,
     published: Option<ResMut<ValleyMist>>,
     shore: Option<ResMut<Shore>>,
+    terrain: Option<ResMut<TerrainShadow>>,
 ) {
-    let (Some(worker), Some(mut published), Some(mut shore)) = (worker, published, shore) else {
+    let (Some(worker), Some(mut published), Some(mut shore), Some(mut terrain)) =
+        (worker, published, shore, terrain)
+    else {
         return;
     };
     let Some(space) = active_space.current() else {
@@ -149,6 +157,7 @@ pub(super) fn update(
         published.set_sea_level(info.sea_level);
         published.disable();
         shore.disable();
+        terrain.disable();
         if !mist.request(&worker, TerrainQuery::Roots(space)) {
             // Try again next frame.
             mist.identity = None;
@@ -181,15 +190,21 @@ pub(super) fn update(
         mist.build = None;
         mist.done = true;
         match result {
-            Ok((map, shore_map)) => {
+            Ok((map, shore_map, relief)) => {
                 info!(
-                    "valley mist: {}×{} map at {} m",
-                    map.size.x, map.size.y, map.metres_per_texel
+                    "valley mist: {}×{} map at {} m; terrain relief {}×{} at {} m",
+                    map.size.x,
+                    map.size.y,
+                    map.metres_per_texel,
+                    relief.size.x,
+                    relief.size.y,
+                    relief.metres_per_texel
                 );
                 published.publish(Arc::new(map));
                 if let Some(shore_map) = shore_map {
                     shore.publish(Arc::new(shore_map));
                 }
+                terrain.set_relief(Arc::new(relief));
             }
             Err(e) => mist.fail(&e),
         }
@@ -243,16 +258,32 @@ fn build(
     let node_metres = f64::from(cell_size) * f64::from(1_u32 << level);
     let spacing = node_metres / intervals as f64;
     // Samples sit on texel centres, half a spacing in from the map's corner.
-    let origin = [
-        f64::from(min_x) * node_metres - spacing * 0.5,
-        f64::from(min_z) * node_metres - spacing * 0.5,
-    ];
+    let corner = |spacing: f64| {
+        [
+            f64::from(min_x) * node_metres - spacing * 0.5,
+            f64::from(min_z) * node_metres - spacing * 0.5,
+        ]
+    };
     let size = UVec2::new(width as u32, depth as u32);
-    let shore = sea_level
-        .map(|level| ShoreMap::from_heights(origin, size, spacing as f32, &heights, level));
+    let relief =
+        TerrainRelief::from_heights(corner(spacing), size, spacing as f32, &heights, sea_level);
+    // Mist and shore at twice the spacing: every other sample, the next level's own samples.
+    let (mist_width, mist_depth) = (width.div_ceil(2), depth.div_ceil(2));
+    let coarse: Vec<_> = (0..mist_depth)
+        .flat_map(|z| (0..mist_width).map(move |x| (x, z)))
+        .map(|(x, z)| heights[2 * z * width + 2 * x])
+        .collect();
+    let (origin, size, spacing) = (
+        corner(spacing * 2.0),
+        UVec2::new(mist_width as u32, mist_depth as u32),
+        spacing * 2.0,
+    );
+    let shore =
+        sea_level.map(|level| ShoreMap::from_heights(origin, size, spacing as f32, &coarse, level));
     Ok((
-        MistMap::from_heights(origin, size, spacing as f32, &heights, sea_level),
+        MistMap::from_heights(origin, size, spacing as f32, &coarse, sea_level),
         shore,
+        relief,
     ))
 }
 
@@ -281,20 +312,20 @@ mod tests {
     #[test]
     fn every_node_of_the_level_under_the_roots_once() {
         let keys = level_keys(&[root(7, -1, 0), root(5, 2, -3)]);
-        assert_eq!(keys.len(), 64 + 4);
+        assert_eq!(keys.len(), 256 + 16);
         assert!(keys.iter().all(|k| k.level == LEVEL));
         let unique: std::collections::HashSet<_> = keys.iter().collect();
         assert_eq!(unique.len(), keys.len());
         assert!(keys.contains(&TerrainNodeKey {
-            level: 4,
-            x: -8,
+            level: 3,
+            x: -16,
             z: 0,
             ..keys[0]
         }));
         assert!(keys.contains(&TerrainNodeKey {
-            level: 4,
-            x: 5,
-            z: -5,
+            level: 3,
+            x: 11,
+            z: -9,
             ..keys[0]
         }));
         // A root below the level sets it.

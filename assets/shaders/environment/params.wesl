@@ -35,5 +35,7 @@ struct EnvironmentParams {
     moon_sunward: vec4<f32>, // direction to the sun lighting the moon; the drawn face's light as a share of the moon light's
     moon_face: vec4<f32>, // unexposed light of white ground on the moon lit from straight above
     night_sky: vec4<f32>, // unexposed moonless night sky light just above the horizon
+    terrain_shadow: vec4<f32>, // terrain shadow map: first corner xz in render coordinates, metres per texel (0 off), published
+    terrain_light: vec4<f32>, // the compass direction its horizon looks towards, unit xz
     lightning_segments: array<vec4<f32>, 32>, // channel segment ends in pairs: xyz, width
 }

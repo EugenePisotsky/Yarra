@@ -83,6 +83,7 @@ pub fn prepare_terrain_material(
         cloud_shadows: None,
         rain_shelter: None,
         forest_shadow: None,
+        terrain_shadow: None,
         shading_mode: TerrainShadingMode::Production,
         settings: TerrainMaterialUniform {
             chunk_minimum: Vec2::new(

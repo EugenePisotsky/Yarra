@@ -28,6 +28,9 @@ pub struct TerrainCompositeMaterial {
     #[texture(124)]
     #[sampler(125)]
     pub(super) forest_shadow: Option<Handle<Image>>,
+    #[texture(126)]
+    #[sampler(127)]
+    pub(super) terrain_shadow: Option<Handle<Image>>,
     pub key: Option<TerrainMaterialKey>,
     pub shading_mode: TerrainShadingMode,
     /// Diagnostic shader bypass only; retains near-source residency for a fair A/B.
@@ -74,6 +77,7 @@ impl Default for TerrainCompositeMaterial {
             cloud_shadows: None,
             rain_shelter: None,
             forest_shadow: None,
+            terrain_shadow: None,
             key: None,
             shading_mode: Default::default(),
             near_disabled: false,

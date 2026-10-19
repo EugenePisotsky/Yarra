@@ -112,6 +112,9 @@ pub struct TerrainMaterial {
     #[texture(124)]
     #[sampler(125)]
     pub(crate) forest_shadow: Option<Handle<Image>>,
+    #[texture(126)]
+    #[sampler(127)]
+    pub(crate) terrain_shadow: Option<Handle<Image>>,
     pub shading_mode: TerrainShadingMode,
     #[uniform(0)]
     pub(crate) settings: TerrainMaterialUniform,
@@ -137,6 +140,7 @@ impl TerrainMaterial {
             cloud_shadows: None,
             rain_shelter: None,
             forest_shadow: None,
+            terrain_shadow: None,
             shading_mode: TerrainShadingMode::Production,
             weights: default(),
             base_color_array: default(),

@@ -51,6 +51,14 @@ fn forest_shadow_parameters() -> vec4<f32> {
 fn forest_sky_parameters() -> vec4<f32> {
     return environment.forest_sky;
 }
+/// Terrain shadow map: first corner xz, metres per texel (0 when off), published.
+fn terrain_shadow_parameters() -> vec4<f32> {
+    return environment.terrain_shadow;
+}
+/// The compass direction the terrain shadow map's horizon looks towards, unit xz.
+fn terrain_light_parameters() -> vec4<f32> {
+    return environment.terrain_light;
+}
 
 /// 1 where rain reaches `p`, 0 under full cover. Bilinear coverage, as on the CPU.
 fn rain_shelter(p: vec3<f32>) -> f32 {

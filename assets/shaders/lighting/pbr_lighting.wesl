@@ -44,6 +44,7 @@ import bevy_pbr::render::pbr_functions::{calculate_diffuse_color, calculate_F0, 
 @if(CONTACT_SHADOWS && DEPTH_PREPASS) import bevy_pbr::render::pbr_functions::calculate_contact_shadow;
 import package::shaders::lighting::surface::{cloud_light, ground_celestial_irradiance, surface_wetness};
 import package::shaders::lighting::forest_shadow::{forest_transmittance, forest_sky_light, forest_sky_visibility, forest_crown_sky};
+import package::shaders::lighting::terrain_shadow::{terrain_sunlight, terrain_sky_visibility};
 
 // Yarra: light reflected towards a surface by the ground around it, as environment radiance
 // (Bevy's ambient colour is used the same way): the ground's albedo times the sun, moon and
@@ -446,10 +447,13 @@ fn apply_pbr_lighting(
                 let far = own * forest_transmittance(in.world_position.xyz, to_light, 2.5);
                 @else
                 let far = forest_transmittance(in.world_position.xyz, to_light, 0.25);
+                // Terrain casts nothing past the cascades either: ridges shade the ground
+                // below their horizon (terrain_shadow).
+                let distant = far * terrain_sunlight(in.world_position.xyz, to_light);
                 @if(IMPOSTOR_SELF_SHADOW)
-                shadow = mix(min(shadow, far), far, beyond);
+                shadow = mix(min(shadow, distant), distant, beyond);
                 @else
-                shadow = mix(shadow, far, beyond);
+                shadow = mix(shadow, distant, beyond);
             }
         }
         // The clouds' direct beam is shaded like any sunlight; what they pass on diffusely casts
@@ -617,6 +621,8 @@ fn apply_pbr_lighting(
         // ground is unchanged); vertical ones get 75% and downward ones 50%, so shapes
         // still read when clouds hide the sun.
         var sky_facing = vec3(0.75 + 0.25 * in.N.y);
+        // Valley floors and gullies see less of the sky than ridges (terrain_shadow).
+        let terrain_sky = terrain_sky_visibility(in.world_position.xyz);
         @if(TREE_CROWN_SKY) {
             // Foliage sees the sky past the rest of its crown (baked) and past the crowns
             // around it, which shade the lower crowns of a stand. Light passed through and
@@ -625,11 +631,11 @@ fn apply_pbr_lighting(
             let reach = crown_sky_reach(diffuse_occlusion.g, in.world_position.xyz);
             let below = 0.5 - 0.5 * in.N.y;
             let ground = ground_light(in.world_position.xyz) * forest_sky_light(in.world_position.xyz);
-            indirect_light += ambient::ambient_light(in.world_position, in.N, in.V, NdotV, diffuse_color, F0, perceptual_roughness, vec3(reach * (1.0 - below)));
+            indirect_light += ambient::ambient_light(in.world_position, in.N, in.V, NdotV, diffuse_color, F0, perceptual_roughness, vec3(reach * (1.0 - below) * terrain_sky));
             indirect_light += diffuse_color * ground * below * reach;
         }
         @elif(TREE_CROWN_SHADING)
-        indirect_light += ambient::ambient_light(in.world_position, in.N, in.V, NdotV, diffuse_color, F0, perceptual_roughness, diffuse_occlusion * sky_facing);
+        indirect_light += ambient::ambient_light(in.world_position, in.N, in.V, NdotV, diffuse_color, F0, perceptual_roughness, diffuse_occlusion * sky_facing * terrain_sky);
         @else {
             // Below the horizon of a surface lies sunlit ground, not sky: its lower half sees
             // the light the ground reflects, so trunks, cliffs and characters are not lit blue
@@ -640,7 +646,7 @@ fn apply_pbr_lighting(
             // Under the crowns most of the sky is hidden and the ground lies in their shade;
             // leaf-filtered light stands in for part of it.
             let canopy = forest_sky_light(in.world_position.xyz);
-            sky_facing *= canopy;
+            sky_facing *= canopy * terrain_sky;
             ground *= canopy;
             indirect_light += ambient::ambient_light(in.world_position, in.N, in.V, NdotV, diffuse_color, F0, perceptual_roughness, diffuse_occlusion * sky_facing);
             indirect_light += diffuse_color * ground * below * diffuse_occlusion;

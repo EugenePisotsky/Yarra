@@ -595,6 +595,7 @@ impl ImpostorMaterials {
                             shadows: environment.shadows.clone(),
                             shelter: environment.shelter.clone(),
                             forest_shadow: environment.forest_shadow.clone(),
+                            terrain_shadow: environment.terrain_shadow.clone(),
                         },
                     },
                     extension: ImpostorExtension {

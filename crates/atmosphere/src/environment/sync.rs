@@ -54,9 +54,10 @@ pub(super) fn sync(
         Option<&GlobalTransform>,
     )>,
     shelter: Res<crate::shelter::RainShelter>,
-    (forest, sky): (
+    (forest, sky, terrain): (
         Res<crate::forest_shadow::ForestShadow>,
         Res<crate::forest_shadow::ForestSkyOcclusion>,
+        Res<crate::terrain_shadow::TerrainShadow>,
     ),
     (mist, presentation, tuning, sea, shore): LowAir,
     mut mist_fade: Local<(u64, f32)>,
@@ -89,6 +90,8 @@ pub(super) fn sync(
         shelter: shelter.parameters(),
         forest_shadow: forest.parameters(),
         forest_sky: [sky.0.clamp(0., 1.), 0., 0., 0.],
+        terrain_shadow: terrain.parameters(origin.0),
+        terrain_light: terrain.light(),
         ..cloud_layer(profile, &value, sun, active, clock.seconds, origin.0)
     };
     if world && profile.night.enabled {
@@ -445,6 +448,7 @@ mod tests {
             .init_resource::<crate::forest_shadow::ForestSkyOcclusion>()
             .init_resource::<crate::valley_mist::ValleyMist>()
             .init_resource::<crate::shore::Shore>()
+            .init_resource::<crate::terrain_shadow::TerrainShadow>()
             .add_systems(Update, sync);
         app.update();
         let first = app.world().resource::<EnvironmentParams>().offset;
@@ -498,6 +502,7 @@ mod tests {
             .init_resource::<crate::forest_shadow::ForestSkyOcclusion>()
             .init_resource::<crate::valley_mist::ValleyMist>()
             .init_resource::<crate::shore::Shore>()
+            .init_resource::<crate::terrain_shadow::TerrainShadow>()
             .add_systems(Update, sync);
         app.update();
         let params = *app.world().resource::<EnvironmentParams>();
