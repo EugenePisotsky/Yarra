@@ -227,6 +227,37 @@ Trees come from **one pipeline**, the vegetation kit (YarraVegetation: card buil
 
 Costs are counted in work that does not depend on the GPU clock (triangles, cards and instances in view, overdraw, texture memory) and timed only with Metal System Trace per pass against a reference pass in the same trace, alternating A/B: macOS clocks the GPU to the load, so the performance HUD's GPU time says little.
 
+## Terrain rendering roadmap
+
+October 19, 2026, after the Reteya mountain reviews ([Experiments](EXPERIMENTS.md#mountains-and-distant-ground--october-19)). The user: mountains look good very close and very far, blurry everywhere in between; a visible change where near detail ends; Witcher 3 references (`tmp/references/mountains`) are sharp at every distance with no visible texture LOD. They asked for the established approach even if it means a rewrite: early budgets and micro-optimizations date from a small world at 120 fps.
+
+**Why the current design cannot get there.** Beyond near detail the ground is a CPU-baked colour and normal image (composites: 2 m texels from 128 m tiles, an atlas of 1,536). At 50% render scale a pixel covers about 0.28 m at 300 m and 0.94 m at 1 km, so 2 m texels are 2–7× too coarse; halving them gave about 10% more contrast for 4× the data, because averaging the blended surfaces into one colour is what erases them. Near detail evaluates materials per pixel from half-metre weights, so the two never match, and extending it costs memory and GPU per page. Geometry is built on the CPU per node (planner, stitched meshes, morph meshes, mesh cache) and its vertex normals coarsen with LOD, so shading relief also fades with distance.
+
+**What shipped engines do** (research from the GDC/SIGGRAPH slides, sources in the October 19 notes):
+- **Witcher 3 (REDengine 3):** per-pixel splatting at every distance from clipmaps. Five 1024² levels of height (R16) and a 16-bit control map per texel (two texture indices, UV scale, slope threshold), plus a low-resolution colour map; 32 textures in one array. Overlays settle into the background texture's normal-map slopes, so snow follows every facet. About 55 MB of clipmaps besides the textures.
+- **Far Cry 4/5, Ghost Recon Wildlands:** an adaptive virtual texture near (10 texels/cm, pages composited on the GPU), a baked far atlas whose density follows quadtree LOD, per-pixel cliffs with dual-scale stochastic triplanar. GPU-driven quadtree on compute (0.1 ms); terrain about 2 ms GPU.
+- **Frostbite:** a procedural virtual texture filled on the GPU plus direct detail splatting within 50–100 m.
+- **Geometry:** geometry clipmaps or CDLOD (fixed grids, vertex-shader height fetch, morphing in the vertex shader). No CPU mesh building.
+
+Either the same material function runs at every distance (Witcher 3) or a cache of it follows screen density (virtual texturing); in both, near and far come from one function, so there is no seam. Virtual texturing needs feedback readback, page compositing and runtime compression (ASTC on iOS), and wgpu has no sparse textures; it stays a later optimization if per-pixel shading proves too costly.
+
+**Chosen: per-pixel materials at every distance on GPU clipmaps (Witcher 3 style), with CDLOD geometry.**
+
+- **Data.** Heights: the existing node pyramid (33² per node at 2^L m) is already an exact height pyramid. Materials: a new cooked control tile per node and level, 64² texels at 0.5·2^L m, each holding the three heaviest global surfaces and their weights (4 bytes), filtered from summed weight vectors with road wear laid in, never by downsampling indices. About 140 MB raw for Reteya at all levels (20–35 MB compressed estimated, against 122.5 MB of composites), cooked in seconds (no texture sampling) instead of 140 s. Wear fields stay for ruts near the camera.
+- **Residency.** Toroidal GPU clipmaps around the camera, height and control separately: about eight 1024² levels each (desktop; 512² on iOS), about 70 MB, refreshed by copying node tiles into ring positions as the camera moves. Valley mist, shore and terrain shadows read the same pyramid.
+- **Geometry.** CDLOD: a CPU (later compute) quadtree selection of fixed instanced grid patches whose vertex shader reads the height clipmap and morphs between levels. The 1 m level covers the contact radius with the same diagonal as the CPU triangles, so actor and grass contact keep their exact-surface guarantee. Replaces mesh building, stitching, morph meshes and the mesh cache.
+- **Shading, one function at every distance.** The normal per pixel from the height clipmap (relief no longer depends on mesh LOD; the fixed-diagonal staircase leaves shading). The control clipmap's top three surfaces height-blended per pixel as near detail does today. Textures at two tiling scales blended by distance so their structure stays on screen, stochastic anti-tiling, mip bias for the upscaler. Biplanar rock on cliffs, snow and loose cover settling by the pixel's normal (Witcher overlay rule) on top of the painted masks. Grass field tint per surface, macro variation, puddles (hollowness from the height clipmap), terrain shadows. Budget: about 2 ms GPU at the look target, to be measured.
+- **Editor.** Paint and height edits re-upload the affected clipmap regions; no composite preview bake.
+- **Removed at the end:** composites (bake, cores cache, tables, atlas, shader), near detail's page atlas and `TerrainMaterial` carriers, the CPU cover planner's mesh path, `TerrainCompositeMaterial`. Formats change directly with a schema bump; worlds are rebuilt.
+
+| Step | Deliverable | Gate |
+| --- | --- | --- |
+| 1. Geometry spike | `--terrain v2`: height clipmaps filled from nodes, CDLOD patches with vertex fetch, per-pixel normals, flat colour per surface from today's weights | Reteya draws to the horizon at 60 fps; shadows, prepass and MetalFX motion correct; GPU and CPU counted against the current path |
+| 2. Control maps | Cooked control tiles at every level; control clipmaps; per-pixel top-three height blend with the pack's textures | The user's problem views: no seam, sharp at 300 m–3 km; GPU within budget |
+| 3. Look | Dual-scale tiling and anti-tiling, biplanar cliffs, slope snow, macro variation, roads and ruts, grass tint, puddles, terrain shadows | User's review in the game against the references |
+| 4. Parity | Actor and grass contact on the new surface, editor live edits, iOS budgets, F1 controls | Contact, streaming and editor tests; phone budget |
+| 5. Removal | Old terrain path, tables and bake removed; schema bump; docs | All suites; worlds rebuilt |
+
 ## Performance roadmap
 
 October 9, 2026. At native resolution the forest ran at about 43 fps uncapped on a cool M2 Max and lower once it heats (the user saw 35). Measurements and the fixes so far are in [Experiments](EXPERIMENTS.md#native-resolution--october-9). What remains, largest first:
