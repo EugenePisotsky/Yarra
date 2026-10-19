@@ -1,5 +1,6 @@
 # Terrain surfaces of the Baltic coast island: beach and dunes, meadows, pine and mixed
-# forest floors, paths and rock. Each surface is one layer of the texture arrays, in this order.
+# forest floors, paths, alpine rock/scree/snow and wet ground. Each surface is one layer
+# of the texture arrays, in this order. Mask bindings are in reteya-ground-layers.toml.
 #
 # Sources are Megascans surfaces under ~/Dev/Assets/terrain/sources (licensed, local only).
 # `tools/import_terrain_surfaces.py` converts them into assets/local/terrain/baltic/source,
@@ -223,5 +224,91 @@ source = "forest_european_broadleaf_ground_dirt_fine_01_xlpnffacc_4k"
 tile_size = 2.0
 normal_strength = 0.7
 roughness = [0.5, 1.0]
+blend_height = 0.3
+anti_tiling = true
+
+# Reteya ground-analysis surfaces. Append new entries to keep existing texture-array
+# indices stable. Wet surfaces are tuned variants of available dirt/gravel scans, not
+# additional photogrammetry captures. The terrain masks choose coverage; these scans
+# supply metre-scale detail.
+
+[[surfaces]]
+key = "bedrock"
+name = "Outcrop rock"
+# Grey fractured rock (greywacke-like, no strata, which read as bark when projected flat onto
+# gentle ground). A 1 m scan shown at 2.5 m: rock reads the same at either scale.
+source = "rough_rock_wall_tinjdj1bw_8k"
+tile_size = 2.5
+normal_strength = 1.0
+roughness = [0.45, 0.95]
+blend_height = 1.0
+anti_tiling = true
+
+[[surfaces]]
+key = "scree"
+name = "Debris and scree"
+source = "coast_rauk_ground_gravel_rough_wfeqejd_4k"
+# Mountain scree reads clearly darker than snow (Canterbury greywacke references).
+color_match = [0.52, 0.51, 0.49]
+tile_size = 1.0
+normal_strength = 0.9
+roughness = [0.55, 1.0]
+blend_height = 0.9
+anti_tiling = true
+
+[[surfaces]]
+key = "mountain-meadow"
+name = "Mountain meadow"
+# Golden tussock: straw-coloured dried grass.
+source = "grass_dried_omgqg0_4k"
+color_match = [0.48, 0.44, 0.33]
+tile_size = 1.2
+normal_strength = 0.45
+roughness = [0.75, 1.0]
+blend_height = 0.45
+anti_tiling = true
+worn = [["dirt", 0.65], ["scree", 0.35]]
+
+[[surfaces]]
+key = "riverbed"
+name = "River gravel"
+source = "coast_rauk_ground_gravel_patchy_01_wffqag3_4k"
+color_match = [0.24, 0.23, 0.20]
+tile_size = 2.0
+normal_strength = 0.8
+roughness = [0.25, 0.65]
+blend_height = 0.8
+anti_tiling = false
+
+[[surfaces]]
+key = "wet-bank"
+name = "Wet bank"
+source = "forest_european_broadleaf_ground_dirt_fine_01_xlpnffacc_4k"
+color_match = [0.20, 0.18, 0.13]
+tile_size = 2.0
+normal_strength = 0.5
+roughness = [0.35, 0.75]
+blend_height = 0.2
+anti_tiling = true
+worn = [["mud", 1.0]]
+
+[[surfaces]]
+key = "mud"
+name = "Wet mud"
+source = "dirt_ground_xdhhdgd_4k"
+color_match = [0.16, 0.14, 0.11]
+tile_size = 2.0
+normal_strength = 0.35
+roughness = [0.18, 0.5]
+blend_height = 0.08
+anti_tiling = true
+
+[[surfaces]]
+key = "snow"
+name = "Settled snow"
+source = "fresh_windswept_snow_uhpjdeyn_8k"
+tile_size = 2.0
+normal_strength = 0.4
+roughness = [0.65, 0.95]
 blend_height = 0.3
 anti_tiling = true

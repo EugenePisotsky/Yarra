@@ -4,7 +4,8 @@
 Reads `assets/packs/terrain/<pack>.toml` and writes, for every surface,
 `assets/local/terrain/<pack>/source/<key>/`:
 
-- `base_color.png`: sRGB albedo with the normalised height map in alpha (alpha is linear);
+- `base_color.png`: sRGB albedo with the normalised height map, scaled by `blend_height`,
+  in alpha (alpha is linear);
 - `normal_material.png`: octahedral tangent normal in RG, ambient occlusion in B and
   roughness in A, all linear.
 
@@ -99,6 +100,9 @@ def mean_color(directory: Path, size: int) -> np.ndarray:
 
 
 def import_surface(surface: dict, sources: Path, output: Path, size: int) -> dict:
+    blend_height = float(surface.get('blend_height', 1.0))
+    if not np.isfinite(blend_height) or not 0 <= blend_height <= 1:
+        raise ValueError(f"{surface['key']}: blend_height must be finite and between 0 and 1")
     directory = sources / surface['source']
     maps = {
         'color': find_map(directory, 'basecolor', 'albedo'),
@@ -140,7 +144,9 @@ def import_surface(surface: dict, sources: Path, output: Path, size: int) -> dic
 
     target = output / surface['key']
     target.mkdir(parents=True, exist_ok=True)
-    rgba = np.concatenate([linear_to_srgb(color), height_unit[..., None]], axis=-1)
+    # Alpha is the blend score's linear height input, not opacity. Apply the pack's
+    # amplitude here so the runtime shader and composite cooker read the same value.
+    rgba = np.concatenate([linear_to_srgb(color), (height_unit * blend_height)[..., None]], axis=-1)
     Image.fromarray(np.rint(rgba * 255).astype(np.uint8), 'RGBA').save(target / 'base_color.png')
     packed = np.concatenate([octahedral(normal), ao[..., None], roughness[..., None]], axis=-1)
     Image.fromarray(np.rint(np.clip(packed, 0, 1) * 255).astype(np.uint8), 'RGBA').save(
@@ -148,6 +154,7 @@ def import_surface(surface: dict, sources: Path, output: Path, size: int) -> dic
     return {
         'key': surface['key'],
         'source': surface['source'],
+        'blend_height': blend_height,
         'maps': {k: v.name for k, v in maps.items()},
         'source_sha256': {
             k: hashlib.sha256(v.read_bytes()).hexdigest() for k, v in maps.items()

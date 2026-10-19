@@ -342,5 +342,10 @@
         "rocky-ground": [("pebbles", 1.0), ("stones", 0.8), ("rocks", 0.6), ("verge-stones", 1.0)],
         "rock": [("stones", 0.3), ("rocks", 0.4)],
         "lichen-rock": [("stones", 0.3), ("rocks", 0.4)],
+        "bedrock": [("stones", 0.3), ("rocks", 0.4)],
+        "scree": [("pebbles", 1.0), ("stones", 0.8), ("rocks", 0.6), ("verge-stones", 1.0)],
+        "mountain-meadow": [("dry-meadow", 0.8), ("meadow", 0.2), ("stones", 0.15), ("rocks", 0.08), ("pebbles", 0.1), ("verge-stones", 0.8), ("verge-pebbles", 0.6)],
+        "riverbed": [("pebbles", 1.0), ("cobbles", 0.6), ("stones", 0.3)],
+        "wet-bank": [("meadow-tall", 0.6), ("meadow", 0.4), ("pebbles", 0.1), ("verge-stones", 0.3)],
     },
 )

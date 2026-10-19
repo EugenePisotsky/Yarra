@@ -19,7 +19,7 @@ pub(crate) type MaskFn<'a> = dyn Fn(Vec2) -> f32 + Sync + 'a;
 
 /// Masks every island world has, generated from height and slope by `paint`. An imported
 /// mask of the same name replaces one.
-const GENERATED_MASKS: [&str; 11] = [
+const GENERATED_MASKS: [&str; 17] = [
     "land",
     "green",
     "bare",
@@ -31,61 +31,34 @@ const GENERATED_MASKS: [&str; 11] = [
     "beach",
     "scree",
     "rock",
+    "mountain_meadow",
+    "bedrock",
+    "wet_bank",
+    "mud",
+    "riverbed",
+    "snow",
 ];
 
-/// An island ground layer above the meadows: its name, the mask it reads and its surfaces.
-/// What grass grows on them is the grass catalog's (`assets/packs/grass/baltic.ron`).
+/// The same ordered mask contract that Houdini reads for its material preview.
+#[derive(serde::Deserialize)]
 struct IslandGround {
-    name: &'static str,
-    mask: &'static str,
-    surfaces: &'static [(&'static str, f32)],
+    name: String,
+    mask: String,
+    surfaces: Vec<(String, f32)>,
 }
 
-/// Island ground layers, lowest first. Houdini supplies sand, rock and scree;
-/// `tools/island_masks.py` derives the coast, dunes, beach and forest floors from them and
-/// from `tools/forest_plan.py`'s stands.
-const ISLAND_GROUND: [IslandGround; 8] = [
-    IslandGround {
-        name: "Coastal grass",
-        mask: "coast",
-        surfaces: &[("coastal-grass", 1.0)],
-    },
-    IslandGround {
-        name: "Pine forest floor",
-        mask: "pine_forest",
-        surfaces: &[("forest-moss", 0.55), ("pine-needles", 0.45)],
-    },
-    IslandGround {
-        name: "Spruce forest floor",
-        mask: "spruce_forest",
-        surfaces: &[("forest-floor", 0.6), ("pine-needles", 0.4)],
-    },
-    IslandGround {
-        name: "Broadleaf forest floor",
-        mask: "broadleaf_forest",
-        surfaces: &[("leaf-litter", 0.6), ("forest-floor", 0.4)],
-    },
-    IslandGround {
-        name: "Dunes",
-        mask: "dune",
-        surfaces: &[("dune-sand", 1.0)],
-    },
-    IslandGround {
-        name: "Beach",
-        mask: "beach",
-        surfaces: &[("beach-sand", 1.0)],
-    },
-    IslandGround {
-        name: "Scree",
-        mask: "scree",
-        surfaces: &[("stony-moss", 0.5), ("rocky-ground", 0.5)],
-    },
-    IslandGround {
-        name: "Rock",
-        mask: "rock",
-        surfaces: &[("rock", 0.75), ("lichen-rock", 0.25)],
-    },
-];
+#[derive(serde::Deserialize)]
+struct GroundLayers {
+    layers: Vec<IslandGround>,
+}
+
+fn ground_layers() -> Vec<IslandGround> {
+    toml::from_str::<GroundLayers>(include_str!(
+        "../../../assets/packs/terrain/reteya-ground-layers.toml"
+    ))
+    .expect("the tracked ground bindings parse")
+    .layers
+}
 
 /// Adds the island ground layers above the meadows: a ground preset for each and a layer
 /// reading its mask.
@@ -96,7 +69,7 @@ fn island_ground(project: &mut ProjectDocument) {
     let pack = TerrainPack::baltic();
     let definition = &mut project.environments[0];
     let first = definition.layers.len() as i32;
-    for (index, ground) in ISLAND_GROUND.iter().enumerate() {
+    for (index, ground) in ground_layers().into_iter().skip(2).enumerate() {
         let id = |part: &str| stable_id(&format!("island-ground/{}/{part}", ground.mask));
         let preset = |part: &str, name: String, kind| Preset {
             id: PresetId(id(part)),
@@ -113,9 +86,9 @@ fn island_ground(project: &mut ProjectDocument) {
                 surfaces: ground
                     .surfaces
                     .iter()
-                    .map(|&(key, weight)| SurfaceWeight {
+                    .map(|(key, weight)| SurfaceWeight {
                         surface: pack.surface(key),
-                        weight,
+                        weight: *weight,
                     })
                     .collect(),
             }),
@@ -272,7 +245,7 @@ pub(crate) fn push_cell(project: &mut ProjectDocument, imported: ImportedTerrain
 /// lowlands, bare ground on the shore, steep slopes and summits, sand along the shore (also
 /// under water), scree and rock on steep slopes. Coast, dune and forest floors come only from
 /// imported masks.
-fn paint(p: Vec2, height: f32, slope: f32) -> [f32; 11] {
+fn paint(p: Vec2, height: f32, slope: f32) -> [f32; 17] {
     let land = smoothstep(0.6, 2.0, height);
     let moist = (0.5 + 0.9 * terrain_fbm(p / 450., 0x6b8e_2d17)).clamp(0., 1.);
     let green = land * (1. - smoothstep(110., 320., height)) * moist;
@@ -283,7 +256,9 @@ fn paint(p: Vec2, height: f32, slope: f32) -> [f32; 11] {
     let rock = smoothstep(0.75, 0.95, slope);
     let scree = smoothstep(0.55, 0.75, slope) * (1. - rock);
     let beach = (1. - smoothstep(1.8, 3.5, height)) * (1. - smoothstep(0.45, 0.7, slope));
-    [land, green, bare, 0., 0., 0., 0., 0., beach, scree, rock]
+    [
+        land, green, bare, 0., 0., 0., 0., 0., beach, scree, rock, 0., 0., 0., 0., 0., 0.,
+    ]
 }
 
 /// Heights and the coverage of imported `layers` in one cell, sampled every metre on the
@@ -432,4 +407,46 @@ pub(crate) fn write_views(project: &Path, views: &[(&str, WorldViewBookmark)]) -
         )?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod ground_tests {
+    use super::*;
+
+    #[test]
+    fn tracked_bindings_match_the_houdini_stack_and_legacy_masks_remain_optional() {
+        let project = base_document("Ground", [-100., 1000.], 0.);
+        let definition = &project.environments[0];
+        let expected: Vec<_> = ground_layers().into_iter().map(|g| g.mask).collect();
+        let mut layers: Vec<_> = definition.layers.iter().collect();
+        layers.sort_by_key(|l| l.order);
+        let actual: Vec<_> = layers
+            .iter()
+            .map(|l| l.imported_mask.as_deref().unwrap())
+            .collect();
+        assert_eq!(actual, expected);
+        assert_eq!(actual.len(), 16);
+        definition.validate(&project.presets).unwrap();
+        let fallback = imported_layers(definition, &[]).unwrap();
+        let values = paint(Vec2::new(20., 30.), 400., 0.2);
+        for (layer, source) in fallback {
+            let name = definition
+                .layers
+                .iter()
+                .find(|l| l.id == layer)
+                .unwrap()
+                .imported_mask
+                .as_deref()
+                .unwrap();
+            if matches!(
+                name,
+                "mountain_meadow" | "bedrock" | "wet_bank" | "mud" | "riverbed" | "snow"
+            ) {
+                let Mask::Generated(index) = source else {
+                    panic!("missing mask was not generated")
+                };
+                assert_eq!(values[index], 0., "legacy fallback for {name}");
+            }
+        }
+    }
 }

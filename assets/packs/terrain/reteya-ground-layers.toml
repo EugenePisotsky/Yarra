@@ -1,0 +1,100 @@
+# Bottom-to-top coverage opacities, not normalized material weights. Each layer applies
+# result = result * (1 - mask) + surface_mix * mask. Diagnostic flow, hollows and ridges
+# stay in Houdini; only these material masks go to the game. Preview colours are sRGB
+# authoring colours, not replacements for the game's scans or lighting.
+
+[[layers]]
+mask = "land"
+name = "Dry meadow"
+surfaces = [["dry-meadow", 1.0]]
+preview_srgb = [0.46, 0.43, 0.29]
+
+[[layers]]
+mask = "green"
+name = "Green meadow"
+surfaces = [["meadow", 1.0]]
+preview_srgb = [0.34, 0.43, 0.24]
+
+[[layers]]
+mask = "coast"
+name = "Coastal grass"
+surfaces = [["coastal-grass", 1.0]]
+preview_srgb = [0.48, 0.49, 0.30]
+
+[[layers]]
+mask = "pine_forest"
+name = "Pine forest floor"
+surfaces = [["forest-moss", 0.55], ["pine-needles", 0.45]]
+preview_srgb = [0.30, 0.35, 0.20]
+
+[[layers]]
+mask = "spruce_forest"
+name = "Spruce forest floor"
+surfaces = [["forest-floor", 0.6], ["pine-needles", 0.4]]
+preview_srgb = [0.25, 0.30, 0.19]
+
+[[layers]]
+mask = "broadleaf_forest"
+name = "Broadleaf forest floor"
+surfaces = [["leaf-litter", 0.6], ["forest-floor", 0.4]]
+preview_srgb = [0.38, 0.32, 0.21]
+
+[[layers]]
+mask = "dune"
+name = "Dunes"
+surfaces = [["dune-sand", 1.0]]
+preview_srgb = [0.76, 0.68, 0.49]
+
+[[layers]]
+mask = "beach"
+name = "Beach"
+surfaces = [["beach-sand", 1.0]]
+preview_srgb = [0.70, 0.65, 0.49]
+
+[[layers]]
+mask = "mountain_meadow"
+name = "Mountain meadow"
+surfaces = [["mountain-meadow", 1.0]]
+preview_srgb = [0.43, 0.48, 0.31]
+
+[[layers]]
+mask = "scree"
+name = "Debris and scree"
+surfaces = [["scree", 1.0]]
+preview_srgb = [0.56, 0.53, 0.47]
+
+[[layers]]
+mask = "rock"
+name = "Rock"
+surfaces = [["rock", 0.75], ["lichen-rock", 0.25]]
+preview_srgb = [0.47, 0.48, 0.43]
+
+[[layers]]
+mask = "bedrock"
+name = "Layered bedrock"
+surfaces = [["bedrock", 1.0]]
+preview_srgb = [0.48, 0.49, 0.50]
+
+[[layers]]
+mask = "wet_bank"
+name = "Wet bank"
+surfaces = [["wet-bank", 1.0]]
+preview_srgb = [0.30, 0.32, 0.23]
+
+[[layers]]
+mask = "mud"
+name = "Wet mud"
+surfaces = [["mud", 1.0]]
+preview_srgb = [0.29, 0.25, 0.19]
+
+[[layers]]
+mask = "riverbed"
+name = "River gravel"
+surfaces = [["riverbed", 1.0]]
+preview_srgb = [0.38, 0.39, 0.37]
+
+[[layers]]
+mask = "snow"
+name = "Settled snow"
+surfaces = [["snow", 1.0]]
+preview_srgb = [0.92, 0.95, 0.98]
