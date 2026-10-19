@@ -34,6 +34,12 @@ impl Pack {
             && self.macro_image == m.macro_variation
     }
 }
+/// Whether a page's wear field is one near detail draws, so the page needs a wear layer.
+pub(super) fn carries_wear(s: &NearSource) -> bool {
+    s.wear
+        .as_ref()
+        .is_some_and(|w| u32::from(w.resolution) == WEAR_SIDE && w.is_valid(s.surfaces.len()))
+}
 /// One of a page's surfaces, as `terrain_near.wesl` reads it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, ShaderType)]
 pub(crate) struct NearSlot {
@@ -53,7 +59,7 @@ pub(crate) struct NearSlot {
 #[derive(Clone, Copy, Debug, Default, PartialEq, ShaderType)]
 pub(crate) struct NearEntry {
     pub key: IVec4,
-    /// X: whether the page has a wear field, in its slot's layer of the wear atlas.
+    /// X: whether the page has a wear field; Y: its layer of the wear atlas.
     pub wear: Vec4,
     /// Fade, weight resolution, surface count.
     pub state: Vec4,
@@ -65,11 +71,11 @@ pub(crate) struct NearEntry {
     pub slots: [NearSlot; MAX_TERRAIN_SURFACES_PER_CELL],
 }
 pub(super) fn bytes() -> u64 {
-    // The RGBA weight layers and a grass cover layer per slot.
+    // The RGBA weight layers and a grass cover layer per slot, a wear field per wear slot.
     u64::from(WEIGHT_SIDE * WEIGHT_SIDE * 4 * WEIGHT_LAYERS as u32 + GRASS_SIDE * GRASS_SIDE * 4)
         * NEAR_SLOTS as u64
         + NearEntry::min_size().get() * NEAR_TABLE as u64
-        + u64::from(WEAR_SIDE * WEAR_SIDE * 4) * NEAR_SLOTS as u64
+        + u64::from(WEAR_SIDE * WEAR_SIDE * 4) * WEAR_SLOTS as u64
 }
 /// RGBA weight layers per slot: four surfaces each, `MAX_TERRAIN_SURFACES_PER_CELL` in all.
 pub(super) const WEIGHT_LAYERS: usize = MAX_TERRAIN_SURFACES_PER_CELL.div_ceil(4);
@@ -105,7 +111,7 @@ pub(super) fn entry(
     m: &TerrainMaterial,
     slot: u32,
     fade: f32,
-    wear: bool,
+    wear: Option<u32>,
     cover_side: u32,
 ) -> NearEntry {
     let settings = m.settings;
@@ -113,7 +119,7 @@ pub(super) fn entry(
     let mut slots = [NearSlot::default(); MAX_TERRAIN_SURFACES_PER_CELL];
     for (index, (slot, layer)) in slots.iter_mut().zip(&s.layers).enumerate() {
         let surface = &layer.surface;
-        let field = s.wear.as_ref().filter(|_| wear);
+        let field = s.wear.as_ref().filter(|_| wear.is_some());
         let worn = field.map_or([(world::NO_WORN_SLOT, 0); 2], |w| w.worn[index]);
         let trampled = field
             .map(|w| w.trampled[index])
@@ -154,7 +160,12 @@ pub(super) fn entry(
     };
     NearEntry {
         key: IVec4::new(s.key.cell.x, s.key.cell.z, 0, slot as i32 + 1),
-        wear: Vec4::new(f32::from(u8::from(wear)), 0., 0., 0.),
+        wear: Vec4::new(
+            f32::from(u8::from(wear.is_some())),
+            wear.unwrap_or(0) as f32,
+            0.,
+            0.,
+        ),
         state: Vec4::new(
             fade,
             if s.surfaces.len() == 1 {
@@ -181,6 +192,8 @@ pub(super) fn entry(
 }
 pub(super) struct Tile {
     slot: u32,
+    /// Its layer of the wear atlas.
+    wear_layer: u32,
     /// The RGBA layers of surface weights, four surfaces each; empty past the page's surfaces.
     pub(super) weights: [Vec<u8>; WEIGHT_LAYERS],
     weight_side: u32,
@@ -195,8 +208,13 @@ impl Tile {
         !self.wear.is_empty()
     }
 }
-/// The page's upload.
-pub(super) fn tile(slot: u32, s: &NearSource, cover: Option<&NearGrassCover>) -> Tile {
+/// The page's upload; its wear field only with a wear layer to hold it.
+pub(super) fn tile(
+    slot: u32,
+    wear_layer: Option<u32>,
+    s: &NearSource,
+    cover: Option<&NearGrassCover>,
+) -> Tile {
     // The shader reads only the layers the page's surfaces fill.
     let (weight_side, weights) = if s.surfaces.len() == 1 {
         (
@@ -213,7 +231,7 @@ pub(super) fn tile(slot: u32, s: &NearSource, cover: Option<&NearGrassCover>) ->
     let wear = s
         .wear
         .as_ref()
-        .filter(|w| u32::from(w.resolution) == WEAR_SIDE && w.is_valid(s.surfaces.len()))
+        .filter(|_| wear_layer.is_some() && carries_wear(s))
         .map_or(vec![], |w| w.texels.concat());
     let cover = cover.filter(|c| {
         c.resolution > 0
@@ -222,6 +240,7 @@ pub(super) fn tile(slot: u32, s: &NearSource, cover: Option<&NearGrassCover>) ->
     });
     Tile {
         slot,
+        wear_layer: wear_layer.unwrap_or(0),
         weights,
         weight_side,
         cover: cover.map_or(vec![], |c| c.rgba.clone()),
@@ -293,7 +312,11 @@ impl NearAtlas {
             NearEntry::min_size().get() * NEAR_TABLE as u64,
             RenderAssetUsages::RENDER_WORLD,
         ));
-        let wear = images.add(image(WEAR_SIDE, TextureFormat::Rgba8Unorm, slots));
+        let wear = images.add(image(
+            WEAR_SIDE,
+            TextureFormat::Rgba8Unorm,
+            WEAR_SLOTS as u32,
+        ));
         let shared = Arc::new(Mutex::new(Shared {
             weights: weights.id(),
             grass: grass.id(),
@@ -327,7 +350,7 @@ impl NearAtlas {
     }
     pub(super) fn submit(&self, table: Vec<NearEntry>, tiles: Vec<Tile>) {
         assert_eq!(table.len(), NEAR_TABLE);
-        assert!(tiles.len() <= 2);
+        assert!(tiles.len() <= NEAR_ADDS);
         let mut s = self.shared.lock().unwrap();
         assert!(s.pending.is_none());
         s.pending = Some(Update {
@@ -382,7 +405,7 @@ fn upload(
                 .map(|(i, data)| (weights, t.weight_side, first + i as u32, data))
                 .chain([
                     (grass, t.cover_side, t.slot, &t.cover),
-                    (wear, WEAR_SIDE, t.slot, &t.wear),
+                    (wear, WEAR_SIDE, t.wear_layer, &t.wear),
                 ]);
             for (image, side, layer, data) in layers {
                 if data.is_empty() {

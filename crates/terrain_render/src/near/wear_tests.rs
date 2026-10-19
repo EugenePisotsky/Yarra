@@ -108,17 +108,22 @@ fn pages_pack_their_wear_and_what_their_surfaces_wear_to() {
             .collect(),
     });
     let m = super::tests::material(&s);
-    let tile = gpu::tile(3, &s, None);
+    assert!(gpu::carries_wear(&s));
+    // Without a wear layer to hold it, the field is not uploaded.
+    assert!(!gpu::tile(3, None, &s, None).has_wear());
+    let tile = gpu::tile(3, Some(5), &s, None);
     assert!(tile.has_wear());
-    let entry = gpu::entry(&s, &m, 3, 1., tile.has_wear(), 0);
+    let entry = gpu::entry(&s, &m, 3, 1., tile.has_wear().then_some(5), 0);
     assert_eq!(entry.wear.x, 1.);
+    assert_eq!(entry.wear.y, 5.);
     assert_eq!(entry.slots[0].worn, Vec4::new(1., 1., -1., 0.));
     assert_eq!(entry.slots[1].worn.x, -1.);
     assert_eq!(entry.slots[0].material.w, 1.);
     assert_eq!(entry.slots[1].material.w, -1.);
     // A field of the wrong size draws none.
     s.wear.as_mut().unwrap().resolution = 64;
-    assert!(!gpu::tile(3, &s, None).has_wear());
+    assert!(!gpu::carries_wear(&s));
+    assert!(!gpu::tile(3, Some(5), &s, None).has_wear());
 }
 
 fn run(

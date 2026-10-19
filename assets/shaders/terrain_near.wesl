@@ -10,7 +10,7 @@ import package::shaders::terrain_wear::{WEAR_TEXEL, map_sampler, wear_at, rut_at
 // `grass`: the grass field's linear colour and how fully grass covers the surface.
 // `worn`: the page slots the surface wears down to (-1 none) and their shares.
 struct NearSlot { surface: vec4<f32>, material: vec4<f32>, phase: vec4<f32>, lattice: vec4<f32>, grass: vec4<f32>, worn: vec4<f32>, }
-// `wear.x`: whether the page has a wear field (terrain_wear.wesl), in its slot's layer.
+// `wear.x`: whether the page has a wear field (terrain_wear.wesl); `wear.y`: its layer.
 struct NearEntry {
     key: vec4<i32>, wear: vec4<f32>, state: vec4<f32>, macro_scales: vec4<f32>, macro_settings: vec4<f32>,
     macro_a: vec4<f32>, macro_b: vec4<f32>, macro_c: vec4<f32>, slots: array<NearSlot, 12>,
@@ -26,30 +26,48 @@ struct NearEntry {
 // and the cover, at the grass fields' texel centres.
 @group(constants::MATERIAL_BIND_GROUP) @binding(17) var near_grass: texture_2d_array<f32>;
 
+// Returned by near_lookup for a page near detail does not hold.
+const NEAR_NONE: u32 = 0xffffffffu;
 // Probe only keys. Returning the whole entry through a dynamic loop also
-// carried every surface parameter through neighbour-only lookups.
+// carried every surface parameter through neighbour-only lookups. The table's size is a power
+// of two (near::NEAR_TABLE).
 fn near_lookup(key: vec2<i32>) -> u32 {
+    let mask = arrayLength(&near_table) - 1u;
     var h = (u32(key.x) * 0x9e3779b9u) ^ (u32(key.y) * 0x85ebca6bu);
     h ^= h >> 16u; h *= 0x7feb352du; h ^= h >> 15u;
-    h &= 255u;
+    h &= mask;
     // Most pixels hit the first slot. Keep that case outside the collision loop.
     let first = near_table[h].key;
-    if first.w == 0 { return 256u; }
+    if first.w == 0 { return NEAR_NONE; }
     if all(first.xy == key) { return h; }
-    for (var i=1u; i<256u; i+=1u) {
-        let index = (h+i)&255u;
+    for (var i=1u; i<=mask; i+=1u) {
+        let index = (h+i)&mask;
         let stored = near_table[index].key;
-        if stored.w == 0 { return 256u; }
+        if stored.w == 0 { return NEAR_NONE; }
         if all(stored.xy == key) { return index; }
     }
-    return 256u;
+    return NEAR_NONE;
 }
 fn near_availability(key: vec2<i32>) -> f32 {
     let index = near_lookup(key);
-    if index == 256u { return 0.0; }
+    if index == NEAR_NONE { return 0.0; }
     return near_table[index].state.x;
 }
 fn triangular(uv: vec2<f32>) -> vec2<f32> { return vec2(uv.x + uv.y*0.5773502692, uv.y*1.1547005384); }
+// Anti-tiling from the lattice vertex with the largest weight alone: one sample instead of three.
+// Seams between vertices are faint at the coarse mips far ground samples.
+fn stochastic_dominant(uv: vec2<f32>, lattice: vec2<f32>, origin: vec2<f32>, layer: i32, dx: vec2<f32>, dy: vec2<f32>) -> vec4<f32> {
+    let c = floor(lattice); let f = fract(lattice);
+    var vertex = c;
+    if f.x+f.y > 1.0 {
+        vertex = c+select(select(vec2(1.0,0.0), vec2(0.0,1.0), 1.0-f.x > 1.0-f.y), vec2(1.0), f.x+f.y-1.0 > max(1.0-f.x,1.0-f.y));
+    } else {
+        vertex = c+select(select(vec2(0.0), vec2(1.0,0.0), f.x > 1.0-f.x-f.y), vec2(0.0,1.0), f.y > max(f.x,1.0-f.x-f.y));
+    }
+    let at = origin + vertex;
+    let turn = stochastic_vertex_turn(at,layer);
+    return textureSampleGrad(near_base, repeat_sampler, quarter_turn(uv,turn)+stochastic_vertex_offset(at,layer), layer, quarter_turn(dx,turn), quarter_turn(dy,turn));
+}
 fn stochastic(uv: vec2<f32>, lattice: vec2<f32>, origin: vec2<f32>, layer: i32, dx: vec2<f32>, dy: vec2<f32>) -> vec4<f32> {
     let c = floor(lattice); let f = fract(lattice);
     var vertices = array<vec2<f32>,3>(c, c+vec2(1.0,0.0), c+vec2(0.0,1.0));
@@ -84,16 +102,23 @@ const FIELD_RANGE: vec2<f32> = vec2(44.0, 76.0);
 const FIELD_STRENGTH: f32 = 0.85;
 // `color.a` is the surface's blend height.
 struct Surface { color: vec4<f32>, normal: vec3<f32>, ao: f32, roughness: f32, }
-fn surface(index: u32, slot: u32, local: vec2<f32>, world_dx: vec2<f32>, world_dy: vec2<f32>) -> Surface {
+// `far`: ground past FAR_GROUND, where the surface's colour comes from its coarse mips. Its
+// normal, occlusion and roughness are then the composite's (the caller's), not the scan's.
+fn surface(index: u32, slot: u32, local: vec2<f32>, world_dx: vec2<f32>, world_dy: vec2<f32>, far: bool) -> Surface {
     let s = near_table[index].slots[slot];
     let size = max(s.surface.y, 0.001);
     let layer = i32(s.surface.x+0.5);
     let uv = local/size + s.phase.xy;
     let dx = world_dx/size; let dy = world_dy/size;
     var color: vec4<f32>;
-    if s.surface.z >= 0.5 {
+    if s.surface.z >= 0.5 && far {
+        color = stochastic_dominant(uv, triangular(local/size)+s.lattice.zw, s.lattice.xy, layer, dx, dy);
+    } else if s.surface.z >= 0.5 {
         color = stochastic(uv, triangular(local/size)+s.lattice.zw, s.lattice.xy, layer, dx, dy);
     } else { color = textureSampleGrad(near_base, repeat_sampler, uv, layer, dx, dy); }
+    if far {
+        return Surface(color, vec3(0.0, 0.0, 1.0), 1.0, 1.0);
+    }
     let packed = textureSampleGrad(near_normal, repeat_sampler, uv, layer, dx, dy);
     let oct = packed.rg*2.0-1.0;
     var n = vec3(oct, 1.0-abs(oct.x)-abs(oct.y));
@@ -140,9 +165,9 @@ fn worn_weights(index: u32, page: array<f32, 12>, wear: f32, bare: f32) -> array
 // The page's ground: its three largest weights here, blended by surface height, and the grass
 // its surfaces carry (field colour, cover) in the same shares.
 struct Ground { surface: Surface, grass: vec4<f32>, }
-fn blended_surfaces(index: u32, page: array<f32, 12>, local: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>) -> Ground {
+fn blended_surfaces(index: u32, page: array<f32, 12>, local: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, far: bool) -> Ground {
     let count = u32(near_table[index].state.z+0.5);
-    if count <= 1u { return Ground(surface(index,0u,local,dx,dy), near_table[index].slots[0].grass); }
+    if count <= 1u { return Ground(surface(index,0u,local,dx,dy,far), near_table[index].slots[0].grass); }
     var weights = page;
     // Largest first; ties keep the lower slot, as world::terrain_blend_candidates does.
     var pick = vec3<u32>(0u); var best = vec3(0.0);
@@ -155,15 +180,15 @@ fn blended_surfaces(index: u32, page: array<f32, 12>, local: vec2<f32>, dx: vec2
     // A surface shows only where its score (weight share plus height) comes within the blend
     // depth of the best; one that cannot, even at full height, is not sampled.
     let share = best/max(best.x+best.y+best.z,0.000001);
-    let a = surface(index,pick.x,local,dx,dy);
+    let a = surface(index,pick.x,local,dx,dy,far);
     var cut = share.x+a.color.a*BLEND_HEIGHT-BLEND_DEPTH;
     var b = a; var c = a; var heights = vec3(a.color.a,-1.0e3,-1.0e3);
     if best.y > 0.0 && share.y+BLEND_HEIGHT > cut {
-        b = surface(index,pick.y,local,dx,dy); heights.y = b.color.a;
+        b = surface(index,pick.y,local,dx,dy,far); heights.y = b.color.a;
         cut = max(cut,share.y+b.color.a*BLEND_HEIGHT-BLEND_DEPTH);
     }
     if best.z > 0.0 && share.z+BLEND_HEIGHT > cut {
-        c = surface(index,pick.z,local,dx,dy); heights.z = c.color.a;
+        c = surface(index,pick.z,local,dx,dy,far); heights.z = c.color.a;
     }
     let w = height_blend(best,heights);
     let grass = near_table[index].slots[pick.x].grass*w.x + near_table[index].slots[pick.y].grass*w.y
@@ -180,14 +205,20 @@ fn macro_response(index: u32, local: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>) ->
     let signal = dot(vec3(a,b,c)*2.0-1.0,vec3(0.28,0.36,0.36));
     return exp2(clamp(signal*near_table[index].macro_settings.x,-1.0,1.0)*near_table[index].macro_scales.w);
 }
+// Past this distance near ground keeps its crisp half-metre weights and the surfaces' colours,
+// but samples each colour once (stochastic_dominant) and shades by the composite's normal,
+// occlusion and roughness (NearResult.far): the scans' normals and anti-tiling blend are lost in
+// their coarse mips there, and they made near ground to 240 m cost more than the frame had.
+const FAR_GROUND: f32 = 120.0;
 // Wheel ruts sink by parallax within this range, fading out over its second half.
 const RUT_RANGE: vec2<f32> = vec2(20.0, 35.0);
 // How deep the rut march looks below the terrain, metres.
 const RUT_DEEPEST: f32 = 0.16;
 // `hollow`: where rain stands in a rut here, as rain hollowness 0..1 (-1: no rut).
-struct NearResult { color: vec4<f32>, normal: vec3<f32>, ao: f32, roughness: f32, weight: f32, hollow: f32, }
+// `far`: the ground is past FAR_GROUND; take occlusion and roughness from the composite.
+struct NearResult { color: vec4<f32>, normal: vec3<f32>, ao: f32, roughness: f32, weight: f32, hollow: f32, far: bool, }
 fn close_ground(world: vec3<f32>, geometry_normal: vec3<f32>, dx: vec2<f32>, dy: vec2<f32>, cell_size: f32, origin: vec2<i32>) -> NearResult {
-    var result = NearResult(vec4(0.0),geometry_normal,1.0,1.0,0.0,-1.0);
+    var result = NearResult(vec4(0.0),geometry_normal,1.0,1.0,0.0,-1.0,false);
     if near_settings.z < 0.5 { return result; }
     let distance_to_camera = distance(near_view::view.world_position,world);
     // By distance only: at a glancing view a pixel spans metres along the ground but centimetres
@@ -198,7 +229,7 @@ fn close_ground(world: vec3<f32>, geometry_normal: vec3<f32>, dx: vec2<f32>, dy:
     let cell = vec2<i32>(floor(c))+origin;
     let uv = fract(c); let local = uv*cell_size;
     let index = near_lookup(cell);
-    if index == 256u { return result; }
+    if index == NEAR_NONE { return result; }
     if near_table[index].state.x <= 0.0 { return result; }
     var availability = near_table[index].state.x;
     let edges = vec4(uv.x,1.0-uv.x,uv.y,1.0-uv.y)*cell_size;
@@ -217,7 +248,7 @@ fn close_ground(world: vec3<f32>, geometry_normal: vec3<f32>, dx: vec2<f32>, dy:
     var sampled = local; var n = normalize(geometry_normal); var occlusion = 1.0; var rim = 0.0;
     var compacted = 0.0;
     if near_table[index].wear.x > 0.5 {
-        let layer = near_table[index].key.w-1;
+        let layer = i32(near_table[index].wear.y+0.5);
         let field = wear_at(layer,uv);
         if field.wear > 0.002 || field.rut > 0.0005 {
             let bare = bare_share(field.wear,vec2<f32>(cell)*cell_size+local);
@@ -259,7 +290,8 @@ fn close_ground(world: vec3<f32>, geometry_normal: vec3<f32>, dx: vec2<f32>, dy:
             }
         }
     }
-    let blend = blended_surfaces(index,weights,sampled,dx,dy);
+    let far = distance_to_camera > FAR_GROUND;
+    let blend = blended_surfaces(index,weights,sampled,dx,dy,far);
     let s = blend.surface;
     // Grass over the ground here: where blades actually grow, from the page's cover layer,
     // else as its surfaces carry grass.
@@ -278,5 +310,6 @@ fn close_ground(world: vec3<f32>, geometry_normal: vec3<f32>, dx: vec2<f32>, dy:
     let t = normalize(vec3(n.y,-n.x,0.0)); let b = normalize(cross(t,n));
     result.normal = normalize(t*s.normal.x+b*s.normal.y+n*s.normal.z);
     result.ao = s.ao*occlusion; result.roughness = s.roughness; result.weight = range_weight*availability;
+    result.far = far;
     return result;
 }

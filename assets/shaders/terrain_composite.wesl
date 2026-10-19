@@ -3,6 +3,7 @@ import package::shaders::weather::ground_wetness::apply_rain_puddles;
 import package::shaders::lighting::surface::surface_weather;
 // World-projected composites with an independently resident close-up surface cache.
 import package::shaders::terrain_near::{close_ground, map_sampler};
+import bevy_pbr::render::mesh_view_bindings as composite_view;
 import bevy_pbr::{
     decal::clustered::apply_decals,
     render::forward_io::{FragmentOutput, VertexOutput},
@@ -126,6 +127,10 @@ fn detailed_hollow(base: f32, world: vec2<f32>, footprint: f32) -> f32 {
     return result + base * remaining;
 }
 
+// The mesh is the 1 m heightfield within about 96 m of the camera and coarser beyond, where
+// near detail takes the composite's normal (baked from the 1 m heights) over this range.
+const MESH_NORMAL_RANGE: vec2<f32> = vec2(64.0, 96.0);
+
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
     var out: FragmentOutput;
@@ -154,10 +159,27 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
             // Close material normals use the actual mesh, as the original detailed
             // renderer does. This also makes fully resident close ground independent
             // of the distant material cache and its lower-resolution normal field.
+            // Past the 1 m mesh they use the composite's normal instead (MESH_NORMAL_RANGE).
+            let eye_distance = distance(composite_view::view.world_position, in.world_position.xyz);
+            let relief = smoothstep(MESH_NORMAL_RANGE.x, MESH_NORMAL_RANGE.y, eye_distance);
+            var baked = GroundSample(vec4(0.0), in.world_normal, 1.0, 1.0);
+            var have_baked = false;
+            if relief > 0.0 {
+                let response = textureSampleGrad(response_map, map_sampler, uv, uv_dx, uv_dy);
+                let base = ground_sample(textureSampleGrad(color_map, map_sampler, uv, uv_dx, uv_dy), response);
+                baked = detailed_ground(base, in.world_position.xz, footprint);
+                have_baked = true;
+            }
+            let shading_normal = normalize(mix(in.world_normal, baked.normal, relief));
             @if(!TERRAIN_NEAR_DISABLED)
-            let close = close_ground(in.world_position.xyz, in.world_normal, world_dx, world_dy, detail.world.x, detail.origin.xy);
+            let close = close_ground(in.world_position.xyz, shading_normal, world_dx, world_dy, detail.world.x, detail.origin.xy);
             @if(!TERRAIN_NEAR_DISABLED) {
                 ground = GroundSample(close.color, close.normal, close.roughness, close.ao);
+                // Far near ground shades by the composite's occlusion and roughness.
+                if close.far && have_baked {
+                    ground.roughness = baked.roughness;
+                    ground.ao = baked.ao;
+                }
             }
             // Without the close cache every pixel takes the distant composite.
             @if(!TERRAIN_NEAR_DISABLED)
@@ -165,9 +187,12 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
             @else
             let distant = true;
             if distant {
-                let response = textureSampleGrad(response_map, map_sampler, uv, uv_dx, uv_dy);
-                let base = ground_sample(textureSampleGrad(color_map, map_sampler, uv, uv_dx, uv_dy), response);
-                ground = detailed_ground(base, in.world_position.xz, footprint);
+                if !have_baked {
+                    let response = textureSampleGrad(response_map, map_sampler, uv, uv_dx, uv_dy);
+                    let base = ground_sample(textureSampleGrad(color_map, map_sampler, uv, uv_dx, uv_dy), response);
+                    baked = detailed_ground(base, in.world_position.xz, footprint);
+                }
+                ground = baked;
                 // Composite alpha is rain hollowness, not coverage.
                 hollow = ground.color.a;
                 @if(!TERRAIN_NEAR_DISABLED) {

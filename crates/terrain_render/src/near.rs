@@ -6,12 +6,24 @@ use world::{PageKey, WorldSpaceId};
 pub(crate) mod gpu;
 use gpu::{NearAtlas, NearEntry, NearUploadHub, Pack};
 
-pub(crate) const NEAR_SLOTS: usize = 64;
-pub(crate) const NEAR_TABLE: usize = 256;
+/// Pages near detail holds: every page within [`NEAR_END`] (about 240 of Reteya's 32 m cells
+/// at 240 m). iOS keeps the close 80 m.
+pub const NEAR_SLOTS: usize = if cfg!(target_os = "ios") { 64 } else { 256 };
+/// Hash table entries, a power of two at least twice the pages.
+pub(crate) const NEAR_TABLE: usize = if cfg!(target_os = "ios") { 256 } else { 512 };
+/// Wear fields (roads' tracks, 256² each) for the nearest pages with roads. A page with roads
+/// waits for one: without its wear its roads would vanish, which the distant ground shows.
+pub(crate) const WEAR_SLOTS: usize = if cfg!(target_os = "ios") { 32 } else { 96 };
 /// Largest ground weight map near detail holds: a 32 m cell compiles 65 samples.
 pub(crate) const WEIGHT_SIDE: u32 = 129;
-pub(crate) const NEAR_END: f32 = 80.;
-pub(crate) const NEAR_START: f32 = 48.;
+/// Near detail draws the ground's own surfaces out to here, handing over to the distant
+/// composite (2 m texels, so blurred mask edges and no surface texture) from [`NEAR_START`].
+/// Past the 1 m mesh (about 96 m) it shades by the composite's normal, which keeps the 1 m
+/// relief the coarser mesh drops.
+pub const NEAR_END: f32 = if cfg!(target_os = "ios") { 80. } else { 240. };
+pub const NEAR_START: f32 = if cfg!(target_os = "ios") { 48. } else { 160. };
+/// Pages admitted and uploaded per frame.
+pub(crate) const NEAR_ADDS: usize = 4;
 
 /// Published source data only. No mesh or render assets until admitted by the near cache.
 #[derive(Component, Clone, Debug)]
@@ -60,6 +72,8 @@ struct Resident {
     uploaded: bool,
     /// Whether the upload carried a wear field.
     wear: bool,
+    /// Its layer of the wear atlas, held by pages with roads.
+    wear_layer: Option<u32>,
     /// When the uploaded source last changed: the editor rewrites sources in place.
     source: bevy::ecs::change_detection::Tick,
     /// The uploaded grass cover's revision and side (0: none).
@@ -193,7 +207,7 @@ fn select_sources(
     }
     let mut added = 0;
     for e in order {
-        if cache.pages.contains_key(&e) || added >= 2 {
+        if cache.pages.contains_key(&e) || added >= NEAR_ADDS {
             continue;
         }
         let Some(slot) =
@@ -202,6 +216,16 @@ fn select_sources(
             break;
         };
         let (_, s) = sources.get(e).unwrap();
+        let wear_layer = if gpu::carries_wear(s) {
+            let free = (0..WEAR_SLOTS as u32)
+                .find(|i| cache.pages.values().all(|p| p.wear_layer != Some(*i)));
+            if free.is_none() {
+                continue;
+            }
+            free
+        } else {
+            None
+        };
         if !valid_source(s) {
             cache.failed.insert(e);
             stats.error = Some(format!(
@@ -258,6 +282,7 @@ fn select_sources(
                         fade: 0.,
                         uploaded: false,
                         wear: false,
+                        wear_layer,
                         source: default(),
                         cover: (0, 0),
                     },
@@ -367,8 +392,8 @@ fn update(
         // drawing meanwhile.
         let stale = p.uploaded
             && (p.cover.0 != cover.map_or(0, |c| c.revision) || p.source != source.last_changed());
-        if (!p.uploaded || stale) && uploads.len() < 2 {
-            let tile = gpu::tile(p.slot, &source, cover);
+        if (!p.uploaded || stale) && uploads.len() < NEAR_ADDS {
+            let tile = gpu::tile(p.slot, p.wear_layer, &source, cover);
             p.source = source.last_changed();
             p.wear = tile.has_wear();
             p.cover = (cover.map_or(0, |c| c.revision), tile.cover_side);
@@ -378,7 +403,8 @@ fn update(
         if !p.uploaded {
             continue;
         }
-        let entry = gpu::entry(&source, m, p.slot, p.fade, p.wear, p.cover.1);
+        let wear = p.wear_layer.filter(|_| p.wear);
+        let entry = gpu::entry(&source, m, p.slot, p.fade, wear, p.cover.1);
         let mut i = hash(p.cell);
         while table[i].key.w != 0 {
             i = (i + 1) & (NEAR_TABLE - 1);

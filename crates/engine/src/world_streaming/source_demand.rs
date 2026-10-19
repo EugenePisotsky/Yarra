@@ -8,6 +8,13 @@ pub(super) const PRELOAD_METERS: f64 = 16.;
 // Bevy culls resident meshes separately for the camera and each shadow cascade.
 // Meshes end within this bounded range; far-object blocks draw impostors beyond it.
 const OBJECT_VISIBILITY_METERS: f64 = crate::object_lod::OBJECT_RESIDENCY_METRES as f64;
+/// Near terrain detail draws the ground's surfaces from terrain pages out to its end, as many
+/// pages as it holds (nearest first): with small cells it stops sooner, which also keeps the
+/// source index within its query limit.
+fn terrain_detail_meters(cell_size: f32) -> f64 {
+    let cells = (terrain_render::near::NEAR_SLOTS as f64 / std::f64::consts::PI).sqrt();
+    f64::from(terrain_render::near::NEAR_END).min(cells * f64::from(cell_size)) + PRELOAD_METERS
+}
 pub(super) type Window = [CellCoord; 2];
 pub(super) type Priority = (u8, f64);
 
@@ -75,7 +82,10 @@ pub(super) fn windows(
     // bounds below. Authored world height ranges are not a culling certificate.
     if view.space == Some(position.space) {
         let size = f64::from(space.cell_size);
-        let radius = view.radius.max(OBJECT_VISIBILITY_METERS);
+        let radius = view
+            .radius
+            .max(OBJECT_VISIBILITY_METERS)
+            .max(terrain_detail_meters(space.cell_size));
         let coordinate = |v: f64| -> Result<i32, String> {
             let v = (v / size).floor();
             if v < i32::MIN as f64 || v > i32::MAX as f64 {
@@ -142,6 +152,7 @@ pub(super) fn demand(
     view: &SourceView,
 ) -> BTreeMap<PageKey, Priority> {
     let mut result = BTreeMap::new();
+    let ground_range = terrain_detail_meters(cell_size);
     for d in descriptors {
         let cell_distance = d.cell.chebyshev_distance(position.cell);
         let local = cell_distance <= VISUAL_SOURCE_RESIDENCY_RADIUS_CELLS;
@@ -157,7 +168,9 @@ pub(super) fn demand(
         // Frustum visibility prioritizes loading; it must not drive caster lifetime.
         let objects = object_near && detail;
         let near = view.space == Some(position.space) && source_distance <= view.radius.powi(2);
-        let terrain = near || if gameplay { active } else { local };
+        let ground =
+            detail && view.space == Some(position.space) && source_distance <= ground_range.powi(2);
+        let terrain = near || ground || if gameplay { active } else { local };
         let priority = if active || (!gameplay && local) {
             (0, f64::from(cell_distance))
         } else {
@@ -572,13 +585,24 @@ mod tests {
                 true,
                 &view,
             );
-            assert_eq!(selected.len(), 1);
+            let objects: Vec<_> = selected
+                .keys()
+                .filter(|k| k.domain != PageDomain::Terrain)
+                .collect();
+            assert_eq!(objects.len(), 1);
             assert!(selected.contains_key(&PageKey {
                 space: WorldSpaceId(1),
                 cell: inside,
                 domain: PageDomain::StaticObjects,
                 lod: 0
             }));
+            // Terrain for near ground detail: 32 m cells out to its end past both cells, 8 m
+            // cells only as far as its pages reach.
+            let terrain = selected
+                .keys()
+                .filter(|k| k.domain == PageDomain::Terrain)
+                .count();
+            assert_eq!(terrain, if size == 32. { 2 } else { 0 });
             let disabled = demand(
                 &[descriptor(inside)],
                 position(),
