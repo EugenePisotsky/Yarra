@@ -3,7 +3,7 @@ import bevy_pbr::render::mesh_view_bindings as near_view;
 import package::shaders::terrain_stochastic::{quarter_turn, stochastic_vertex_turn, stochastic_vertex_offset};
 import package::shaders::terrain_blend::{BLEND_DEPTH, BLEND_HEIGHT, height_blend};
 import package::shaders::lighting::surface::surface_weather;
-import package::shaders::terrain_wear::{WEAR_TEXEL, map_sampler, wear_at, rut_at, lay_worn, bare_share, rut_parallax, wear_patch, wheel_grooves};
+import package::shaders::terrain_wear::{WEAR_TEXEL, wear_at, rut_at, lay_worn, bare_share, rut_parallax, wear_patch, wheel_grooves};
 // One of a page's up to eight surfaces. `surface`: array layer, metres per repetition,
 // anti-tiling (0/1), normal strength. `material`: normal Y sign, roughness minimum/maximum.
 // `phase`/`lattice`: this page's UV and anti-tiling lattice offsets for the surface's tile size.
@@ -16,6 +16,10 @@ struct NearEntry {
     macro_a: vec4<f32>, macro_b: vec4<f32>, macro_c: vec4<f32>, slots: array<NearSlot, 12>,
 }
 @group(constants::MATERIAL_BIND_GROUP) @binding(8) var near_weights: texture_2d_array<f32>;
+// Near terrain's coarse maps (weights, grass cover, wear) clamp rather than repeat.
+@group(constants::MATERIAL_BIND_GROUP) @binding(2) var map_sampler: sampler;
+// Per page with roads: its wear field (terrain_wear.wesl).
+@group(constants::MATERIAL_BIND_GROUP) @binding(16) var near_wear: texture_2d_array<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(10) var<storage, read> near_table: array<NearEntry>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(11) var<uniform> near_settings: vec4<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(12) var near_base: texture_2d_array<f32>;
@@ -249,7 +253,7 @@ fn close_ground(world: vec3<f32>, geometry_normal: vec3<f32>, dx: vec2<f32>, dy:
     var compacted = 0.0;
     if near_table[index].wear.x > 0.5 {
         let layer = i32(near_table[index].wear.y+0.5);
-        let field = wear_at(layer,uv);
+        let field = wear_at(near_wear,map_sampler,layer,uv);
         if field.wear > 0.002 || field.rut > 0.0005 {
             let bare = bare_share(field.wear,vec2<f32>(cell)*cell_size+local);
             weights = worn_weights(index,weights,field.wear,bare);
@@ -261,14 +265,14 @@ fn close_ground(world: vec3<f32>, geometry_normal: vec3<f32>, dx: vec2<f32>, dy:
             if sink > 0.0 && field.wear > 0.05 {
                 let deepest = RUT_DEEPEST*sink;
                 let view = normalize(near_view::view.world_position-world);
-                let found = rut_parallax(layer,uv,cell_size,view,n,deepest);
+                let found = rut_parallax(near_wear,map_sampler,layer,uv,cell_size,view,n,deepest);
                 sampled = local+found.xy*sink;
                 let at = uv+found.xy*sink/cell_size;
                 // Rut walls tilt the ground; grooves of many wheels score the floors along the
                 // traffic, fading before they would shimmer.
                 let e = WEAR_TEXEL;
-                let slope = vec2(rut_at(layer,at+vec2(e,0.0))-rut_at(layer,at-vec2(e,0.0)),
-                    rut_at(layer,at+vec2(0.0,e))-rut_at(layer,at-vec2(0.0,e)))/(2.0*e*cell_size)*sink;
+                let slope = vec2(rut_at(near_wear,map_sampler,layer,at+vec2(e,0.0))-rut_at(near_wear,map_sampler,layer,at-vec2(e,0.0)),
+                    rut_at(near_wear,map_sampler,layer,at+vec2(0.0,e))-rut_at(near_wear,map_sampler,layer,at-vec2(0.0,e)))/(2.0*e*cell_size)*sink;
                 n = normalize(n+vec3(slope.x,0.0,slope.y));
                 let bottom = clamp(found.z/max(field.rut*1.3,0.02),0.0,1.0)*smoothstep(0.005,0.03,found.z);
                 occlusion = 1.0-0.35*bottom;

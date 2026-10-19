@@ -6,7 +6,10 @@
 // normal maps near the camera and one sample each further out. The normal under them comes per pixel
 // from the height clipmap at the pixel's footprint.
 import package::shaders::lighting::pbr_lighting::apply_pbr_lighting;
-import package::shaders::terrain_clipmap_common::{clipmap_normal, leaf_spacing, levels, origin_samples, resident_level, settings};
+import package::shaders::terrain_clipmap_common::{clipmap_normal, intervals, leaf_height, leaf_spacing, levels, node_of, origin_samples, resident_level, settings, wear_slot};
+import package::shaders::terrain_wear::{WEAR_TEXEL, bare_share, rut_at, rut_parallax, wear_at, wear_patch, wheel_grooves};
+import package::shaders::weather::ground_wetness::apply_rain_puddles;
+import package::shaders::lighting::surface::surface_weather;
 import package::shaders::terrain_stochastic::{quarter_turn, stochastic_vertex_turn, stochastic_vertex_offset};
 import package::shaders::terrain_blend::height_blend;
 import bevy_pbr::render::mesh_view_bindings::{globals, view};
@@ -25,6 +28,9 @@ struct ClipmapSurface { texture: vec4<f32>, material: vec4<f32>, grass: vec4<f32
 @group(constants::MATERIAL_BIND_GROUP) @binding(8) var repeat_sampler: sampler;
 @group(constants::MATERIAL_BIND_GROUP) @binding(9) var normal_material: texture_2d_array<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(10) var macro_variation: texture_2d<f32>;
+// Road wear of the cells around the camera, one layer per toroidal slot (terrain_wear.wesl).
+@group(constants::MATERIAL_BIND_GROUP) @binding(11) var wear_pages: texture_2d_array<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(12) var wear_sampler: sampler;
 
 // Past this distance each surface is sampled once and shades by the clipmap's normal alone: the
 // scans' normals and anti-tiling blend are lost in their coarse mips there.
@@ -38,6 +44,31 @@ const UNDER_TINT: vec2<f32> = vec2(0.25, 0.5);
 const UNDER_SHADE: vec2<f32> = vec2(0.8, 0.55);
 const FIELD_RANGE: vec2<f32> = vec2(44.0, 76.0);
 const FIELD_STRENGTH: f32 = 0.85;
+// Wheel ruts sink by parallax within this range, fading out over its second half, as near
+// detail's; worn edges darken out to the wear window (two cells or more around the camera's).
+const RUT_RANGE: vec2<f32> = vec2(20.0, 35.0);
+const RUT_DEEPEST: f32 = 0.16;
+const WEAR_FADE: vec2<f32> = vec2(40.0, 56.0);
+// world::TERRAIN_HOLLOW_RADIUS_METRES and TERRAIN_HOLLOW_DEPTH_METRES: rain stands where the ground
+// lies below its surroundings by this much over this radius.
+const HOLLOW_RADIUS: f32 = 1.5;
+const HOLLOW_DEPTH: f32 = 0.15;
+// weather/ground_wetness.wesl PUDDLE_DISTANCE.
+const PUDDLE_DISTANCE: f32 = 80.0;
+
+// Where rain stands on the ground: how far it lies below two rings around it.
+fn terrain_hollow(leaf: vec2<i32>, fraction: vec2<f32>) -> f32 {
+    let centre = leaf_height(leaf, fraction);
+    let radius = HOLLOW_RADIUS / leaf_spacing();
+    var sum = 0.0;
+    for (var i = 0u; i < 12u; i += 1u) {
+        let inner = i < 4u;
+        let angle = 6.2831855 * select((f32(i - 4u) + 0.5) / 8.0, f32(i) / 4.0, inner);
+        let r = select(radius, radius * 0.5, inner);
+        sum += leaf_height(leaf, fraction + vec2(cos(angle), sin(angle)) * r);
+    }
+    return clamp((sum / 12.0 - centre) / HOLLOW_DEPTH, 0.0, 1.0);
+}
 
 // A packed control sample (world::pack_control): three layers of five bits, two shares of 255.
 struct Sample { layers: vec3<u32>, shares: vec3<f32>, }
@@ -159,9 +190,27 @@ fn stochastic(uv: vec2<f32>, lattice: vec2<f32>, layer: i32, dx: vec2<f32>, dy: 
 // `color.a` is the surface's blend height; `normal` is in the ground's tangent space.
 struct Surface { color: vec4<f32>, normal: vec3<f32>, ao: f32, roughness: f32, }
 
-// A surface at world XZ `p`. `under`: how much of the grass field's colour, and of the blades'
-// shade, fully grassed ground takes here.
-fn surface(layer: u32, p: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, far: bool, under: vec2<f32>) -> Surface {
+// The vertical plane a steep slope faces more: its XY or ZY coordinates and their derivatives.
+struct Side { uv: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, }
+fn side_projection(p: vec3<f32>, n: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>) -> Side {
+    if abs(n.x) > abs(n.z) {
+        return Side(vec2(p.z, -p.y), vec2(dx.z, -dx.y), vec2(dy.z, -dy.y));
+    }
+    return Side(vec2(p.x, -p.y), vec2(dx.x, -dx.y), vec2(dy.x, -dy.y));
+}
+
+// Where the ground's view from above ends: the share of a slope's colour that comes from the
+// side projection, sharpened so only steep ground takes it.
+fn side_share(n: vec3<f32>) -> f32 {
+    let w = pow(vec2(abs(n.y), max(abs(n.x), abs(n.z))), vec2(4.0));
+    return w.y / (w.x + w.y);
+}
+
+// A surface at world XZ `p`, seen from above, and on steep ground also from the side it faces
+// (biplanar: a texture projected from above alone stretches down cliffs); `side` is that share,
+// `world` the point and its derivatives. `under`: how much of the grass field's colour, and of the
+// blades' shade, fully grassed ground takes here.
+fn surface(layer: u32, p: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, far: bool, under: vec2<f32>, side: f32, plane: Side) -> Surface {
     let s = surfaces[layer];
     let flat_normal = vec3(0.0, 0.0, 1.0);
     let rough = mix(s.material.x, s.material.y, 0.5);
@@ -186,6 +235,11 @@ fn surface(layer: u32, p: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, far: bool, un
     } else {
         color = textureSampleGrad(base_color, repeat_sampler, uv, l, uv_dx, uv_dy);
     }
+    // Steep ground: colour and blend height partly from the side, one plain sample.
+    if side > 0.02 {
+        let from_side = textureSampleGrad(base_color, repeat_sampler, plane.uv / size, l, plane.dx / size, plane.dy / size);
+        color = mix(color, from_side, side);
+    }
     // Ground partly grassed shows the field between its own texture.
     color = vec4(mix(color.rgb, s.grass.rgb, under.x * cover) * mix(1.0, under.y, cover), color.a);
     if far {
@@ -199,7 +253,7 @@ fn surface(layer: u32, p: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, far: bool, un
     n.y += select(fold, -fold, n.y >= 0.0);
     n = normalize(n);
     n.y *= s.texture.w;
-    n = normalize(vec3(n.xy * clamp(s.texture.z, 0.0, 1.0), max(n.z, 0.001)));
+    n = normalize(vec3(n.xy * clamp(s.texture.z, 0.0, 1.0) * (1.0 - side), max(n.z, 0.001)));
     return Surface(color, n, packed.b, mix(s.material.x, s.material.y, packed.a));
 }
 
@@ -242,27 +296,109 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let under = vec2(mix(mix(UNDER_TINT.x, UNDER_TINT.y, thinning), FIELD_STRENGTH, field),
         mix(mix(UNDER_SHADE.x, UNDER_SHADE.y, thinning), 1.0, field));
 
+    // Roads near the camera, as near detail draws them: the wear field sinks ruts by parallax
+    // (surfaces are sampled where the eye meets the rut floor), tilts the ground with their
+    // walls, shades their floors and scores them with grooves, and darkens worn edges.
+    var sampled = p;
+    var ground_normal = n;
+    var occlusion = 1.0;
+    var rim = 0.0;
+    var compacted = 0.0;
+    var hollow = 0.0;
+    // Fine wear here, the wear as the half-metre control samples saw it, and how much to trust
+    // the fine field (fading with the wear window).
+    var refine = vec3(0.0);
+    let wet = surface_weather().x > 0.3 && distance_to_camera < PUDDLE_DISTANCE;
+    if distance_to_camera < WEAR_FADE.y {
+        let cell = node_of(0u, leaf);
+        let layer = wear_slot(cell);
+        let size = leaf_spacing() * f32(intervals());
+        if layer >= 0 {
+            let uv = (vec2<f32>(leaf - cell * intervals()) + fraction) / f32(intervals());
+            let field = wear_at(wear_pages, wear_sampler, layer, uv);
+            // Over half a control sample each way: the wear the control samples averaged.
+            let q = 0.25 / size;
+            let blurred = (wear_at(wear_pages, wear_sampler, layer, uv + vec2(q, q)).wear
+                + wear_at(wear_pages, wear_sampler, layer, uv + vec2(-q, q)).wear
+                + wear_at(wear_pages, wear_sampler, layer, uv + vec2(q, -q)).wear
+                + wear_at(wear_pages, wear_sampler, layer, uv + vec2(-q, -q)).wear) * 0.25;
+            refine = vec3(field.wear, blurred, 1.0 - smoothstep(WEAR_FADE.x, WEAR_FADE.y, distance_to_camera));
+            if field.wear > 0.002 || field.rut > 0.0005 {
+                let fade = 1.0 - smoothstep(WEAR_FADE.x, WEAR_FADE.y, distance_to_camera);
+                let worn_bare = field.wear * bare_share(field.wear, p);
+                rim = worn_bare * (1.0 - worn_bare) * 4.0 * fade;
+                compacted = worn_bare * 0.25 * fade;
+                let sink = 1.0 - smoothstep(RUT_RANGE.x, RUT_RANGE.y, distance_to_camera);
+                if sink > 0.0 && field.wear > 0.05 {
+                    let to_eye = normalize(view.world_position - in.world_position.xyz);
+                    let found = rut_parallax(wear_pages, wear_sampler, layer, uv, size, to_eye, n, RUT_DEEPEST * sink);
+                    sampled = p + found.xy * sink;
+                    let at = uv + found.xy * sink / size;
+                    let e = WEAR_TEXEL;
+                    let slope = vec2(
+                        rut_at(wear_pages, wear_sampler, layer, at + vec2(e, 0.0)) - rut_at(wear_pages, wear_sampler, layer, at - vec2(e, 0.0)),
+                        rut_at(wear_pages, wear_sampler, layer, at + vec2(0.0, e)) - rut_at(wear_pages, wear_sampler, layer, at - vec2(0.0, e))) / (2.0 * e * size) * sink;
+                    ground_normal = normalize(n + vec3(slope.x, 0.0, slope.y));
+                    let bottom = clamp(found.z / max(field.rut * 1.3, 0.02), 0.0, 1.0) * smoothstep(0.005, 0.03, found.z);
+                    occlusion = 1.0 - 0.35 * bottom;
+                    compacted = max(compacted, bottom * field.wear);
+                    let fine = 1.0 - smoothstep(0.03, 0.07, max(length(world_dx), length(world_dy)));
+                    if fine > 0.0 {
+                        let g = wheel_grooves(sampled, field.direction);
+                        occlusion *= 1.0 - 0.12 * g * abs(g) * fine * field.wear;
+                    }
+                    // Rain stands in dips of the rut floors a metre or three across.
+                    if wet {
+                        let dips = wear_patch(sampled, 2.0, 0x6e3u);
+                        let wobble = wear_patch(sampled, 0.6, 0x51du) - 0.5;
+                        hollow = clamp(bottom * bottom * dips * 1.5 - 0.55 + wobble * 0.35, 0.0, 1.0);
+                    }
+                }
+            }
+        }
+    }
+    if wet {
+        hollow = max(hollow, terrain_hollow(leaf, fraction));
+    }
+
+    let side = side_share(n);
+    let plane = side_projection(in.world_position.xyz, n, dpdx(in.world_position.xyz), dpdy(in.world_position.xyz));
     // Control samples are half a leaf apart: one octave finer than the heights.
-    let top = ground_surfaces(leaf, fraction, lod + 1.0, in.position.xy);
-    let a = surface(top.layers.x, p, world_dx, world_dy, far, under);
+    var top = ground_surfaces(leaf, fraction, lod + 1.0, in.position.xy);
+    // Near the camera roads follow the fine wear field: the share of the ground worn bare
+    // scales with how much more (or less) worn this point is than its half-metre neighbourhood,
+    // so wheel tracks and the strip between them stay sharp.
+    if refine.z > 0.0 && refine.y > 0.01 {
+        let worn = vec3<f32>(vec3(surfaces[top.layers.x].material.w, surfaces[top.layers.y].material.w,
+            surfaces[top.layers.z].material.w) > vec3(0.5));
+        let total = dot(top.weights, vec3(1.0));
+        let bare = dot(top.weights, worn);
+        if bare > 0.001 && bare < total - 0.001 {
+            let wanted = clamp(bare * mix(1.0, refine.x / refine.y, refine.z), 0.0, total);
+            top.weights = mix(top.weights * (total - wanted) / (total - bare), top.weights * wanted / bare, worn);
+        }
+    }
+    let a = surface(top.layers.x, sampled, world_dx, world_dy, far, under, side, plane);
     var b = a;
     var c = a;
     var heights = vec3(a.color.a, -1.0e3, -1.0e3);
     if top.weights.y > 0.0 {
-        b = surface(top.layers.y, p, world_dx, world_dy, far, under);
+        b = surface(top.layers.y, sampled, world_dx, world_dy, far, under, side, plane);
         heights.y = b.color.a;
     }
     if top.weights.z > 0.0 {
-        c = surface(top.layers.z, p, world_dx, world_dy, far, under);
+        c = surface(top.layers.z, sampled, world_dx, world_dy, far, under, side, plane);
         heights.z = c.color.a;
     }
     let w = height_blend(top.weights, heights);
-    let color = a.color.rgb * w.x + b.color.rgb * w.y + c.color.rgb * w.z;
+    // Worn soil is darker and browner than loose soil of the same kind.
+    let worn = mix(vec3(1.0), vec3(0.76, 0.7, 0.64), compacted) * (1.0 - 0.12 * rim);
+    let color = (a.color.rgb * w.x + b.color.rgb * w.y + c.color.rgb * w.z) * worn;
     let local_normal = normalize(a.normal * w.x + b.normal * w.y + c.normal * w.z);
     // World-X tangent with the heightfield's +Z bitangent, as near detail's.
-    let t = normalize(vec3(n.y, -n.x, 0.0));
-    let bt = normalize(cross(t, n));
-    let normal = normalize(t * local_normal.x + bt * local_normal.y + n * local_normal.z);
+    let t = normalize(vec3(ground_normal.y, -ground_normal.x, 0.0));
+    let bt = normalize(cross(t, ground_normal));
+    let normal = normalize(t * local_normal.x + bt * local_normal.y + ground_normal * local_normal.z);
 
     var pbr = pbr_input_from_vertex_output(in, is_front, false);
     pbr.material.base_color = vec4(clamp(color * macro_response(p, world_dx, world_dy), vec3(0.0), vec3(1.0)), 1.0);
@@ -270,11 +406,12 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     pbr.material.metallic = 0.0;
     pbr.material.reflectance = vec3(0.25);
     pbr.material.flags = pbr_types::STANDARD_MATERIAL_FLAGS_FOG_ENABLED_BIT;
-    let ao = a.ao * w.x + b.ao * w.y + c.ao * w.z;
+    let ao = (a.ao * w.x + b.ao * w.y + c.ao * w.z) * occlusion;
     pbr.diffuse_occlusion = vec3(ao);
     pbr.specular_occlusion = ao;
     pbr.N = normal;
     pbr.clearcoat_N = normal;
+    pbr = apply_rain_puddles(pbr, hollow);
     let lit = apply_pbr_lighting(pbr);
     out.color = main_pass_post_lighting_processing(pbr, lit);
     return out;

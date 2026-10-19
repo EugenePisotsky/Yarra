@@ -198,31 +198,55 @@ impl RoadShape {
 }
 
 impl TerrainRoad {
-    /// How deep the road's ruts lie at a point `offset` from its centre line, metres: each wheel
-    /// track a rounded rut, deepening and shallowing along the road (over twice the wander
-    /// length by 30%, every metre or two by 20%); the deeper of the two.
+    /// How deep the road's ruts lie at a point `offset` from its centre line, metres. Horses and
+    /// carts, not cars: each wheel track is a shallow worn trough with a narrow wheel groove in
+    /// it that wobbles across the track, now and then doubled where another cart's gauge ran
+    /// beside it. Ruts deepen and shallow along the road (over twice the wander length by 30%,
+    /// every metre or two by 20%), fade out over stretches of several metres and sink into
+    /// potholes a couple of metres long where water stands; the deeper of the two tracks.
     pub fn rut(&self, offset: &RoadOffset) -> f64 {
         if self.track_depth <= 0.0 {
             return 0.0;
         }
         let shape = &self.shape;
         let centre = offset.point;
-        let slow = value4(
-            centre.map(|v| v / (2.0 * f64::from(shape.track_wander_length.max(0.5)))),
-            shape.seed ^ 0x77d,
-        );
-        let fast = value4(centre.map(|v| v / 1.4), shape.seed ^ 0x3c7);
+        let along = |size: f64, seed: u32| value4(centre.map(|v| v / size), shape.seed ^ seed);
+        let slow = along(2.0 * f64::from(shape.track_wander_length.max(0.5)), 0x77d);
+        let fast = along(1.4, 0x3c7);
+        let wobble = along(3.1, 0x6b5);
+        let breaks = along(7.3, 0x1f9);
+        let holes = along(2.3, 0x4d3);
         let power = 2.0 + 6.0 * (1.0 - f64::from(self.rut_roundness));
+        let profile = |distance: f64, half: f64, power: f64| {
+            smooth(1.0 - (distance / half.max(0.01)).min(1.0).powf(power))
+        };
         shape
             .tracks(centre)
             .iter()
             .enumerate()
             .map(|(i, &(at, half))| {
-                let depth =
-                    f64::from(self.track_depth) * (0.7 + 0.6 * slow[i]) * (0.8 + 0.4 * fast[2 + i]);
-                let t =
-                    ((offset.lateral - at).hypot(offset.longitudinal) / half.max(0.01)).min(1.0);
-                depth * smooth(1.0 - t.powf(power))
+                let kept = 0.3 + 0.7 * smooth((breaks[i] - 0.2) / 0.35);
+                let hole = 1.0 + 0.9 * smooth((holes[i] - 0.74) / 0.16);
+                let depth = f64::from(self.track_depth)
+                    * (0.7 + 0.6 * slow[i])
+                    * (0.8 + 0.4 * fast[2 + i])
+                    * kept
+                    * hole;
+                let distance = |from: f64| (offset.lateral - from).hypot(offset.longitudinal);
+                let trough = profile(distance(at), half, power);
+                // The wheel: the groove an iron tyre presses into soft ground, a few times its
+                // own width and never finer than the wear field resolves, off the track's middle.
+                let groove_half = (half * 0.45).clamp(0.1, 0.2);
+                let groove_at = at + (wobble[i] * 2.0 - 1.0) * half * 0.4;
+                let groove = profile(distance(groove_at), groove_half, 2.0);
+                let outward = if i == 0 { -1.0 } else { 1.0 };
+                let second = profile(
+                    distance(groove_at + outward * groove_half * 1.7),
+                    groove_half,
+                    2.0,
+                ) * 0.7
+                    * smooth((wobble[2 + i] - 0.6) / 0.2);
+                depth * (0.35 * trough + 0.65 * groove.max(second))
             })
             .fold(0.0, f64::max)
     }

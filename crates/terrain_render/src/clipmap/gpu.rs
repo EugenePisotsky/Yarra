@@ -24,12 +24,19 @@ pub(crate) const CLIPMAP_VERTEX_SHADER: &str = "shaders/terrain_clipmap_vertex.w
 pub(crate) const CLIPMAP_SHADER: &str = "shaders/terrain_clipmap.wesl";
 /// Levels the textures hold at most.
 pub const MAX_LEVELS: u8 = 8;
-/// State texels: eye, origin, a window per level, then each level's residency rows.
+/// State texels: eye, origin, a window per level, each level's residency rows, then the wear
+/// slots' cells.
 const STATE_WINDOWS: u32 = 2;
 const STATE_RESIDENCY: u32 = STATE_WINDOWS + MAX_LEVELS as u32;
 /// Residency texels per level: 32 rows of up to 32 nodes, four rows a texel.
 const RESIDENCY_TEXELS: u32 = 8;
-const STATE_WIDTH: u32 = STATE_RESIDENCY + MAX_LEVELS as u32 * RESIDENCY_TEXELS;
+const STATE_WEAR: u32 = STATE_RESIDENCY + MAX_LEVELS as u32 * RESIDENCY_TEXELS;
+const STATE_WIDTH: u32 = STATE_WEAR + WEAR_SLOTS as u32;
+/// Road wear near the camera: the cells of a `WEAR_WINDOW`² window, one atlas layer per toroidal
+/// slot (`terrain_clipmap.wesl`).
+pub const WEAR_WINDOW: i32 = 5;
+pub const WEAR_SLOTS: usize = (WEAR_WINDOW * WEAR_WINDOW) as usize;
+const WEAR_SIDE: u32 = world::WEAR_RESOLUTION as u32;
 
 #[derive(Clone, Copy, Debug, Default, ShaderType)]
 pub struct ClipmapSettings {
@@ -49,7 +56,7 @@ pub struct ClipmapSurface {
     /// Metres per repetition, anti-tiling (0/1), normal strength, normal Y sign.
     pub texture: Vec4,
     /// Roughness minimum and maximum; whether grass covers it so fully that it is shaded by its
-    /// field colour alone, without textures (0/1).
+    /// field colour alone, without textures (0/1); whether roads wear ground bare to it (0/1).
     pub material: Vec4,
     /// The grass field's linear colour and how fully it covers the surface.
     pub grass: Vec4,
@@ -154,6 +161,9 @@ pub struct ClipmapTerrainMaterial {
     normal_material: Option<Handle<Image>>,
     #[texture(10)]
     macro_variation: Option<Handle<Image>>,
+    #[texture(11, dimension = "2d_array")]
+    #[sampler(12)]
+    wear: Option<Handle<Image>>,
 }
 
 impl Material for ClipmapTerrainMaterial {
@@ -177,9 +187,12 @@ impl Material for ClipmapTerrainMaterial {
 pub struct ClipmapTextures {
     pub layout: ClipmapLayout,
     pub material: Handle<ClipmapTerrainMaterial>,
+    surface_table: Vec<ClipmapSurface>,
+    surfaces: Handle<ShaderBuffer>,
     heights: Handle<Image>,
     normals: Handle<Image>,
     control: Handle<Image>,
+    wear: Handle<Image>,
     state: Handle<Image>,
 }
 
@@ -246,6 +259,13 @@ impl ClipmapTextures {
             TextureFormat::R32Uint,
             ImageSampler::nearest(),
         );
+        let wear = image(
+            WEAR_SIDE,
+            WEAR_SIDE,
+            WEAR_SLOTS as u32,
+            TextureFormat::Rgba8Unorm,
+            ImageSampler::linear(),
+        );
         let state = image(
             STATE_WIDTH,
             1,
@@ -254,6 +274,10 @@ impl ClipmapTextures {
             ImageSampler::nearest(),
         );
         let leaf = layout.spacing(0) as f32;
+        let surfaces = buffers.add(ShaderBuffer::new(
+            crate::storage_bytes(&ground.surfaces),
+            RenderAssetUsages::RENDER_WORLD,
+        ));
         let material = materials.add(ClipmapTerrainMaterial {
             environment: atmosphere::environment::fallback_parameters(),
             cloud_shadows: None,
@@ -282,20 +306,21 @@ impl ClipmapTextures {
             normals: Some(normals.clone()),
             state: Some(state.clone()),
             control: Some(control.clone()),
-            surfaces: buffers.add(ShaderBuffer::new(
-                crate::storage_bytes(&ground.surfaces),
-                RenderAssetUsages::RENDER_WORLD,
-            )),
+            surfaces: surfaces.clone(),
             base_color: Some(ground.base_color),
             normal_material: Some(ground.normal_material),
             macro_variation: Some(ground.macro_variation),
+            wear: Some(wear.clone()),
         });
         Self {
             layout,
             material,
+            surface_table: ground.surfaces,
+            surfaces,
             heights,
             normals,
             control,
+            wear,
             state,
         }
     }
@@ -307,6 +332,33 @@ fn control_layout(layout: &ClipmapLayout) -> ClipmapLayout {
         side: layout.side * 2,
         intervals: layout.intervals * 2,
         ..*layout
+    }
+}
+
+impl ClipmapTextures {
+    /// Marks the surfaces roads wear ground bare to (the layers of their pages' worn slots), which
+    /// near the camera follow the fine wear field (`terrain_clipmap.wesl`). True when one was new.
+    pub fn mark_bare_ground(
+        &mut self,
+        layers: impl IntoIterator<Item = u16>,
+        buffers: &mut Assets<ShaderBuffer>,
+    ) -> bool {
+        let mut changed = false;
+        for layer in layers {
+            if let Some(s) = self.surface_table.get_mut(usize::from(layer))
+                && s.material.w < 0.5
+            {
+                s.material.w = 1.0;
+                changed = true;
+            }
+        }
+        if changed && let Some(mut buffer) = buffers.get_mut(&self.surfaces) {
+            *buffer = ShaderBuffer::new(
+                crate::storage_bytes(&self.surface_table),
+                RenderAssetUsages::RENDER_WORLD,
+            );
+        }
+        changed
     }
 }
 
@@ -373,6 +425,8 @@ pub struct ClipmapFrame<'a> {
     pub origin_samples: [i64; 2],
     pub windows: &'a [NodeWindow],
     pub residency: &'a Residency,
+    /// The cell whose wear each atlas slot holds.
+    pub wear: &'a [Option<world::CellCoord>; WEAR_SLOTS],
 }
 
 /// Main-world uploads for the next extraction.
@@ -380,6 +434,7 @@ pub struct ClipmapFrame<'a> {
 pub struct ClipmapUploads {
     target: Option<Target>,
     blocks: Vec<NodeBlock>,
+    wear: Vec<(u32, Vec<u8>)>,
     state: Option<Vec<u32>>,
     pub uploaded_blocks: u64,
 }
@@ -389,6 +444,7 @@ struct Target {
     heights: AssetId<Image>,
     normals: AssetId<Image>,
     control: AssetId<Image>,
+    wear: AssetId<Image>,
     state: AssetId<Image>,
     layout: ClipmapLayout,
 }
@@ -400,20 +456,29 @@ impl ClipmapUploads {
             heights: textures.heights.id(),
             normals: textures.normals.id(),
             control: textures.control.id(),
+            wear: textures.wear.id(),
             state: textures.state.id(),
             layout: textures.layout,
         });
         self.blocks.clear();
+        self.wear.clear();
         self.state = None;
     }
     pub fn clear(&mut self) {
         self.target = None;
         self.blocks.clear();
+        self.wear.clear();
         self.state = None;
     }
     pub fn push(&mut self, block: NodeBlock) {
         self.uploaded_blocks += 1;
         self.blocks.push(block);
+    }
+    /// A cell's wear field (`world::TerrainWear`, at full resolution) into atlas slot `slot`.
+    pub fn push_wear(&mut self, slot: usize, wear: &world::TerrainWear) {
+        debug_assert_eq!(u32::from(wear.resolution), WEAR_SIDE);
+        self.wear
+            .push((slot as u32, wear.texels.iter().flatten().copied().collect()));
     }
     pub fn set_frame(&mut self, frame: &ClipmapFrame) {
         let mut state = vec![0_u32; STATE_WIDTH as usize * 4];
@@ -430,6 +495,12 @@ impl ClipmapUploads {
             let at = (STATE_RESIDENCY + level as u32 * RESIDENCY_TEXELS) as usize * 4;
             state[at..at + 32].copy_from_slice(rows);
         }
+        for (slot, cell) in frame.wear.iter().enumerate() {
+            if let Some(cell) = cell {
+                let at = (STATE_WEAR as usize + slot) * 4;
+                state[at..at + 3].copy_from_slice(&[cell.x as u32, cell.z as u32, 1]);
+            }
+        }
         self.state = Some(state);
     }
 }
@@ -438,6 +509,7 @@ impl ClipmapUploads {
 struct RenderUploads {
     target: Option<Target>,
     blocks: Vec<NodeBlock>,
+    wear: Vec<(u32, Vec<u8>)>,
     state: Option<Vec<u32>>,
 }
 
@@ -463,6 +535,7 @@ fn extract(mut main: ResMut<MainWorld>, mut render: ResMut<RenderUploads>) {
         };
     }
     render.blocks.append(&mut uploads.blocks);
+    render.wear.append(&mut uploads.wear);
     if let Some(state) = uploads.state.take() {
         render.state = Some(state);
     }
@@ -477,14 +550,40 @@ fn upload(
         return;
     };
     // Images appear a frame or more after they are added: keep everything until then.
-    let (Some(heights), Some(normals), Some(control), Some(state)) = (
+    let (Some(heights), Some(normals), Some(control), Some(wear), Some(state)) = (
         images.get(target.heights),
         images.get(target.normals),
         images.get(target.control),
+        images.get(target.wear),
         images.get(target.state),
     ) else {
         return;
     };
+    for (slot, texels) in uploads.wear.drain(..) {
+        queue.write_texture(
+            TexelCopyTextureInfo {
+                texture: &wear.texture,
+                mip_level: 0,
+                origin: Origin3d {
+                    x: 0,
+                    y: 0,
+                    z: slot,
+                },
+                aspect: TextureAspect::All,
+            },
+            &texels,
+            TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(WEAR_SIDE * 4),
+                rows_per_image: Some(WEAR_SIDE),
+            },
+            Extent3d {
+                width: WEAR_SIDE,
+                height: WEAR_SIDE,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
     let layout = target.layout;
     let control_layout = control_layout(&layout);
     for block in uploads.blocks.drain(..) {

@@ -19,10 +19,14 @@ struct ClipmapSettings {
 @group(constants::MATERIAL_BIND_GROUP) @binding(3) var normal_sampler: sampler;
 @group(constants::MATERIAL_BIND_GROUP) @binding(4) var state: texture_2d<u32>;
 
-// State texels (gpu.rs): eye, origin, a window per level, then each level's residency rows.
+// State texels (gpu.rs): eye, origin, a window per level, each level's residency rows, then the
+// cell each wear atlas slot holds.
 const STATE_WINDOWS: i32 = 2;
 const STATE_RESIDENCY: i32 = 10;
 const RESIDENCY_TEXELS: i32 = 8;
+const STATE_WEAR: i32 = 74;
+// gpu.rs WEAR_WINDOW: cells per side of the road wear window around the camera.
+const WEAR_WINDOW: i32 = 5;
 
 fn side() -> i32 { return i32(settings.grid.x); }
 fn levels() -> u32 { return u32(settings.grid.y); }
@@ -101,4 +105,28 @@ fn clipmap_normal(leaf: vec2<i32>, fraction: vec2<f32>, lod: f32) -> vec3<f32> {
         return n;
     }
     return normalize(mix(n, level_normal(coarse, leaf, fraction), t));
+}
+
+// The wear atlas layer holding a cell's road wear, or -1.
+fn wear_slot(cell: vec2<i32>) -> i32 {
+    let n = WEAR_WINDOW;
+    let slot = ((cell.x % n) + n) % n + n * (((cell.y % n) + n) % n);
+    let held = textureLoad(state, vec2(STATE_WEAR + slot, 0), 0);
+    if held.z == 0u || any(bitcast<vec2<i32>>(held.xy) != cell) {
+        return -1;
+    }
+    return slot;
+}
+
+// Leaf-level ground height at a leaf sample plus a fraction of one (which may exceed one),
+// bilinearly over the triangles' corners.
+fn leaf_height(leaf: vec2<i32>, fraction: vec2<f32>) -> f32 {
+    let whole = floor(fraction);
+    let s = leaf + vec2<i32>(whole);
+    let f = fraction - whole;
+    let a = textureLoad(heights, texel(s), 0, 0).r;
+    let b = textureLoad(heights, texel(s + vec2(1, 0)), 0, 0).r;
+    let c = textureLoad(heights, texel(s + vec2(0, 1)), 0, 0).r;
+    let d = textureLoad(heights, texel(s + vec2(1, 1)), 0, 0).r;
+    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }

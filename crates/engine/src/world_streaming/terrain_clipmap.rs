@@ -117,6 +117,10 @@ pub struct ClipmapTerrain {
     gpu: Option<ClipmapTextures>,
     mesh: Option<Handle<Mesh>>,
     patches: HashMap<TerrainNodeKey, Entity>,
+    /// The cell and page whose road wear each wear atlas slot holds.
+    wear: [Option<(world::CellCoord, Entity)>; clipmap::WEAR_SLOTS],
+    /// Layers newly found worn bare to, for the surface table.
+    bare: Vec<u16>,
     placed: Option<world::CellCoord>,
     failure: Option<String>,
     started: Option<f64>,
@@ -400,6 +404,75 @@ fn decode(
         .collect()
 }
 
+/// Road wear around the camera: each cell of the wear window whose page has a wear field holds
+/// it in its toroidal atlas slot, uploaded when the slot's page changes.
+fn follow_wear(
+    terrain: &mut ClipmapTerrain,
+    uploads: &mut ClipmapUploads,
+    sources: &Query<(Entity, Ref<terrain_render::near::NearSource>)>,
+    space: WorldSpaceId,
+    eye: DVec3,
+    cell_size: f32,
+) {
+    let size = f64::from(cell_size);
+    let at = world::CellCoord {
+        x: (eye.x / size).floor() as i32,
+        z: (eye.z / size).floor() as i32,
+    };
+    let half = clipmap::WEAR_WINDOW / 2;
+    let window = |c: world::CellCoord| (c.x - at.x).abs() <= half && (c.z - at.z).abs() <= half;
+    let mut pages: HashMap<
+        world::CellCoord,
+        (
+            Entity,
+            bool,
+            &world::TerrainWear,
+            &terrain_render::near::NearSource,
+        ),
+    > = HashMap::new();
+    for (entity, source) in sources {
+        let changed = source.is_changed();
+        let source = Ref::into_inner(source);
+        if source.key.space != space || source.key.lod != 0 || !window(source.key.cell) {
+            continue;
+        }
+        if let Some(wear) = source
+            .wear
+            .as_ref()
+            .filter(|w| w.resolution == world::WEAR_RESOLUTION)
+        {
+            pages.insert(source.key.cell, (entity, changed, wear, source));
+        }
+    }
+    let n = clipmap::WEAR_WINDOW;
+    for dz in -half..=half {
+        for dx in -half..=half {
+            let cell = world::CellCoord {
+                x: at.x + dx,
+                z: at.z + dz,
+            };
+            let slot = (cell.x.rem_euclid(n) + n * cell.z.rem_euclid(n)) as usize;
+            match pages.get(&cell) {
+                Some(&(entity, changed, wear, source)) => {
+                    if changed || terrain.wear[slot] != Some((cell, entity)) {
+                        uploads.push_wear(slot, wear);
+                        terrain.wear[slot] = Some((cell, entity));
+                        // The page's surfaces its roads wear bare to.
+                        terrain.bare.extend(wear.worn.iter().flatten().filter_map(
+                            |&(to, share)| {
+                                (to != world::NO_WORN_SLOT && share > 0)
+                                    .then(|| source.layers.get(usize::from(to)).map(|l| l.layer))
+                                    .flatten()
+                            },
+                        ));
+                    }
+                }
+                None => terrain.wear[slot] = None,
+            }
+        }
+    }
+}
+
 /// The world's surfaces by texture layer, with the grass each carries, and its textures.
 fn ground(
     asset_server: &AssetServer,
@@ -471,6 +544,7 @@ pub(super) fn update(
         ResMut<Assets<bevy::render::storage::ShaderBuffer>>,
         Res<AssetServer>,
     ),
+    sources: Query<(Entity, Ref<terrain_render::near::NearSource>)>,
 ) {
     let (Some(worker), Some(space)) = (worker, active_space.current()) else {
         return;
@@ -639,13 +713,27 @@ pub(super) fn update(
     terrain.stats.patches = patches.len();
     terrain.stats.triangles = patches.len() * (layout.intervals * layout.intervals * 2) as usize;
     terrain.stats.uploads = uploads.uploaded_blocks;
+    follow_wear(
+        &mut terrain,
+        &mut uploads,
+        &sources,
+        space,
+        eye,
+        info.cell_size,
+    );
+    let bare = std::mem::take(&mut terrain.bare);
+    if let Some(gpu) = terrain.gpu.as_mut() {
+        gpu.mark_bare_ground(bare, &mut buffers);
+    }
     let cells = origin.cell();
     let samples = |c: i32| i64::from(c) * i64::from(layout.intervals);
+    let wear = terrain.wear.map(|slot| slot.map(|(cell, _)| cell));
     uploads.set_frame(&ClipmapFrame {
         eye: render_eye,
         origin_samples: [samples(cells.x), samples(cells.z)],
         windows: &terrain.windows,
         residency: &terrain.residency,
+        wear: &wear,
     });
     if !terrain.ready_logged && terrain.stats.missing == 0 && terrain.decoding.is_empty() {
         terrain.ready_logged = true;
