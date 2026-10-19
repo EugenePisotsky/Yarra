@@ -157,6 +157,12 @@ const FLAGS: &[Flag] = &[
         "Clouds (default balanced)",
     ),
     flag(
+        "--terrain",
+        "lod|v2",
+        Scene,
+        "Ground renderer: the terrain LOD, or the clipmap spike (default lod)",
+    ),
+    flag(
         "--tree-shadow-lod",
         "0..2",
         Scene,

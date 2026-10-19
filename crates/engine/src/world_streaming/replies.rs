@@ -19,6 +19,7 @@ pub(super) fn receive_database_results(
     mut reload: ResMut<WorldGenerationReload>,
     mut far: ResMut<far_objects::FarObjects>,
     mut mist: ResMut<valley_mist::MistTerrain>,
+    mut clipmap: ResMut<terrain_clipmap::ClipmapTerrain>,
 ) {
     let Some(worker) = worker else {
         return;
@@ -42,6 +43,8 @@ pub(super) fn receive_database_results(
             DatabaseResult::Terrain(result) => {
                 if mist.owns_request(id) {
                     mist.receive(id, result);
+                } else if clipmap.owns_request(id) {
+                    clipmap.receive(id, result);
                 } else if entry.owns_request(id) {
                     entry.receive(id, result);
                 } else {

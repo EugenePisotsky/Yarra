@@ -250,15 +250,26 @@ pub(super) fn install(app: &mut App) {
                 .before(bevy::camera::visibility::VisibilitySystems::VisibilityPropagate)
                 .before(bevy::camera::visibility::VisibilitySystems::CheckVisibility),
         )
+        // Terrain v2 draws the ground instead (`--terrain v2`).
+        .configure_sets(
+            PostUpdate,
+            (
+                ContactSystems::Collect.run_if(super::terrain_clipmap::lod_terrain),
+                TerrainLodUpdate.run_if(super::terrain_clipmap::lod_terrain),
+                ContactSystems::Publish.run_if(super::terrain_clipmap::lod_terrain),
+            ),
+        )
         .add_systems(
             PostUpdate,
             (
                 authoring::update
+                    .run_if(super::terrain_clipmap::lod_terrain)
                     .after(TransformSystems::Propagate)
                     .before(ContactSystems::Collect)
                     .before(terrain_render::near::NearPrepare)
                     .before(near_view),
                 near_view
+                    .run_if(super::terrain_clipmap::lod_terrain)
                     .after(TransformSystems::Propagate)
                     .before(terrain_render::near::NearPrepare),
                 update

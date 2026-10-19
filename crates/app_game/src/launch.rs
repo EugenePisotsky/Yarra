@@ -15,6 +15,7 @@ pub(crate) struct LaunchOptions {
     pub fps: u32,
     pub upscaler: upscaling::UpscaleMethod,
     pub clouds: engine::CloudQuality,
+    pub terrain: engine::TerrainRenderer,
     pub weather: engine::WeatherStart,
     /// Day phase to start at instead of the authored time, 0..1.
     pub time: Option<f32>,
@@ -178,6 +179,14 @@ impl LaunchOptions {
                     ("off", engine::CloudQuality::Off),
                     ("balanced", engine::CloudQuality::Balanced),
                     ("high", engine::CloudQuality::High),
+                ],
+            )?,
+            terrain: args.choice(
+                "--terrain",
+                "lod",
+                &[
+                    ("lod", engine::TerrainRenderer::Lod),
+                    ("v2", engine::TerrainRenderer::Clipmap),
                 ],
             )?,
             weather: weather(&args)?.unwrap_or(if measured {

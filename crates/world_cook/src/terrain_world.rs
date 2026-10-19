@@ -96,14 +96,14 @@ fn island_ground(project: &mut ProjectDocument) {
         definition.layers.push(Layer {
             id: LayerId(id("layer")),
             revision: 1,
-            name: ground.name.into(),
+            name: ground.name,
             preset: soil.id,
             overrides: vec![],
             order: first + index as i32,
             seed: 42,
             enabled: true,
             opacity: 1.0,
-            imported_mask: Some(ground.mask.into()),
+            imported_mask: Some(ground.mask),
         });
         project.presets.presets.push(soil);
     }

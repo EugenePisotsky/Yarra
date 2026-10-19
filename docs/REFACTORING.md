@@ -252,11 +252,13 @@ Either the same material function runs at every distance (Witcher 3) or a cache 
 
 | Step | Deliverable | Gate |
 | --- | --- | --- |
-| 1. Geometry spike | `--terrain v2`: height clipmaps filled from nodes, CDLOD patches with vertex fetch, per-pixel normals, flat colour per surface from today's weights | Reteya draws to the horizon at 60 fps; shadows, prepass and MetalFX motion correct; GPU and CPU counted against the current path |
+| 1. Geometry spike — **done October 19** | `--terrain v2`: height clipmaps filled from nodes, CDLOD patches with vertex fetch, per-pixel normals, a flat colour by slope and altitude (coarse levels have no weights until step 2) | Reteya draws to the horizon at 60 fps; shadows, prepass and MetalFX motion correct; GPU and CPU counted against the current path |
 | 2. Control maps | Cooked control tiles at every level; control clipmaps; per-pixel top-three height blend with the pack's textures | The user's problem views: no seam, sharp at 300 m–3 km; GPU within budget |
 | 3. Look | Dual-scale tiling and anti-tiling, biplanar cliffs, slope snow, macro variation, roads and ruts, grass tint, puddles, terrain shadows | User's review in the game against the references |
 | 4. Parity | Actor and grass contact on the new surface, editor live edits, iOS budgets, F1 controls | Contact, streaming and editor tests; phone budget |
 | 5. Removal | Old terrain path, tables and bake removed; schema bump; docs | All suites; worlds rebuilt |
+
+**Step 1 result.** `terrain_render::clipmap` (layout, windows, CDLOD selection, textures, uploads through extraction) and `engine::world_streaming::terrain_clipmap` (residency, DB batches, patch entities, grounding); shaders `terrain_clipmap*.wesl`. Uncapped at the game size v2 runs 23–33% faster than the terrain LOD with half the main-thread time, and the fast walk's terrain hitches are gone ([Experiments](EXPERIMENTS.md#terrain-v2-geometry-spike--october-19)); the GPU comparison waits for step 2's materials. Carried into step 2: grazing-angle normal aliasing, world-space entry, iOS sizes.
 
 ## Performance roadmap
 

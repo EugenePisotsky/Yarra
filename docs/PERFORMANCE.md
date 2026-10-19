@@ -114,7 +114,7 @@ One mode holds the camera and ends the run: play, a repro route (`--render-repro
 
 | Purpose | Controls |
 | --- | --- |
-| Scene and presentation | `--world-db FILE`, `--start-view FILE`, `--story DIR`, `--fps 0\|15..240`, `--resolution-scale 1\|0.75\|0.5\|0.33`, `--time HH:MM`, `--day-clock on\|off`, `--weather auto\|authored\|clear\|scattered\|overcast\|rain\|storm`, `--upscaler auto\|linear\|metalfx-spatial\|metalfx-temporal`, `--cloud-quality off\|balanced\|high`, `--tree-shadow-lod 0..2` |
+| Scene and presentation | `--world-db FILE`, `--start-view FILE`, `--story DIR`, `--fps 0\|15..240`, `--resolution-scale 1\|0.75\|0.5\|0.33`, `--time HH:MM`, `--day-clock on\|off`, `--weather auto\|authored\|clear\|scattered\|overcast\|rain\|storm`, `--upscaler auto\|linear\|metalfx-spatial\|metalfx-temporal`, `--cloud-quality off\|balanced\|high`, `--terrain lod\|v2`, `--tree-shadow-lod 0..2` |
 | Panel and logging | `--diagnostics off\|panel\|full`, `--performance-open`, `--render-audit`, `--render-console`, `--timing-log`, `--gpu-timing-detail`, `--gpu-timing-off`, `--metalfx-timing-log`, `--grass-counters` |
 | Scripted routes | `--render-repro NAME`, `--render-frames N`, `--render-snapshot PATH`, `--render-snapshot-frames N,N`, `--render-prepass`, `--render-walk-speed MPS`, `--render-frame-clock`, `--render-temporal-view motion\|depth`, `--render-ui-off` |
 | Captures and checks | `--metal-capture PATH.gputrace`, `--streaming-smoke` |

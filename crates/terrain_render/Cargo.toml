@@ -7,6 +7,7 @@ publish.workspace = true
 [dependencies]
 atmosphere.workspace = true
 bevy.workspace = true
+half = "2.7"
 world.workspace = true
 ron.workspace = true
 serde.workspace = true

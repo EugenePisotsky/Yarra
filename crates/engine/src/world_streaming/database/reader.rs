@@ -198,6 +198,12 @@ fn read_terrain(reader: &RuntimeReader, query: TerrainQuery) -> Result<TerrainRe
             .map_err(|e| e.to_string())?
             .map(TerrainReply::Node)
             .ok_or("missing required terrain node".into()),
+        TerrainQuery::Nodes(keys) => keys
+            .into_iter()
+            .filter_map(|key| reader.read_terrain_node(key).transpose())
+            .collect::<Result<Vec<_>, _>>()
+            .map(TerrainReply::Nodes)
+            .map_err(|e| e.to_string()),
     }
 }
 

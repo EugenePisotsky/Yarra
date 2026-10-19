@@ -49,6 +49,7 @@ fn run() -> Result<(), String> {
         .insert_resource(engine::WorldDebugControls {
             world_switch: options.debug_world_switch,
         })
+        .insert_resource(options.terrain)
         .insert_resource(engine::TreeInstancing {
             shadow_lod: options.tree_shadow_lod,
             ..default()

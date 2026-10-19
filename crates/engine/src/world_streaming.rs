@@ -31,6 +31,8 @@ pub use smoke::StreamingSmokePlugin;
 pub use world_space::ActiveWorldSpace;
 use world_space::WorldSpaceTransition;
 pub(crate) use world_space::sync_world_atmosphere;
+pub(crate) mod terrain_clipmap;
+pub use terrain_clipmap::{ClipmapStats, ClipmapTerrain, TerrainRenderer};
 pub(crate) mod terrain_lod;
 pub use terrain_lod::{
     LiveTerrainPreview, TerrainContactReadiness, TerrainLodStats, TerrainPreviewRequest,
@@ -93,6 +95,7 @@ impl Plugin for WorldStreamingPlugin {
             .init_resource::<SourceResidency>()
             .init_resource::<far_objects::FarObjects>()
             .init_resource::<valley_mist::MistTerrain>()
+            .init_resource::<terrain_clipmap::ClipmapTerrain>()
             .init_resource::<ActiveWorldSpace>()
             .init_resource::<WorldCatalog>()
             .init_resource::<WorldGenerationReload>()
@@ -111,7 +114,7 @@ impl Plugin for WorldStreamingPlugin {
                     replies::receive_database_results,
                     generation::request_reload,
                     world_space::request_world_space_from_keyboard,
-                    terrain_lod::entry::prepare,
+                    terrain_lod::entry::prepare.run_if(terrain_clipmap::lod_terrain),
                     generation::advance_reload,
                     world_space::apply_world_space_transition,
                     origin::sync_stream_focus_to_viewpoint,
@@ -131,7 +134,14 @@ impl Plugin for WorldStreamingPlugin {
             )
             .add_systems(
                 PostUpdate,
-                source_demand::collect_view.after(TransformSystems::Propagate),
+                (
+                    source_demand::collect_view.after(TransformSystems::Propagate),
+                    terrain_clipmap::update
+                        .run_if(terrain_clipmap::clipmap_terrain)
+                        .after(TransformSystems::Propagate)
+                        .before(bevy::camera::visibility::VisibilitySystems::VisibilityPropagate)
+                        .before(bevy::camera::visibility::VisibilitySystems::CheckVisibility),
+                ),
             );
     }
 }

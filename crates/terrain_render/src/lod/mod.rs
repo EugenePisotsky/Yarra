@@ -7,7 +7,7 @@ use world::TerrainNodeKey;
 mod allocation;
 mod neighbours;
 use neighbours::EDGES;
-mod mesh;
+pub(crate) mod mesh;
 pub(crate) use mesh::stitch_indices;
 pub use mesh::{StitchEdges, build_patch_mesh};
 mod morph;

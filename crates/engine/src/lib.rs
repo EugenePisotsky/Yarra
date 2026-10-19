@@ -46,13 +46,14 @@ pub use character_catalog::{
 };
 pub use msaa_store::{MsaaColorStorePlugin, MsaaColorStorePolicy};
 pub use world_streaming::{
-    ActiveWorldSpace, FLOATING_ORIGIN_THRESHOLD_CELLS, GameplayObject, GeneratedEnvironmentObject,
-    LiveTerrainPreview, StreamedTerrainSurface, StreamedVegetationFieldPage, StreamedVisualObject,
-    StreamingSmokePlugin, StreamingStats, TerrainContactReadiness, TerrainLodStats,
-    TerrainPreviewRequest, VisualLodScale, WorldCatalog, WorldDebugControls, WorldDetailDemand,
-    WorldGenerationReload, WorldOrigin, WorldRenderRoot, WorldSpaceInfo, WorldStreamingConfig,
-    WorldStreamingPlugin, WorldStreamingSystems, WorldViewCamera, WorldViewpoint,
-    sample_resident_terrain_surface, spawn_collection_visual,
+    ActiveWorldSpace, ClipmapStats, ClipmapTerrain, FLOATING_ORIGIN_THRESHOLD_CELLS,
+    GameplayObject, GeneratedEnvironmentObject, LiveTerrainPreview, StreamedTerrainSurface,
+    StreamedVegetationFieldPage, StreamedVisualObject, StreamingSmokePlugin, StreamingStats,
+    TerrainContactReadiness, TerrainLodStats, TerrainPreviewRequest, TerrainRenderer,
+    VisualLodScale, WorldCatalog, WorldDebugControls, WorldDetailDemand, WorldGenerationReload,
+    WorldOrigin, WorldRenderRoot, WorldSpaceInfo, WorldStreamingConfig, WorldStreamingPlugin,
+    WorldStreamingSystems, WorldViewCamera, WorldViewpoint, sample_resident_terrain_surface,
+    spawn_collection_visual,
 };
 
 mod ocean;

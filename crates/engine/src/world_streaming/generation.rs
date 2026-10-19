@@ -272,6 +272,7 @@ mod tests {
                 .init_resource::<SourceResidency>()
                 .init_resource::<super::far_objects::FarObjects>()
                 .init_resource::<super::valley_mist::MistTerrain>()
+                .init_resource::<super::terrain_clipmap::ClipmapTerrain>()
                 .init_resource::<terrain_lod::TerrainLodStream>()
                 .init_resource::<terrain_lod::entry::TerrainEntry>()
                 .init_resource::<terrain_lod::UploadTracker>()

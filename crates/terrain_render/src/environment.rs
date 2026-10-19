@@ -20,6 +20,18 @@ impl EnvironmentInputs for crate::TerrainMaterial {
         self.terrain_shadow = Some(environment.terrain_shadow.clone());
     }
 }
+impl EnvironmentInputs for crate::clipmap::ClipmapTerrainMaterial {
+    fn parameters(&self) -> &Handle<ShaderBuffer> {
+        &self.environment
+    }
+    fn bind_environment(&mut self, environment: &EnvironmentAssets) {
+        self.environment = environment.parameters.clone();
+        self.cloud_shadows = Some(environment.shadows.clone());
+        self.rain_shelter = Some(environment.shelter.clone());
+        self.forest_shadow = Some(environment.forest_shadow.clone());
+        self.terrain_shadow = Some(environment.terrain_shadow.clone());
+    }
+}
 impl EnvironmentInputs for crate::TerrainCompositeMaterial {
     fn parameters(&self) -> &Handle<ShaderBuffer> {
         &self.environment

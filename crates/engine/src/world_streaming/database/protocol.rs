@@ -78,12 +78,15 @@ pub(in crate::world_streaming) enum TerrainQuery {
     Roots(WorldSpaceId),
     Metadata(Vec<TerrainNodeKey>),
     Node(TerrainNodeKey),
+    /// Several nodes at once; absent ones are left out of the reply.
+    Nodes(Vec<TerrainNodeKey>),
     Material(TerrainMaterialQuery),
 }
 #[derive(Debug)]
 pub(in crate::world_streaming) enum TerrainReply {
     Metadata(Vec<TerrainNodeDescriptor>),
     Node(EncodedTerrainNode),
+    Nodes(Vec<EncodedTerrainNode>),
     Material(TerrainMaterialReply),
 }
 #[derive(Clone, Debug)]

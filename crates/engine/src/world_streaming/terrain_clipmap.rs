@@ -1,0 +1,605 @@
+//! Terrain v2 (`--terrain v2`, step 1 of the terrain rendering roadmap in docs/REFACTORING.md):
+//! the ground drawn from GPU height clipmaps with CDLOD patches (`terrain_render::clipmap`)
+//! instead of the terrain LOD's CPU-built meshes.
+//!
+//! Every level keeps a window of nodes around the camera resident in its clipmap layer. Nodes
+//! are read from the world database in batches, decoded on a pool thread and written into their
+//! toroidal blocks; a window moving by a node rewrites only the row of blocks that enters it.
+//! Each frame selects the patches to draw from the resident nodes and keeps one entity per
+//! patch, all sharing one grid mesh and one material; the vertex shader does the rest.
+use super::{
+    ActiveWorldSpace, WorldCatalog, WorldOrigin, WorldViewCamera,
+    database::{
+        DatabaseRequest, NotSent, RequestId, TerrainQuery, TerrainReply, WorldDatabaseWorker,
+    },
+};
+use bevy::{
+    camera::{primitives::Aabb, visibility::NoAutoAabb},
+    math::DVec3,
+    mesh::MeshTag,
+    prelude::*,
+    tasks::{AsyncComputeTaskPool, Task, block_on, poll_once},
+};
+use std::collections::{HashMap, HashSet};
+use terrain_render::clipmap::{
+    self, ClipmapFrame, ClipmapLayout, ClipmapTerrainMaterial, ClipmapTextures, ClipmapUploads,
+    LodRanges, NodeBlock, NodeWindow, Residency,
+};
+use world::{TerrainHeightfield, TerrainNodeKey, WorldSpaceId};
+use world_db::{EncodedTerrainNode, TerrainNodeDescriptor};
+
+/// Which renderer draws the ground.
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TerrainRenderer {
+    /// The terrain LOD's stitched meshes and baked composites.
+    #[default]
+    Lod,
+    /// Terrain v2: clipmaps and CDLOD patches.
+    Clipmap,
+}
+
+pub(crate) fn lod_terrain(renderer: Option<Res<TerrainRenderer>>) -> bool {
+    renderer.is_none_or(|r| *r == TerrainRenderer::Lod)
+}
+pub(crate) fn clipmap_terrain(renderer: Option<Res<TerrainRenderer>>) -> bool {
+    !lod_terrain(renderer)
+}
+
+/// Texels per side of a level: 32 nodes' blocks, of which 31 are a window and one its guard.
+const SIDE: u32 = if cfg!(target_os = "ios") { 512 } else { 1024 };
+/// The top level: 1 km nodes with 32 m cells, a 31 km window. Roots above it start at it.
+const TOP: u8 = 5;
+/// Level 0 draws within this many metres of the camera; every coarser level doubles it. At
+/// 1 m leaf spacing a triangle is 6–13 px across at 1440p wherever it is drawn. The window
+/// must hold a level's patches past its parent's range: (31 − 1) / 2 − HYSTERESIS nodes.
+const LEAF_RANGE: f64 = if cfg!(target_os = "ios") { 96.0 } else { 192.0 };
+/// Nodes are read ahead out to this multiple of the range that draws them, so the next finer
+/// level's normals are resident where the fragment shader asks for them.
+const PREFETCH: f64 = 2.0;
+/// A window follows the camera once it is more than this many nodes off its centre.
+const HYSTERESIS: i32 = 2;
+/// Nodes per database request, and requests in flight.
+const BATCH: usize = 48;
+const IN_FLIGHT: usize = 2;
+/// Samples per node side the clipmap is laid out for.
+const NODE_SAMPLES: u16 = 33;
+
+#[derive(Default)]
+struct Resident {
+    bounds: HashMap<TerrainNodeKey, [f32; 2]>,
+    /// Level-0 samples for grounding actors on the drawn surface.
+    leaves: HashMap<TerrainNodeKey, TerrainHeightfield>,
+}
+
+impl clipmap::NodeSource for Resident {
+    fn resident(&self, key: TerrainNodeKey) -> Option<[f32; 2]> {
+        self.bounds.get(&key).copied()
+    }
+}
+
+struct Decoded {
+    key: TerrainNodeKey,
+    bounds: [f32; 2],
+    block: NodeBlock,
+    leaf: Option<TerrainHeightfield>,
+}
+
+/// Counts for the log and for comparing against the terrain LOD.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ClipmapStats {
+    pub resident: usize,
+    pub patches: usize,
+    pub triangles: usize,
+    pub demand: usize,
+    pub missing: usize,
+    pub uploads: u64,
+}
+
+#[derive(Resource, Default)]
+pub struct ClipmapTerrain {
+    identity: Option<(String, WorldSpaceId)>,
+    cell_size: f32,
+    layout: Option<ClipmapLayout>,
+    ranges: Option<LodRanges>,
+    space: Option<WorldSpaceId>,
+    starts: Vec<TerrainNodeKey>,
+    windows: Vec<NodeWindow>,
+    resident: Resident,
+    residency: Residency,
+    /// Requested and not yet resident, and keys the database does not have.
+    requested: HashSet<TerrainNodeKey>,
+    absent: HashSet<TerrainNodeKey>,
+    pending: HashMap<RequestId, TerrainQuery>,
+    received: Vec<Vec<EncodedTerrainNode>>,
+    decoding: Vec<Task<Result<Vec<Decoded>, String>>>,
+    gpu: Option<ClipmapTextures>,
+    mesh: Option<Handle<Mesh>>,
+    patches: HashMap<TerrainNodeKey, Entity>,
+    placed: Option<world::CellCoord>,
+    failure: Option<String>,
+    started: Option<f64>,
+    ready_logged: bool,
+    pub stats: ClipmapStats,
+}
+
+impl ClipmapTerrain {
+    pub(super) fn owns_request(&self, id: RequestId) -> bool {
+        self.pending.contains_key(&id)
+    }
+
+    pub(super) fn receive(&mut self, id: RequestId, reply: Result<TerrainReply, String>) {
+        let Some(query) = self.pending.remove(&id) else {
+            return;
+        };
+        match (query, reply) {
+            (TerrainQuery::Roots(_), Ok(TerrainReply::Metadata(roots))) => self.adopt_roots(&roots),
+            (TerrainQuery::Nodes(keys), Ok(TerrainReply::Nodes(nodes))) => {
+                let found: HashSet<_> = nodes.iter().map(|n| n.descriptor.key).collect();
+                for key in keys.into_iter().filter(|k| !found.contains(k)) {
+                    self.requested.remove(&key);
+                    self.absent.insert(key);
+                }
+                self.received.push(nodes);
+            }
+            (_, Err(e)) => self.fail(e),
+            _ => self.fail("terrain reply does not match its request".into()),
+        }
+    }
+
+    fn fail(&mut self, reason: String) {
+        if self.failure.is_none() {
+            warn!("TERRAIN_V2_FAILED {reason}");
+        }
+        self.failure = Some(reason);
+    }
+
+    fn adopt_roots(&mut self, roots: &[TerrainNodeDescriptor]) {
+        let Some(top) = roots.iter().map(|r| r.key.level).min().map(|l| l.min(TOP)) else {
+            self.fail("the world space has no terrain".into());
+            return;
+        };
+        if roots
+            .iter()
+            .any(|r| r.resolution.is_some_and(|n| n != NODE_SAMPLES))
+        {
+            self.fail(format!("terrain v2 needs {NODE_SAMPLES}-sample nodes"));
+            return;
+        }
+        let layout = ClipmapLayout::new(
+            SIDE,
+            top + 1,
+            f64::from(self.cell_size),
+            u32::from(NODE_SAMPLES - 1),
+        );
+        self.starts = roots
+            .iter()
+            .flat_map(|root| {
+                let span = 1_i32 << (root.key.level - top);
+                let key = root.key;
+                (0..span * span).map(move |i| TerrainNodeKey {
+                    level: top,
+                    x: key.x * span + i % span,
+                    z: key.z * span + i / span,
+                    ..key
+                })
+            })
+            .collect();
+        self.space = roots.first().map(|r| r.key.space);
+        self.residency = Residency::new(layout.levels);
+        self.layout = Some(layout);
+        self.ranges = Some(LodRanges { leaf: LEAF_RANGE });
+    }
+
+    fn request(&mut self, worker: &WorldDatabaseWorker, query: TerrainQuery) -> bool {
+        let Some((generation, _)) = &self.identity else {
+            return false;
+        };
+        match worker.send(DatabaseRequest::Terrain {
+            generation: generation.clone(),
+            query: query.clone(),
+        }) {
+            Ok(id) => {
+                self.pending.insert(id, query);
+                true
+            }
+            Err(NotSent::Full) => false,
+            Err(NotSent::Stopped) => {
+                self.fail("the world database worker stopped".into());
+                false
+            }
+        }
+    }
+
+    fn window(&self, level: u8) -> Option<&NodeWindow> {
+        self.windows.get(usize::from(level))
+    }
+
+    fn in_window(&self, key: TerrainNodeKey) -> bool {
+        self.window(key.level)
+            .is_some_and(|w| w.contains(key.x, key.z))
+    }
+
+    /// Follows the eye; nodes leaving a window leave the clipmap.
+    fn move_windows(&mut self, layout: &ClipmapLayout, xz: [f64; 2]) {
+        let mut moved = false;
+        for level in 0..layout.levels {
+            let at = NodeWindow::node_at(layout, level, xz);
+            let keep = self.window(level).is_some_and(|w| {
+                let c = w.centre();
+                (at[0] - c[0]).abs() <= HYSTERESIS && (at[1] - c[1]).abs() <= HYSTERESIS
+            });
+            if keep {
+                continue;
+            }
+            let window = NodeWindow::around(layout, level, at);
+            match self.windows.get_mut(usize::from(level)) {
+                Some(w) => *w = window,
+                None => self.windows.push(window),
+            }
+            moved = true;
+        }
+        if !moved {
+            return;
+        }
+        let gone: Vec<_> = self
+            .resident
+            .bounds
+            .keys()
+            .copied()
+            .filter(|&k| !self.in_window(k))
+            .collect();
+        for key in gone {
+            self.resident.bounds.remove(&key);
+            self.resident.leaves.remove(&key);
+            self.residency.set(layout, key, false);
+        }
+        let windows = self.windows.clone();
+        self.requested.retain(|k| {
+            windows
+                .get(usize::from(k.level))
+                .is_some_and(|w| w.contains(k.x, k.z))
+        });
+    }
+
+    /// Nodes the view needs or soon will, parents first: those inside their window whose
+    /// parent is within `PREFETCH` × the parent's split range. Unloaded nodes take their
+    /// parent's height bounds, which hold theirs.
+    fn demand(
+        &self,
+        layout: &ClipmapLayout,
+        ranges: &LodRanges,
+        eye: DVec3,
+    ) -> Vec<TerrainNodeKey> {
+        let mut out: Vec<(f64, TerrainNodeKey)> = Vec::new();
+        let mut level_nodes: Vec<(TerrainNodeKey, [f32; 2])> = self
+            .starts
+            .iter()
+            .filter(|&&k| self.in_window(k))
+            .map(|&k| {
+                (
+                    k,
+                    self.resident
+                        .bounds
+                        .get(&k)
+                        .copied()
+                        .unwrap_or([-1.0e4, 1.0e4]),
+                )
+            })
+            .collect();
+        while !level_nodes.is_empty() {
+            let mut next = Vec::new();
+            for &(key, bounds) in &level_nodes {
+                let bounds = self.resident.bounds.get(&key).copied().unwrap_or(bounds);
+                let d = clipmap::distance(layout, key, bounds, eye);
+                out.push((d / layout.node_metres(key.level), key));
+                if key.level == 0 || d >= PREFETCH * ranges.range(key.level - 1) {
+                    continue;
+                }
+                let Ok(Some(children)) = key.children() else {
+                    continue;
+                };
+                next.extend(
+                    children
+                        .into_iter()
+                        .filter(|&c| self.in_window(c) && !self.absent.contains(&c))
+                        .map(|c| (c, bounds)),
+                );
+            }
+            level_nodes = next;
+        }
+        out.sort_by(|a, b| a.0.total_cmp(&b.0));
+        out.into_iter().map(|(_, k)| k).collect()
+    }
+
+    fn accept(&mut self, layout: &ClipmapLayout, uploads: &mut ClipmapUploads, node: Decoded) {
+        self.requested.remove(&node.key);
+        if !self.in_window(node.key) {
+            return;
+        }
+        self.resident.bounds.insert(node.key, node.bounds);
+        if let Some(leaf) = node.leaf {
+            self.resident.leaves.insert(node.key, leaf);
+        }
+        self.residency.set(layout, node.key, true);
+        uploads.push(node.block);
+    }
+
+    fn clear(&mut self, commands: &mut Commands, uploads: &mut ClipmapUploads) {
+        for (_, entity) in self.patches.drain() {
+            commands.entity(entity).despawn();
+        }
+        uploads.clear();
+        *self = Self::default();
+    }
+
+    /// The drawn leaf surface's height under a render-space position, once its node is
+    /// resident: the same triangles the patch draws within the leaf range.
+    pub fn ground_height(&self, render: Vec3, origin: &WorldOrigin) -> Option<f32> {
+        let space = self.space?;
+        let cell = f64::from(self.cell_size);
+        let [ox, oz] = origin.cell().origin(self.cell_size);
+        let (x, z) = (f64::from(render.x) + ox, f64::from(render.z) + oz);
+        let key = TerrainNodeKey {
+            space,
+            level: 0,
+            x: (x / cell).floor() as i32,
+            z: (z / cell).floor() as i32,
+        };
+        let field = self.resident.leaves.get(&key)?;
+        let local = [
+            (x - f64::from(key.x) * cell) as f32,
+            (z - f64::from(key.z) * cell) as f32,
+        ];
+        Some(field.sample_height(local, self.cell_size))
+    }
+}
+
+/// Decodes a batch and lays each node out as its clipmap block.
+fn decode(nodes: Vec<EncodedTerrainNode>, intervals: u32) -> Result<Vec<Decoded>, String> {
+    nodes
+        .into_iter()
+        .map(|encoded| {
+            let node = encoded.decode().map_err(|e| e.to_string())?;
+            let field = node
+                .heightfield
+                .ok_or_else(|| format!("terrain node {:?} holds no heights", node.key))?;
+            if u32::from(field.resolution) != intervals + 1 {
+                return Err(format!(
+                    "terrain node {:?} is not {NODE_SAMPLES}²",
+                    node.key
+                ));
+            }
+            let n = usize::from(field.resolution);
+            let normals: Vec<_> = (0..n * n).map(|i| field.normal_at(i % n, i / n)).collect();
+            let block = NodeBlock::new(node.key, field.heights.clone(), &normals);
+            Ok(Decoded {
+                key: node.key,
+                bounds: node.height_bounds,
+                block,
+                leaf: (node.key.level == 0).then_some(field),
+            })
+        })
+        .collect()
+}
+
+/// Mesh tag of a patch: its level and node, as `terrain_clipmap_vertex.wesl` unpacks them.
+fn patch_tag(key: TerrainNodeKey) -> u32 {
+    debug_assert!((-8192..8192).contains(&key.x) && (-8192..8192).contains(&key.z));
+    (u32::from(key.level) << 28) | ((key.x as u32 & 0x3fff) << 14) | (key.z as u32 & 0x3fff)
+}
+
+fn patch_transform(layout: &ClipmapLayout, key: TerrainNodeKey, origin: [f64; 2]) -> Transform {
+    let size = layout.node_metres(key.level);
+    let spacing = layout.spacing(key.level) as f32;
+    Transform::from_xyz(
+        (f64::from(key.x) * size - origin[0]) as f32,
+        0.0,
+        (f64::from(key.z) * size - origin[1]) as f32,
+    )
+    .with_scale(Vec3::new(spacing, 1.0, spacing))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn update(
+    mut commands: Commands,
+    mut terrain: ResMut<ClipmapTerrain>,
+    mut uploads: ResMut<ClipmapUploads>,
+    worker: Option<Res<WorldDatabaseWorker>>,
+    catalog: Res<WorldCatalog>,
+    active_space: Res<ActiveWorldSpace>,
+    origin: Res<WorldOrigin>,
+    time: Res<Time>,
+    camera: Query<(&Camera, &GlobalTransform), With<WorldViewCamera>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut images: ResMut<Assets<Image>>,
+    mut materials: ResMut<Assets<ClipmapTerrainMaterial>>,
+) {
+    let (Some(worker), Some(space)) = (worker, active_space.current()) else {
+        return;
+    };
+    let Some(info) = catalog.world_space(space) else {
+        return;
+    };
+    let identity = (catalog.generation_id().to_owned(), space);
+    if terrain.identity.as_ref() != Some(&identity) {
+        terrain.clear(&mut commands, &mut uploads);
+        terrain.identity = Some(identity);
+        terrain.cell_size = info.cell_size;
+        terrain.started = Some(time.elapsed_secs_f64());
+        if !terrain.request(&worker, TerrainQuery::Roots(space)) {
+            terrain.identity = None;
+        }
+        return;
+    }
+    if terrain.failure.is_some() {
+        return;
+    }
+    let (Some(layout), Some(ranges)) = (terrain.layout, terrain.ranges) else {
+        return;
+    };
+    if terrain.gpu.is_none() {
+        let textures = ClipmapTextures::new(layout, ranges, &mut images, &mut materials);
+        uploads.target(&textures);
+        terrain.gpu = Some(textures);
+        terrain.mesh = Some(meshes.add(clipmap::patch_mesh(&layout)));
+    }
+    let Some((_, camera)) = camera.iter().find(|(c, _)| c.is_active) else {
+        return;
+    };
+    let render_eye = camera.translation();
+    let offset = origin.cell().origin(info.cell_size);
+    let eye = DVec3::new(
+        f64::from(render_eye.x) + offset[0],
+        f64::from(render_eye.y),
+        f64::from(render_eye.z) + offset[1],
+    );
+    terrain.move_windows(&layout, [eye.x, eye.z]);
+
+    // Decoded nodes join the clipmap; received batches start decoding.
+    let mut finished = Vec::new();
+    terrain
+        .decoding
+        .retain_mut(|task| match block_on(poll_once(task)) {
+            Some(result) => {
+                finished.push(result);
+                false
+            }
+            None => true,
+        });
+    for result in finished {
+        match result {
+            Ok(nodes) => {
+                for node in nodes {
+                    terrain.accept(&layout, &mut uploads, node);
+                }
+            }
+            Err(e) => terrain.fail(e),
+        }
+    }
+    let intervals = layout.intervals;
+    for batch in std::mem::take(&mut terrain.received) {
+        terrain
+            .decoding
+            .push(AsyncComputeTaskPool::get().spawn(async move { decode(batch, intervals) }));
+    }
+
+    // Request what the view needs, nearest (relative to node size) first.
+    let demand = terrain.demand(&layout, &ranges, eye);
+    let missing: Vec<_> = demand
+        .iter()
+        .copied()
+        .filter(|k| !terrain.resident.bounds.contains_key(k))
+        .collect();
+    terrain.stats.demand = demand.len();
+    terrain.stats.missing = missing.len();
+    let wanted: Vec<_> = missing
+        .into_iter()
+        .filter(|k| !terrain.requested.contains(k))
+        .collect();
+    for batch in wanted.chunks(BATCH) {
+        if terrain.pending.len() >= IN_FLIGHT
+            || !terrain.request(&worker, TerrainQuery::Nodes(batch.to_vec()))
+        {
+            break;
+        }
+        terrain.requested.extend(batch.iter().copied());
+    }
+
+    // Patches: one entity per selected node.
+    let patches = clipmap::select(
+        &layout,
+        &ranges,
+        &terrain.windows,
+        &terrain.starts,
+        &terrain.resident,
+        eye,
+    );
+    let selected: HashMap<_, _> = patches.iter().map(|p| (p.key, p.bounds)).collect();
+    let mut stale = Vec::new();
+    for (key, entity) in &terrain.patches {
+        if !selected.contains_key(key) {
+            stale.push(*key);
+            commands.entity(*entity).despawn();
+        }
+    }
+    for key in stale {
+        terrain.patches.remove(&key);
+    }
+    let replace = terrain.placed != Some(origin.cell());
+    if replace {
+        terrain.placed = Some(origin.cell());
+        for (&key, &entity) in &terrain.patches {
+            let transform = patch_transform(&layout, key, offset);
+            commands
+                .entity(entity)
+                .insert((transform, GlobalTransform::from(transform)));
+        }
+    }
+    let (mesh, material) = (
+        terrain.mesh.clone().unwrap(),
+        terrain.gpu.as_ref().unwrap().material.clone(),
+    );
+    let n = layout.intervals as f32;
+    for patch in &patches {
+        if terrain.patches.contains_key(&patch.key) {
+            continue;
+        }
+        let transform = patch_transform(&layout, patch.key, offset);
+        let entity = commands
+            .spawn((
+                Mesh3d(mesh.clone()),
+                MeshMaterial3d(material.clone()),
+                MeshTag::new(patch_tag(patch.key)),
+                transform,
+                GlobalTransform::from(transform),
+                Aabb::from_min_max(
+                    Vec3::new(0.0, patch.bounds[0], 0.0),
+                    Vec3::new(n, patch.bounds[1], n),
+                ),
+                NoAutoAabb,
+            ))
+            .id();
+        terrain.patches.insert(patch.key, entity);
+    }
+
+    let resident = terrain.resident.bounds.len();
+    terrain.stats.resident = resident;
+    terrain.stats.patches = patches.len();
+    terrain.stats.triangles = patches.len() * (layout.intervals * layout.intervals * 2) as usize;
+    terrain.stats.uploads = uploads.uploaded_blocks;
+    let cells = origin.cell();
+    let samples = |c: i32| i64::from(c) * i64::from(layout.intervals);
+    uploads.set_frame(&ClipmapFrame {
+        eye: render_eye,
+        origin_samples: [samples(cells.x), samples(cells.z)],
+        windows: &terrain.windows,
+        residency: &terrain.residency,
+    });
+    if !terrain.ready_logged && terrain.stats.missing == 0 && terrain.decoding.is_empty() {
+        terrain.ready_logged = true;
+        let seconds = terrain.started.map_or(0.0, |s| time.elapsed_secs_f64() - s);
+        info!(
+            "TERRAIN_V2_READY {seconds:.2} s: {} nodes resident, {} patches, {} triangles",
+            resident, terrain.stats.patches, terrain.stats.triangles
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn patch_tags_carry_negative_nodes() {
+        let key = TerrainNodeKey {
+            space: WorldSpaceId(1),
+            level: 5,
+            x: -5,
+            z: 4,
+        };
+        let tag = patch_tag(key);
+        assert_eq!(tag >> 28, 5);
+        assert_eq!(((tag << 4) as i32) >> 18, -5);
+        assert_eq!(((tag << 18) as i32) >> 18, 4);
+    }
+}

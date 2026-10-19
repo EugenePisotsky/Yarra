@@ -1,3 +1,4 @@
+pub mod clipmap;
 pub mod composite;
 mod environment;
 mod heightfield_mesh;
@@ -60,6 +61,7 @@ impl Plugin for TerrainRenderPlugin {
     fn build(&self, app: &mut App) {
         composite::atlas::install(app);
         near::install(app);
+        clipmap::install(app);
         app.init_resource::<TerrainMacroVariation>()
             .add_systems(Startup, atmosphere::environment::init_fallback)
             .add_systems(
@@ -67,6 +69,7 @@ impl Plugin for TerrainRenderPlugin {
                 (
                     environment::sync::<TerrainMaterial>,
                     environment::sync::<TerrainCompositeMaterial>,
+                    environment::sync::<clipmap::ClipmapTerrainMaterial>,
                 ),
             )
             .add_plugins(MaterialPlugin::<TerrainMaterial>::default())
