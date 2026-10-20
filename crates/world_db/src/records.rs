@@ -347,13 +347,13 @@ pub struct PageTerrainSurfaceRecord {
     pub surface: TerrainSurfaceId,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RuntimeTerrainSurface {
     pub surface: TerrainSurface,
     pub layer: u16,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TerrainRenderResources {
     pub profile: TerrainProfile,
     pub texture_set: TerrainTextureSet,

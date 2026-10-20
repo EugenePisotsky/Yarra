@@ -10,9 +10,7 @@ use std::path::Path;
 use world::*;
 use world_db::{RuntimeReader, TerrainControlStore, WorldSpaceRecord};
 
-/// The coarsest level with control tiles: terrain v2's top clipmap level
-/// (`engine::world_streaming::terrain_clipmap`).
-const CONTROL_TOP: u8 = 5;
+const CONTROL_TOP: u8 = CONTROL_TOP_LEVEL;
 
 pub(crate) fn cook(path: &Path, spaces: &[WorldSpaceRecord]) -> Result<()> {
     let start = std::time::Instant::now();
@@ -136,71 +134,10 @@ fn leaf(
     cell: CellCoord,
     size: f32,
 ) -> Result<Vec<u32>> {
-    let count = page.surfaces.len();
     let slots: Vec<u16> = page
         .surfaces
         .iter()
         .map(|id| layers.get(id).copied().context("unknown terrain surface"))
         .collect::<Result<_>>()?;
-    if count == 0 || count > MAX_TERRAIN_SURFACES_PER_CELL {
-        bail!("terrain pages have one to {MAX_TERRAIN_SURFACES_PER_CELL} surfaces");
-    }
-    if count > 1 && page.weight_pages.len() != count.div_ceil(4) {
-        bail!("terrain page weights do not match its surfaces");
-    }
-    let mut samples = Vec::with_capacity(CONTROL_SAMPLES * CONTROL_SAMPLES);
-    let mut ground = vec![0.0_f64; count];
-    for j in 0..CONTROL_SAMPLES {
-        for i in 0..CONTROL_SAMPLES {
-            let uv = [
-                i as f64 / CONTROL_INTERVALS as f64,
-                j as f64 / CONTROL_INTERVALS as f64,
-            ];
-            if count == 1 {
-                ground[0] = 1.0;
-            } else {
-                weights(&page.weight_pages, uv, &mut ground);
-                if let Some(wear) = &page.wear {
-                    let world = [
-                        (f64::from(cell.x) + uv[0]) * f64::from(size),
-                        (f64::from(cell.z) + uv[1]) * f64::from(size),
-                    ];
-                    let w = wear.sample(uv).wear;
-                    wear.lay(&mut ground, w, bare_share(w, world));
-                }
-            }
-            let mut mix = ControlMix::default();
-            for (&layer, &weight) in slots.iter().zip(&ground) {
-                mix.add(layer, weight as f32);
-            }
-            samples.push(mix.pack());
-        }
-    }
-    Ok(samples)
-}
-
-/// Bilinear ground weights of the page's surfaces at `uv`, four per RGBA page, normalised.
-fn weights(pages: &[TerrainWeightPage], uv: [f64; 2], result: &mut [f64]) {
-    result.fill(0.0);
-    let n = pages[0].resolution as usize;
-    let p = uv.map(|x| x * (n - 1) as f64);
-    let a = p.map(|x| (x.floor() as usize).min(n - 1));
-    let f = [p[0] - a[0] as f64, p[1] - a[1] as f64];
-    for y in 0..2 {
-        for x in 0..2 {
-            let w =
-                (if x == 0 { 1. - f[0] } else { f[0] }) * (if y == 0 { 1. - f[1] } else { f[1] });
-            if w <= 0.0 {
-                continue;
-            }
-            let i = ((a[1] + y).min(n - 1) * n + (a[0] + x).min(n - 1)) * 4;
-            for (surface, value) in result.iter_mut().enumerate() {
-                *value += f64::from(pages[surface / 4].rgba[i + surface % 4]) / 255. * w;
-            }
-        }
-    }
-    let sum = result.iter().sum::<f64>().max(1e-9);
-    for value in result {
-        *value /= sum;
-    }
+    leaf_control(page, &slots, cell, size).map_err(anyhow::Error::msg)
 }

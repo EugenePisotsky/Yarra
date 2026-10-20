@@ -154,7 +154,9 @@ fn invalid(message: &str) -> WorldDbError {
 mod tests {
     #[test]
     fn tiles_round_trip() {
-        let samples: Vec<u32> = (0..65 * 65).map(|i| i * 2_654_435_761).collect();
+        let samples: Vec<u32> = (0..65 * 65)
+            .map(|i: u32| i.wrapping_mul(2_654_435_761))
+            .collect();
         let payload = super::encode_terrain_control(&samples).unwrap();
         assert_eq!(super::decode_terrain_control(&payload).unwrap(), samples);
         assert!(super::encode_terrain_control(&samples[1..]).is_err());

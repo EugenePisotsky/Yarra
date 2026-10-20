@@ -10,6 +10,9 @@ use std::{collections::BTreeMap, sync::Arc};
 pub struct TerrainPreviewProducts {
     pub nodes: BTreeMap<TerrainNodeKey, Arc<TerrainNode>>,
     pub composites: BTreeMap<TerrainMaterialKey, Arc<TerrainComposite>>,
+    /// Control tiles (`crate::terrain_control`) of the changed leaves and their ancestors up to
+    /// `CONTROL_TOP_LEVEL`, packed samples.
+    pub controls: BTreeMap<TerrainNodeKey, Arc<Vec<u32>>>,
     /// Only leaves that differ from the publication; retained after source eviction.
     pub leaves: BTreeMap<CellCoord, Arc<TerrainHeightfieldPage>>,
 }
@@ -24,6 +27,11 @@ impl TerrainPreviewProducts {
             })
             .sum::<usize>()
             + self.composites.len() * (TerrainComposite::gpu_bytes() + 128)
+            + self
+                .controls
+                .values()
+                .map(|c| 128 + c.len() * 4)
+                .sum::<usize>()
             + self
                 .leaves
                 .values()

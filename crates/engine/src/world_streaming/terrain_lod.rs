@@ -25,7 +25,7 @@ pub use contact::TerrainContactReadiness;
 pub(crate) use contact::test_flat_contact;
 mod authoring;
 use super::database::{RequestId, TerrainQuery, TerrainReply};
-pub use authoring::{LiveTerrainPreview, TerrainPreviewRequest};
+pub use authoring::LiveTerrainPreview;
 use contact::{ContactInputs, ContactSystems};
 use terrain_render::lod::{self, LodSettings, LodView, PatchMetadata, PlannedCover, StitchEdges};
 use transition::{Transition, patch_transform};

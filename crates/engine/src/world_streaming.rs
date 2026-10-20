@@ -32,11 +32,11 @@ pub use world_space::ActiveWorldSpace;
 use world_space::WorldSpaceTransition;
 pub(crate) use world_space::sync_world_atmosphere;
 pub(crate) mod terrain_clipmap;
-pub use terrain_clipmap::{ClipmapStats, ClipmapTerrain, TerrainRenderer};
-pub(crate) mod terrain_lod;
-pub use terrain_lod::{
-    LiveTerrainPreview, TerrainContactReadiness, TerrainLodStats, TerrainPreviewRequest,
+pub use terrain_clipmap::{
+    ClipmapStats, ClipmapTerrain, LiveTerrainPreview, TerrainPreviewRequest, TerrainRenderer,
 };
+pub(crate) mod terrain_lod;
+pub use terrain_lod::{TerrainContactReadiness, TerrainLodStats};
 
 use std::path::PathBuf;
 
@@ -96,6 +96,7 @@ impl Plugin for WorldStreamingPlugin {
             .init_resource::<far_objects::FarObjects>()
             .init_resource::<valley_mist::MistTerrain>()
             .init_resource::<terrain_clipmap::ClipmapTerrain>()
+            .init_resource::<LiveTerrainPreview>()
             .init_resource::<ActiveWorldSpace>()
             .init_resource::<WorldCatalog>()
             .init_resource::<WorldGenerationReload>()
@@ -136,6 +137,9 @@ impl Plugin for WorldStreamingPlugin {
                 PostUpdate,
                 (
                     source_demand::collect_view.after(TransformSystems::Propagate),
+                    terrain_clipmap::apply_preview
+                        .run_if(terrain_clipmap::clipmap_terrain)
+                        .before(terrain_clipmap::update),
                     terrain_clipmap::update
                         .run_if(terrain_clipmap::clipmap_terrain)
                         .after(TransformSystems::Propagate)

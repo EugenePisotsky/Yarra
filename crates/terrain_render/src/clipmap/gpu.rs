@@ -363,23 +363,27 @@ impl ClipmapTextures {
 }
 
 /// One node's samples for its level's block: `intervals + 1` per side, the last row and column
-/// landing in the next blocks (the same world samples their own nodes hold).
+/// landing in the next blocks (the same world samples their own nodes hold). A part left `None`
+/// keeps what the block holds.
 pub struct NodeBlock {
     pub key: TerrainNodeKey,
-    pub heights: Vec<f32>,
-    /// Unit normals' x and z, as half floats.
-    pub normals: Vec<[u16; 2]>,
+    /// Heights, and unit normals' x and z as half floats.
+    pub relief: Option<(Vec<f32>, Vec<[u16; 2]>)>,
     /// Packed control samples, `2 × intervals + 1` per side (`world::CONTROL_SAMPLES`).
-    pub control: Vec<u32>,
+    pub control: Option<Vec<u32>>,
 }
 
 impl NodeBlock {
-    pub fn new(
-        key: TerrainNodeKey,
-        heights: Vec<f32>,
-        normals: &[[f32; 3]],
-        control: Vec<u32>,
-    ) -> Self {
+    /// A block that rewrites nothing yet.
+    pub fn new(key: TerrainNodeKey) -> Self {
+        Self {
+            key,
+            relief: None,
+            control: None,
+        }
+    }
+
+    pub fn with_relief(mut self, heights: Vec<f32>, normals: &[[f32; 3]]) -> Self {
         let normals = normals
             .iter()
             .map(|n| {
@@ -389,12 +393,13 @@ impl NodeBlock {
                 ]
             })
             .collect();
-        Self {
-            key,
-            heights,
-            normals,
-            control,
-        }
+        self.relief = Some((heights, normals));
+        self
+    }
+
+    pub fn with_control(mut self, control: Vec<u32>) -> Self {
+        self.control = Some(control);
+        self
     }
 }
 
@@ -589,30 +594,20 @@ fn upload(
     for block in uploads.blocks.drain(..) {
         let origin = layout.block_origin(block.key);
         let layer = u32::from(block.key.level);
-        write_block(
-            &queue,
-            heights,
-            &layout,
-            origin,
-            layer,
-            bytemuck_f32(&block.heights),
-        );
-        write_block(
-            &queue,
-            normals,
-            &layout,
-            origin,
-            layer,
-            bytemuck_u16(&block.normals),
-        );
-        write_block(
-            &queue,
-            control,
-            &control_layout,
-            control_layout.block_origin(block.key),
-            layer,
-            block.control.iter().flat_map(|v| v.to_le_bytes()).collect(),
-        );
+        if let Some((h, n)) = &block.relief {
+            write_block(&queue, heights, &layout, origin, layer, bytemuck_f32(h));
+            write_block(&queue, normals, &layout, origin, layer, bytemuck_u16(n));
+        }
+        if let Some(samples) = &block.control {
+            write_block(
+                &queue,
+                control,
+                &control_layout,
+                control_layout.block_origin(block.key),
+                layer,
+                samples.iter().flat_map(|v| v.to_le_bytes()).collect(),
+            );
+        }
     }
     if let Some(words) = uploads.state.take() {
         let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();

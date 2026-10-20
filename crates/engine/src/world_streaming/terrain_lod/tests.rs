@@ -742,7 +742,7 @@ fn live_authoring_handoff(app: &mut App, runtime: &std::path::Path, deadline: st
     }
     let mut products = TerrainPreviewProducts::default();
     products.composites.insert(key, Arc::new(painted));
-    let request = |revision, products| TerrainPreviewRequest {
+    let request = |revision, products| crate::TerrainPreviewRequest {
         revision,
         generation: identity.0.clone(),
         space: identity.1,

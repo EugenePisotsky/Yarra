@@ -5,7 +5,10 @@
 //! heaviest surfaces, by texture array layer, and their shares in 32 bits, so the GPU blends any
 //! of the world's surfaces anywhere. Parents filter their children's surface shares, never their
 //! layer indices.
-use crate::{TERRAIN_BLEND_SURFACES, TerrainNodeKey};
+use crate::{
+    CellCoord, MAX_TERRAIN_SURFACES_PER_CELL, TERRAIN_BLEND_SURFACES, TerrainHeightfieldPage,
+    TerrainNodeKey, TerrainWeightPage, bare_share,
+};
 
 /// Samples per tile side.
 pub const CONTROL_SAMPLES: usize = 65;
@@ -13,6 +16,8 @@ pub const CONTROL_SAMPLES: usize = 65;
 pub const CONTROL_INTERVALS: usize = CONTROL_SAMPLES - 1;
 /// Texture array layers a control sample can name.
 pub const MAX_CONTROL_LAYERS: u16 = 32;
+/// The coarsest level with control tiles: terrain v2's top clipmap level.
+pub const CONTROL_TOP_LEVEL: u8 = 5;
 
 /// A node's control samples, row-major.
 #[derive(Clone, Debug, PartialEq)]
@@ -102,6 +107,80 @@ impl ControlMix {
 
     pub fn pack(&self) -> u32 {
         pack_control(self.top())
+    }
+}
+
+/// A cell's samples from its page's ground weights, worn where its roads wear it as near
+/// detail wears it; `slot_layers` gives each page surface's texture layer.
+pub fn leaf_control(
+    page: &TerrainHeightfieldPage,
+    slot_layers: &[u16],
+    cell: CellCoord,
+    cell_size: f32,
+) -> Result<Vec<u32>, String> {
+    let count = page.surfaces.len();
+    if count == 0 || count > MAX_TERRAIN_SURFACES_PER_CELL || slot_layers.len() != count {
+        return Err(format!(
+            "terrain pages have one to {MAX_TERRAIN_SURFACES_PER_CELL} surfaces with layers"
+        ));
+    }
+    if count > 1 && page.weight_pages.len() != count.div_ceil(4) {
+        return Err("terrain page weights do not match its surfaces".into());
+    }
+    let mut samples = Vec::with_capacity(CONTROL_SAMPLES * CONTROL_SAMPLES);
+    let mut ground = vec![0.0_f64; count];
+    for j in 0..CONTROL_SAMPLES {
+        for i in 0..CONTROL_SAMPLES {
+            let uv = [
+                i as f64 / CONTROL_INTERVALS as f64,
+                j as f64 / CONTROL_INTERVALS as f64,
+            ];
+            if count == 1 {
+                ground[0] = 1.0;
+            } else {
+                page_weights(&page.weight_pages, uv, &mut ground);
+                if let Some(wear) = &page.wear {
+                    let world = [
+                        (f64::from(cell.x) + uv[0]) * f64::from(cell_size),
+                        (f64::from(cell.z) + uv[1]) * f64::from(cell_size),
+                    ];
+                    let w = wear.sample(uv).wear;
+                    wear.lay(&mut ground, w, bare_share(w, world));
+                }
+            }
+            let mut mix = ControlMix::default();
+            for (&layer, &weight) in slot_layers.iter().zip(&ground) {
+                mix.add(layer, weight as f32);
+            }
+            samples.push(mix.pack());
+        }
+    }
+    Ok(samples)
+}
+
+/// Bilinear ground weights of the page's surfaces at `uv`, four per RGBA page, normalised.
+fn page_weights(pages: &[TerrainWeightPage], uv: [f64; 2], result: &mut [f64]) {
+    result.fill(0.0);
+    let n = pages[0].resolution as usize;
+    let p = uv.map(|x| x * (n - 1) as f64);
+    let a = p.map(|x| (x.floor() as usize).min(n - 1));
+    let f = [p[0] - a[0] as f64, p[1] - a[1] as f64];
+    for y in 0..2 {
+        for x in 0..2 {
+            let w =
+                (if x == 0 { 1. - f[0] } else { f[0] }) * (if y == 0 { 1. - f[1] } else { f[1] });
+            if w <= 0.0 {
+                continue;
+            }
+            let i = ((a[1] + y).min(n - 1) * n + (a[0] + x).min(n - 1)) * 4;
+            for (surface, value) in result.iter_mut().enumerate() {
+                *value += f64::from(pages[surface / 4].rgba[i + surface % 4]) / 255. * w;
+            }
+        }
+    }
+    let sum = result.iter().sum::<f64>().max(1e-9);
+    for value in result {
+        *value /= sum;
     }
 }
 

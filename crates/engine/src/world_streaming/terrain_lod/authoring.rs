@@ -1,27 +1,12 @@
 //! Two-phase editor handoff: upload a complete affected region, then let the
 //! editor commit its matching grass/source cells at the same frame boundary.
 use super::*;
+pub use crate::world_streaming::terrain_clipmap::LiveTerrainPreview;
 use std::sync::Arc;
-use world::{TerrainMaterialKey, TerrainPreviewProducts};
+use world::TerrainMaterialKey;
 
-#[derive(Clone)]
-pub struct TerrainPreviewRequest {
-    pub revision: u64,
-    pub generation: String,
-    pub space: WorldSpaceId,
-    pub products: Arc<TerrainPreviewProducts>,
-}
-#[derive(Resource, Default)]
-pub struct LiveTerrainPreview {
-    pub request: Option<TerrainPreviewRequest>,
-    pub ready: Option<u64>,
-    pub commit: Option<u64>,
-    pub applied: Option<u64>,
-    pub error: Option<String>,
-    stage: Option<Stage>,
-}
 #[derive(Default)]
-struct Stage {
+pub(super) struct Stage {
     appearance_changed: bool,
     revision: u64,
     todo: Vec<Patch>,
@@ -93,6 +78,7 @@ impl TerrainLodStream {
 pub(super) fn update(
     mut commands: Commands,
     mut live: ResMut<LiveTerrainPreview>,
+    mut staged: Local<Option<Stage>>,
     catalog: Res<WorldCatalog>,
     origin: Res<WorldOrigin>,
     mut stream: ResMut<TerrainLodStream>,
@@ -106,12 +92,11 @@ pub(super) fn update(
         .request
         .clone()
         .filter(|r| r.generation == catalog.generation_id() && Some(r.space) == origin.space());
-    if live
-        .stage
+    if staged
         .as_ref()
         .is_some_and(|s| request.as_ref().is_none_or(|r| r.revision != s.revision))
     {
-        live.stage.take().unwrap().clear(&mut meshes, &tracker);
+        staged.take().unwrap().clear(&mut meshes, &tracker);
         live.ready = None;
     }
     let Some(request) = request else { return };
@@ -138,7 +123,7 @@ pub(super) fn update(
     // A cached off-screen mesh may predate this edit; never reuse it for the new overlay.
     stream.trim_mesh_cache(&mut meshes, &tracker, 0, MAX_MESH_BYTES);
     let size = catalog.world_space(request.space).unwrap().cell_size;
-    if live.stage.is_none() {
+    if staged.is_none() {
         let appearance_changed = stream
             .overlay
             .as_ref()
@@ -207,9 +192,9 @@ pub(super) fn update(
                 }
             }
         }
-        live.stage = Some(stage);
+        *staged = Some(stage);
     }
-    let stage = live.stage.as_mut().unwrap();
+    let stage = staged.as_mut().unwrap();
     let mut i = 0;
     while i < stage.jobs.len() {
         if let Some(result) = check_ready(&mut stage.jobs[i].task) {
@@ -274,7 +259,7 @@ pub(super) fn update(
     if live.commit != Some(request.revision) {
         return;
     }
-    let stage = live.stage.take().unwrap();
+    let stage = staged.take().unwrap();
     // Cancel pre-edit IO/decode completions before changing metadata. Future reads
     // consult this immutable overlay, including when the camera revisits a region.
     stream.pending.clear();

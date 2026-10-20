@@ -7,10 +7,12 @@ mod parallel;
 mod runtime_build;
 mod streaming_cook;
 mod terrain_cook;
-pub use material_bake::preview::{
-    MAX_PREVIEW_LEAVES, bake_terrain_preview, published_terrain_leaf,
-};
+pub use material_bake::preview::bake_terrain_preview;
+mod terrain_preview;
 pub use material_bake::{TerrainBakeLibrary, TerrainMaterialBakeStats};
+pub use terrain_preview::{
+    MAX_PREVIEW_LEAVES, preview_terrain, published_terrain_control, published_terrain_leaf,
+};
 mod terrain_fixture;
 use environment_cook::{
     CookedEnvironment, TerrainSlot, TerrainWeights, compile_environment, demo_environment,

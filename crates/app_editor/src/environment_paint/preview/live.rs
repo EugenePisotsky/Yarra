@@ -1,5 +1,6 @@
-//! Applied source edits on the distant renderer. One cancellable CPU worker and
-//! one GPU-staged revision; local source demand remains independent of visibility.
+//! Applied source edits on the terrain: one cancellable CPU worker builds the preview's nodes and
+//! control tiles, which terrain v2 draws in place of the published ones once committed; local
+//! source demand remains independent of visibility.
 use super::*;
 use crate::publication::RuntimePublicationPaths;
 use engine::{LiveTerrainPreview, TerrainPreviewRequest};
@@ -10,7 +11,7 @@ use std::{
     time::{Duration, Instant},
 };
 use world::{TerrainHeightfieldPage, TerrainPreviewProducts};
-use world_db::{RuntimeReader, TerrainRenderResources};
+use world_db::RuntimeReader;
 type SourceContext = (WorldSpaceId, u64, u64, u64, String);
 type SourceSignature = (SourceContext, u64, u64, Vec<CellCoord>);
 #[cfg(test)]
@@ -28,7 +29,6 @@ struct Input {
     roads: Vec<crate::road_authoring::working::RoadChange>,
     regions: Option<Vec<RoadCellBounds>>,
     resident: Vec<CellCoord>,
-    resources: TerrainRenderResources,
     global: bool,
     base: Option<Arc<Snapshot>>,
 }
@@ -64,7 +64,6 @@ impl LiveWorker {
     fn start(paths: &RuntimePublicationPaths) -> Result<Self, String> {
         let project = paths.project_database.clone();
         let runtime = paths.runtime_database.clone();
-        let assets = paths.asset_root.clone();
         let latest = Arc::new(AtomicU64::new(0));
         let token = latest.clone();
         let worker = crate::worker::Worker::spawn(
@@ -72,13 +71,8 @@ impl LiveWorker {
             1,
             1,
             move |requests: Receiver<Input>, results| {
-                let library =
-                    world_cook::TerrainBakeLibrary::load(&assets).map_err(|e| format!("{e:#}"));
                 while let Ok(job) = requests.recv() {
-                    let result = library
-                        .as_ref()
-                        .map_err(Clone::clone)
-                        .and_then(|library| compile(&project, &runtime, library, &job, &token));
+                    let result = compile(&project, &runtime, &job, &token);
                     if results
                         .send(ResultMessage {
                             revision: job.revision,
@@ -225,7 +219,6 @@ pub(crate) fn update(
                         .roads
                         .preview_regions(space, definition.cell_size),
                     resident,
-                    resources: resources.clone(),
                     global,
                     base: state.accepted.clone(),
                 });
@@ -310,17 +303,15 @@ pub(crate) fn update(
 fn compile(
     project: &Path,
     runtime: &Path,
-    library: &world_cook::TerrainBakeLibrary,
     job: &Input,
     token: &AtomicU64,
 ) -> Result<Arc<Snapshot>, String> {
-    compile_inner(project, runtime, library, job, token).map_err(|e| format!("{e:#}"))
+    compile_inner(project, runtime, job, token).map_err(|e| format!("{e:#}"))
 }
 
 fn compile_inner(
     project: &Path,
     runtime: &Path,
-    library: &world_cook::TerrainBakeLibrary,
     job: &Input,
     token: &AtomicU64,
 ) -> anyhow::Result<Arc<Snapshot>> {
@@ -490,14 +481,7 @@ fn compile_inner(
     let products = if let Some(base) = job.base.as_ref().filter(|b| b.products.leaves == leaves) {
         base.products.clone()
     } else {
-        let mut p = world_cook::bake_terrain_preview(
-            &reader,
-            space,
-            leaves,
-            &job.resources,
-            library,
-            cancelled,
-        )?;
+        let mut p = world_cook::preview_terrain(&reader, space, leaves, cancelled)?;
         // Explicit baseline replacements undo earlier edits, including keys that
         // have since left the current source neighborhood.
         if let Some(base) = &job.base {
@@ -511,13 +495,11 @@ fn compile_inner(
                     ));
                 }
             }
-            for &key in base.products.composites.keys() {
-                if let std::collections::btree_map::Entry::Vacant(e) = p.composites.entry(key) {
+            for &key in base.products.controls.keys() {
+                if let std::collections::btree_map::Entry::Vacant(e) = p.controls.entry(key) {
                     e.insert(Arc::new(
-                        reader
-                            .read_terrain_composite(key)?
-                            .ok_or_else(|| anyhow::anyhow!("missing published undo material"))?
-                            .decode()?,
+                        world_cook::published_terrain_control(&reader, key)?
+                            .ok_or_else(|| anyhow::anyhow!("missing published undo control"))?,
                     ));
                 }
             }

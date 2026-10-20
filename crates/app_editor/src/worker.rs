@@ -51,24 +51,8 @@ impl<Request: Send + 'static, Response: Send + 'static> Worker<Request, Response
         self.sender().try_send(request)
     }
 
-    #[cfg(test)]
-    pub(crate) fn send(
-        &self,
-        request: Request,
-    ) -> Result<(), crossbeam_channel::SendError<Request>> {
-        self.sender().send(request)
-    }
-
     pub(crate) fn try_recv(&self) -> Result<Response, TryRecvError> {
         self.results.try_recv()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn recv_timeout(
-        &self,
-        timeout: std::time::Duration,
-    ) -> Result<Response, crossbeam_channel::RecvTimeoutError> {
-        self.results.recv_timeout(timeout)
     }
 
     fn sender(&self) -> &Sender<Request> {
