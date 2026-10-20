@@ -1,0 +1,3 @@
+# Formatting-only commits, skipped by `git blame` (git config blame.ignoreRevsFile .git-blame-ignore-revs).
+# yarra-tidy blank-line pass
+a675d7bbc60b7bdb40ef354dbb287b17ced50e29
