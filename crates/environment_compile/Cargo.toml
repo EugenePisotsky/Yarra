@@ -13,5 +13,3 @@ thiserror.workspace = true
 vegetation.workspace = true
 world.workspace = true
 
-[dev-dependencies]
-vegetation-compile.workspace = true

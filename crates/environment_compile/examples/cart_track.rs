@@ -107,8 +107,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn roots(
     plan: &CompilePlan,
     cells: &[CompiledCell],
-) -> Result<Vec<vegetation_compile::DebugPlacement>, vegetation_compile::PlacementError> {
-    vegetation_compile::generate_scene_debug_placements(&vegetation::VegetationScene {
+) -> Result<Vec<vegetation::reference::DebugPlacement>, vegetation::reference::PlacementError> {
+    vegetation::reference::generate_scene_debug_placements(&vegetation::VegetationScene {
         catalog: plan.catalog().clone(),
         pages: cells
             .iter()

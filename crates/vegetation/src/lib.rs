@@ -12,6 +12,7 @@ use thiserror::Error;
 
 pub mod fixtures;
 mod placement;
+pub mod reference;
 
 pub use placement::*;
 

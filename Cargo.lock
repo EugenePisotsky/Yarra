@@ -7221,7 +7221,6 @@ dependencies = [
  "thiserror 2.0.20",
  "yarra-environment",
  "yarra-vegetation",
- "yarra-vegetation-compile",
  "yarra-world",
 ]
 
@@ -7353,14 +7352,6 @@ dependencies = [
  "ron",
  "serde",
  "thiserror 2.0.20",
-]
-
-[[package]]
-name = "yarra-vegetation-compile"
-version = "0.1.0"
-dependencies = [
- "thiserror 2.0.20",
- "yarra-vegetation",
 ]
 
 [[package]]

@@ -16,7 +16,6 @@ members = [
     "crates/terrain_render",
     "crates/upscaling",
     "crates/vegetation",
-    "crates/vegetation_compile",
     "crates/vegetation_render",
     "crates/world",
     "crates/world_cook",
@@ -61,7 +60,6 @@ glam = "0.33"
 terrain-render = { package = "yarra-terrain-render", path = "crates/terrain_render" }
 upscaling = { package = "yarra-upscaling", path = "crates/upscaling" }
 vegetation = { package = "yarra-vegetation", path = "crates/vegetation" }
-vegetation-compile = { package = "yarra-vegetation-compile", path = "crates/vegetation_compile" }
 vegetation-render = { package = "yarra-vegetation-render", path = "crates/vegetation_render" }
 world = { package = "yarra-world", path = "crates/world" }
 log = { version = "0.4", features = ["max_level_debug", "release_max_level_warn"] }

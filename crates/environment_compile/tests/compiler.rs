@@ -266,7 +266,8 @@ fn partial_exclusions_thin_grass_without_moving_roots() {
                     surface: VegetationSurfaceField::flat(2, 0.0, [0.0, 1.0, 0.0]),
                     fields: cell.vegetation.fields,
                 };
-                vegetation_compile::generate_page_debug_placements(plan.catalog(), &page).unwrap()
+                vegetation::reference::generate_page_debug_placements(plan.catalog(), &page)
+                    .unwrap()
             })
             .map(|p| (p.grass, p.seed, p.root.map(f32::to_bits)))
             .collect::<HashSet<_>>()

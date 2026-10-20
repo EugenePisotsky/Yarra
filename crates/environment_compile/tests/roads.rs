@@ -665,7 +665,7 @@ fn road_thinning_keeps_cpu_reference_roots_at_their_original_positions() {
                 })
                 .collect(),
         };
-        vegetation_compile::generate_scene_debug_placements(&scene)
+        vegetation::reference::generate_scene_debug_placements(&scene)
             .unwrap()
             .into_iter()
             .map(|p| (p.grass, p.seed, p.root.map(f32::to_bits)))
