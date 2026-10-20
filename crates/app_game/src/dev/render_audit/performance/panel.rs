@@ -159,9 +159,9 @@ fn initialize(
         });
 
         for (tab, note, controls) in [
-            (Tab::Features, "Grass Disabled skips its render preparation, compute and draws; source streaming remains. Terrain/object draw switches keep streaming, animation and collision. Sky + haze keeps authored illumination. Cloud Off skips cloud passes; shared material bookkeeping remains. Fog & mist hides ground haze and valley mist; weather fog stays. Ambient particles hides dust motes, seed fluff and falling leaves. Light shafts and sun rays skips the sunbeam passes; the sun's glare stays.", &[Control::Clouds, Control::GrassEnabled, Control::Sky, Control::Bloom, Control::AutoExposure, Control::Fog, Control::Particles, Control::LightShafts, Control::Terrain, Control::Objects, Control::Shadows, Control::ShadowMap, Control::Wind][..]),
-            (Tab::Quality, "Click to cycle. Object LOD size below 1 selects coarser available assets. Lower resolution affects the 3D scene only.", &[Control::Scale, Control::Upscaler, Control::TemporalDebug, Control::Antialiasing, Control::ObjectDetail][..]),
-            (Tab::Advanced, "Diagnostic experiments. Compute only hides grass draws but keeps generation; Schedule only omits generation. Draw frozen locks controls. These settings do not change published content.", &[Control::Grass, Control::Scene, Control::Prepass, Control::Counters, Control::GpuPassTimings, Control::Lock, Control::PageGizmos, Control::TerrainMacro][..]),
+            (Tab::Features, "Grass Disabled skips its render preparation, compute and draws; source streaming remains. Terrain/object draw switches keep streaming, animation and collision. Sky + haze keeps authored illumination. Cloud Off skips cloud passes; shared material bookkeeping remains. Fog & mist hides ground haze and valley mist; weather fog stays. Ambient particles hides dust motes, seed fluff and falling leaves. Light shafts and sun rays skips the sunbeam passes; the sun's glare stays.", Control::FEATURES),
+            (Tab::Quality, "Click to cycle. Object LOD size below 1 selects coarser available assets. Lower resolution affects the 3D scene only.", Control::QUALITY),
+            (Tab::Advanced, "Diagnostic experiments. Compute only hides grass draws but keeps generation; Schedule only omits generation. Draw frozen locks controls. These settings do not change published content.", Control::ADVANCED),
         ] {
             panel.spawn((Page(tab), page_node())).with_children(|page| {
                 page.spawn((Text::new(note), font(12.0)));

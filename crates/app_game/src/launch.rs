@@ -167,7 +167,7 @@ impl LaunchOptions {
             world_db: args.path("--world-db"),
             start_view: args.path("--start-view"),
             story: args.path("--story"),
-            fps: fps(&args)?,
+            fps: args.fps("--fps")?,
             upscaler,
             clouds: args.choice(
                 "--cloud-quality",
@@ -263,16 +263,6 @@ impl DiagnosticsMode {
             Self::Full => "full",
         }
     }
-}
-
-// Following a 120 Hz display kept the GPU busy whenever it had headroom, and loud.
-fn fps(args: &Args) -> Result<u32, String> {
-    args.value("--fps")?
-        .unwrap_or("60")
-        .parse::<u32>()
-        .ok()
-        .filter(|&fps| fps == 0 || (15..=240).contains(&fps))
-        .ok_or_else(|| "--fps requires 0 or 15..240".into())
 }
 
 fn resolution_scale(args: &Args) -> Result<Option<f32>, String> {

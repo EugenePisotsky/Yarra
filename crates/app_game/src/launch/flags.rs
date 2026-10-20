@@ -551,6 +551,17 @@ impl Args {
             })
     }
 
+    /// A frame rate: 0 (no cap of its own) or 15..240, 60 when absent. Following a 120 Hz
+    /// display kept the GPU busy whenever it had headroom, and loud.
+    pub(crate) fn fps(&self, key: &str) -> Result<u32, String> {
+        self.value(key)?
+            .unwrap_or("60")
+            .parse::<u32>()
+            .ok()
+            .filter(|&fps| fps == 0 || (15..=240).contains(&fps))
+            .ok_or_else(|| format!("{key} requires 0 or 15..240"))
+    }
+
     /// `on | off`, on when absent.
     pub(crate) fn switch(&self, key: &str) -> Result<bool, String> {
         self.choice(key, "on", &[("on", true), ("off", false)])

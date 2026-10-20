@@ -99,12 +99,7 @@ impl ProfileSettings {
             );
         }
 
-        let fps = args.value("--profile-fps")?.unwrap_or("60");
-        let fps = fps
-            .parse::<u32>()
-            .ok()
-            .filter(|&fps| fps == 0 || (15..=240).contains(&fps))
-            .ok_or("--profile-fps requires 0 (uncapped) or 15..240")?;
+        let fps = args.fps("--profile-fps")?;
         Ok(Some(Self {
             size,
             surface,
@@ -159,8 +154,10 @@ pub(crate) struct ProfileClock {
 }
 
 impl ProfileClock {
+    /// The route frame a timed profile has reached: its warmup, then its seconds at the
+    /// routes' rate.
     pub fn reference_frame(&self) -> u32 {
-        300 + (self.route_seconds * 120.0).round() as u32
+        300 + (self.route_seconds * f64::from(crate::dev::repro::ROUTE_FPS)).round() as u32
     }
 }
 
@@ -466,7 +463,7 @@ mod tests {
         let mut clock = ProfileClock::default();
         for fps in [60, 120] {
             clock.route_seconds = (2 * fps) as f64 / fps as f64;
-            assert_eq!(clock.reference_frame(), 540);
+            assert_eq!(clock.reference_frame(), 420);
         }
     }
 }

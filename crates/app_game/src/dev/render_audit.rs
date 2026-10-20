@@ -117,6 +117,53 @@ enum Control {
 }
 
 impl Control {
+    /// F1's pages of settings, in the order they are shown.
+    const FEATURES: &[Control] = &[
+        Control::Clouds,
+        Control::GrassEnabled,
+        Control::Sky,
+        Control::Bloom,
+        Control::AutoExposure,
+        Control::Fog,
+        Control::Particles,
+        Control::LightShafts,
+        Control::Terrain,
+        Control::Objects,
+        Control::Shadows,
+        Control::ShadowMap,
+        Control::Wind,
+    ];
+
+    const QUALITY: &[Control] = &[
+        Control::Scale,
+        Control::Upscaler,
+        Control::TemporalDebug,
+        Control::Antialiasing,
+        Control::ObjectDetail,
+    ];
+
+    const ADVANCED: &[Control] = &[
+        Control::Grass,
+        Control::Scene,
+        Control::Prepass,
+        Control::Counters,
+        Control::GpuPassTimings,
+        Control::Lock,
+        Control::PageGizmos,
+        Control::TerrainMacro,
+    ];
+
+    /// Every setting a capture comparison reports: the header's, then each page's. Grass
+    /// Disabled is the grass mode Advanced shows in full; the lock is not a setting.
+    fn settings() -> impl Iterator<Item = Control> {
+        [Control::FrameRate, Control::MovementSpeed]
+            .into_iter()
+            .chain(Self::FEATURES.iter().copied())
+            .chain(Self::QUALITY.iter().copied())
+            .chain(Self::ADVANCED.iter().copied())
+            .filter(|c| !matches!(c, Control::GrassEnabled | Control::Lock))
+    }
+
     fn label(self, s: &RuntimeSettings, frame_rate: FrameRate) -> String {
         match self {
             Self::FrameRate => frame_rate.label(),
@@ -342,7 +389,6 @@ fn update_labels(
     }
 }
 
-#[allow(clippy::too_many_arguments)] // Independent Bevy input resources and UI layout.
 fn route_input(
     window: Single<&Window, With<PrimaryWindow>>,
     panels: Query<(&ComputedNode, &UiGlobalTransform, &InheritedVisibility), With<AuditPanel>>,

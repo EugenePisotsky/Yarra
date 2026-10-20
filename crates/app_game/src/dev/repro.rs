@@ -6,6 +6,10 @@ use engine::{ActiveWorldSpace, GameplaySystems, WorldViewCamera};
 use crate::game_render::scale_index;
 use crate::runtime_settings::{RuntimeSettings, Scene};
 
+/// Routes are written in frames of the game at its 60 FPS cap; a timed profile and the wind
+/// map seconds to them at this rate.
+pub(crate) const ROUTE_FPS: f32 = 60.0;
+
 /// A repeatable camera route, named on the command line by [`Route::name`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Route {
@@ -450,7 +454,7 @@ fn synchronize_wind(
     // Run after Update's normal wind advance. Capture frame 600 now has identical wind
     // geometry even when startup compilation takes a different amount of wall-clock time.
     wind.set_phase_seconds(profile.as_ref().map_or_else(
-        || frame.0 as f32 / if cfg!(target_os = "ios") { 60.0 } else { 120.0 },
+        || frame.0 as f32 / ROUTE_FPS,
         |p| 2.5 + p.route_seconds as f32,
     ));
 }
