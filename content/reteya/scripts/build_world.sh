@@ -21,9 +21,9 @@ packs=(yarra_bay/bay yarra_longleaf/longleaf yarra_spruces/spruces yarra_birches
 FOREST=(uv run --with numpy --with scipy --with pillow python tools/forest_plan.py $IN/planning/heightfield.json $W/forest
   --roads content/reteya/roads.ron --keep-open tributary --keep-open wetland --keep-open bedrock
   --keep-open riverbed --keep-open mud --keep-open wet_bank --keep-open snow)
-$COOK import-heightfield $IN/heightfield.json $P $R
+$COOK import-heightfield $IN/heightfield.json $P $R --no-cook
 for pack in $packs; do $COOK import-assets assets/packs/$pack.catalog.ron $P; done
-$COOK import-roads content/reteya/roads.ron $P $R
+$COOK import-roads content/reteya/roads.ron $P $R --no-cook
 $FOREST --apply --project $P | tail -2
 $COOK cook $P $R
 mkdir -p $W/world.project.views

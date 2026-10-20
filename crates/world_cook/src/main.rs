@@ -1,6 +1,9 @@
-use std::path::PathBuf;
+use std::{ffi::OsString, path::PathBuf};
 
 use anyhow::{Context, Result, bail};
+
+const USAGE: &str = "expected `cook`, `import-heightfield`, `import-roads`, `import-grass`, \
+                     `import-assets`, `create-demo` or `create-road-demo`";
 
 fn main() -> Result<()> {
     let mut arguments = std::env::args_os().skip(1);
@@ -9,159 +12,168 @@ fn main() -> Result<()> {
         .and_then(|argument| argument.into_string().ok())
         .unwrap_or_else(|| "cook".into());
 
-    if command == "import-assets" {
-        let source = PathBuf::from(arguments.next().context("expected CATALOG_RON")?);
-        let project = arguments
-            .next()
-            .map(PathBuf::from)
-            .unwrap_or_else(default_project_path);
+    match command.as_str() {
+        "cook" => {
+            let options = CookOptions::parse(arguments)?;
 
-        if arguments.next().is_some() {
-            bail!("usage: yarra-world-cook import-assets CATALOG_RON [PROJECT_DB]");
+            if !options.cook {
+                bail!("`cook --no-cook` does nothing");
+            }
+
+            cook(&options)
         }
+        "import-heightfield" => import_heightfield(arguments),
+        "import-roads" => import_roads(arguments),
+        "import-grass" => import_grass(arguments),
+        "import-assets" => import_assets(arguments),
+        "create-demo" | "create-road-demo" => create_demo(&command, arguments),
+        _ => bail!("unknown command {command:?}; {USAGE}"),
+    }
+}
 
-        let catalog: world_db::AssetImportCatalog =
-            ron::from_str(&std::fs::read_to_string(&source)?)?;
-        catalog.validate()?;
-        let asset_root = repository_root().join("assets");
+/// Imports a heightfield as the default world's terrain, creating the project if needed.
+fn import_heightfield(mut arguments: impl Iterator<Item = OsString>) -> Result<()> {
+    let manifest = PathBuf::from(
+        arguments
+            .next()
+            .context("expected a heightfield MANIFEST_JSON")?,
+    );
+    let options = CookOptions::parse(arguments)?;
+    let project = &options.project;
+    let report = yarra_world_cook::import_heightfield(&manifest, project)?;
+    let stats = report.stats;
+    println!(
+        "{} {} in {:.1} s: {} cells ({} added, {} changed, {} removed, {} flat), heights {} to {} m",
+        if report.created { "Created" } else { "Updated" },
+        project.display(),
+        report.seconds,
+        stats.cells,
+        stats.added,
+        stats.changed,
+        stats.removed,
+        report.flat_cells,
+        report.bounds[0],
+        report.bounds[1]
+    );
 
-        for asset in &catalog.assets {
-            for uri in
-                std::iter::once(&asset.source_uri).chain(asset.variants.iter().map(|v| &v.uri))
-            {
-                if !asset_root.join(uri).is_file() {
-                    bail!(
-                        "missing local asset {}; run the pack exporter first",
-                        asset_root.join(uri).display()
-                    );
-                }
+    if !report.unused_masks.is_empty() {
+        println!(
+            "No layer reads the masks {}; give a layer one in the editor to use it",
+            report.unused_masks.join(", ")
+        );
+    }
+
+    println!("Start views: {}", project.with_extension("views").display());
+    cook_after_import(&options)
+}
+
+fn import_roads(mut arguments: impl Iterator<Item = OsString>) -> Result<()> {
+    let source = PathBuf::from(arguments.next().context("expected a roads RON")?);
+    let options = CookOptions::parse(arguments)?;
+    let report =
+        yarra_world_cook::import_roads(&std::fs::read_to_string(&source)?, &options.project)?;
+    println!(
+        "imported {} road styles and {} roads ({} knots) from {}",
+        report.styles,
+        report.roads,
+        report.knots,
+        source.display()
+    );
+    cook_after_import(&options)
+}
+
+fn import_grass(mut arguments: impl Iterator<Item = OsString>) -> Result<()> {
+    let source = PathBuf::from(arguments.next().context("expected a grass pack RON")?);
+    let options = CookOptions::parse(arguments)?;
+    let catalog = yarra_world_cook::grass_catalog(&std::fs::read_to_string(&source)?)?;
+    world_db::ProjectWriter::open(&options.project)?.replace_vegetation_catalog(&catalog)?;
+    println!("imported {}", source.display());
+    cook_after_import(&options)
+}
+
+fn import_assets(mut arguments: impl Iterator<Item = OsString>) -> Result<()> {
+    let source = PathBuf::from(arguments.next().context("expected CATALOG_RON")?);
+    let project = arguments
+        .next()
+        .map(PathBuf::from)
+        .unwrap_or_else(default_project_path);
+
+    if arguments.next().is_some() {
+        bail!("usage: yarra-world-cook import-assets CATALOG_RON [PROJECT_DB]");
+    }
+
+    let catalog: world_db::AssetImportCatalog = ron::from_str(&std::fs::read_to_string(&source)?)?;
+    catalog.validate()?;
+    let asset_root = repository_root().join("assets");
+
+    for asset in &catalog.assets {
+        for uri in std::iter::once(&asset.source_uri).chain(asset.variants.iter().map(|v| &v.uri)) {
+            if !asset_root.join(uri).is_file() {
+                bail!(
+                    "missing local asset {}; run the pack exporter first",
+                    asset_root.join(uri).display()
+                );
             }
         }
-
-        world_db::ProjectWriter::open(&project)?.import_assets(&catalog)?;
-        println!(
-            "Registered {} assets in {}. Reopen the editor to refresh its palette; cook after placing or scattering them.",
-            catalog.assets.len(),
-            project.display()
-        );
-        return Ok(());
     }
 
-    if command == "create-demo" || command == "create-road-demo" {
-        let project = PathBuf::from(arguments.next().context("expected a new PROJECT_DB path")?);
+    world_db::ProjectWriter::open(&project)?.import_assets(&catalog)?;
+    println!(
+        "Registered {} assets in {}. Reopen the editor to refresh its palette; cook after placing or scattering them.",
+        catalog.assets.len(),
+        project.display()
+    );
+    Ok(())
+}
 
-        if arguments.next().is_some() {
-            bail!("usage: yarra-world-cook {command} PROJECT_DB");
-        }
+fn create_demo(command: &str, mut arguments: impl Iterator<Item = OsString>) -> Result<()> {
+    let project = PathBuf::from(arguments.next().context("expected a new PROJECT_DB path")?);
 
-        if command == "create-road-demo" {
-            yarra_world_cook::create_road_demo_project(&project)?;
-        } else {
-            yarra_world_cook::create_demo_project(&project)?;
-        }
-
-        println!(
-            "created layer-based authoring database: {}",
-            project.display()
-        );
-        return Ok(());
+    if arguments.next().is_some() {
+        bail!("usage: yarra-world-cook {command} PROJECT_DB");
     }
 
-    if command == "import-roads" {
-        let source = PathBuf::from(arguments.next().context("expected a roads RON")?);
-        let options = CookOptions::parse(arguments)?;
-        let report =
-            yarra_world_cook::import_roads(&std::fs::read_to_string(&source)?, &options.project)?;
-        let manifest = options.cook()?.manifest;
-        println!(
-            "imported {} road styles and {} roads ({} knots) from {} and published runtime generation {}",
-            report.styles,
-            report.roads,
-            report.knots,
-            source.display(),
-            manifest.generation_id
-        );
-        return Ok(());
-    }
-
-    if command == "import-grass" {
-        let source = PathBuf::from(arguments.next().context("expected a grass pack RON")?);
-        let options = CookOptions::parse(arguments)?;
-        let catalog = yarra_world_cook::grass_catalog(&std::fs::read_to_string(&source)?)?;
-        world_db::ProjectWriter::open(&options.project)?.replace_vegetation_catalog(&catalog)?;
-        let manifest = options.cook()?.manifest;
-        println!(
-            "imported {} and published runtime generation {}",
-            source.display(),
-            manifest.generation_id
-        );
-        return Ok(());
-    }
-
-    let heightfield = if command == "import-heightfield" {
-        Some(PathBuf::from(
-            arguments
-                .next()
-                .context("expected a heightfield MANIFEST_JSON")?,
-        ))
+    if command == "create-road-demo" {
+        yarra_world_cook::create_road_demo_project(&project)?;
     } else {
-        None
-    };
-
-    if command != "cook" && heightfield.is_none() {
-        bail!(
-            "unknown command {command:?}; expected `cook`, `import-heightfield`, `create-demo`, `create-road-demo`, `import-grass`, `import-roads` or `import-assets`"
-        );
+        yarra_world_cook::create_demo_project(&project)?;
     }
 
-    let options = CookOptions::parse(arguments)?;
-    let project_path = &options.project;
-    let runtime_path = &options.runtime;
+    println!(
+        "created layer-based authoring database: {}",
+        project.display()
+    );
+    Ok(())
+}
 
-    if let Some(manifest) = &heightfield {
-        // The heightfield defines the world; the cook below publishes it.
-        let report = yarra_world_cook::import_heightfield(manifest, project_path)?;
-        let stats = report.stats;
-        println!(
-            "{} {} in {:.1} s: {} cells ({} added, {} changed, {} removed, {} flat), heights {} to {} m",
-            if report.created { "Created" } else { "Updated" },
-            project_path.display(),
-            report.seconds,
-            stats.cells,
-            stats.added,
-            stats.changed,
-            stats.removed,
-            report.flat_cells,
-            report.bounds[0],
-            report.bounds[1]
-        );
-
-        if !report.unused_masks.is_empty() {
-            println!(
-                "No layer reads the masks {}; give a layer one in the editor to use it",
-                report.unused_masks.join(", ")
-            );
-        }
-
-        println!(
-            "Start views: {}",
-            project_path.with_extension("views").display()
-        );
+/// Publishes what an import changed, unless asked not to: a build of several imports cooks
+/// once, at the end.
+fn cook_after_import(options: &CookOptions) -> Result<()> {
+    if options.cook {
+        cook(options)
+    } else {
+        println!("Not cooked; cook to publish the change");
+        Ok(())
     }
+}
 
-    if !project_path.exists() {
+fn cook(options: &CookOptions) -> Result<()> {
+    if !options.project.exists() {
         bail!(
             "project {} does not exist; build Reteya with `content/reteya/scripts/build_world.sh` (see content/reteya/README.md) or supply an existing PROJECT_DB",
-            project_path.display()
+            options.project.display()
         );
     }
 
-    let report = options.cook()?;
-    let manifest = report.manifest;
+    let report = if options.full {
+        yarra_world_cook::cook_project_fresh(&options.project, &options.runtime)
+    } else {
+        yarra_world_cook::cook_project_with_report(&options.project, &options.runtime)
+    }?;
     println!(
         "published runtime generation {}: {}",
-        manifest.generation_id,
-        runtime_path.display()
+        report.manifest.generation_id,
+        options.runtime.display()
     );
     let stats = report.stats;
     println!(
@@ -224,16 +236,21 @@ struct CookOptions {
     runtime: PathBuf,
     /// Recompile every cell instead of continuing the existing runtime.
     full: bool,
+    /// Whether an import publishes what it changed.
+    cook: bool,
 }
 
 impl CookOptions {
-    fn parse(arguments: impl IntoIterator<Item = std::ffi::OsString>) -> Result<Self> {
+    fn parse(arguments: impl IntoIterator<Item = OsString>) -> Result<Self> {
         let mut paths = Vec::new();
         let mut full = false;
+        let mut cook = true;
 
         for argument in arguments {
             if argument == "--full" {
                 full = true;
+            } else if argument == "--no-cook" {
+                cook = false;
             } else if argument.to_string_lossy().starts_with("--") {
                 bail!("unknown cook option {argument:?}");
             } else {
@@ -242,7 +259,7 @@ impl CookOptions {
         }
 
         if paths.len() > 2 {
-            bail!("expected [PROJECT_DB] [RUNTIME_DB] [--full]");
+            bail!("expected [PROJECT_DB] [RUNTIME_DB] [--full] [--no-cook]");
         }
 
         let mut paths = paths.into_iter();
@@ -250,15 +267,8 @@ impl CookOptions {
             project: paths.next().unwrap_or_else(default_project_path),
             runtime: paths.next().unwrap_or_else(default_runtime_path),
             full,
+            cook,
         })
-    }
-
-    fn cook(&self) -> Result<yarra_world_cook::CookReport> {
-        if self.full {
-            yarra_world_cook::cook_project_fresh(&self.project, &self.runtime)
-        } else {
-            yarra_world_cook::cook_project_with_report(&self.project, &self.runtime)
-        }
     }
 }
 
@@ -267,7 +277,7 @@ mod tests {
     use super::*;
 
     fn options(args: &[&str]) -> Result<CookOptions> {
-        CookOptions::parse(args.iter().map(std::ffi::OsString::from))
+        CookOptions::parse(args.iter().map(OsString::from))
     }
 
     #[test]
@@ -275,18 +285,13 @@ mod tests {
         let default = options(&[]).unwrap();
         assert_eq!(default.project, default_project_path());
         assert_eq!(default.runtime, default_runtime_path());
-        assert!(!default.full);
-        let custom = options(&["source.sqlite", "runtime.sqlite", "--full"]).unwrap();
+        assert!(!default.full && default.cook);
+        let custom = options(&["source.sqlite", "runtime.sqlite", "--full", "--no-cook"]).unwrap();
         assert_eq!(custom.project, PathBuf::from("source.sqlite"));
         assert_eq!(custom.runtime, PathBuf::from("runtime.sqlite"));
-        assert!(custom.full);
+        assert!(custom.full && !custom.cook);
 
-        for args in [
-            vec!["--terrain-materials", "assets"],
-            vec!["--geometry-only"],
-            vec!["--unknown"],
-            vec!["one", "two", "three"],
-        ] {
+        for args in [vec!["--unknown"], vec!["one", "two", "three"]] {
             assert!(options(&args).is_err(), "{args:?}");
         }
     }
