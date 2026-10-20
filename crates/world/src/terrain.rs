@@ -40,7 +40,8 @@ pub struct TerrainSurface {
     pub normal_strength: f32,
     pub roughness_min: f32,
     pub roughness_max: f32,
-    /// How far feet press into the ground, in metres: deep for snow, 0 for firm ground.
+    /// How deep the surface's soft ground (snow) lies over the firm ground the heights hold, in
+    /// metres: the ground is drawn that much higher and feet sink through it; 0 for firm ground.
     pub soft_depth: f32,
 }
 

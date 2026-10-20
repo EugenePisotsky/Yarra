@@ -84,6 +84,13 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
   Arkham Origins: parallax "will never be as thick"). CDLOD splits soft leaves further near the
   camera, on the leaves' triangles: +260k triangles on the pass basin with no measurable cost, and
   4M triangles in the main pass measured within noise, so geometry is not the limit.
+- **Snow as a layer over the firm ground.** *Kept* (October 20). Heights stay the ground, actors
+  keep standing on it and wade; the vertex shader raises soft surfaces by their `soft_depth`
+  (snow 0.4 m) out to 300 m, and banks form where the control shares give way to firm ground
+  (no thickness past 300 m, where 40 cm is a pixel or two). Cost on a screen of snow about
+  0.3–0.6 ms, firm ground none. Carrying the control cell through the fragment shader for the
+  banks' slope cost 0.7 ms by register pressure alone; carrying only the slope out of
+  `ground_surfaces` and skipping cells without a soft layer by a bit mask brought it down.
 - **Terrain shadows and sky occlusion from a GPU horizon map.** *Kept* (`3a151a2`). The CPU search
   on every core each 0.5° of sun dropped a frame every ~2 s, only with the day clock on (214
   drops → 8).

@@ -65,9 +65,16 @@ pub struct ClipmapSettings {
     macro_scales: Vec4,
     /// Macro contrast, whether macro variation is on, control texels per side.
     ground: Vec4,
-    /// Range of the first detail level on soft ground (0: none).
+    /// Range of the first detail level on soft ground (0: none), and the soft texture layers as
+    /// a bit mask (its bits).
     detail: Vec4,
+    /// How deep each texture layer's soft ground lies over the firm ground, metres, four a
+    /// vector: the vertex stage's copy of the surface table's (`SOFT_LAYERS` layers).
+    soft: [Vec4; SOFT_LAYERS / 4],
 }
+
+/// Texture layers the control tiles can name (five bits).
+const SOFT_LAYERS: usize = 32;
 
 /// One of the world's ground surfaces, by texture array layer.
 #[derive(Clone, Copy, Debug, Default, ShaderType)]
@@ -79,7 +86,8 @@ pub struct ClipmapSurface {
     pub material: Vec4,
     /// The grass field's linear colour and how fully it covers the surface.
     pub grass: Vec4,
-    /// x: how far feet press into it, metres (`world::TerrainSurface::soft_depth`).
+    /// x: how deep its soft ground lies over the firm ground, metres
+    /// (`world::TerrainSurface::soft_depth`).
     pub soft: Vec4,
 }
 
@@ -332,7 +340,13 @@ impl ClipmapTextures {
                     ground.macro_albedo_strength,
                 ),
                 ground: Vec4::new(ground.macro_contrast, 1.0, control_side as f32, 0.0),
-                detail: Vec4::new(ranges.detail as f32, 0.0, 0.0, 0.0),
+                detail: Vec4::new(
+                    ranges.detail as f32,
+                    f32::from_bits(soft_mask(&ground.surfaces)),
+                    0.0,
+                    0.0,
+                ),
+                soft: soft_depths(&ground.surfaces),
             },
             heights: Some(heights.clone()),
             normals: Some(normals.clone()),
@@ -358,6 +372,27 @@ impl ClipmapTextures {
             state,
         }
     }
+}
+
+/// Each texture layer's soft depth, four a vector.
+fn soft_depths(surfaces: &[ClipmapSurface]) -> [Vec4; SOFT_LAYERS / 4] {
+    let mut depths = [Vec4::ZERO; SOFT_LAYERS / 4];
+
+    for (layer, surface) in surfaces.iter().enumerate().take(SOFT_LAYERS) {
+        depths[layer / 4][layer % 4] = surface.soft.x;
+    }
+
+    depths
+}
+
+/// The soft texture layers, a bit each.
+fn soft_mask(surfaces: &[ClipmapSurface]) -> u32 {
+    surfaces
+        .iter()
+        .take(SOFT_LAYERS)
+        .enumerate()
+        .filter(|(_, s)| s.soft.x > 0.0)
+        .fold(0, |mask, (layer, _)| mask | 1 << layer)
 }
 
 /// The control texture's layout: twice the samples of the heights' per node.
@@ -953,6 +988,21 @@ mod tests {
         assert_eq!(value("STATE_WEAR"), i64::from(STATE_WEAR));
         assert_eq!(value("WEAR_WINDOW"), i64::from(WEAR_WINDOW));
         assert_eq!(value("DETAIL_LEVELS"), i64::from(DETAIL_LEVELS));
+    }
+
+    #[test]
+    fn soft_layers_reach_the_vertex_stage_by_layer() {
+        let surface = |soft| ClipmapSurface {
+            soft: Vec4::new(soft, 0.0, 0.0, 0.0),
+            ..default()
+        };
+        let surfaces: Vec<_> = (0..6)
+            .map(|l| surface(if l == 5 { 0.4 } else { 0.0 }))
+            .collect();
+        assert_eq!(soft_mask(&surfaces), 1 << 5);
+        let depths = soft_depths(&surfaces);
+        assert_eq!(depths[1], Vec4::new(0.0, 0.4, 0.0, 0.0));
+        assert_eq!(depths[0], Vec4::ZERO);
     }
 
     #[test]

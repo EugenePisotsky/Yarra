@@ -5,11 +5,13 @@
 // lower even neighbour, so at the range the patch is the coarser grid and meets coarser
 // neighbours without cracks. Distances are from the main camera (the state texture's eye), so
 // shadow cascades draw the same surface. Detail patches, parts of a leaf on soft ground, place
-// their vertices on the leaves' triangles and morph the same way.
+// their vertices on the leaves' triangles and morph the same way. Near the camera every vertex
+// stands on the soft layer (snow) over the firm ground the heights hold, morphing to the lift the
+// coarser level gives it, so levels still meet.
 import bevy_pbr::render::{mesh_functions, view_transformations::position_world_to_clip};
 import package::shaders::terrain::clipmap_common::{
     DETAIL_LEVELS, eye, heights, intervals, leaf_spacing, leaf_surface_height, level_normal, levels,
-    normals, render_xz, settings, texel, unpack_normal,
+    normals, render_xz, settings, soft_layer, soft_layer_reach, texel, unpack_normal,
 };
 @if(PREPASS_PIPELINE) import bevy_pbr::prepass::io::VertexOutput;
 @else import bevy_pbr::render::forward_io::VertexOutput;
@@ -42,18 +44,34 @@ fn morph(position: vec3<f32>, range: f32) -> f32 {
     return clamp((distance(eye(), position) - start) / (end - start), 0.0, 1.0);
 }
 
-// A detail level's sample: a leaf sample plus a fraction of 2^-detail steps, on the leaves'
-// triangles.
+// A detail level's sample is a leaf sample plus a fraction of 2^-detail steps.
+fn detail_leaf(sample: vec2<i32>, detail: u32) -> vec2<i32> {
+    return sample >> vec2(detail);
+}
+
+fn detail_fraction(sample: vec2<i32>, detail: u32) -> vec2<f32> {
+    return vec2<f32>(sample - (detail_leaf(sample, detail) << vec2(detail))) / f32(1u << detail);
+}
+
+// On the leaves' triangles.
 fn detail_point(sample: vec2<i32>, detail: u32) -> vec3<f32> {
-    let leaf = sample >> vec2(detail);
-    let fraction = vec2<f32>(sample - (leaf << vec2(detail))) / f32(1u << detail);
+    let leaf = detail_leaf(sample, detail);
+    let fraction = detail_fraction(sample, detail);
     let xz = render_xz(leaf) + fraction * leaf_spacing();
     return vec3(xz.x, leaf_surface_height(leaf, fraction), xz.y);
 }
 
 fn detail_normal(sample: vec2<i32>, detail: u32) -> vec3<f32> {
-    let leaf = sample >> vec2(detail);
-    return level_normal(0u, leaf, vec2<f32>(sample - (leaf << vec2(detail))) / f32(1u << detail));
+    return level_normal(0u, detail_leaf(sample, detail), detail_fraction(sample, detail));
+}
+
+fn detail_lift(sample: vec2<i32>, detail: u32) -> f32 {
+    return soft_layer(0u, detail_leaf(sample, detail), detail_fraction(sample, detail));
+}
+
+// A level's sample, lifted as the control samples of level `control` hold the soft layer.
+fn level_lift(sample: vec2<i32>, level: u32, control: u32) -> f32 {
+    return soft_layer(control, sample << vec2(level), vec2(0.0));
 }
 
 @vertex
@@ -65,8 +83,10 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     var position: vec3<f32>;
     var normal: vec3<f32>;
     var k = 0.0;
-    if i32(tag_level(tag)) < DETAIL_LEVELS {
-        let detail = u32(DETAIL_LEVELS - i32(tag_level(tag)));
+    let detailed = i32(tag_level(tag)) < DETAIL_LEVELS;
+    let detail = u32(max(DETAIL_LEVELS - i32(tag_level(tag)), 1));
+    let level = u32(max(i32(tag_level(tag)) - DETAIL_LEVELS, 0));
+    if detailed {
         position = detail_point(sample, detail);
         normal = detail_normal(sample, detail);
         k = morph(position, settings.detail.x / f32(1u << (detail - 1u)));
@@ -76,7 +96,6 @@ fn vertex(vertex: Vertex) -> VertexOutput {
             normal = normalize(mix(normal, detail_normal(even, detail), k));
         }
     } else {
-        let level = tag_level(tag) - u32(DETAIL_LEVELS);
         let xz = render_xz(sample << vec2(level));
         position = vec3(xz.x, sample_height(sample, level), xz.y);
         normal = sample_normal(sample, level);
@@ -90,6 +109,21 @@ fn vertex(vertex: Vertex) -> VertexOutput {
             position = select(mix(position, coarse, k), coarse, k >= 1.0);
             normal = normalize(mix(normal, sample_normal(even, level), k));
         }
+    }
+    // Every vertex, even ones that do not move, blends to the coarser grid's lift at the
+    // sample it morphs onto, read at that grid's own level.
+    let reach = soft_layer_reach(distance(eye(), position));
+    if reach > 0.0 {
+        var lift: f32;
+        if detailed {
+            lift = mix(detail_lift(sample, detail), detail_lift(even, detail), k);
+        } else {
+            lift = level_lift(sample, level, level);
+            if k > 0.0 {
+                lift = mix(lift, level_lift(even, level, level + 1u), k);
+            }
+        }
+        position.y += lift * reach;
     }
     out.world_position = vec4(position, 1.0);
     out.position = position_world_to_clip(position);

@@ -12,14 +12,18 @@ struct ClipmapSettings {
     macro_scales: vec4<f32>,
     // Macro contrast, whether macro variation is on, control texels per side.
     ground: vec4<f32>,
-    // Range of the first detail level on soft ground (0: none).
+    // Range of the first detail level on soft ground (0: none), soft layers as a bit mask (bits).
     detail: vec4<f32>,
+    // How deep each texture layer's soft ground lies over the firm ground, metres, four a vector:
+    // the vertex stage's copy of the surface table's.
+    soft: array<vec4<f32>, 8>,
 }
 @group(constants::MATERIAL_BIND_GROUP) @binding(0) var<uniform> settings: ClipmapSettings;
 @group(constants::MATERIAL_BIND_GROUP) @binding(1) var heights: texture_2d_array<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(2) var normals: texture_2d_array<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(3) var normal_sampler: sampler;
 @group(constants::MATERIAL_BIND_GROUP) @binding(4) var state: texture_2d<u32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(5) var control: texture_2d_array<u32>;
 
 // State texels (gpu.rs, whose tests check these copies): eye, origin, a window per level, each
 // level's residency rows, then the cell each wear atlas slot holds.
@@ -120,6 +124,113 @@ fn wear_slot(cell: vec2<i32>) -> i32 {
         return -1;
     }
     return slot;
+}
+
+// A packed control sample (world::pack_control): three layers of five bits, two shares of 255.
+struct Sample { layers: vec3<u32>, shares: vec3<f32>, }
+
+fn unpack(sample: u32) -> Sample {
+    let a = f32((sample >> 16u) & 255u) / 255.0;
+    let b = f32((sample >> 24u) & 255u) / 255.0;
+    return Sample(vec3(sample & 31u, (sample >> 5u) & 31u, (sample >> 10u) & 31u),
+        vec3(a, b, max(1.0 - a - b, 0.0)));
+}
+
+// The four packed control samples of `level` around a leaf sample plus a fraction of one (x, y,
+// z, w: the cell's corners 00, 10, 01, 11), the fraction of the way between them, and metres
+// between them: control samples lie half a height sample apart at every level.
+struct ControlCell { packed: vec4<u32>, f: vec2<f32>, spacing: f32, }
+
+fn control_cell(level: u32, leaf: vec2<i32>, fraction: vec2<f32>) -> ControlCell {
+    let units = leaf * 2;
+    let first = units >> vec2(level);
+    let rest = units - (first << vec2(level));
+    let q = (vec2<f32>(rest) + fraction * 2.0) / f32(1u << level);
+    let whole = floor(q);
+    let mask = vec2(i32(settings.ground.z) - 1);
+    let t0 = (first + vec2<i32>(whole)) & mask;
+    let t1 = (first + vec2<i32>(whole) + 1) & mask;
+    let l = i32(level);
+    let packed = vec4(textureLoad(control, t0, l, 0).r, textureLoad(control, vec2(t1.x, t0.y), l, 0).r,
+        textureLoad(control, vec2(t0.x, t1.y), l, 0).r, textureLoad(control, t1, l, 0).r);
+    return ControlCell(packed, q - whole, leaf_spacing() * f32(1u << level) * 0.5);
+}
+
+// Where soft ground shares the ground with firm ground, its layer thins from this share to
+// nothing at that one: banks where snow ends, as wide as the masks blend.
+const SOFT_EDGE: vec2<f32> = vec2(0.65, 0.35);
+// The snow layer stands over the ground out to this range, thinning over its last part: past it,
+// half a metre is a pixel or two.
+const SOFT_LAYER_RANGE: vec2<f32> = vec2(200.0, 300.0);
+
+fn layer_soft_depth(layer: u32) -> f32 {
+    return settings.soft[layer >> 2u][layer & 3u];
+}
+
+// A control sample's soft ground: its depth by share, and the share of the ground that is soft.
+fn softness(packed: u32) -> vec2<f32> {
+    let s = unpack(packed);
+    let depths = vec3(layer_soft_depth(s.layers.x), layer_soft_depth(s.layers.y), layer_soft_depth(s.layers.z));
+    return vec2(dot(s.shares, depths), dot(s.shares, select(vec3(0.0), vec3(1.0), depths > vec3(0.0))));
+}
+
+// The soft layer's depth over the firm ground at a cell's fraction `f`, between its corners'
+// softness: soft ground's own depth where it covers most of the ground, thinning to its edge.
+fn cell_soft_layer(c: ControlCell, corners: array<vec2<f32>, 4>, f: vec2<f32>) -> f32 {
+    let s = mix(mix(corners[0], corners[1], f.x), mix(corners[2], corners[3], f.x), f.y);
+    return s.x / max(s.y, 1e-4) * smoothstep(SOFT_EDGE.y, SOFT_EDGE.x, s.y);
+}
+
+fn cell_softness(c: ControlCell) -> array<vec2<f32>, 4> {
+    return array(softness(c.packed.x), softness(c.packed.y), softness(c.packed.z), softness(c.packed.w));
+}
+
+// Whether a cell's four samples are the same: most of soft and firm ground alike, whose layer is
+// level there.
+fn uniform_cell(c: ControlCell) -> bool {
+    return all(c.packed == vec4(c.packed.x));
+}
+
+// Whether any of a cell's samples names a soft layer: most ground has none, and no layer.
+fn soft_cell(c: ControlCell) -> bool {
+    let mask = bitcast<u32>(settings.detail.y);
+    let p = c.packed;
+    let named = (vec4(mask) >> (p & vec4(31u))) | (vec4(mask) >> ((p >> vec4(5u)) & vec4(31u)))
+        | (vec4(mask) >> ((p >> vec4(10u)) & vec4(31u)));
+    return any((named & vec4(1u)) != vec4(0u));
+}
+
+// How deep the soft layer lies over the firm ground, metres, at a leaf sample plus a fraction
+// of one, as `level`'s control samples hold it.
+fn soft_layer(level: u32, leaf: vec2<i32>, fraction: vec2<f32>) -> f32 {
+    let c = control_cell(level, leaf, fraction);
+    if !soft_cell(c) {
+        return 0.0;
+    }
+    if uniform_cell(c) {
+        let s = softness(c.packed.x);
+        return s.x / max(s.y, 1e-4) * smoothstep(SOFT_EDGE.y, SOFT_EDGE.x, s.y);
+    }
+    return cell_soft_layer(c, cell_softness(c), c.f);
+}
+
+// The soft layer's slope along x and z within a control cell.
+fn soft_layer_slope(c: ControlCell) -> vec2<f32> {
+    if !soft_cell(c) || uniform_cell(c) {
+        return vec2(0.0);
+    }
+    let corners = cell_softness(c);
+    let e = 0.1;
+    let x = vec2(clamp(c.f.x - e, 0.0, 1.0), clamp(c.f.x + e, 0.0, 1.0));
+    let z = vec2(clamp(c.f.y - e, 0.0, 1.0), clamp(c.f.y + e, 0.0, 1.0));
+    let dx = (cell_soft_layer(c, corners, vec2(x.y, c.f.y)) - cell_soft_layer(c, corners, vec2(x.x, c.f.y))) / max((x.y - x.x) * c.spacing, 1e-6);
+    let dz = (cell_soft_layer(c, corners, vec2(c.f.x, z.y)) - cell_soft_layer(c, corners, vec2(c.f.x, z.x))) / max((z.y - z.x) * c.spacing, 1e-6);
+    return vec2(dx, dz);
+}
+
+// How much of the soft layer stands at `distance` metres from the camera.
+fn soft_layer_reach(distance: f32) -> f32 {
+    return 1.0 - smoothstep(SOFT_LAYER_RANGE.x, SOFT_LAYER_RANGE.y, distance);
 }
 
 // The leaves' drawn ground at a leaf sample plus a fraction (0..1) of one: their triangles, split

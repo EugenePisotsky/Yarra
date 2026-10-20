@@ -256,7 +256,9 @@ SQLite. The renderers (Bevy) have no SQLite: `engine` is the only library joinin
   culling. A node splits only when all four children are resident and vertices morph to the
   coarser grid, so levels meet without cracks. Soft leaves near the camera split into detail
   levels (`DETAIL_LEVELS` = 3: 0.5, 0.25 and 0.125 m within 48, 24 and 12 m) whose vertices lie
-  on the leaves' triangles. The print windows hold nothing the log does not:
+  on the leaves' triangles. Heights are the firm ground; soft surfaces (`soft_depth`, snow
+  0.4 m) stand that much higher within 300 m of the camera, thinning to banks where they give way
+  to firm ground, and every vertex morphs to the coarser level's lift, so levels still meet. The print windows hold nothing the log does not:
   ground a window moves onto starts undisturbed and takes every logged press reaching it.
 - Must not depend on `world_db` or `engine`.
 

@@ -28,7 +28,7 @@ struct Surface {
     /// What light wear tramples it to: a surface key.
     #[serde(default)]
     trampled: Option<String>,
-    /// How far feet press into it, in metres; most ground is firm.
+    /// How deep its soft ground lies over the firm ground, in metres; most ground is firm.
     #[serde(default)]
     soft_depth: f32,
 }

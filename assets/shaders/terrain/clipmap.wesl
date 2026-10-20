@@ -7,7 +7,7 @@
 // from the height clipmap at the pixel's footprint. Soft ground takes the prints feet pressed into
 // it (terrain/prints.wesl).
 import package::shaders::lighting::pbr_lighting::apply_pbr_lighting;
-import package::shaders::terrain::clipmap_common::{clipmap_normal, intervals, leaf_height, leaf_spacing, levels, node_of, origin_samples, resident_level, settings, wear_slot};
+import package::shaders::terrain::clipmap_common::{ControlCell, Sample, clipmap_normal, control_cell, intervals, leaf_height, leaf_spacing, levels, node_of, origin_samples, resident_level, settings, soft_layer_reach, soft_layer_slope, unpack, wear_slot};
 import package::shaders::terrain::wear::{WEAR_TEXEL, bare_share, rut_at, rut_parallax, wear_at, wear_patch, wheel_grooves};
 import package::shaders::terrain::prints::{print_parallax, print_relief, print_relief_slope, print_view};
 import package::shaders::weather::ground_wetness::apply_rain_puddles;
@@ -25,7 +25,6 @@ import bevy_pbr::{
 
 // crates/terrain_render/src/clipmap/gpu.rs ClipmapSurface, by texture array layer.
 struct ClipmapSurface { texture: vec4<f32>, material: vec4<f32>, grass: vec4<f32>, soft: vec4<f32>, }
-@group(constants::MATERIAL_BIND_GROUP) @binding(5) var control: texture_2d_array<u32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(6) var<storage, read> surfaces: array<ClipmapSurface>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(7) var base_color: texture_2d_array<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(8) var repeat_sampler: sampler;
@@ -85,16 +84,6 @@ fn terrain_hollow(leaf: vec2<i32>, fraction: vec2<f32>) -> f32 {
     return clamp((sum / 12.0 - centre) / HOLLOW_DEPTH, 0.0, 1.0);
 }
 
-// A packed control sample (world::pack_control): three layers of five bits, two shares of 255.
-struct Sample { layers: vec3<u32>, shares: vec3<f32>, }
-
-fn unpack(sample: u32) -> Sample {
-    let a = f32((sample >> 16u) & 255u) / 255.0;
-    let b = f32((sample >> 24u) & 255u) / 255.0;
-    return Sample(vec3(sample & 31u, (sample >> 5u) & 31u, (sample >> 10u) & 31u),
-        vec3(a, b, max(1.0 - a - b, 0.0)));
-}
-
 // A layer's share of a sample.
 fn share(s: Sample, layer: u32) -> f32 {
     return dot(select(vec3(0.0), s.shares, s.layers == vec3(layer)), vec3(1.0));
@@ -106,12 +95,12 @@ fn soft_depths(top: Top) -> vec3<f32> {
     return vec3(surfaces[top.layers.x].soft.x, surfaces[top.layers.y].soft.x, surfaces[top.layers.z].soft.x);
 }
 
-// How far feet could press into the ground's three heaviest surfaces, by their shares.
+// How deep the soft layer of the ground's three heaviest surfaces lies, by their shares.
 fn soft_depth(top: Top) -> f32 {
     return dot(top.weights, soft_depths(top)) / max(dot(top.weights, vec3(1.0)), 0.000001);
 }
 
-// How far feet press into the surface that shows at world XZ `p`: the three blended by their
+// How deep the soft layer of the surface that shows at world XZ `p` lies: the three blended by their
 // heights, one plain sample each, as the ground draws them. By shares alone, grass growing over
 // a little snow took whole prints.
 fn shown_soft_depth(top: Top, p: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>) -> f32 {
@@ -147,21 +136,12 @@ fn rank(top: Top, layer: u32, weight: f32) -> Top {
 // fraction of one, bilinearly. Candidates are each sample's heaviest surface and the nearest
 // sample's other two: a surface none of them names weighs too little to show. Control samples
 // lie half a height sample apart at every level.
-fn level_surfaces(level: u32, leaf: vec2<i32>, fraction: vec2<f32>) -> Top {
-    let units = leaf * 2;
-    let first = units >> vec2(level);
-    let rest = units - (first << vec2(level));
-    let q = (vec2<f32>(rest) + fraction * 2.0) / f32(1u << level);
-    let whole = floor(q);
-    let f = q - whole;
-    let mask = vec2(i32(settings.ground.z) - 1);
-    let t0 = (first + vec2<i32>(whole)) & mask;
-    let t1 = (first + vec2<i32>(whole) + 1) & mask;
-    let l = i32(level);
-    let p00 = textureLoad(control, t0, l, 0).r;
-    let p10 = textureLoad(control, vec2(t1.x, t0.y), l, 0).r;
-    let p01 = textureLoad(control, vec2(t0.x, t1.y), l, 0).r;
-    let p11 = textureLoad(control, t1, l, 0).r;
+fn level_surfaces(cell: ControlCell) -> Top {
+    let f = cell.f;
+    let p00 = cell.packed.x;
+    let p10 = cell.packed.y;
+    let p01 = cell.packed.z;
+    let p11 = cell.packed.w;
     let s00 = unpack(p00);
     let s10 = unpack(p10);
     let s01 = unpack(p01);
@@ -178,17 +158,25 @@ fn level_surfaces(level: u32, leaf: vec2<i32>, fraction: vec2<f32>) -> Top {
     return top;
 }
 
-// The ground's three heaviest surfaces for a footprint of 2^lod control samples: a level's
-// samples, or over the last part of its octave the next coarser level's at a share of pixels
-// that grows across it (the temporal upscaler resolves the dither into a blend).
-fn ground_surfaces(leaf: vec2<i32>, fraction: vec2<f32>, lod: f32, pixel: vec2<f32>) -> Top {
+// The ground's three heaviest surfaces, and the soft layer's slope where they come from the leaf
+// level's control samples (zero elsewhere).
+struct Ground { top: Top, soft_slope: vec2<f32>, }
+
+// The ground for a footprint of 2^lod control samples: a level's samples, or over the last part
+// of its octave the next coarser level's at a share of pixels that grows across it (the
+// temporal upscaler resolves the dither into a blend).
+
+fn ground_surfaces(leaf: vec2<i32>, fraction: vec2<f32>, lod: f32, pixel: vec2<f32>) -> Ground {
     let top = levels() - 1u;
     let fine = resident_level(u32(clamp(floor(lod), 0.0, f32(top))), leaf);
     let coarse = resident_level(min(fine + 1u, top), leaf);
     let t = smoothstep(0.6, 1.0, lod - f32(fine));
     let frame = f32(globals.frame_count % 64u);
     let noise = fract(52.9829189 * fract(dot(pixel + 5.588238 * frame, vec2(0.06711056, 0.00583715))));
-    return level_surfaces(select(fine, coarse, noise < t), leaf, fraction);
+    let level = select(fine, coarse, noise < t);
+    let cell = control_cell(level, leaf, fraction);
+    let slope = select(vec2(0.0), soft_layer_slope(cell), level == 0u);
+    return Ground(level_surfaces(cell), slope);
 }
 
 fn triangular(uv: vec2<f32>) -> vec2<f32> { return vec2(uv.x + uv.y * 0.5773502692, uv.y * 1.1547005384); }
@@ -336,7 +324,8 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         mix(mix(UNDER_SHADE.x, UNDER_SHADE.y, thinning), 1.0, field));
 
     // Control samples are half a leaf apart: one octave finer than the heights.
-    var top = ground_surfaces(leaf, fraction, lod + 1.0, in.position.xy);
+    let ground = ground_surfaces(leaf, fraction, lod + 1.0, in.position.xy);
+    var top = ground.top;
 
     // Roads near the camera: the wear field sinks ruts by parallax
     // (surfaces are sampled where the eye meets the rut floor), tilts the ground with their
@@ -402,6 +391,12 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     if wet {
         hollow = max(hollow, terrain_hollow(leaf, fraction));
     }
+
+    // The soft layer stands over the firm ground (terrain/clipmap_vertex.wesl): its banks, where
+    // soft ground gives way to firm, slope the ground, from the leaf level's control samples the
+    // surfaces were read from.
+    let slope = ground.soft_slope * soft_layer_reach(distance_to_camera);
+    ground_normal = normalize(ground_normal - vec3(slope.x, 0.0, slope.y));
 
     // Soft ground near the player: prints sink by parallax, tilt the ground with their walls,
     // and pack it, darker in their depths. Undisturbed ground shows itself: a view ray entering
