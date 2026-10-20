@@ -1,159 +1,88 @@
-# Asset layout
+# Assets
 
-The Houdini forest authoring project is tracked separately in
-[YarraVegetation](https://github.com/EugenePisotsky/YarraVegetation). Its native
-scene, generators, presets, and source-texture inventory are versioned there.
-Supplied textures, rendered atlases, and exported meshes remain local in both
-projects. Restoring a Git checkout alone does not restore these asset binaries.
+```text
+assets/catalogs/   tracked runtime catalogs (character presentations)
+assets/packs/      tracked pack manifests: provenance, expected local files, import decisions
+assets/shaders/    WESL shaders (layout in docs/ARCHITECTURE.md#shaders)
+assets/local/      ignored: licensed sources and everything built from them
+assets/generated/  ignored: the cooked runtime world, rebuilt from content/
+```
 
-For new trees or variants, use the
-[authoring guide](https://github.com/EugenePisotsky/YarraVegetation/blob/main/TREE_AUTHORING.md)
-and [game integration workflow](../docs/WORKFLOWS.md#creating-and-revising-trees).
-Import complete texture-sharing families together. The current 16 forms use
-`hierarchy_v2` bindings on bark and cards; rebuilt bundles require the matching
-importer and engine. Legacy exports retain their earlier wind path.
+A Git checkout does not restore `assets/local/`; back it up. What each folder holds and how to
+rebuild it is in [Workflows](../docs/WORKFLOWS.md#local-assets). Nothing cooks until it is
+restored.
 
-`assets/packs/yarra_birches/birches.catalog.ron` records the three imported birch
-states and their three mesh LODs. Rebuild them with
-`tools/import_vegetation_bundle.py` from the matching authoring bundles (Khronos
-KTX 4.4.2, available on PATH or via `--ktx`).
-`assets/packs/yarra_oaks/oaks.catalog.ron` records the forest, spreading and sparse
-oak forms. Use the same importer with a separate `assets/local/yarra_oaks/` output
-pack; the three forms share one texture set and three mesh LODs each.
-`assets/packs/yarra_maples/maples.catalog.ron` records forest, spreading and sparse
-maples, rebuilt into `assets/local/yarra_maples/` with the same importer. Both
-source leaf packages are combined into one shared texture set; the current bark
-uses the supplied elm texture as a provisional stand-in.
-`assets/packs/yarra_tall_forest/tall_forest.catalog.ron` records the taller layered
-broadleaf prototype inspired by Witcher reference IMG_1369. It uses
-small pointed qgCoa2 leaves on slim fixed sprays and compact facing bunches,
-with brown elm bark, and imports into `assets/local/yarra_tall_forest/`.
-The editable generator and preset live in YarraVegetation.
-`assets/packs/yarra_spruces/spruces.catalog.ron` records the Norway spruce
-prototype in `assets/local/yarra_spruces/`. It uses the supplied qgpvu2 shoots on
-fixed V-shaped sprays and provisional pine bark. Main folds remain through all
-three mesh LODs. The placement helper adds three review instances beside the
-longleafs and birches; use `spruce-stand`. See the workflow for rebuilding.
-Editor journals and reference captures are local working data as well.
+## Vegetation packs
 
-`assets/generated/` contains derived runtime SQLite generations produced by
-`yarra-world-cook`. It is ignored because it can be rebuilt from `content/`.
-
-`assets/local/` is intentionally ignored: supplied sources and derived binaries
-stay out of the public repository.
-
-Tracked pack manifests live in `assets/packs/`. They describe provenance,
-expected local files, import decisions, and verified runtime artifacts without
-putting licensed source or derived binaries in Git. This gives the editor and
-cooker a stable asset identity while storage policy can change independently.
-
-The local pack layout separates source files from engine-ready artifacts:
+Every tree, shrub and ground plant comes from the vegetation kit in
+[YarraVegetation](https://github.com/EugenePisotsky/YarraVegetation) (its generators, presets and
+[authoring guide](https://github.com/EugenePisotsky/YarraVegetation/blob/main/TREE_AUTHORING.md)).
+`tools/import_vegetation_bundle.py` turns a kit bundle into a pack: the tracked catalog
+`assets/packs/yarra_<pack>/<pack>.catalog.ron` and the local files in `assets/local/yarra_<pack>/`:
 
 ```text
 assets/local/yarra_longleaf/
-  import.json, source/pine_longleaf_branch_library.json
+  import.json, source/...
   runtime/pine_longleaf/pine_longleaf_lod{0,1,2,3}.{gltf,bin}, pine_longleaf_impostor_*.ktx2
   runtime/textures/
 ```
 
-Terrain packs follow the same local-only rule. `assets/packs/terrain/baltic.toml` tracks the
-surfaces, their Megascans sources under `~/Dev/Assets/terrain/sources` and their parameters:
+The packs: `yarra_longleaf` (pines), `yarra_spruces`, `yarra_birches`, `yarra_oaks`, `yarra_maples`,
+`yarra_tall_forest` (tall broadleaf), `yarra_dead_trees`, `yarra_bay` and `yarra_shrubs` (shrubs),
+and the ground cover `yarra_ferns`, `yarra_nettles`, `yarra_sorrel`, `yarra_lilies`. Import forms
+that share textures together. Grass is not a pack of meshes: `assets/packs/grass/baltic.ron`
+names what grows on each terrain surface.
+
+## Terrain surfaces
+
+`assets/packs/terrain/baltic.toml` lists the ground surfaces in texture-array order, their
+Megascans sources (`~/Dev/Assets/terrain/sources`) and parameters. The tools build:
 
 ```text
 assets/local/terrain/baltic/
   source/<surface>/{base_color.png,normal_material.png}   # tools/import_terrain_surfaces.py
   source/macro_variation.png, source/import-report.json
   runtime/{universal,astc}/{base_color_array,normal_material_array,macro_variation}.ktx2
+                                                          # tools/compile_terrain_textures.py
 ```
 
-The first character presentation is also restored from the legacy project into
-ignored local storage:
+The world's terrain catalog refers to the runtime files (UASTC for the Mac, ASTC for iOS).
 
-```text
-assets/local/characters/female_main/female_main_locomotion.glb
-```
+## Characters
 
-Its tracked contract is `assets/packs/characters/female_main.toml`. The GLB is a
-validated in-place export containing the body, skeleton, and animation clips;
-its expected SHA-256 is recorded in that manifest.
-
-Runtime character composition is separate from pack provenance. The checked-in
-`assets/catalogs/character_presentations.catalog.ron` assigns stable IDs to
-skeleton contracts, models, animation banks, clips, movement sets, and
-presentation profiles. It may reference ignored local assets, but it never
-changes their licensing or redistribution policy. See the
-[character runtime contract](../docs/ARCHITECTURE.md#characters-and-editor-lifecycle).
-
-Build the KTX2 arrays (portable UASTC and native iOS ASTC) with
-`uv run python tools/compile_terrain_textures.py`; see
-[Terrain surfaces](../docs/WORKFLOWS.md#terrain-surfaces). The SQLite terrain catalog refers to
-these runtime URIs; source images and compiled KTX2 files remain ignored.
+`assets/local/characters/female_main/female_main_locomotion.glb` is the player: body, skeleton
+and animation clips, checked against the SHA-256 in `assets/packs/characters/female_main.toml`.
+`assets/catalogs/character_presentations.catalog.ron` gives stable IDs to skeleton contracts,
+models, animation banks, clips, movement sets and presentation profiles
+(`engine::character_catalog`); it may reference ignored local files.
 
 ## Tree shading contracts
 
-Trees come from the vegetation kit (`tools/import_vegetation_bundle.py`). Leaf cards are lit
-by the crown, not by their own orientation. `NORMAL` is the smoothed crown surface normal
-and `COLOR_0` is crown-depth occlusion. The foliage material is tagged
-`yarra_shading: "crown_v1"`:
-both sides of a card keep the crown normal (Bevy's two-sided flip would light every
-back face as if it faced into the crown). Occlusion dims sky and ambient light;
-past the shadow range it also supplies a coarse self-shadow fallback. Leaves are kept rough and use half
-the default reflectance (`KHR_materials_specular`), since glossy sky reflection off
-crown normals turns shaded leaves grey. It also carries the usual `yarra_wind`
-contract (TEXCOORD_1 = flutter, branch); bark is opaque and rigid, with its
-occlusion multiplied into base colour, except bark tagged `bark_sky_v1` (below).
+What the importer writes and the tree shaders (`shaders/tree/material.wesl`,
+`shaders/lighting/pbr_lighting.wesl`) read:
 
-Every vegetation tree preset exports `vegetation_occlusion: "crown_sky_v2"` on its foliage
-and `"bark_sky_v1"` on its bark. Bark vertex colours then hold the same overcast sky
-visibility, baked for each bark vertex against the complete crown (LOD0's cards as soft
-clumps); the importer selects `yarra_shading: "bark_sky_v1"` and the game (TREE_BARK_SKY)
-lights bark by the darker of that share, plus 12% through the leaves, and the stand's
-(`bark_sky_reach`), instead of tinting its albedo. Trunks under their own crown no longer
-take the open sky's light; trunks inside a stand are unchanged.
-
-Foliage:
-`import_vegetation_bundle.py` preserves this marker and selects
-`yarra_shading: "crown_v2"`; it refuses the older `crown_sky_v1` (rebuild the bundle).
-Its vertex colors hold linear sky visibility: the share of an overcast sky's light
-(three times brighter overhead than at the horizon) a card sees past the rest of
-its crown, from the complete crown before LOD thinning. Facing clumps retain one
-value at their pivot, and impostors carry the same values.
-The game (TREE_CROWN_SKY in `shaders/lighting/pbr_lighting.wesl`) multiplies the
-crown's sky light by it and by the shade of the crowns around (`forest_crown_sky`),
-keeping 12% for light passed through and between leaves; the lower half of a crown
-sees the ground, as other surfaces do. Near direct sunlight still uses dynamic
-shadows. Over the outer 30% of the shadow range, `crown_v2` blends to coarse
-self-shadowing from the same visibility and the stable crown normal relative to
-the light. It adds no texture samples or geometry. Unmarked bundles keep `crown_v1`.
-
-Pine bundles split the trunk into `bark` and `bark_upper` triangles by the bark blend
-weight (COLOR_0 alpha, lower 0 to upper 1). The importer gives every bark triangle the
-`bark` material with `yarra_bark: "blend_v1"` and the upper bark's textures, so the game
-blends the two across the weight (`shaders/tree_bark.wesl`): the upper bark shows first in
-the lower bark's dark furrows and closes over its plates last. Drawn as two materials they
-met in a hard line.
-
-The bay shrub trial is rebuilt from vegetation's `bay_upright` bundle using
-`tools/import_vegetation_bundle.py`, with tracked catalog
-`packs/yarra_bay/bay.catalog.ron` and local textures/geometry in `local/yarra_bay`.
-
-`packs/yarra_longleaf/longleaf.catalog.ron` registers the current four-form pine
-kit: healthy, half bare, nearly bare with top needles, and mostly one-sided.
-Local source/runtime geometry is under `local/yarra_longleaf`.
-It uses rfefw2 needle scans on upward forked sprays, with 2,662 / 1,346 / 676
-triangles and 23 centered facing cards. Every branch group retains a fixed spray
-at far LOD. The existing renderer and other tree assets are unchanged by this
-kit. All four forms share their textures and woody scaffold; bare fork cards
-remain fixed. Review the forms in the LOD lab or in a forest planted by
-`tools/forest_plan.py` ([workflows](../docs/WORKFLOWS.md#creating-and-revising-trees)).
-
-The earlier native-scene pine pack, shared-pipeline pine experiments and isolated
-branch studies have been removed from game assets. Authoring experiments remain
-in YarraVegetation for historical reference; use the longleaf kit for game content.
+- **Leaf cards are lit by the crown**, not by their own orientation: `NORMAL` is the smoothed crown
+  surface normal, kept on both sides of a card. Leaves are rough with half the default
+  reflectance (`KHR_materials_specular`): glossy sky reflection off crown normals turned shaded
+  leaves grey.
+- **Crown sky visibility** (`vegetation_occlusion: "crown_sky_v2"` from the kit, imported as
+  `yarra_shading: "crown_v2"`): vertex colours hold the share of an overcast sky a card sees past
+  the rest of its complete crown. The game multiplies the crown's sky light by it and by the shade
+  of the crowns around, keeping 12% for light through the leaves; over the outer 30% of the
+  shadow range it blends to a coarse self-shadow from the same values. Impostors carry the same
+  values. The importer refuses the older `crown_sky_v1`: rebuild the bundle.
+- **Bark sky visibility** (`"bark_sky_v1"`): bark vertex colours hold the same overcast sky
+  visibility against the whole crown; the game lights bark by it (plus 12% through the leaves)
+  instead of tinting its albedo.
+- **Two-layer pine bark** (`yarra_bark: "blend_v1"`): every bark triangle gets the lower bark's
+  material with the upper bark's textures, blended across COLOR_0 alpha
+  (`shaders/tree/bark.wesl`): the upper bark shows first in the lower bark's furrows. Two
+  materials met in a hard line.
+- **Wind** (`yarra_wind`): TEXCOORD_1 holds flutter and branch; bark is opaque and rigid.
 
 ## Map symbols and lettering
 
-`tools/render_world_map.py` reads two free sets from `assets/local/map/` (ignored by Git):
+`tools/render_world_map.py` reads two free sets from `assets/local/map/`:
 
 ```text
 assets/local/map/homann/   K.M. Alexander's Homann Cartography Brushes 2.0 PNG Pack (CC0),
@@ -162,7 +91,6 @@ assets/local/map/fonts/    IMFeENrm28P.ttf, IMFeENit28P.ttf, IMFeENsc28P.ttf: IM
                            roman, italic and small caps (SIL Open Font License)
 ```
 
-Download the brushes from <https://kmalexander.com/free-stuff/fantasy-map-brushes/> and the
-fonts from Google Fonts (`ofl/imfellenglish`, `ofl/imfellenglishsc`). CC0 needs no
-attribution. A shipped game that includes the fonts must include the OFL text.
-
+Download the brushes from <https://kmalexander.com/free-stuff/fantasy-map-brushes/> and the fonts
+from Google Fonts (`ofl/imfellenglish`, `ofl/imfellenglishsc`). CC0 needs no attribution; a
+shipped game that includes the fonts must include the OFL text.

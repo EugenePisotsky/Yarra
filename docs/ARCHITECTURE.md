@@ -1,282 +1,426 @@
 # Architecture
 
-Current implementation; gameplay foundations simplified September 30, 2026. Use [workflows](WORKFLOWS.md) to operate the tools, [performance](PERFORMANCE.md) to measure them, [experiments](EXPERIMENTS.md) for decisions/results, and [refactoring](REFACTORING.md) for remaining structural work.
+Which crate owns what, how data moves, and the rules that keep it that way. History lives in
+git, decisions in [decisions](DECISIONS.md), open work in [backlog](BACKLOG.md), how to run
+things in [workflows](WORKFLOWS.md).
 
-## Ownership
+## Overview
 
-| Crate | Owns |
-| --- | --- |
-| `app_game` | Executable/platform composition, game presentation, frame pacing, F1 and profiling/capture |
-| `app_editor` | Workspace shell, authoring commands/history, draft previews, save/recovery and publication coordination |
-| `engine` | Actor/camera/input/animation integration; world streaming, origin, residency, terrain contact and vegetation integration |
-| `atmosphere` | Bevy sky, sun/moon, ambient illumination, haze, clouds and shared cloud transmission |
-| `terrain_render` | Terrain v2: clipmap layout and textures, CDLOD patch selection and the ground material; the editor's preset page material |
-| `vegetation_render` | GPU grass placement/scheduling, caches, procedural blades, wind/lighting and diagnostics |
-| `upscaling` | Backend selection/capabilities, Linear/MetalFX, temporal contracts and output composition |
-| `world` | Bevy-free coordinates, IDs, payload ABI, terrain/atmosphere/cloud contracts and view bookmarks |
-| `environment` | Bevy-free environment definitions, presets, brushes, roads and scatter contracts |
-| `environment_compile` | Pure bounded derivation of ground, vegetation, road relief and scattered objects |
-| `game_types` | Durable gameplay IDs, semantic keys, text references, owner references and logical time |
-| `gameplay` | Bevy/SQLite-free rules, actors, inventory, quests, dialogue, world triggers, the in-memory playthrough, commands and the headless driver |
-| `game_content` | RON/Fluent compilation, published SQLite bundles and language packs, runtime content reader, validation/scenario tools |
-| `save` | Snapshot save files and manual/quick/auto slots |
-| `scripting` | Luau engine for gameplay scripts: sandbox, limits and the translation onto `gameplay`'s script scopes |
-| `localization` | Fluent bundles, explicit locale selection/fallback and formatting diagnostics |
-| `vegetation` | Renderer-independent grass types, grass packs, coverage fields and deterministic placement |
-| `vegetation_compile` | CPU reference placement used as a test oracle |
-| `world_db` | Revisioned authoring and immutable runtime SQLite readers/writers, schemas and bounded queries |
-| `world_cook` | Staged cooking/publication, the terrain hierarchy and control tiles, live preview products and explicit fixture generators |
+Yarra is a third-person game (`yarra-app-game`) and a world editor (`yarra-app-editor`), both
+Rust on Bevy 0.20, running on macOS and iOS through Metal. There is one world, Reteya, an
+island, rebuilt from its inputs (a Houdini heightfield export, roads, packs); see
+[its README](../content/reteya/README.md).
 
-Game launch options are parsed once in `app_game/launch.rs` and injected as resources/settings. Shared runtime/rendering libraries do not inspect process arguments or bind experimental keys. [RuntimeSettingsPlugin](../crates/app_game/src/runtime_settings.rs) owns the shared render/feature snapshot and applies it to cameras, materials, atmosphere, vegetation and input. It initializes before output setup and before F1 captures its reset baseline. [PerformancePanelPlugin](../crates/app_game/src/render_audit.rs) composes the optional controls, UI and capture session; game startup and [reproduction routes](../crates/app_game/src/repro.rs) work without it. Diagnostic overrides remain fields of the shared snapshot so CLI/F1/reset/A/B use the same state.
-
-Within [performance diagnostics](../crates/app_game/src/render_audit/performance.rs), `panel` owns layout/input/visibility, `capture` owns launch/reset snapshots and bounded A/B recordings, `telemetry` owns frame/app history and pipeline readiness, and `report` owns statistics, comparison text and CSV export. Capture completion returns an outcome to presentation; the recording session has no UI entities or panel visibility state.
-
-`--diagnostics off|panel|full` controls composition. Full preserves the previous default. Panel installs F1 and frame/app cadence collection without CPU system wrappers or GPU probes; Off omits both panel and timing plugins. The vegetation renderer no longer installs Bevy's diagnostics recorder itself; game/editor composition chooses it explicitly. Renderer workload bookkeeping remains part of rendering, and explicit repro/profile automation still works in Off mode. F1 captures terrain macro variation and page gizmos alongside other settings.
-
-Keep data/compiler crates independent of Bevy. Renderers do not own SQLite or editor workflows. Currently `engine` depends on both renderers, atmosphere and `world_db`; `world_db` includes authoring/compiler dependencies; vegetation rendering depends on upscaling for temporal integration. These are real dependencies, not a fully separated gameplay/runtime architecture yet.
+**World data.** The editor and importers write a mutable, revisioned SQLite *project* database;
+`world_cook` compiles it into an immutable SQLite *runtime* database, one generation at a time;
+the engine streams the runtime around the camera into the renderers, actors and tools.
 
 ```text
-content/world.project.sqlite
-  → bounded source snapshot + environment compilation + world cooking
-  → staged, validated runtime publication
-  → assets/generated/world.runtime.sqlite
-  → read-only database worker → asynchronous decode
-  → bounded attachment/removal → renderers and gameplay consumers
+heightfield, roads, packs --(yarra-world-cook import-*)--+
+editor --(Save)------------------------------------------+
+                                                         v
+                      content/world.project.sqlite         source, revisioned
+                                 | world_cook::cook_project (Publish, yarra-world-cook cook)
+                                 v
+                      assets/generated/world.runtime.sqlite   immutable generation
+                                 | engine world streaming (read-only worker)
+                                 v
+         source pages, clipmap nodes, far-object blocks --> renderers, actors, editor tools
 ```
 
-The editor overlays unsaved source edits on the published runtime. Save changes source; publication creates a new immutable generation. Failed publication leaves the previous generation usable. Runtime pages are derived products, not authoring state.
-
-## World, source and persistence contracts
-
-[world_db](../crates/world_db/src/lib.rs) keeps its public API at the crate root. `records` defines data contracts; `project` separates bounded editor reads/writes from whole-document import/export; `runtime` separates immutable reading from whole-build/incremental output writes. `catalog`, `page`, `storage`, `limits` and `error` own shared encoding, validation and budgets. `cook_store` owns only the bounded source snapshot. Existing environment, road, atmosphere and terrain stores retain their domain transactions and queries. These are internal modules; runtime-only dependency packaging remains future work.
-
-- Stable IDs identify worlds, definitions, assets, placements, presets, layers and roads. Visual entities are disposable representations of those identities.
-- Logical positions use world/cell coordinates; render transforms are relative to a floating origin. Rebasing must preserve world-aligned texture, wind and placement phase.
-- The one world, Reteya, is built from a terrain tool's export by [the heightfield import](../crates/world_cook/src/heightfield_import.rs) ([terrain_world](../crates/world_cook/src/terrain_world.rs) holds its catalog, generated paint and start views; [Reteya](../content/reteya/README.md) keeps its inputs). It uses 32 m cells with 1 m heights and 1 m paint and a sea level. Exactly flat cells (open sea) store neither heights nor paint. A world may record a start view (project settings, copied to runtime metadata outside the content hash); without `--start-view` the game adopts it when the runtime opens and moves the player and camera there, and the editor focuses it. An import writes cells in place ([terrain_import](../crates/world_db/src/terrain_import.rs)), advancing revisions only where heights or imported coverage changed and never deleting a paint revision, so re-imports cook incrementally. A layer with an `imported_mask` takes its coverage from the import's mask of that name, or else from the masks generated from height and slope (`land` and `green` for the meadow layers, rough `beach`, `scree` and `rock` from height and slope, and empty `coast`, `dune` and forest-floor masks); island worlds bind the island ground layers listed in [Terrain from Houdini](WORKFLOWS.md#terrain-from-houdini); imports rewrite only those layers and keep painted ones, and the editor does not paint them. Imported coverage fades out over the world's last 48 m because the cook requires neighbouring cells to agree along shared edges, including the empty ones beyond the world. Unit tests use two small fixtures built in code (`create-demo`, 32 m cells; `create-road-demo`, 8 m). Cell size is per world; `DEFAULT_CELL_SIZE = 32` is not proof that every world uses that grid.
-- Current versions: source **32**, runtime **32**, page payload **14**, terrain node **2**, recovery journal **15**. Source/runtime constants live in [world](../crates/world/src/lib.rs); the journal version in [journal](../crates/app_editor/src/journal.rs). Every reader accepts only its current version: incompatible formats are rejected, not migrated or silently reset (worlds are rebuilt or converted outside the repository).
-- Editor reads/writes are bounded and revision-checked. Undo/redo uses stable-ID commands. Save commits coherent revisions; stale writes report conflicts. Recovery is separate from ordinary save.
-- Production cooking uses one consistent source snapshot, bounded cell/halo batches and staged output. Cell compilation and the control tiles run on every core in fixed batches ([parallel](../crates/world_cook/src/parallel.rs)). Inputs are read and results written on the cook thread in key order, so the publication is byte-identical to a sequential cook. `cook` prints phase times. Whole-document helpers remain fixture/parity references and share compilation code with production.
-- `cook` continues the previous publication when its global inputs (the header hash over catalogs, profiles and environments) and its set of terrain cells are unchanged. It clones the runtime (copy-on-write on APFS) and recompiles only cells whose input fingerprint changed: the cell's source, its 3×3 halo of heights, paint and roads, and its placed objects. Only cells whose ground page changed replace their terrain leaf and its ancestors; a change of the world's hierarchy grid resolution replaces every node in place. Control tiles are rebuilt in full by every cook (about a minute for Reteya). `cook --full` rebuilds everything. Tests check that both paths publish identical content hashes.
-- Unloaded source is unknown, not empty. Road/coverage queries must certify sufficient bounds/halos before compilation.
-- Schema or bincode enum changes require a version bump and a recook. Page payloads are `TerrainHeightfield`, `StaticObjects`, `GameplayObjects` and `Vegetation`, in the page domains `Terrain`, `StaticObjects`, `GameplayObjects` and `Vegetation`; removing or reordering a variant shifts serialized discriminants, so it always comes with a version bump.
-
-## Standalone gameplay foundations
-
-The gameplay libraries run without Bevy, game/editor startup, cooked worlds or art assets. The game uses them only in the opt-in `--story` slice; the editor does not depend on them. [The content CLI](../crates/game_content/src/main.rs) exercises inventory, trading, equipment, dialogue, quests, world triggers, Fluent and save/load together; [workflows](WORKFLOWS.md#standalone-gameplay-and-saves) has the commands. [The roadmap](REFACTORING.md#gameplay-roadmap) lists what changes next: several of the models below (dialogue graphs, triggers, character rules) are about to be replaced.
+**Gameplay content.** Rules, items, characters, quests and dialogue are authored as RON, Fluent
+and Luau under `content/gameplay/`. `game_content` publishes a project as an immutable SQLite
+bundle plus a language pack per locale; a `gameplay::GameSession` runs against it in memory, and
+`save` writes slot files. No Bevy: the game uses this only in the opt-in `--story DIR` slice,
+the editor not at all.
 
 ```text
-game_types (IDs, keys, text references, logical time)
-    ↑ gameplay (rules, actors, inventory, quests, dialogue, world, session)
-    ↑ save (snapshot files)          localization → game_types + Fluent
-    ↑ scripting (Luau engine behind gameplay's script trait)
-    ↑ game_content (RON/Fluent/Luau → SQLite, runtime reader, tools)
-
-engine/apps (future): compose session, saves and localization with Bevy/UI
+content/gameplay/<project>/ --LoadedProject::load_directory--> LoadedProject::build,
+                                                               build_language_pack
+bundle + language packs --ContentRepository::open--> GameSession / Driver --> save slots
 ```
 
-`gameplay` contains the domain modules that used to be separate crates. They stay separated as modules: `rules`, `inventory`, `actors`, `quests` and `dialogue` hold data and pure operations; `session` coordinates them. No domain imports Fluent or stores rendered text.
-
-### State in memory, content on demand
-
-Two decisions shape the runtime:
-
-- **The whole mutable playthrough is in memory** ([`SessionState`](../crates/gameplay/src/state.rs)): actors, inventories, wallets, quests, relationships, dialogue history, conversations, object/location/trigger state, pending events, variables, clock and random streams. Records are keyed maps. A record that was never changed is absent and reads as its default (an unstarted quest, a neutral relationship, an object in its authored state), so state and saves contain only what differs from the authored world. Quests, triggers and scripts can ask about any actor at any time; there is no "not loaded" state to handle.
-- **Content is split by how it is used.** Definitions that commands consult constantly are loaded once when a session opens: rules, item catalog, actor templates, scripts, quests, interaction profiles, named predicates, dialogue *contracts* (roles, line/choice IDs, repeat policy), objects, areas and triggers. Dialogue graphs are read when something first needs one (a command or a read model asking `content.dialogue(id)`) and kept in a small least-recently-used cache (`MAX_LOADED_DIALOGUES`, 32); the session hands its source to the content for this ([`graphs.rs`](../crates/gameplay/src/graphs.rs)). A graph that cannot be read fails what needed it, as any other error would. Text contracts and wording are never loaded by a session; the formatter asks for them.
-
-[`ContentSource`](../crates/gameplay/src/runtime.rs) is the one port: `identity`, `core` and `dialogue(id)`. `ContentRepository` implements it over a published bundle; `ToolContent` implements it over a complete in-memory project for tests and authoring tools.
-
-### Commands
-
-[`GameSession::apply`](../crates/gameplay/src/session.rs) accepts a command as a whole or leaves state, clock and both random streams untouched. It runs the command against a [`Tx`](../crates/gameplay/src/tx.rs): every write first remembers the record it replaces. A rejected command is undone from that journal; an accepted one uses it to
-
-- in debug builds, re-check the records it wrote (plus actors whose equipment depends on a changed inventory), which only finds mistakes in the rules' own code; release builds leave it out;
-- derive notifications (item acquired, quest changed, area entered…) and queue those a trigger subscribes to.
-
-New items take identities from the inventory that makes them: its own identity and how many entries it has made before, a count kept in the inventory record. A replay after loading makes the same items, and an undone command gives the numbers back with the rest of the record.
-
-The queued work is then carried out before `apply` returns, one piece per step, each a transaction of its own, so a command's outcome is settled state.
-
-Cost therefore follows the records a command touches, not the size of the playthrough: three item commands against 20,000 actors take about 0.1 ms in the dev profile. Nested scopes (`savepoint`/`rollback_to`) let a failed trigger plan be undone on its own while the rest of the command is kept. The full-state check runs when a playthrough is created or loaded.
-
-Read models (`state()`, `derived`, `conversation_view`, `preview_interaction`, `quote_trade`, `container_contents`, `next_movement`) never consume randomness. [`Driver`](../crates/gameplay/src/driver.rs) wraps the same commands with a fixed time step for the game and headless runs alike, an optional event trace and `advance_until`.
-
-### Content and publication
-
-[The checked-in project](../content/gameplay/demo/project.ron) is authored as RON plus Fluent: a project lists package directories; a package's files say by their names what they hold (catalog fragments, actor templates, rules, quests, profiles, predicates, world objects and triggers, conversation graphs, scripts), its `package.ron` declares its areas and variables, and its Fluent files are its one text resource. Names such as `guard/gate`, not paths or package order, are identities; a name hashes to the 16-byte identity used at runtime. RON and Fluent are the only authoring source; gameplay reads published SQLite only.
-
-`LoadedProject::build` publishes one immutable bundle (schema **12**): one checksummed JSON record per asset keyed by `(kind, id)`, a manifest with the mechanical fingerprint, and a tool-only scenario. `ContentRepository::open` reads the manifest; `read`/`read_kind` verify checksum and identity of what they return. Language packs (schema **1**) are published separately per locale, so wording fixes need no mechanical rebuild and do not affect saves. The mechanical fingerprint covers definitions, rules and world binding and excludes translations.
-
-Conditions and actions are closed enums in [`content.rs`](../crates/gameplay/src/content.rs), shared by dialogue choices, interaction profiles and triggers, with `All`/`Any`/`Not` and named predicates. They are written inline where they are used. `Script("module.function")` is one more variant of each, run by the Luau engine the content carries; see [the roadmap](REFACTORING.md#step-4-done) for the script rules.
-
-### Saves
-
-A [save](../crates/save/src/slots.rs) is one file per slot: a one-line header (format, slot info, content identity) followed by the state as JSON. Listing slots reads only headers. Saving writes a sibling file, syncs it and renames it over the slot, so a failed save leaves the previous one intact. Loading does not require the content the slot was saved with. It brings the state in line with the content at hand (every character's stats worked out again with the current formulas, resources kept within their caps, party members raised to the level the party's experience now earns), then checks the whole state against it and refuses, with the reason, what still does not fit. The header's content identity lets the game tell the player the content has changed. Save format **16**; other formats are rejected, not migrated. `ContentLibrary` retains published bundles by fingerprint so a slot can also be restored against the exact content it was saved with.
-
-Changes the load cannot account for (a removed item, class or quest the save refers to, a new primary stat) refuse the save. That is enough while worlds and saves are disposable; a shipped game patching content under existing saves would need more.
-
-### Current domain behaviour
-
-These work today and are covered by the headless scenarios and tests.
-
-- **Dialogue:** a flat graph of nodes, each with a speaker role, text, an inline condition and actions, and ordered children. After a node the first eligible child decides: a line plays, or the eligible choices are offered. Roles are required, optional or a named character who joins when in the party, so companion reactions, lines for particular combinations of companions and NPC replies to them are ordinary nodes. Runs are keyed by `(dialogue, participant, speaker)` and keep a cursor token; explicit repeat policies and scoped history carry over between runs, and variables remember rewards given.
-- **NPC interaction:** a profile's prioritized entry rules pick an opening, offer independent topics and choose weighted variants from a separate narrative random stream.
-- **World:** object lock/open/destroyed overlays; areas known by name; triggers that listen for signals (entering or leaving an area, a walk arriving or failing, an item acquired, a quest, variable or dialogue change) and run their actions as a unit; walks requested by `Move` and completed when the engine reports the actor inside the area. Dialogues are blocking or ambient.
-- **Characters:** stats declared by the rules as primary, derived or a resource; derived stats and skill checks are functions in the rules script, and a character's stats are stored and worked out again only when what it is built of changes. Classes grant points and abilities per level and cap what trainers teach; experience and gold belong to the party. Status effects carry modifiers and periodic changes.
-- **Actions in time:** abilities with durations, costs and cooldowns; each character has a queue of intents, begun one at a time and resolved by the ability's script. No turns: passing time visits only characters with something pending.
-- **Inventory:** stacks, transfers, wallets and fixed-price trades with stale-quote detection. NPC and container inventories are made from loot tables the first time a command needs them.
-
-### Localization
-
-Text references are `(TextResourceId, TextKey)`, written `"package/key"` or just `"key"` within a package. What a message takes (`Text`, `Number`, a choice of names) is read from the source-language Fluent, so the contract and the wording cannot disagree. Read models return `BoundText` (a reference plus typed values); only the central formatter renders a locale. Publication analyses every Fluent branch, reference and argument use. `LanguageSource` composes content contracts with the selected packs; each resource is parsed once per locale and kept. Details and commands are in [workflows](WORKFLOWS.md#editing-and-validating-gameplay-content).
-
-### Known limits
-
-- Caps on how many of something content or a playthrough may have are gone. What bounds remain guard against endless or exponential work (nesting depth of conditions and actions, the predicate expansion budget, script steps and memory, 256 queued steps per command), against one mistake exhausting memory (the size of each file read, 4,096 stacks per inventory), or are rules of the game (party size, eight lined-up intents).
-- Every character has a record in memory, about 1 KB each with stats kept as maps keyed by name. Only inventories are made lazily.
-- The rules know nothing of range or line of sight; the engine adapter decides who can reach whom before it sends an intent.
-- The game uses these crates only through the opt-in `--story` slice ([`app_game/src/story.rs`](../crates/app_game/src/story.rs)): conversation, quest, gate state, saves, area occupancy for the party, triggered walks, ambient lines, the character sheet, lessons and sparring with a dummy. Walks are straight lines; there is no pathfinding.
-
-## Environment authoring
-
-Reusable typed presets and compositions feed ordered spatial layers with coverage masks. One compiler derives ground palettes/weights, vegetation fields and generated objects. Empty coverage uses the world's explicit base material. Terrain surfaces have semantic IDs; texture-set array layers are resolved during cooking. A cell holds up to twelve surfaces, four per RGBA weight page, so varied natural ground along a road keeps both its own surfaces and what roads wear them to; with eight, worn ground crowded natural surfaces out of varied forest pages and their neighbours, which kept them, drew different ground up to a straight seam (72 seams along the island's roads). Where more meet still, a cell keeps the twelve that show most, worn ground included and samples on its edge counting sixteen times, so the surfaces a neighbour shares along the edge are kept and the dropped ones are slivers inside the cell; each sample's weight is shared among those kept.
-
-Curved roads have stable source geometry, shared styles for the kind of way (wheel tracks or one footpath track, edges, wander, patchiness, relief) and a traffic level per road (`Road::traffic`, 0–1) for how worn it is: `RoadWear::at` gives the wear of its tracks, centre strip and shoulders, how patchy it stays and how deep its ruts and basin sink. Quiet roads are two trampled lines, medium ones (0.5) bare tracks with grass between, busy ones a single bare band with worn shoulders; grass thins with wear (`grass_cleared`), all of it where the ground is worn bare. Relief is derived from original source heights, never repeatedly added to previous output. Explicit junctions connect 2–4 arms, of any styles: within its radius a junction's roads give way to one worn patch in the style and traffic of the busiest of them in the junction's style (a footpath leaving a cart road takes the cart road's patch), its edge ragged by up to a third of the radius (`world::junction_blend`). Traffic cuts the corners: wherever neighbouring arms meet at 60–165°, the compiler lays a corner leg, a narrower road of the quieter arm's style with a quarter to two thirds of its traffic (more the wider the corner), curving tangent to both arms from up to 18 m along them (`JUNCTION_LEG_REACH`) and leaving a grass island against the junction; legs that only one-way traffic could take against its road are left out. Junction bounds reach the legs, so editing an arm recooks them. A style with no wheel spacing is a footpath, one track down the middle. Spatial certification, intersections, samples and output work remain budgeted; querying one region must not recursively load the entire route network. Roads wear the ground rather than paint it: each terrain surface names what it wears bare to (`EnvironmentDefinition::worn`, seeded from the terrain pack's `worn`: meadow to sandy dirt and gravel, forest floor to forest dirt; at most two) and what light wear tramples it to (`trampled`: meadow to dry grass, forest floor to leaf litter), and a page's weights hold only the natural ground. How much of the worn ground goes bare rather than trampled rises with wear, its line broken up in patches (`world::bare_share`), so path edges, centre strips, corner legs and the rims of junction patches read as trampled dry grass and only heavily worn ground as dirt. The compiler draws every road and junction into a wear field per page ([`world::TerrainWear`](../crates/world/src/terrain_wear.rs), page payload version 14, 256² at texel centres, 12.5 cm on 32 m cells): wear 0–1, rut depth and the traffic direction as a doubled angle (opposite directions blend instead of cancelling), with each page surface's worn slots; worn surfaces join the palette ahead of heavier natural ground. The field comes from the roads crossing the cell ([`world::TerrainRoads`](../crates/world/src/terrain_road.rs), compiler-side now: each road's style in the order the compiler lays them, its tessellated segments near the cell, and the junctions near it): `TerrainRoads::wear` lays each road its share of the ground (less where its junctions take over), then each junction's patch, and keeps the deepest rut and the direction of the road wearing a point most. `TerrainWear::lay` wears the natural ground by it, and the compiler's grass, details and palette and the control tiles all lay it the same way. How a style draws its tracks, centre strip and shoulders from the distance to the centre line (`RoadShape::zones`, with its 32-bit value noise) lives in `world`. Edges are ragged in broad patches and finer bites (`edge_variation`), and each track wanders across the road and changes width along it (`track_wander`, `track_wander_length`). A cell's grids resolve only so much (`RoadDetailLimits`: tracks two samples wide, edges half a sample soft, patches four samples across); the compiler broadens a finer style to them for weights, grass and heights, and terrain v2's wear field draws it as authored. Ruts are carved into heights only where tracks span two height intervals (`CartTrackProfile::carves_ruts`); narrower ones (the island's 1.1 m tracks on 1 m heights) are the wear field's to draw.
-
-Asset collections deterministically scatter registered visuals with weights, scale/spacing, slope and clearance controls. Generated placements are render-only and are not individually editable source objects. Manual object placements remain separate and preserve stable identity.
-
-Asset management currently consists of local source/runtime files, tracked pack manifests, SQLite asset/LOD records, a searchable editor placement palette and collection selection. `world-cook import-assets` validates a bounded RON catalog and local file availability, then registers stable key-derived IDs transactionally through `ProjectWriter`. Reimports refresh supplied variants and preserve unrelated records, placements and definition aliases. Asset conversion remains an offline tool, without an editor import UI. Pack binaries remain ignored local files.
-
-## Terrain and streaming
-
-Terrain v2 draws the ground: GPU height clipmaps filled from the cooked terrain hierarchy, CDLOD patches and one per-pixel ground material at every distance, after the Witcher 3's terrain (the roadmap is in [Refactoring](REFACTORING.md#terrain-rendering-roadmap)). Terrain pages are CPU height sources for gameplay and tools, and carry the road wear the ground material draws near the camera.
-
-[Database transport](../crates/engine/src/world_streaming/database.rs) owns worker startup, bounded channels and shutdown; `WorldDatabaseWorker::send` numbers every request, and each reply carries the id of the request it answers. Its protocol and immutable-reader queries depend only on `world`/`world_db` data, not terrain-rendering or residency modules. Source and terrain/material consumers submit requests without blocking; the streaming coordinator routes replies ([replies](../crates/engine/src/world_streaming/replies.rs)) and owns world/index state and transitions. [Source residency](../crates/engine/src/world_streaming/residency.rs) separately owns page requests, asynchronous decoding, admission, cooling, statistics and stale-result rejection. A staged generation can answer terrain queries, but source reads remain on the active generation until the exact commit is acknowledged.
-
-Dropping the worker disconnects a separate cancellation channel before joining. Both request and reply waits can then exit even when queues are full; an already-running synchronous SQLite read still finishes first. Runtime worker omission/restart is not a supported streaming mode.
-
-[Attachment](../crates/engine/src/world_streaming/residency/attachment.rs) converts prepared pages into CPU terrain sources, objects, grass fields or gameplay objects. Whole-page validation finishes before any entity spawns. Cooling retains ownership for two seconds and can revive the same entities. World/generation changes clear pages and cancel decode jobs without reusing pending request identities; same-world rebases preserve canonical sources. These internal systems remain ordered inside `WorldStreamingSystems`; residency omission or runtime suspension is not a supported mode.
-
-Important invariants:
-
-- Cooked heights are f32 values on one world-wide 1/1024 m grid, and normals keep 12 bits per octahedral axis (about 0.05°). Constructors round both, so editor previews, cooked pages and decoded runtime data hold identical values, and shared edges stay bit-identical because the grid never depends on the page. The [codec](../crates/world/src/terrain_heightfield_codec.rs) stores planar-predicted integer steps: terrain nodes and height pages are about 40% of their previous zstd size on the hill fixture. CPU grounding/raycasting and grass placement interpolate the same piecewise-linear triangles as terrain geometry, not a different bilinear surface.
-- Parent nodes decimate heights exactly but filter normals (3×3 tent; border samples filter only along their edge, so neighbours share codes). Point-sampled normals made distant lighting change at every level switch.
-- A level draws only resident nodes, and the shaders read the first resident level at or above the one they want: a node still loading shows its parent's samples, never a hole. Patches morph to the coarser grid before their parent's range, so level changes are continuous and need no stitching.
-- Clipmap residency and detailed source demand are separate. Selection uses the 3D distance to a node's height bounds, so elevated views do not demand leaves everywhere below the camera.
-- Actors stand on the resident leaf triangles the patches draw within the leaf range (`ClipmapTerrain::ground_height`), and a grounded actor does not step onto ground not yet resident. Grass may be retired atomically under pressure; actor grounding must not disappear.
-- Control tiles exist at every level up to `CONTROL_TOP_LEVEL` (5, 1 km nodes); parents filter their children's surface shares, never their layer indices, with a [1,2,1] kernel that runs only along the edge on borders, so neighbours share their edge samples.
-- Rebase, source edits, publication and shader changes invalidate the appropriate caches. Obsolete asynchronous results cannot replace a newer revision.
-
-Current source-stream limits include 16 pages loading/decoding/waiting for attachment, two actual page attachment attempts/frame, 64 MiB decoded source residency and 256 MiB estimated source GPU residency. Transport separately holds at most 16 queued requests and 32 replies; draining those queues does not bypass source-page admission. Terrain v2's clipmap textures have a fixed size: about 150 MiB on desktop (heights and normals 24 MiB each, control 96 MiB, wear atlas 6 MiB), a quarter on iOS. These counters are not total process/GPU memory. Admission skips blocked pages when a later page fits; priority eviction and aggregate pre-decode byte reservation remain open.
-
-[ObjectLodPlugin](../crates/engine/src/object_lod.rs) owns visual-object LODs after transform propagation. Streaming includes it for game/editor; collection previews can use it without database streaming. Each object spawns every LOD as a child scene, and the plugin gives their meshes Bevy visibility ranges: a LOD's band runs between the distances where the object's projected height crosses the previous LOD's threshold and its own, and neighbouring LODs dither into each other over ±10% of each switch distance instead of popping. Projected height is the object's height seen side-on at its distance (logical pixels per metre × the 0.25–4 `VisualLodScale` clamp), so pitching the camera never changes LODs; projecting the root-to-top segment shrank when the camera looked down and switched trees under a top-down camera to their coarsest LOD. Ranges are rewritten only when window size, field of view or Object detail change; new LOD scenes are ranged when they finish spawning. Directional shadow cascades resolve the same ranges from the main camera. Residency reads LOD telemetry (the band containing the camera, ignoring crossfades) through accessors. Without the plugin every LOD would draw.
-
-[ClipmapTerrain](../crates/engine/src/world_streaming/terrain_clipmap.rs) keeps a window of 31×31 nodes per level resident around the camera, six levels from 32 m leaf nodes (1 m samples) to 1 km nodes: each level is a 1024² toroidal layer (512² on iOS) whose 32nd row and column guard the window, and a window follows the camera once it is more than two nodes off centre. Nodes are read from the database 48 per request, two requests in flight, parents first and nearest (relative to node size) first, out to twice the range that draws them; a pool thread decodes each into its block (33² heights, normals as half floats, 65² control samples), and a window moving by a node rewrites only the row entering it. `TERRAIN_V2_READY` logs the first complete fill (about 2 s on Reteya).
-
-[Patch selection](../crates/terrain_render/src/clipmap/select.rs) is CDLOD: the leaf level draws within 192 m of the camera (96 m on iOS) and every coarser level doubles that; a node splits where its children's range reaches its height bounds, and vertices morph toward the coarser grid over the last 30% of a level's range (`MORPH_SHARE`). Selection depends on distance alone, so camera turns change only culling. Each selected node is one entity with one shared 33² grid mesh and the material; its mesh tag carries its level and node, and the vertex shader reads its heights from the clipmap. At 1 m leaf spacing a triangle is 6–13 px across at 1440p wherever it is drawn.
-
-World views (the game camera and the editor's world camera) cull at `WORLD_VIEW_DISTANCE`, 20 km, past the island's far side; haze visibility comes from the world's atmosphere profile (60 km by default), not from start views. Bevy's default of 1 km hid kilometre-scale terrain. Depth is infinite reverse-Z, so this only decides what is drawn; terrain cost is bounded by the clipmap's distance ranges.
-
-Static-object residency uses a separate 192 m camera-to-cell-bounds radius in all directions. Camera frustum visibility only prioritizes loading; it must not retire off-screen trees that can cast shadows onto visible ground. In the game, objects whose last LOD is an impostor (trees and shrubs) are drawn by the GPU trees ([gpu](../crates/engine/src/trees/gpu.rs)), not by their cells. Far-object pages carry each form's whole LOD chain (its mesh LODs' scenes and thresholds, its height and its impostor); every batch of the resident blocks takes a range of one instance pool, placed relative to its batch's origin so a rebase moves only origins. Each form's mesh LODs come from one hidden template scene per LOD, converted to tree materials as any tree scene is. Each frame a compute pass ([lod](../assets/shaders/tree/lod.wesl)) picks every instance's representation from its projected height (the catalog's mesh LOD thresholds, with no residency limit, then the impostor where its views hold a texel or more per output pixel: below the form's height times the views' texels per metre, over the window's scale factor, whatever the render scale; the last mesh LOD's own catalog threshold is the editor's), dissolves changes over time as below, culls the instance against the main view and each shadow cascade (casting from `--tree-shadow-lod` LODs coarser; a cascade only gets casters whose sphere, swept away from the light, meets the main view's sides and the depths whose fragments sample that cascade, its overlap with the one before included, since its frustum is a square round the whole slice, open toward the light), and appends it with its dither level to its form and representation's bucket in each view; one indirect draw per form, representation and primitive then draws each bucket through the tree or impostor material's own pipelines (`TREE_INSTANCED`, `IMPOSTOR_INSTANCED`), including the depth and motion prepass for trees. Cells still spawn one entity per such object for gameplay (rain shelter), without LOD scenes, and leave its meshes out of their GPU budget; F1 Objects off and the Ground and Grass scenes hide the trees through `TreeInstancing::hidden`. The LOD lab's tree is a batch of one with a forced representation. The editor, and objects without an impostor (ground cover) still draw entities, which Bevy culls per camera and cascade; the editor's cells draw tree meshes up to the impostor hand-off and its blocks draw impostor batch meshes, as described next. The descriptor window covers the larger of grass contact and object visibility ranges, within the existing 4096-cell query budget. Grass contact and gameplay demand keep their own ranges. This replaces the three-cell object limit that reduced visibility to about 24 m in 8 m worlds. An asset's last LOD may be a hemi-octahedral impostor (`*.impostor.json`, version 3, [tree_impostor](../crates/engine/src/trees/impostor.rs)). Its two atlases hold each view's crop as equal tiles, whole multiples of 8 texels, so the bake builds its three mip levels view by view, and every view keeps an empty gutter of 4 texels round the tree. The shader samples with the view's mip bias, as mesh textures do, and treats a ray within half a texel of a tile's edge at the mip it reads as missing the view: the gutter holds nothing there, and no read filters in the next view. The first holds colour and coverage. The second holds an octahedral normal, the surface's depth toward the viewer and crown occlusion. The second is loaded as linear data, since Bevy decodes UASTC as sRGB unless told otherwise. The shader lights each pixel at the depth-corrected surface. Where it takes over from its mesh LODs, the quad bends in the wind as its far mesh LOD's trunk does, less farther out, and not at all by 2.5 times that distance or past 450 m: the descriptor carries that LOD's wind profile and stem height, the impostor material binds the trees' wind buffer, and its bottom, middle and top vertex rows follow the trunk's arc. Cells never draw it: every cook regroups the static objects whose asset ends in an impostor into far-object pages per block of 16×16 cells (`far_object_pages`, [far_objects](../crates/world_db/src/runtime/far_objects.rs)), and both apps stream blocks within 2,048 m ([far_objects](../crates/engine/src/world_streaming/far_objects.rs)) with one batch per form per block. Objects whose last LOD is an impostor switch at a distance, with 4% hysteresis, and then dissolve old into new over 0.6 s: on the GPU in the game, which follows the same rules, and in the editor on the CPU ([object_lod/timed](../crates/engine/src/object_lod/timed.rs)). Fading meshes carry their dither level in their mesh tag, which the tree shaders read in every pass, so shadows dissolve too. In the shadow passes the levels are doubled, so shadows overlap: the incoming LOD's shadow is whole by mid-fade and the outgoing one's stays whole until then. In the editor the impostor's level goes into its instance's slot in a buffer shared by all impostors (`ImpostorFades`), found by world position. An instance no resident object controls is drawn, so a tree whose cell is still loading shows its impostor and fades to its mesh when the cell arrives. There the hand-off stays within 166 m (`IMPOSTOR_HANDOFF_METRES`), inside the object residency. Impostors cast no shadow-map shadows. Their crown and forest self-shading applies at every distance, darkened further by the shadow maps where those are darker. Assets without an impostor keep their final mesh LOD below its threshold. The LOD lab ([lod_lab](../crates/engine/src/trees/lab.rs), `yarra-app-game --lod-lab`) spawns a cataloged tree outside streaming with the same chain, as a batch of one the GPU trees draw; a forced representation on the batch draws any representation at any distance, and the lab follows the fades on the CPU to know when a dissolve has ended. The legacy diagnostic path retains its three-cell window. Source memory and attachment budgets still apply, so 192 m is a demand limit, not a guarantee under memory pressure. Pages share asset variants, so the GPU budget counts each variant once across resident pages, and impostors not at all (far-object blocks own them). Every far-object batch also feeds the distant forest shadows ([forest_shadow](../crates/engine/src/trees/forest_shadow.rs)): crowns (from each impostor's baked crown metadata) are rasterized off the main thread into a 4 km map around the camera ([atmosphere::forest_shadow](../crates/atmosphere/src/forest_shadow.rs)), and past the shadow cascades every cloud and terrain material marches towards the sun through it, so distant crowns shade each other and the forest floor as the shadow maps do near the camera.
-
-Ground shading ([terrain_clipmap](../assets/shaders/terrain_clipmap.wesl)) is one material function at every distance. Control tiles ([terrain_control](../crates/world/src/terrain_control.rs), cooked by [control_cook](../crates/world_cook/src/control_cook.rs)) hold 65² samples per node, 0.5 m apart at the leaves with 32 m cells: each keeps the three heaviest surfaces by texture layer and two shares in 32 bits, the ground already worn as roads wear it (`TerrainWear::lay`). The control clipmap holds them at twice the height clipmap's density; each pixel reads it at the level its footprint asks for, dithered between two, and decodes a fixed set of six candidates. Surfaces blend by height ([terrain_blend](../assets/shaders/terrain_blend.wesl)): each surface's base colour alpha is its blend height, scaled by the pack's `blend_height` at import, so stones and needles rise through sand and moss instead of cross-fading; a surface's score is its weight share plus half its height, surfaces within 0.12 of the best show, and one that cannot show however high it stands is not sampled. Surfaces whose grass covers 70% or more (`COVERED_GROUND`) take one plain colour sample under their field's colour, since grass hides them near the camera and is only that colour past the grass range. The others sample the pack's textures, with anti-tiling (albedo from three randomly transformed lattice cells) and normal maps within 120 m (`FAR_GROUND`) and one sample each beyond, where the scans' detail is lost in their coarse mips; steep ground projects them biplanar. The normal under them comes per pixel from the height clipmap at the pixel's footprint, blended between the two resident levels around it as a mip chain would be. Albedo is sRGB; height, normal/AO/roughness and macro maps are linear. Terrain packs ([baltic](../assets/packs/terrain/baltic.toml)) list surfaces in array order with their Megascans sources and parameters; new worlds take their surfaces from the pack, after which the project owns the parameters. The page `TerrainMaterial` remains only for the editor's preset preview, which shades a page's first two surfaces with the same height blend.
-
-Roads near the camera come from a wear atlas: the 5×5 cells around the camera's hold their pages' 256² wear fields (12.5 cm, `StreamedTerrainWear`) in toroidal slots. Within 56 m bare road ground is re-sharpened from the field ([terrain_wear](../assets/shaders/terrain_wear.wesl)). Within 20–35 m ruts sink by parallax over the field's rut depth: the view ray is marched six steps into it, the floor found shades the pixel (its textures, a normal tilted by the rut's slope and occlusion), and grooves of many wheels run along the field's direction, a few centimetres apart at random, in stretches, fading before they would shimmer. Cart ruts are irregular: a wobbling wheel groove in a shallow worn trough, doubled in patches, fading out over stretches, with potholes (`TerrainRoad::rut`). Worn soil is darker and browner, most at rut bottoms and the edges where it meets grass. Rain stands in hollows of the height clipmap and in dips of the rut floors within 80 m (`weather/ground_wetness.wesl`), spreading as it soaks. Compiler tests check the field against `TerrainRoads::wear` and the worn weights against what the roads lay.
-
-The editor live-edits terrain v2 through a two-phase handoff ([preview](../crates/engine/src/world_streaming/terrain_clipmap/preview.rs)). Its worker builds the edited cells' nodes up to the roots and their control tiles up to level 5 ([terrain_preview](../crates/world_cook/src/terrain_preview.rs)), with published versions where an undone edit leaves a key; the terrain answers ready, and the commit, in the frame the editor shows the matching grass and source cells, rewrites every resident block it changes (a block can rewrite its relief or its control alone). Nodes read later take the overlay's parts. A new publication of the drawn space is read again in place: every resident node stays drawn until its new version replaces it, and only a new extent or new ground textures load from scratch.
-
-## Vegetation
-
-Grass follows the ground, as in Ghost of Tsushima. A world's grass catalog ([`VegetationCatalog`](../crates/vegetation/src/lib.rs)) holds grass types (`GrassType`: density, blade height/width/tilt/bend ranges, clumping, colours, gloss, translucency, stiffness) and what grows on each terrain surface, as a share of each type's density. Catalogs come from grass packs ([baltic](../assets/packs/grass/baltic.ron), keyed by terrain surface key); new worlds take the pack's catalog, after which the project owns it (`yarra-world-cook import-grass` replaces it). Type IDs derive from their keys, so packs may reorder types. The compiler derives each type's coverage per cell (64² at texel centres) from the cell's surface weights times the catalog's shares, less grass-channel exclusions (`environment::GRASS_CHANNEL`) and road wear; there are no grass layers. Coverage fingerprints follow what grows where, not how it looks, so a look change republishes the catalog without recooking cells. Grass cover (`VegetationCatalog::cover`: amount, and the field's colour from its types' upper blades) shapes the ground beneath. Terrain v2 takes it from the ground's surfaces (each surface's grass cover); a per-page map of where blades actually grow (`VegetationFieldPageData::cover_map`) is not drawn yet. Close by the ground keeps its own texture at 80% with a quarter of the field's colour, by 30 m (as blades thin out) at 55% with half of it, and it turns to the field's colour over 44–76 m, past the blades; the colour is each surface's cover, so fields keep their colour past the grass range.
-
-The runtime joins those fields with terrain surfaces, generates candidates on the GPU, and emits instances into two bounded indirect draw bins: high detail (9 rows, 19 vertices, within a radius that fits the high bin at the scene's densest grass) and low detail (3 rows, 7 vertices). It does not store an entity or database row per blade. Each type grows on its own world-aligned lattice at its density: one candidate per cell, jittered, pulled toward Voronoi clump centres and thinned at their edges ([placement](../crates/vegetation/src/placement.rs), mirrored by `placement/sampling.wesl`). A candidate grows where coverage times its clump's retention beats its stable rank, which the type's `patches` blends from the blade's own toward its clump's (through the blend's distribution, so the rank stays uniform): partial coverage then drops whole clumps and sparse grass grows as tussocks; distance thinning keeps one root per 2×2 block per quarter of density and widens survivors. Stable ownership, seeds and thinning preserve placement across views; telemetry exposes capacity drops.
-
-The [renderer entry point](../crates/vegetation_render/src/renderer.rs) owns render-world composition and resource initialization. Internal modules separate CPU/WGSL layouts (`gpu_types`), CPU scene/LOD packing (`packing`), fixed index templates (`topology`), allocation/bind groups (`buffers`), pipeline specialization (`pipelines`), uploads/view inputs (`prepare`), cached placement dispatch (`generation`), opaque queue/draw (`draw`), and optional counter readback (`telemetry`). Candidate caching and temporal rendering retain their owners. Scheduling remains explicit at composition, including temporal dependencies and the iOS readback exclusion; these modules are not independently removable plugins.
-
-Twin types (`GrassType::twin`, Ghost of Tsushima's doubled blades) grow two blades in a V from each root within one blade's strip: it runs down the first blade from its tip to the shared root and up the second (high detail 4 + 5 segments, low detail a straight blade and one with a bend), so they double the blades for the same placement and vertex work; fragments double. The vertex shader builds each blade from its instance ([blade](../assets/shaders/vegetation/blade.wesl)): height, width, tilt, bend and side curve from per-blade hashes and its clump (height, dry tips, brightness); a cubic Bézier whose root handle rises upright, tip leans by the tilt and middle arches by the bend. Wind pushes the tip downwind by the broad field trees share (`field_force`), modulated by grass-scale gusts rolling downwind at 3.2 m/s, with each blade bobbing at its own constant rate and fluttering across (gusts change amplitudes, never rates: the wind clock runs to 4096 s, and a rate varying with the gust once made blades vibrate ever faster the longer the game ran); the control polygon then scales back to its rest length, so pushed blades bow over instead of stretching. The width line turns toward edge-on views by up to 25° (the talk's glancing-angle adjustment); thinned blades narrow away and survivors widen; blades beyond 5–15 m keep at least 1.5 pixels of width (up to 2.25× their own), as thinner ones shimmer when the camera moves sideways. Lighting ([lighting](../assets/shaders/vegetation/draw/lighting.wesl)) rounds each blade's normal across its width, takes a narrow sheen from it near the camera and, far away, a broad lobe about the clump's stable normal (specular anti-aliasing; a field of blades leaning every way, not a polished ground, so no distant glare patch), wraps diffuse, transmits low sun through backlit tips; sheen and transmission take only the sun's direct beam, while diffuse also takes what clouds scatter, so overcast grass has no sheen, darkens blades by their depth in the field's canopy (height above the ground over the type's canopy height, so a tip lying low is as dark as a root and blades rise out of the dark), breaks the sun's beam low in the canopy with a pattern of gaps sampled where the beam enters the canopy top (shadow lines on lower blades, after Ghost of Tsushima's dithered shadow impostor; the pattern fades to its mean, exp(−2.3 × depth), beyond 10–24 m) and keeps the sun, cloud, shadow-map, atmosphere and crown inputs of the rest of the scene. With MetalFX Temporal the vertex shader poses each blade twice, with this and last frame's camera and wind, for its motion.
-
-Placement and source acceptance use separate caches; wind phase never invalidates them. Tests compare accepted instance multisets and rendered output, not append order alone. A scene revision uploads only the samples of pages that arrived or changed. `WorldVegetationPlugin` gives every page a content key, renewed when its field or terrain page changes and kept across rebases. [Page slots](../crates/vegetation_render/src/renderer/page_slots.rs) keep each keyed page's surface and coverage samples at a fixed range and free ranges when pages leave. Work items and grass types depend on the whole resident scene, so they are rebuilt each revision; they are small. Scenes without keys, such as editor previews and fixtures, are packed in full.
-
-[WorldVegetationPlugin](../crates/engine/src/world_vegetation.rs) composes the renderer, published field/terrain joining and the logical LOD focus. The game installs it explicitly after world streaming; F1 applies settings before its update set. `VegetationSceneState` and `VegetationView` name the production render snapshot and camera opt-in. The grass shaders are in `assets/shaders/vegetation/`: `schedule`, `placement` (with its sampling and LOD modules), `candidate_cache`, `blade`, and `draw` (geometry, lighting), sharing `types`, `random` and `lod`; their integer limits come from Rust as `constants::` definitions.
-
-Game and editor share terrain-to-vegetation conversion. The editor's [grass](../crates/app_editor/src/grass.rs) module previews the project catalog with the accepted coverage; it does not edit the catalog. Terrain and vegetation keys match by space/cell/LOD and extent, ignoring their different page domains. Source joining continues while grass rendering is disabled, and clears stale pages when the world/catalog disappears. Joined in-place edits invalidate the snapshot; unrelated terrain pages do not.
-
-[TreeWindPlugin](../crates/engine/src/trees.rs) ([wind](../crates/engine/src/trees/wind.rs)) is installed explicitly by game/editor composition. It reads the existing `VegetationWind` direction, strength, gust field and phase; the vegetation renderer remains the clock owner, including an external transport (the Presets workspace preview, tests). Legacy `extras.yarra_wind = "foliage_uv1_v1"` opts static, alpha-masked foliage into UV1 `(flutter, branch)` deformation with rigid bark; `TreeWindResponse` supplies that path's response in metres. Current vegetation bundles opt both bark and foliage into `hierarchy_v2`, requiring `_WIND_PIVOT` and `_WIND_AXIS` on every primitive. There are no path-name/prefab heuristics or database schema changes.
-
-The new attributes store the primary limb root/tree height and limb direction/compliance. Authoring assigns descendants and cards from the complete skeleton before LOD thinning. The shader curves the planted trunk, transforms each primary limb with its attachment, then applies camera facing and pinned card flutter. `wind_profile` stores species compliance, height-based response period, flutter gain and foliage load. Four coherent bands filtered by a damped response drive motion; this is an artistic shallow hierarchy, not measured turbulence or per-joint physics. Trunk/limb angle caps bound extreme settings and swept mesh bounds. Ground stems keep separate feet; secondary twigs inherit the primary limb; collision and weather-shelter footprints remain in the rest pose. Current instances use uniform scale.
-
-`TreeWindTuning` supplies session-only F1 overrides and response gains. Automatic wind is restored before weather updates each frame; a separate smoothed manual pose is applied in PostUpdate before extraction. Returning to weather therefore resumes its current automatic values. Externally driven wind (editor previews) bypasses the manual override. Strength, gustiness and direction affect the shared vegetation field; tree response gains affect the connected hierarchy. F1 labels refresh after `TreeWindSystems`; capture context records tuning, while A/B Restore does not restore it.
-
-Tree materials extend the existing cloud-shaded PBR material, preserving textures, alpha clipping, normal maps and cloud transmission. Connected bark keeps its upper/lower texture blend in the wind material; the legacy bark converter skips that tag. Tagged foliage explicitly opts into that pipeline in the isolated Presets workspace, where the isolated atmosphere (`AtmosphereOwner::Isolated`) disables cloud transmission; unrelated materials retain their ordinary path. Conversion follows cloud material conversion and retries until scene dependencies and bounds exist. Instances share cached materials, source edits propagate, and unloading scenes releases the cache's references. Mesh bounds include the maximum allowed deformation. One shared 192-byte GPU buffer carries two 96-byte current/previous wind poses, so time updates do not rewrite per-instance transforms or dirty every material. Independently reduced f64 phase offsets preserve the field across floating-origin rebases. Foliage also tagged `extras.yarra_shading = "crown_v1"` (kit bundles without the crown bake) is lit by its crown: back faces keep the authored crown normal (Bevy's two-sided flip is turned off; back faces are still drawn), `|N·V|` replaces `N·V` so a card seen from behind is not treated as grazing, and `COLOR_0` is crown occlusion applied to indirect light only (`TREE_CROWN_SHADING` in the cloud material shaders), because shadow maps already darken the sun.
-
-Colour, depth and shadow passes evaluate identical tree geometry. The motion-vector prepass evaluates the previous model matrix with the last GPU-submitted wind pose, including its settings and origin; it does not reconstruct history from a time delta. This supports MetalFX Temporal and Bevy temporal consumers, paused/scrubbed transport and wind toggles. PostUpdate producers of external wind run before `TreeWindSystems`. New LOD topology still uses the renderer's ordinary history rejection; LOD switches crossfade by dithering (see ObjectLodPlugin), which does not guarantee shimmer-free foliage. A native GPU regression checks animation, pause, zero weights, disable and rebase cases, and the game path has been exercised with MetalFX Temporal.
-
-**Ground details** ([ground_details](../crates/engine/src/ground_details.rs)) strew stones, pebbles, cobbles, twigs, ferns, nettles, lily of the valley and sorrel where the ground surfaces say. `vegetation::DetailType`s live in the grass pack beside the grass types and share their ID space and per-surface shares, so the compiler cooks their coverage fields like grass's (roads and Grass-channel exclusions clear plants; types `on_paths`, stones, pebbles, cobbles and twigs, also lie on worn ground); the grass renderer skips their fields. A type with a `wear` band (from, peak, to) grows only on worn ground, by how worn: its coverage is what the natural ground carries times the band's share averaged over the page's wear field (`world::TerrainWear`) within each sample, so verge stones and pebbles gather where wear falls off and sticks along and on forest paths. Each page of the grass scene within a type's `distance` of the camera is placed on the CPU with the grass's lattice, Voronoi clumps and coverage acceptance (`vegetation::Lattice`, implemented by both kinds), in canonical coordinates so objects stay put across rebases. Every object is a plain mesh entity of one of the type's pieces: every mesh of the type's glTF files (props made from Megascans packs by `tools/import_detail_props.py`; plants are the LOD1 of the `yarra_*` vegetation bundles, 130–600 triangles). A piece keeps its primitive's material tags (`GltfMaterialExtras`), so plants become tree-wind foliage with crown shading exactly as tree scenes do. Each object it stands on the ground at the page's surface height, follows the slope by `align`, leans by up to `tilt`, sinks by `sink` of its height and scales within `scale`. Pieces of a pack share one material (converted from the glTF material once, then to the environment material like any mesh), so Bevy draws them instanced; each page's objects of one type hang under one `WorldRenderRoot`, spawned and despawned as the page enters and leaves the type's distance (16 m hysteresis) and dissolving out over its last 20% (`VisibilityRange`). Small types cast no shadows. A changed catalog (a live-edited pack) places every page again. Measured at the shipped densities in the pine forest: about 4,200 objects (twigs, rocks, ferns), about 1 ms per frame, nearly all the ferns' alpha-tested cards (their shadows about 0.3 ms); props alone cost nothing measurable.
-
-Characters push grass aside and press it down ([trample](../crates/vegetation_render/src/renderer/trample.rs), `shaders/vegetation/trample.wesl`). `WorldVegetationPlugin` lists every actor with `CharacterMotion` as a `GrassBender` (the 16 nearest the detail focus): its feet and velocity, with a 0.7 m reach. A compute pass advances a 64 m, 12.5 cm-texel map that wraps around the camera (texels the camera's movement wraps onto new ground start at rest). Each texel is a critically damped spring holding the way the grass there is pushed (length 1 lies flat) and its velocity. A character sets its target: under the feet (within 20–50% of the reach) a push of 2 along its motion, so blades lie flat and the excess keeps them flat after it passes; beside its legs, out to the reach, half a lean outward and a little forward, the same way all the while it passes, so blades do not swivel. Grass is pushed further quickly (14 rad/s) and always lets go slowly (1.6 rad/s): blades go down in about 0.1 s, stay flat about 1.4 s and rise over 2 more, without swinging past upright; at walking pace the flat trail is about 2 m long. Blades sample the map at their root: their direction from the root slides from their own toward lying along the push, which is continuous whichever way they faced. Each pushed blade varies so a trail does not read as combed: it lies up to ±0.6 rad off the push, at a lean of 1.15–1.55 rad, and twists about its length by up to ±1.05 rad, so some show their face and some their edge. Pushed blades lose most of their arch and wind response and leave the canopy's shade. The previous frame's copy poses them for motion vectors. The pass costs nothing measurable. The `actor-walk` repro takes `--render-walk-speed` to check it at walking pace.
-
-Grass casts no shadows yet; previous proxy casters were removed after visual rejection.
-
-## Characters and editor lifecycle
-
-[MinimalGamePlugin](../crates/engine/src/gameplay.rs) is a convenience composition of environment, terrain, streaming and `GameplayPlugins`. The gameplay group has four owners:
-
-| Plugin | Responsibility |
-| --- | --- |
-| `GameplayPlugin` | Player root, character presentation, motors, grounding, shared control resources and schedule |
-| `GameInputPlugin` | Pointer/touch destinations, keyboard/gamepad intent and orbit/zoom controls |
-| `GameCameraPlugin` | Camera creation, launch bookmark and actor follow |
-| `MovementTargetPlugin` | Destination ring entity, assets and terrain-aligned placement |
-
-Custom composition can install `GameplayPlugins.build().disable::<GameInputPlugin>().disable::<MovementTargetPlugin>()` after the rendering/streaming prerequisites. Keep the core `GameplayPlugin`; camera omission is also supported, with camera-dependent input idle. The editor continues composing its own previews and camera/input stack. These are startup choices, not hot plugin removal or new CLI flags.
-
-`GameplaySystems` orders camera input → pointer destination → movement intent → motor → grounding → marker → camera follow, after streaming transitions/rebasing. UI routing and settings run before `CameraInput`; repro camera overrides run after `CameraFollow`. Character presentation resolves motor settings before movement. `GameInputEnabled(false)` freezes controls/motors while grounding/follow continue and native gesture readers drain events. Pointer capture alone preserves keyboard/gamepad input.
-
-Actor roots own movement and logical location. Imported presentation scenes are children; meshes/animation never own streaming or camera focus. Player control, camera target and stream focus are independent roles. Stable presentation profiles resolve compatible models, skeletons, animation banks and semantic clips. The current motor drives Idle/Walk/Jog with acceleration, turning, arrival and playback-rate output; terrain grounding is implemented. Party AI, navigation/collision, crouch, equipment, combat, IK and root motion are not implemented foundations to assume.
-
-World, Animation and Presets workspaces have separate cameras, input and preview lifecycle. Switching cancels transient interactions and restores workspace-owned settings while retaining drafts/history and world navigation. The shell camera remains active. Window visibility is presentation only; tool activation controls source demand. Bounded source working sets and stable-ID selection support promoted editor proxies; matching cooked visuals are hidden while proxies are ready.
-
-The [World workspace](../crates/app_editor/src/workspaces/world.rs) composes camera navigation, shortcuts/picking, source-object proxies, grouped gizmo transactions and overlays. Its UI module composes the toolbar and separate hierarchy, inspector, assets, navigator and diagnostics views. Beyond 768 m of orbit distance (back below 576 m) the world camera keeps only its local preload ring instead of detailed source demand across the whole view; the terrain hierarchy still draws the whole world. [Vegetation authoring](../crates/app_editor/src/vegetation_authoring.rs) separates the validated catalog draft/save lifecycle, accepted live preview, inspector, population/species controls and ribbon-curve canvas. Existing plugins still own system ordering and save completion; internal modules are not independent activation switches.
-
-## Atmosphere and presentation
-
-One authored atmosphere/weather profile belongs to each world space. Pure evaluation lives in `world`; the Bevy adapter owns sky, directional/ambient illumination and haze. The game advances the time of day ([`GameDayClock`](../crates/engine/src/day_clock.rs)): the day phase moves at the profile's `day_seconds` (20 minutes by default) from the authored start or `--time HH:MM`. Profiles, repros, look and LOD-lab captures hold the time they start at unless `--day-clock on`, and F1 A/B captures pause it. Editor preview transport can temporarily own the phase; the Atmosphere window's **Game start** holds the phase the game starts at. Restoring a workspace must restore the correct owner and camera environment.
-
-The [sky composite](../crates/atmosphere/src/sky.rs) draws everything between the camera and the scene in one pass over the resolved HDR image, after the main passes: the physical sky and sun/moon disks and aerial perspective from Bevy's atmosphere tables, the cloud layer, ground haze, valley mist and weather fog. Bevy still computes those tables and lights surfaces through them; only its own sky pass is replaced, by a no-op in the same schedule slot (found as the only system whose sole constraints are after the opaque pass and before the transparent pass, apart from the public transmissive pass). That pass drew into the multisampled colour target, so multisample colour had to be stored and reloaded every frame, and it fogged whole pixels from one depth sample. The composite reads every depth sample: sky samples get the sky's light and geometry samples the haze of their own distance, and the resolved image is multiplied by the transmittance averaged over geometry samples only, because sky samples hold the black clear colour. Pixels whose samples share one distance are shaded once. Transmittance is per channel through dual-source blending where the GPU supports it. The composite needs sampled depth, which Bevy requests only for atmosphere views, so `WorldEnvironmentView` cameras request it themselves. Aerial-perspective transmittance integrates the medium's extinction along the camera-to-surface segment (Simpson's rule over Bevy's full-precision density table, bound at 5/7). Bevy's segment lookup divides two whole-atmosphere transmittances that underflow its half-float table for near-horizontal ground rays, which drew coloured horizontal streaks on distant terrain. The F1 sky switch stops the composite drawing sky and haze but keeps Bevy's tables, so surface lighting does not change with it.
-
-Exposure follows the profile's EV; in the game, eye adaptation ([adaptation](../crates/atmosphere/src/adaptation.rs), Bevy's auto exposure) then follows half of a change in the scene's metered brightness around a reference a stop below a forest edge in sun (daylight shows half a stop darker than metered), within +1.5 / −1 stop by day, quickly towards brighter scenes and slowly towards darker ones. At night it brightens at most half a stop (`NIGHT_BRIGHTEN`, five quarter-stop curves picked by `adaptation`): a moonless night meters far below the reference while snow sits in the brightest tenth Bevy leaves out, so the full lift turned snow lavender-white. **Distant terrain shadows** ([terrain_shadow](../crates/atmosphere/src/terrain_shadow.rs), `lighting/terrain_shadow.wesl`, bindings 126–127): from the same 8 m relief, a map holds per texel the horizon towards the light's compass direction (tangent and distance), the ground height and the share of the sky the terrain around leaves open. Past the shadow cascades lit materials dim the sun, or the moon while the sun is down, below that horizon, with the light's exact elevation, so shadows lengthen smoothly; the GPU searches the horizon again whenever the compass direction moves 0.25°, a band of rows a frame, into the map in place (`terrain_shadow::gpu`, `lighting/terrain_horizon.wesl`; the sky share once per relief). The sky's light is scaled by the open share everywhere, so valley floors and gullies see less of it than ridges. The sky band counts for 30% in metering. It is a game-only presentation setting (F1 **Auto exposure**); the editor shows the exposure as set. Bevy keeps adapting a view whose `AutoExposure` is removed, so turning it off swaps in an identity compensation curve. Under tree crowns the sky light is held back as well ([`ForestSkyOcclusion`](../crates/atmosphere/src/forest_shadow.rs), `forest_sky_visibility`): the forest-shadow crown map carries three mip levels (8, 16 and 32 m texels) that hold the average share of sky its crowns let through (`exp(−density)`) and the highest canopy top, and a point reads them once, between 8 and 16 m texels, with a 15% floor. Bevy rewrites only level 0 of an existing texture when an image changes, so the render world uploads those levels itself (`ForestSkyLevels`). World cameras use Khronos PBR Neutral tonemapping (`WORLD_TONEMAPPING`). Terrain, bark, characters and grass apply it to their ambient term; tree foliage and impostors keep their baked crown occlusion. The sky the crowns hide is partly replaced by leaf-filtered light (`CANOPY_FILL`, a dim green-gold share of the sky's light), so shade under crowns is not sky-blue. Below its own horizon a surface sees ground, not sky: in `lighting/pbr_lighting.wesl` the lower half of a normal's view takes the light the ground reflects (`ground_light`: a green-gold albedo times the sun and moon through the atmosphere and cloud shadow, plus the sky), dimmed under crowns. Before, trunks, characters and cliffs were lit only by blue sky light from every side and read purple-blue in shade; flat ground is unchanged. Grass reads the map through the shared cloud surface bind group.
-
-Every weather has two layers of low air, authored per world in `AtmosphereProfile::fog` ([`FogSettings`](../crates/world/src/fog.rs)) and drawn by the sky composite in front of the aerial perspective, mixed with weather fog by optical depth. **Ground haze** thickens exponentially towards the sea (30 km visibility at sea level, thinning by e every 250 m), integrated analytically along each ray, so ridges stand out of hazier lowlands. **Valley mist** pools in low ground under a level top, so hills rise out of it. Its [map](../crates/atmosphere/src/valley_mist.rs) is built once per runtime generation from the terrain: the engine reads every level-3 node (8 m samples; 1,600 nodes for Reteya) through the database worker and builds the mist map from every other sample (16 m, 641², exactly the level-4 samples) and the terrain relief for distant terrain shadows from all of them, a few requests at a time with ids of their own, and builds the map off the main thread ([`world_streaming/valley_mist.rs`](../crates/engine/src/world_streaming/valley_mist.rs)). Per texel it holds the mist floor (the lowest ground within 256 m, smoothed, so the floor reaches up a valley's sides and the top above it stays level), the valley share (ground below its surroundings) and the land share (mist fades out within about 200 m offshore). Open ground holds 35% of a valley's depth and 20% of its density. Along a ray, mist is integrated exactly in four stretches of the part that runs below the higher of the mist tops at its ends, each with the top and drifting cloud-noise wisps at its middle; where depth samples differ (silhouettes), haze and mist are evaluated at the nearest and farthest sample and interpolated. Mist is lit by the sky (and moon) evenly and by the sun mostly forwards, through the same cloud-deck attenuation as weather fog. Ground haze scatters at least the colour of the sky just above the horizon below each ray, read from Bevy's sky table, and never less than its own sun and sky light (the aureole towards the sun, which light shafts take back where the haze lies in shadow; with the horizon colour alone they took back more than it had and left a cyan glow towards a sun rising behind trees): haze and sky are the same air, so distant haze meets the sky without a band at any time of day (a separate estimate of its light left a grey band over the sea once the sun was dimmed by the atmosphere); at night the authored fill light is added. Distant clouds lost in haze likewise turn into the sky they stand in. Under a closing deck (`EnvironmentParams::weather.z`, 0 open to 1 overcast) both blend to the deck's grey instead, and the deck continues to the horizon at its lowest traced elevation rather than fading out past 20–40 km, which had left a band of clear sky between the deck and the sea. The mist amount follows the sun: authored amounts at night, sunrise, high sun and sunset, with morning mist burning off by 40° of sun elevation (8 am, the default start, keeps about a third of the dawn amount); wet ground after rain adds to it and strong wind thins it. F1 **Fog & mist** and `--profile-fog` turn both off; weather fog stays.
-
-[Light shafts](../crates/atmosphere/src/light_shafts.rs) are sunbeams through the air near the camera, computed before the sky composite at a quarter of the main-pass resolution ([march](../assets/shaders/sky/light_shafts.wesl), [blur](../assets/shaders/sky/light_shafts_blur.wesl)). Each texel marches its view ray in 32 steps, packed towards the camera and offset per texel by interleaved gradient noise, over the range the sun's shadow-map cascades cover (at most 150 m). The cascades are orthographic, so each ray's shadow coordinates are blended between its two ends rather than projected per step. The composite lights ground haze and valley mist as if the sun reached all of it; the march gives back the sunlight of haze and mist in shadow. It adds the humid **air under crowns**, which only this pass draws: `FogSettings::canopy_air_visibility_metres` (500 m by default, denser with the morning mist) under the canopy of the forest-shadow map. That air scatters sunlight where the shadow maps let it through and a dimmer, leaf-green share of sky light everywhere. Shadow lookups are skipped where only the thin ground haze would be darkened, and mist is evaluated only below its ceiling. Each texel stores the light to add, the air's transmittance and the distance it marched to; two depth-aware blur passes remove the step noise, and the composite blends the result in with a depth-aware upsample, so there is no extra full-screen pass. F1 **Light shafts** and `--profile-shafts` turn it off; it also needs Fog & mist. Cost: within noise in the broadleaf forest and about 0.5–0.9 ms on the open start beach (morning mist there is shadowed too).
-
-The sun ([`sun_glare`](../crates/atmosphere/src/sun_glare.rs), [celestial](../assets/shaders/sky/celestial.wesl), glare kernels in [sun](../assets/shaders/sky/sun.wesl)) is drawn by the composite instead of Bevy's flat disc: limb-darkened, with its exposed light kept within half floats. The haze and mist phase function has a narrow aureole lobe (5%, g 0.92), so the sky and distant haze brighten right around the sun. Glare of the eye and lens is drawn analytically around the sun's direction: a core about a degree wide holding 2% of the sun's light and a veil over tens of degrees holding 1.2%, scaled by how much of the sun the camera sees. A one-workgroup compute pass measures that ([shader](../assets/shaders/sky/sun_occlusion.wesl)): with the disc on screen, 64 depth samples across it count the sky behind; off screen, 64 shadow-map samples on a 0.4 m patch around the camera tell whether something blocks it. The cloud shadow at the camera dims both, and the result eases in over a few frames, so walking through leaf shadow does not flicker the glare. Bevy's bloom downsample suppresses small, very bright sources, which is why the disc alone barely bloomed.
-
-**Sunlight through the atmosphere** ([`sunlight`](../crates/atmosphere/src/sunlight.rs)). Bevy dims and reddens the sunlight on surfaces with its transmittance table; the effects that light the air themselves (ground haze, valley mist, weather fog, light shafts, particles, rain and the cloud layer) now use the same light. Each frame the CPU integrates Bevy's medium (Rayleigh with the profile's molecular density, the near-ground aerosol of the view's visibility, ozone) along the sun's direction over the curved atmosphere, once at the camera (`EnvironmentParams::near_sun`, and `air_sun` for haze and mist) and once at the middle of the cloud layer (`sun`, `sun_color`), and drops the part of the disc below the horizon. Before, they used a grey estimate that at 5° elevation gave the haze about seven times the light reaching the ground, and no red, so sunsets showed a grey-white horizon band. Clouds keep their light longer than the ground: from 2 km the horizon lies 1.4° down.
-
-**Sun and twilight.** The profile has one sun above the atmosphere (`sun_srgb`, `sun_lux`); Bevy's atmosphere alone reddens and dims it towards the horizon, for surfaces and sky alike. The phases (night, sunrise, day, sunset) author only the sky light. Before, each phase carried its own warm sun as well, which the atmosphere reddened a second time, so the twilight zenith went brown instead of blue. The sun fades out of the sky between 10° and 18° below the horizon and renders shadow maps only while it is up. After sunset the sky light takes the night's hue by 4° down while it dims, paler until night (`TWILIGHT_PALE`), instead of the sunset's lilac; together with Bevy's sky this read purple. **Adaptation** (`EvaluatedAtmosphere::adaptation`) follows the light on open ground (the sun through a clear atmosphere's air mass plus the sky light): the exposure opens just enough that open ground never reads darker than under the authored moonlit night, between the day and night exposures. Adapting to the sun's elevation instead (the square root of the night weight) left the minutes around sunset and sunrise one to one and a half stops darker than the night, saturated green: the sun's light on the ground was gone while the night exposure had barely begun. The loss of colour (`colour_loss`) is the adaptation once the sun is down (fading in between 3° above and 1° below the horizon), so golden hours keep their colour while exposure already opens.
-
-**Night** loses colour: world views get Bevy's `ColorGrading` with post-tonemapping saturation falling by `NIGHT_DESATURATION` (60%) with `colour_loss`, as eyes adapted to moonlight see little colour, so moonlit scenes stay readable without looking like a blue day. The **moon** ([`NightLighting`](../crates/world/src/atmosphere.rs)) follows the sun's path, lagging behind by its elongation, which grows a turn per synodic month from the authored age at the first day's midnight (`age_days`, 10 by default: waxing gibbous). The game clock counts days (`AtmosphereState::day`), so the moon rises about 50 minutes later each day and goes through its phases every 30 game days. Moonlight is art-directed: the authored full-moon illuminance times the lit share to the power 1.5 (a half moon gives about a third), only at night, fading out over 3° after the disc has set, and partly balanced above 12° elevation so a high moon lights open ground about 1.4 times as much as a low one rather than 3.7: the night keeps its tone as the moon climbs. The composite draws the moon itself (Bevy's disc is off): a sphere lit from the sun's direction with Lommel–Seeliger reflection, so a full moon is evenly bright to its edge, with earthshine on the dark side and a coarse map of the near side's seas and bright craters at their real places, oriented by the pole of its path. By day it is drawn as the sunlit moon (pale against the sky); at night dimmed to stay readable at the night exposure, so its seas show. Its glitter on the sea is its drawn face's image, much brighter than the averaged glitter would make it, since wave facets each mirror the whole disc. A moonless sky keeps a faint glow (airglow and starlight, at least 15% of the night's sky light near the horizon), so it never turns black over lit ground. Neither light is ever hidden: Bevy 0.19 lost a directional light's shadow casters once it has been hidden and shown again, so a dark light only stops rendering shadow maps (`AtmospherePresentation::shadows` holds the quality setting). The composite draws **stars**: at most one per cell of a 160-per-unit grid over the sky's directions, at a hashed spot away from the cell's edges (about 5,000 above the horizon, mostly faint, white to pale blue or orange), about a pixel wide in exposed units. They come out as twilight ends (sun 3–11° down) and sit behind the moon, clouds, haze and the atmosphere's transmittance. The crowns' wrap-around and see-through light, added outside Bevy's `directional_light`, goes through the same atmosphere transmittance and visible share of the sun's disc (`through_atmosphere` in `lighting/pbr_lighting.wesl`); before, foliage stayed white-lit at sunset and lit after the sun had set, because the sun keeps lighting Bevy's twilight sky well below the horizon.
-
-**Sun rays** ([`sun_glare`](../crates/atmosphere/src/sun_glare.rs), [shader](../assets/shaders/sky/sun_rays.wesl)) reach past the shadow maps. After the occlusion pass, at the light shafts' quarter resolution, each texel walks 32 samples along its line to the sun on screen, packed towards the sun and weighted by the veil there, and records the share that is open sky (off screen, the share of the sun seen stands in). The composite multiplies the glare's veil by it, plus an **air glow** around the sun (5% of its light, 0.15 rad wide), so beams fan out from trunks, crowns, ridges and buildings in front of the sun. The air glow is drawn only while the sun is in or near the image, and builds up over the first 200 m of depth (faster in the air under crowns, from the light shafts' transmittance), so near ground and hills in front of a low sun are not washed out. F1 **Light shafts and sun rays** and `--profile-shafts` turn both passes off.
-
-[Ambient particles](../crates/atmosphere/src/ambient_particles.rs) are drawn like the rain: instanced quads in camera-anchored boxes that wrap a world-fixed lattice, with hashed positions, periodic motion of whole cycles per hour (so the wrapping clock never jumps) and a wind drift accumulated on the CPU, so nothing is simulated per particle ([shader](../assets/shaders/weather/ambient.wesl)). There are three kinds. **Dust motes** fill a 6 m box just ahead of the camera. **Seed fluff** fills a 5 m layer over the ground of the valley-mist map, 28 m across. **Falling leaves**, 36 m across, exist only under crowns of the forest-shadow map: each falls from a height in the crown it left, traced back along the wind, to that map's ground, swinging, tilting and tumbling. Motes and fluff are lit through the sun's own shadow-map cascades (read with Bevy's light uniform and comparison sampler, not its view bind group), the cloud shadow and the crowns' sky occlusion, with Henyey–Greenstein forward scattering, so motes show in sunbeams and against the light; leaves are lit two-sided. Motes keep to shade under crowns, where sunbeams read; seeds favour open ground. Tiny particles are drawn at least three pixels across, as soft dots that keep the light of their true size. Motes and fluff need a dry day: rain clears them and wet ground thins them, while wind adds fluff and shakes leaves loose. F1 **Ambient particles** and `--profile-particles` turn them off. Cost is within measurement noise (under 0.1 ms).
-
-Balanced clouds use a 2048×256 azimuth × elevation sky panorama (square-root elevation warp, rows along the horizon) refreshed a few rows every frame, four complete refreshes per second at any frame rate. The sky composite cross-fades the two latest complete refreshes while a third image is refreshed, so clouds change continuously rather than in 4 Hz steps behind a moving refresh seam; High retains per-frame half-resolution rendering. Cloud altitude, field size, seed or enablement changes, teleports and resume require a full refresh; coverage, density, erosion and thickness (weather) and normal evolution update progressively. Cloud Off skips cloud tracing and shadow passes but preserves weather fog, weather's ambient response and some shared bookkeeping.
-
-**Cloud shapes** ([density](../assets/shaders/clouds/density.wesl), [tracing](../assets/shaders/clouds/render.wesl)). Broken cloud is cumulus: the body noise is sampled stretched upwards (half its horizontal rate), so each cloud is a column with one footprint from a flat base, and the threshold rising with height rounds its top, so strong cores tower and edges stay low. Worley billows are eaten out of the outline, and the density reaches its full value within a few tens of metres of it, 2.5 times a deck's. As coverage closes into overcast the deck keeps layered sampling (the layer's share of the noise period upwards) and a density that follows the noise, so its thin and thick parts give it texture. Light through a cloud has a direct beam, `exp(-τ)` times the phase, and a diffuse part that falls off as `1/(1 + 0.11τ)` (two-stream diffusion with g 0.85), so thick bases stay grey; bases also take sunlit ground's bounce (albedo about 0.1), which at midday equals the sky above them. The trace takes about 25 m steps, 48 to 160 of them (at most 80 at High, which traces every frame). The composite reads the panorama as a cubic B-spline in four bilinear taps, without which the sharp edges showed its texels as staircases; reflections in the sea read it bilinearly. Surfaces take sunlight past the clouds in two parts (`cloud_light` in [surface](../assets/shaders/lighting/surface.wesl)): the direct beam, which the shadow maps and crowns shade and a closing deck hides whatever thin spots the cloud shadow finds (as it hides the sun's disc), and up to 12% of the sun that the clouds pass on diffusely, which keeps surfaces facing the bright sky around the sun a little brighter but casts no shadows, held back under crowns as the sky is. Light shafts and lit particles take only the beam.
-
-Game weather is [pure data in `world`](../crates/world/src/weather.rs): Clear/Scattered/Overcast/Rain/Storm presets, a weighted random sequence with hold/transition durations, continuous blending from the current values and a wetness integrator. Each world's `AtmosphereProfile::weather` holds its authored presets and sequence, stored with the rest of the profile in one encoding (new worlds start from the built-in values). The game adopts published edits live without restarting the sequence. The editor previews any preset, with a chosen wetness, over the edited or published profile; editor-owned atmospheres apply weather only as that explicit preview, and isolated workspaces never do. Rain shelter and grass ambient gain are game-only, so editor previews rain under trees. The [engine adapter](../crates/engine/src/weather/rain.rs) advances it in the game only (`AtmosphereOwner::Game`) and overlays it on the authored profile: cloud shape, daytime exposure and skylight colour through `AtmosphereState::effective_profile`, the grass ambient bound through `VegetationAmbientGain` (exposure adaptation, since grass lighting is bounded in exposed units), and the shared wind through `VegetationWind` strength, gusts and `rate`. Grass, trees and cloud drift share the authored cloud wind direction while weather is active. Weather changes the wind clock rate rather than `speed`, because phase is `time × speed`. Reduced visibility is not written into Bevy's scattering medium: its half-float transmittance tables divide values that underflow below a few kilometres and produced NaN streaks. During a weather change each region of the cloud field blends from the previous coverage, extinction and erosion at its own time (a noise-driven arrival over ~40% of the change) instead of one global threshold; cloud shadows share the same density function. Weather fog instead adds the missing extinction, lit by desaturated ambient light, per depth sample in the sky composite, outdoors only. `--weather authored`, the default for profiles, repros, captures and smoke runs, presents the profile unchanged. F1 A/B captures pause the weather clock and record the weather.
-
-**Lightning** ([model](../crates/atmosphere/src/lightning.rs), [game schedule](../crates/engine/src/lightning.rs)) comes with storms: `WeatherParams::lightning_per_minute` rises to 8 with heavy rain under the densest clouds, so only the Storm preset (and changes into it) strikes, and the saved weather is unchanged. Strikes come at exponential intervals, 1.5–7 km around the camera, on the weather's clock (paused with it). A strike is a seed, the point it hits and its start: two to four return strokes tens of milliseconds apart, each a 35 ms pulse of the channel and a 60 ms flash, then the clouds' afterglow over the rest of 1.2 s. The channel is ten jagged segments from the cloud base to the strike point and three two-segment branches, drawn by the sky composite as a pixel-wide core and halo far past white (bloom spreads it), behind nearer geometry and dimmed by haze and rain fog. The flash lights the clouds near the strike (and their reflection in the sea), the haze and rain fog, and the ground through the ambient light (2,000 at the peak, bluish white): a night strike shows the landscape in grey for a moment. F1 → Weather **Lightning strike** forces one ahead of the camera; the look key `lightning=SECONDS` holds one that far in. No thunder: there is no audio yet.
-
-[Precipitation](../crates/atmosphere/src/precipitation.rs) draws rain as instanced camera-facing streaks in three camera-anchored boxes (near, mid, far) that wrap a world-fixed drop lattice. Positions come from hashes plus a CPU-accumulated fall offset, so there is no per-drop state and wind changes never make drops jump. Streaks follow drop velocity relative to the smoothed velocity of `PrecipitationReference`, which the game sets to the camera's follow target so orbiting does not tilt the rain (teleports and origin rebases ignored; free cameras draw unstretched streaks), keep at least one pixel of width with proportionally reduced alpha, fade near the lens and with weather fog, and use a soft test against scene depth. The pass runs between `EarlyPostProcess` and `PostProcess`: after Temporal reconstruction (no ghosting, output resolution) or on the resolved MSAA image, and before bloom and tone mapping. Wetness from `AtmosphereState` reaches every surface through `EnvironmentParams::weather`: the shared PBR adapter darkens albedo and lowers roughness on sky-facing surfaces, and grass darkens its body colour.
-
-The [open sea](../crates/engine/src/ocean.rs) is render-only and has no mesh. A world space's optional `sea_level` (stored in both databases) is published while a world view is active as `atmosphere::SeaSurface`; the sky composite ([sea](../assets/shaders/water/sea.wesl)) intersects each view ray with the sea's surface (flat out to 10 km around the view, then bending with the planet, so it reaches the sky's horizon from any height) and draws the water in front of whatever the main pass drew below it: the seabed, the foot of a rock, or nothing beyond the world's ground. Shore is wherever the terrain crosses the sea level. Through the water, the seabed is dimmed per channel by the column seen through (red goes within a few metres; `WATER_EXTINCTION`) and by its own light coming down (1.3× its depth), and the body adds the daylight it scatters back up (`WATER_ALBEDO`), so shallow water over sand is clear and greenish and deep water dark blue. The surface's waves ([waves](../assets/shaders/water/waves.wesl)) are 24 deep-water waves from 60 m to 15 cm in a fan around the cloud wind, with directions, wavenumbers and frequencies in a constant table (whole cycles per hour, so the wrapping clock never jumps), each equally steep so that together their slope variance follows Cox and Munk's measurements for the weather's wind strength. Waves under about three pixels long drop out (the loop stops at the first, since they run longest first) and their slope variance becomes roughness, so far water spreads the sun into a broad glitter path instead of shimmering. Gust patches a few hundred metres across, from the cloud noise and drifting with the mist, roughen it unevenly. The surface reflects the sky and the cached cloud panorama with Fresnel (blending to the deck's grey under overcast), and the sun and moon through GGX glitter shaded by cloud shadows (the cloud shadow map is bound to the composite) and hidden by a closing deck. In the first 30 cm of depth a swash runs up as each broken wave comes ashore and drains back: a lacy foam front rides it with fainter foam behind, sand it drained from stays wet and darker, and a film of water fades in over the first metres. Widths along the ground become depths through the seabed's slope, estimated from the depth buffer two pixels away, so a nearly flat beach gets a thin foam line rather than sheets, and nothing starts hard at the dry edge, where the terrain's contour zigzags. Rain leaves no splashes below the sea level. Cost: about 0.2–0.3 ms at game scale with the sea filling most of the view or at the waterline. Not implemented: refraction, the view from under water, swimming, lakes and rivers.
-
-**Breaking waves** come ashore from a [shore map](../crates/atmosphere/src/shore.rs), built with the valley mist's map from the same terrain heights (16 m, Reteya 641²) in a world with a sea and bound to the composite: per texel the depth below the sea level and the time a crest of the 9 s swell takes to get there from 20 m of water, by Dijkstra's search in from deep water at the crest's speed (linear dispersion; in shallow water the square root of g times the depth and a 0.4 m bore, integrated along the seabed between texels), with its gradient. Crests are the lines of equal time, so they lie along the shore, wrap into bays and close up as the water shallows; water inland below the sea level is never reached. In the composite (`surf_at`) a crest's phase is the wave clock less that time, shifted along the shore by smooth fields a few hundred metres across; each crest has its own height, and some stretches of shore get bigger sets. The swell (0.6 m times the square of the weather's wind strength) grows as it slows (Green's law) and breaks where its height reaches 0.78 of the depth, held to that share from there on; before breaking its crest sharpens and its front steepens, after it a white roller runs on the front and leaves foam that opens into a Worley lace and fades over 3 s, and the water behind is lighter. Both sides of a crest are Gaussians blurred by adding the pixel's footprint along the view (keeping their area), so far surf softens instead of breaking into speckle, and lace fades into the veil it averages to. Within about 4 m of depth and where the view falls more steeply than 5°, the view ray is marched through the band the waves fill and refined by secant steps, so crests stand up out of the water and hide what lies behind; beyond, slopes and foam draw them on the flat surface. The swash takes its timing from the same crests. Wind ripples calm in broken and shallow water. Cost at 3456×2168: about 0.15 ms with no sea in view (a larger shader), 0.65 ms at the waterline view and 1.3 ms with the surf zone filling the view (99 against 112 fps), most of it the march.
-
-[Rain shelter](../crates/atmosphere/src/shelter.rs) is a 256² top-down map (0.5 m texels, 128 m around the camera) of the highest object top above each texel and its coverage. Any placed object shelters the ground below its top, so trees, shrubs and rocks need no tagging: streamed objects carry an `ObjectFootprint` from their largest LOD bounds, and the [engine](../crates/engine/src/weather.rs) rebuilds the map while rain or wetness needs it, after moving 16 m, on origin rebases and (throttled to 0.5 s) when objects stream. Materials bind it at 123 beside the cloud inputs; rain streaks, splash placement, surface wetness and puddles all use the same bilinear lookup. Splashes are spawned on the CPU on resident terrain in a disc around the ground the camera looks at, at constant density per square metre (skipping steep and sheltered ground), into a 512-entry ring buffer with the terrain normal. Each draws a ripple ring lying on the surface (strong on wet ground, faint on dry) and four droplets thrown in a cone that fall back under gravity, hidden behind nearer geometry such as grass. [Puddles](../assets/shaders/weather/ground_wetness.wesl) follow the relief: terrain v2 finds each pixel's hollowness in the height clipmap (depth below the ground within 1.5 m, saturating at 15 cm). As ground soaks, water rises into road ruts and dips deepest first; when soaked, hollows about 4 cm deep hold water, and a few sparse noise puddles remain on open flat ground. Only wet ground within 80 m computes it. The editor's preset preview material has no relief and uses noise puddles. Ripple rings animate while rain falls; only the terrain shaders call it.
-
-Game defaults are 50% of physical width/height, 4× MSAA, native-resolution UI, Auto upscaling, Balanced grass/clouds and optional counters off. Auto uses MetalFX Spatial when supported, otherwise Linear. Explicit Linear samples the scene directly during UI composition. MetalFX Temporal is an integrated, selectable game backend: it replaces MSAA, requires mesh depth/motion, writes grass color/motion/final depth, reconstructs HDR before full-size postprocessing, and resets history on discontinuities. Motion excludes jitter; exposed HDR uses a unit exposure hint. Recorded performance and moving-grass quality issues remain unresolved; these are follow-up issues in an implemented feature, not missing temporal integration. See the ledger.
-
-`MsaaColorStorePolicy::Automatic` discards multisample color only when later consumers permit it; depth is retained. New passes loading that color must request Preserve or extend the consumer check. Atmosphere views qualify only while `BevySkyPassReplaced` confirms Bevy's sky pass is gone. This adapts Bevy's opaque schedule, as the sky composite adapts its sky pass; both must be rechecked on upgrades. The [wgpu-hal patch](../third_party/wgpu-hal/YARRA_PATCH.md) supplies the Metal minimum presentation interval for frame pacing; it is not obsolete vendored experimentation.
+### Crates and their workspace dependencies
+
+Packages are named `yarra-<crate>` (`cargo run -p yarra-world-cook`); code uses the short
+names. In dependency order:
+
+```text
+vegetation           -
+world                vegetation
+environment          world
+environment_compile  environment, vegetation, world
+world_db             environment, vegetation, world
+world_cook           environment, environment_compile, vegetation, world, world_db
+game_types           -
+gameplay             game_types
+localization         game_types
+save                 game_types, gameplay
+scripting            game_types, gameplay
+game_content         game_types, gameplay, localization, save, scripting
+upscaling            -
+atmosphere           world
+terrain_render       atmosphere, world
+vegetation_render    atmosphere, upscaling, vegetation
+engine               atmosphere, terrain_render, vegetation, vegetation_render, world, world_db
+app_game             engine, game_content, game_types, gameplay, localization, save,
+                     terrain_render, upscaling (metalfx), vegetation, vegetation_render, world
+app_editor           atmosphere, engine, environment, environment_compile, terrain_render,
+                     vegetation, vegetation_render, world, world_cook, world_db
+shader_check         -   dev-dependency of atmosphere, engine, terrain_render, vegetation_render
+rust_tidy            -   tools/rust_tidy, package yarra-tidy
+```
+
+The world-data and gameplay crates have no Bevy; of them only `world_db` and `game_content` use
+SQLite. The renderers (Bevy) have no SQLite: `engine` is the only library joining the two.
+
+## World data crates
+
+### vegetation
+
+- Owns what grass and ground details are: `GrassType`, `DetailType`, `VegetationCatalog`, built
+  from a `GrassPack` (`assets/packs/grass/baltic.ron`) keyed by terrain surface; the per-cell
+  coverage the cook writes (`VegetationFieldPageData`, `VegetationFieldPage`, `GrassField`).
+- Owns deterministic blade placement (`Lattice`, `sample_candidate`, `sample_clump`,
+  `accepted`); `reference` is the CPU placement tests hold the GPU to.
+- Invariants: no Bevy, SQLite or GPU. `shaders/vegetation/placement/sampling.wesl` mirrors
+  `placement.rs`; change both together. Depends on no workspace crate.
+
+### world
+
+- Coordinates and identities: `WorldSpaceId`, `CellCoord`, `WorldPosition` (space, cell and an
+  offset within it), `StableObjectId`, `ObjectDefinitionId`, `AssetId`.
+- Cooked page contracts: `PageKey`, `PageDomain` (Terrain, StaticObjects, GameplayObjects,
+  Vegetation), `PagePayload`, `encode_page_payload`; far-object blocks (`FarObjectsPage`,
+  `FarObjectForm`, `FAR_OBJECT_BLOCK_CELLS` = 16).
+- Terrain contracts: `TerrainHeightfieldPage` (heights, surfaces, `TerrainWear`), the hierarchy
+  (`TerrainNodeKey`, `TerrainNode`), control tiles (`TerrainControlTile`, `CONTROL_SAMPLES` = 65,
+  `CONTROL_TOP_LEVEL` = 5), editor previews (`TerrainPreviewProducts`).
+- Renderer-free atmosphere and weather (`AtmosphereProfile`, `evaluate_at`,
+  `weather::WeatherRuntime`), `GameplayArea`, `WorldViewBookmark`, `road_noise`.
+- Invariants:
+  - One binary codec (`codec`). Blobs carry no version: `PROJECT_SCHEMA_VERSION` and
+    `RUNTIME_SCHEMA_VERSION` cover everything stored, so changing a stored type (or reordering
+    a bincode enum such as `PagePayload`) bumps one.
+  - Heights are quantised to `TERRAIN_HEIGHT_STEP` (1/1024 m), normals to `TERRAIN_NORMAL_BITS`
+    (12): previews, cooked and decoded data are identical and shared cell edges agree exactly.
+  - At most `MAX_TERRAIN_SURFACES_PER_CELL` (12) surfaces a cell. Decoding is bounded
+    (`MAX_DECODED_PAGE_BYTES`, 64 MiB) and refuses trailing bytes.
+- Must not depend on Bevy, SQLite or `environment`.
+
+### environment
+
+- Owns ground authoring source: `EnvironmentDefinition` (layers, `WornGround`,
+  `GroundTreatment`), coverage (`CoverageSnapshot`, `CoverageIndex`, `halo`), `brush`,
+  `PresetLibrary`, render-only scatter (`AssetCollection`).
+- Owns road source: `Road`, `RoadKnot`, `RoadSpan`, `RoadJunction`, `RoadWear`, `RoadSnapshot`,
+  and the `validate` checks `world_db` applies before it writes source.
+- Invariants: no editor, database or renderer dependency. Neighbouring cells share edge
+  samples, so a cell compiles only with its whole halo loaded; a cell that is not loaded is an
+  error, and truncated road reads are never taken as empty.
+- Must not depend on Bevy, SQLite, `world_db` or the compiler.
+
+### environment_compile
+
+- Owns deterministic cell compilation: `CompilePlan::new`, then `compile_cells` gives
+  `CompiledCell` (ground palette and weight pages, vegetation fields, generated objects, roads,
+  wear field, input fingerprint). Budgets are explicit in `CompileProfile`.
+- Owns how roads wear and grade the ground (`TerrainRoads`, `RoadShape`, `junction_blend`) and
+  scatter thinning.
+- Invariants: no Bevy, SQLite, filesystem or GPU work. A batch is all or error and returns cells
+  in canonical order. Road relief grades the original source heights, never earlier output.
+  Scatter roots do not move when paint or density change.
+- Must not depend on `world_db` or Bevy.
+
+### world_db
+
+- Project database: bounded editor access (`ProjectReader`, `ProjectWriter`), whole-document
+  import/export (`ProjectDocument`), domain stores (environment, roads, atmosphere, areas,
+  `TerrainImportWriter`, asset import) and the cook's snapshot (`ProjectCookSnapshot`).
+- Runtime database: `RuntimeReader::open_immutable`, `RuntimeCookWriter`, `RuntimeManifest`,
+  terrain nodes and control tiles, far-object pages (`rebuild_far_objects`).
+- Invariants:
+  - Opening an existing database checks `PRAGMA user_version` against this build's constant
+    (`WorldDbError::SchemaVersion` otherwise). No migrations: worlds are disposable and rebuilt.
+  - Source writes run in IMMEDIATE transactions, compare revisions (a stale write is a conflict)
+    and commit a whole gesture or nothing; their sizes are bounded (`limits`).
+  - Runtime reads never touch authoring tables; render weights and vegetation fields are never
+    authoring records. Start view and gameplay areas sit outside the runtime's content hash.
+- Must not depend on Bevy or `environment_compile` (a dev-dependency for tests).
+
+### world_cook
+
+- Owns `yarra-world-cook`: `cook [--full]`, `import-heightfield|roads|grass|assets` (each cooks
+  afterwards unless `--no-cook`), and the test fixtures `create-demo`, `create-road-demo`.
+- Owns the production cook (`cook_project`, `cook_project_fresh`): one source snapshot, cells
+  compiled in batches on every core (`parallel`), terrain hierarchy (`terrain_cook`), control
+  tiles (`control_cook`), far-object blocks; and the editor's previews (`preview_terrain`).
+- Invariants:
+  - Reads and writes happen in key order on the cook thread, so output matches a sequential
+    cook. An incremental cook (same global inputs and terrain cells) recompiles only cells whose
+    input fingerprint changed, and their ancestors; tests hold it to a full cook's content hash.
+  - Output is staged, validated, then renamed over the runtime: a failed cook leaves the
+    previous generation. Previews never modify either database.
+- Must not depend on Bevy or the engine.
+
+## Gameplay crates
+
+### game_types
+
+- Owns durable 16-byte identities (`ActorId`, `DialogueId`, `PlaythroughId` and the rest of
+  `ids!`; `named(name)` hashes an authored name), `Key`, `TextKey`, `TextRef`, `GameTime`,
+  `TextContract`, `BoundText`, and `Invalid`/`require`.
+- Invariant: contracts only, no runtime services; depends on no workspace crate.
+
+### gameplay
+
+- Owns the rules and domains (`rules`, `actors`, `inventory`, `quests`, `dialogue`, world objects,
+  areas and triggers) and the playthrough: `SessionState`, `GameSession`, `Command`, and `Driver`
+  (fixed time steps, in the game and headless alike).
+- Owns two ports: `ContentSource` (`identity`, `core`, `dialogue`), implemented by
+  `game_content::ContentRepository` and by `ToolContent`; and `ScriptEngine`.
+- Invariants:
+  - No Bevy, SQLite, filesystem or Fluent; rendered text never enters state.
+  - The whole playthrough is in memory. Records never changed are absent and read as defaults,
+    so state and saves hold only what differs from the authored world. Derived indexes such as
+    carried inventories are rebuilt on load, not saved.
+  - `GameSession::apply` accepts a command whole or leaves state, clock and random streams
+    untouched: every write goes through a `Tx` that remembers what it replaced. Read models never
+    consume randomness. Dialogue graphs load on demand, at most `MAX_LOADED_DIALOGUES` (32).
+- Must not depend on the other gameplay crates; the `fixtures` feature is for tests only.
+
+### localization
+
+- Owns Fluent presentation: `Localization`, `LanguageResource`, `contract`, `contract_hash`. A
+  package's source-language file defines its messages and their arguments; translations are
+  checked against it. Must not depend on `gameplay`.
+
+### save
+
+- Owns slot files: `SaveDirectory`, `SaveSlot` (`Manual`, `Quick`, `Auto`), `SaveInfo`.
+- Invariants: one file a slot, a JSON header line then the state as JSON, written beside the slot,
+  synced and renamed over it. Loading brings state in line with the content at hand and refuses,
+  with the reason, what no longer fits. Must not depend on SQLite or `game_content`.
+
+### scripting
+
+- Owns the Luau engine `LuauScripts` (a `gameplay::ScriptEngine`) and its API definitions
+  (`API_DEFINITIONS`); content names a function as `module.function`.
+- Invariants: each call loads its module afresh into its own sandbox, with a memory cap and a
+  step budget, and can do only what gameplay's script scopes allow.
+
+### game_content
+
+- Owns the authored project (`LoadedProject`, `ProjectFile`), publication
+  (`LoadedProject::build`, `build_language_pack`), reading (`ContentRepository`,
+  `LanguageRepository`, `LanguageSource`) and the `yarra-game-content` CLI (validate, build,
+  inspect, scenarios, demo).
+- Invariants: a bundle is a manifest, one core row a session reads up front, and a row per
+  dialogue graph and per text contract, read when needed. Language packs are separate and never
+  part of a save's content identity, so wording changes leave mechanics alone. Existing bundle
+  files are never overwritten. Domain crates never depend on this crate.
+
+## Rendering crates
+
+### upscaling
+
+- Owns `UpscaleMethod` (Auto, Linear, MetalFX Spatial, MetalFX Temporal), `UpscaleView`,
+  `UpscaleStatus`, `UpscalingPlugin`, temporal contracts (`temporal::TemporalView`, `jitter`)
+  and `DirectTonemapOutput`.
+- Invariants: Auto picks MetalFX Spatial where supported, otherwise Linear. MetalFX sits behind
+  the `metalfx` feature, which only `app_game` enables. Depends on no workspace crate.
+
+### atmosphere
+
+- Owns the sky and the air: `WorldEnvironmentPlugin` (`game()`/`editor()`), `AtmosphereState`,
+  `AtmosphereOwner` (Game, Editor, Isolated), the sky composite (`sky`), clouds, light shafts,
+  sun glare, rain, particles, lightning, eye adaptation, the tone map (`WORLD_TONEMAPPING`).
+- Owns what all lit materials share (`environment::EnvironmentParams` and its maps) and the
+  terrain-derived maps (`valley_mist`, `shore`, `terrain_shadow`).
+- Invariants: profile evaluation is pure and lives in `world`; this crate is its Bevy adapter.
+  Bevy's sky pass is replaced (`BevySkyPassReplaced`); recheck on Bevy upgrades. Isolated views
+  get no clouds, weather or particles.
+- Must not depend on SQLite, `world_db` or `engine`.
+
+### terrain_render
+
+- Owns terrain v2's drawing: `TerrainRenderPlugin`, `clipmap::ClipmapTerrainMaterial`,
+  `ClipmapTextures`, `ClipmapUploads`, CDLOD selection (`ClipmapLayout`, `LodRanges`, `select`,
+  `MORPH_SHARE` = 0.3), ground surfaces (`TerrainSurfaceLayer`), and `ClipmapPatch` (one cell
+  outside streaming, for the editor's preset preview).
+- Invariants: selection uses distance to a node's box, so turning the camera changes only
+  culling. A node splits only when all four children are resident and vertices morph to the
+  coarser grid, so levels meet without cracks.
+- Must not depend on `world_db` or `engine`.
+
+### vegetation_render
+
+- Owns procedural grass after Ghost of Tsushima: `VegetationRenderPlugin`,
+  `VegetationSceneState`, `VegetationView`, `VegetationWind` (which trees also read), trampling
+  (`GrassBender`), `VegetationDiagnostics`.
+- Invariants: dormant until a `VegetationSceneState` exists and a camera has `VegetationView`;
+  installs no GPU timing probes; no entity or row per blade. The candidate cache holds only
+  stable acceptance, never view-dependent visibility or LOD.
+- Must not depend on `world`, `world_db` or `engine`: it knows grass, not the world.
+
+## engine
+
+- World at runtime: `WorldStreamingPlugin` (`game()`/`editor()`), `WorldOrigin`,
+  `WorldRenderRoot`, `ClipmapTerrain`, `WorldGenerationReload`, `LiveTerrainPreview`.
+- Objects and vegetation: `ObjectLodPlugin`, GPU trees and wind (`TreeWindPlugin`,
+  `TreeInstancing`), `WorldVegetationPlugin`, ground details, `OceanPlugin`.
+- Actors: `GameplayPlugins` (player, camera, input, destination marker), `GameplaySystems`,
+  `MoveIntent`, and `MinimalGamePlugin` (environment, terrain, streaming and actors).
+- Time and weather: `GameDayClock`, `GameWeather`, `GameLightning`.
+- Invariants: actor roots own movement; presentation scenes are children and never move them.
+  Libraries do not read process arguments; the apps inject settings. The `gameplay` module here
+  is actor control, not the `gameplay` crate.
+- Must not depend on the gameplay crates, `world_cook` (tests only), `bevy_egui` or the apps.
+
+## Applications
+
+### app_game
+
+- Composition (`main.rs`, `launch`): parses launch options once (one flag table,
+  `launch/flags.rs`, which also generates `--help` and the table in
+  [workflows](WORKFLOWS.md#launch-options)) and injects them as resources; installs
+  `MinimalGamePlugin`, vegetation, trees, ocean, weather and the day clock.
+- Presentation (`GameRenderPlugin`, see [the frame](#rendering-frame)), `runtime_settings` (the
+  one writer of the settings F1 changes) and frame pacing: the event loop, `CADisplayLink` on
+  macOS and the patched wgpu-hal minimum presentation interval
+  (`third_party/wgpu-hal/YARRA_PATCH.md`).
+- The `--story` slice (`story`), which publishes the authored project, sends input and engine
+  observations as commands and shows read models.
+- Development tooling under `dev/`, installed by `dev::install`: the F1 panel and its timing
+  layer (`render_audit`), repro routes, timed profiles, look captures, the LOD lab, Metal
+  captures and live grass-pack reload. The game modules do not depend on it.
+
+### app_editor
+
+Owns the shell, workspaces, tools, working sets, saving, publication and the recovery journal
+(see [the editor](#the-editor)). Must not depend on the gameplay crates.
+
+## Tools
+
+- **shader_check** composes WESL as Bevy's shader cache does (same `wesl` compiler and options,
+  Bevy's modules from its crate sources) and validates it with naga; see [shaders](#shaders).
+  Render crates use its `Shaders` API in tests.
+- **rust_tidy** (`cargo run -p yarra-tidy [-- --write]`) only inserts the blank lines rustfmt
+  leaves out: between items and around a function's multi-line steps.
+
+## Rendering frame
+
+The game camera (`WorldViewCamera`) renders in HDR and tone-maps into an offscreen image at a
+share of the window's physical size (`resolution_scale`, 0.5 by default) with 4× MSAA; with
+MetalFX Temporal, MSAA is off and the backend reconstructs at output size. In order:
+
+1. Compute before the camera: grass trampling, candidate cache and placement; GPU tree LOD and
+   culling (`shaders/tree/lod.wesl`); the terrain-horizon search; cloud shadows.
+2. Main passes: terrain v2 patches (one shared grid mesh and `ClipmapTerrainMaterial`; heights
+   come from the clipmap), grass as indirect opaque draws (no shadows), trees and impostors as
+   indirect draws per form and representation in the main, prepass and shadow phases, meshes.
+3. After the main pass: the sky composite, one full-screen pass over the resolved image (sky, sun
+   and moon, aerial perspective, clouds, haze, mist, fog, the sea), fed by quarter-resolution
+   light shafts, sun occlusion and sun rays.
+4. Temporal resolve (MetalFX Temporal only); rain and ambient particles between
+   `EarlyPostProcess` and `PostProcess`; bloom, eye adaptation and tone mapping.
+5. Upscaling to the window (MetalFX Spatial, or Linear during UI composition) under a UI camera
+   at native resolution.
+
+Every lit material binds the shared environment at slots 120–127 (`EnvironmentParams`, cloud
+shadow, rain shelter, forest and terrain shadow). `MsaaColorStorePlugin` discards multisample
+colour after the resolve only while `BevySkyPassReplaced` holds. The editor uses the same
+renderers.
+
+## Streaming and residency
+
+All runtime IO goes through one read-only worker holding a `RuntimeReader`, behind bounded
+channels (16 requests, 32 replies); each request is numbered and its reply routed to the
+consumer that sent it. Four kinds of data stream independently:
+
+- **Source pages** by cell around the view: terrain relief and wear within 240 m (80 m on
+  iOS), objects within 192 m (`OBJECT_RESIDENCY_METRES`), grass fields, gameplay objects in the
+  game only. Admission is bounded (64 MiB decoded, 256 MiB estimated GPU, two attachments a
+  frame); departing pages cool for two seconds.
+- **Terrain clipmap nodes** (`ClipmapTerrain`): a 31×31-node window per level, six levels from
+  32 m leaves to 1 km nodes, toroidal 1024² layers (512² on iOS), parents first. Shaders read
+  the first resident level at or above the one wanted, so a loading node shows its parent,
+  never a hole; actors stand on resident leaf triangles (`ClipmapTerrain::ground_height`).
+- **Far-object blocks**: 16×16-cell blocks of impostor-ending objects within 2 km, carrying
+  whole LOD chains into the GPU trees' instance pool and the forest shadow map.
+- **Coarse maps**: every level-3 node, read once per generation for the valley mist, shore and
+  distant terrain-shadow maps.
+
+A new generation is adopted in two phases (`WorldGenerationReload`): nothing read for it
+reaches the live generation before the commit. Render space has a floating origin: `WorldOrigin`
+moves to the focus's cell once the focus is over `FLOATING_ORIGIN_THRESHOLD_CELLS` (8) cells
+away. Only `WorldRenderRoot` entities move; far-object batches sit relative to their own
+origins, and grass, wind and details are anchored to canonical coordinates
+(`VegetationRenderOrigin`), so a rebase changes nothing on screen.
+
+## Shaders
+
+All shaders are WESL in `assets/shaders/`, a folder per subsystem:
+
+- `terrain/`: clipmap material and vertex shader, height blend, road wear, anti-tiling.
+- `vegetation/`: grass `schedule`, `placement/`, `candidate_cache`, `blade`, `draw/`,
+  `trample`, sharing `types`, `random` and `lod`.
+- `tree/`: tree material, bark, wind and its prepass, impostors, the LOD compute pass.
+- `sky/`: the composite and its parts (air, fog, celestial, sun, cloud layer), light shafts,
+  sun occlusion and sun rays. `clouds/`: density, panorama, tracing, shadows.
+- `lighting/`: shared lit-material code: `material` (adapted from Bevy's PBR, see
+  `THIRD_PARTY.md`), `pbr_lighting`, `surface`, forest and terrain shadows, terrain horizon.
+- `environment/`: the `EnvironmentParams` layout and map lookups. `weather/`: rain, particles,
+  ambient particles, ground wetness. `water/`: the sea and its waves.
+- Root: `crossfade` (LOD crossfades as MSAA sample masks), `environment_coverage` (editor).
+
+Modules import each other as `package::shaders::<folder>::<file>` and Bevy's as
+`bevy_pbr::...`; integer limits arrive from Rust as `constants::NAME` definitions. Bevy composes
+a variant only when a pipeline first needs it, so run `cargo run -p yarra-shader-check` after
+shader changes: it checks every variant in `crates/shader_check/entries.ron` (definition sets
+from the game's pipeline log, refreshed when pipelines change); `--each-flag`, `--parse-all`.
+
+## The editor
+
+- **Workspaces** (`EditorWorkspace`): World; Animation (character previews); Presets
+  (environment presets, collections, road styles), the last two under an isolated atmosphere.
+  Each owns its cameras, UI and systems; project workers and save completion stay in the shell.
+- **Tools** register an `EditorToolDescriptor` naming their workspace and the source domains
+  (`EditorSourceDomain`) the bounded query window loads while active. The World workspace places
+  objects and authors areas, the atmosphere, roads and environment paint
+  (`workspaces/world/tools`).
+- **Working sets** hold edits by stable ID: `EditorObjectWorkingSet` for placed objects,
+  `SourceWorkingSets` for atmospheres, areas, roads, definitions, presets and coverage cells;
+  `EditorHistory` gives undo and redo. `SourceActivity` decides in one place whether a save,
+  publication, gesture, conflict or pending draft blocks a change.
+- **Save** (`EditorSaveCoordinator`) drains every domain in dependency-safe order through the
+  project thread (`ProjectEditorStore`), which owns the one connection and sends one save at a
+  time through a `SaveChannel` per domain; stale revisions come back as conflicts.
+- **Publish** (`RuntimePublicationPlugin`) runs `world_cook::cook_project` on a worker; the
+  engine adopts the result, or keeps the previous generation on failure. Save & Publish saves
+  first. Unsaved terrain edits are drawn from `world_cook::preview_terrain` (`LiveTerrainPreview`).
+- **Journal** (`EditorJournalPlugin`): dirty objects, definitions, presets, coverage, roads,
+  areas and atmospheres are written atomically to `<project>.editor-journal.ron` and restored
+  into the working sets on the next start; a journal for another project or schema is refused.
+
+## Formats and versions
+
+Every reader accepts only its current version: no migrations, fallback readers or silent
+resets. Change a format, bump its constant and rebuild (Reteya from its inputs).
+
+| Format | Constant, file | Value |
+| --- | --- | --- |
+| Project database, blobs included | `PROJECT_SCHEMA_VERSION`, `world/src/lib.rs` | 33 |
+| Runtime database, blobs included | `RUNTIME_SCHEMA_VERSION`, `world/src/lib.rs` | 34 |
+| Gameplay project (`project.ron`) | `SOURCE_FORMAT_VERSION`, `game_content/src/project.rs` | 11 |
+| Content bundle | `BUNDLE_SCHEMA_VERSION`, `game_content/src/bundle.rs` | 14 |
+| Language pack | `VERSION`, `game_content/src/languages.rs` | 3 |
+| Save slot | `SAVE_FORMAT`, `save/src/slots.rs` | 17 |
+| Editor journal | `JOURNAL_SCHEMA_VERSION`, `app_editor/src/journal.rs` | 15 |
+| Heightfield manifest | `VERSION`, `world_cook/src/heightfield_import.rs` | 2 |
+| Asset import catalog | literal in `AssetImportCatalog::validate` | 1 |
+| Character catalog | literal in `engine/src/character_catalog.rs` | 1 |
+| Impostor descriptor | literal in `engine/src/trees/impostor.rs` | 3 |
+
+The SQLite formats keep their version in `PRAGMA user_version`; bundles and language packs also
+set an `application_id`, so the wrong kind of file is refused.

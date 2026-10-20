@@ -34,7 +34,7 @@ Back that folder up.
 
 ```sh
 cargo build --release -p yarra-world-cook
-content/reteya/scripts/build_world.sh tmp/reteya      # about 6 minutes
+content/reteya/scripts/build_world.sh tmp/reteya      # about 4 minutes
 content/reteya/scripts/install_world.sh tmp/reteya --replace
 cargo run --release -p yarra-app-game
 ```
@@ -43,10 +43,12 @@ cargo run --release -p yarra-app-game
 an existing default world. Edits made in the editor live only in the installed project, so a rebuild
 from the inputs drops them.
 
-`build_world.sh` imports the terrain into a new project, the 13 vegetation packs, the roads, plants
-the forest (`tools/forest_plan.py`, keeping channels, wet ground, rock and snow open) and cooks. A fresh
-build on October 19 matched the iterated test world view for view; the October 20 build (schema 32)
-took 6 minutes.
+`build_world.sh` imports the terrain into a new project, the 13 vegetation packs and the roads
+without cooking, plants the forest (`tools/forest_plan.py`, keeping channels, wet ground, rock and
+snow open) and cooks once. It stops at the first failure; a finished build leaves `BUILD_DONE`,
+which `install_world.sh` requires. With `--replace`, the replaced world moves to
+`tmp/world-backups/`. Two builds give the same generation; the October 20 build (project schema 33,
+runtime 34) took about 4 minutes.
 
 ## How the inputs were made
 

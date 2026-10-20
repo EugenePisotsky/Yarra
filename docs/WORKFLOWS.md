@@ -1,996 +1,579 @@
 # Workflows
 
-Commands run from the repository root. [Architecture](ARCHITECTURE.md) describes ownership; [performance](PERFORMANCE.md) describes controlled measurement.
+How to set up, build, run, check and measure Yarra. Commands run from the repository root on an
+Apple silicon Mac. [Architecture](ARCHITECTURE.md) says which crate owns what;
+[decisions](DECISIONS.md) records what was tried and why it was kept or dropped.
 
-## Prepare, edit and publish
+- Build the apps and tools with `--release`; only the [checks](#checks-before-committing) use the
+  debug profile, and `target/debug` grows to tens of GB.
+- Check free space (`df -h .`) before full builds, test runs and traces.
+- `tmp/` is ignored scratch space for trial worlds, captures, logs and traces.
 
-Restore local assets according to [pack contracts](../assets/README.md). Licensed sources and generated databases stay ignored. After restoring the terrain surfaces (see [Terrain surfaces](#terrain-surfaces)):
+## Setup
 
-```sh
-uv run --with numpy --with pillow python tools/import_terrain_surfaces.py
-uv run python tools/compile_terrain_textures.py
-cargo build --release -p yarra-world-cook
-content/reteya/scripts/build_world.sh tmp/reteya
-content/reteya/scripts/install_world.sh tmp/reteya
-cargo run -p yarra-app-editor
-cargo run --release -p yarra-app-game
-```
+### Tools
 
-The world is Reteya, the only one: `build_world.sh` builds it from its kept inputs (Houdini export, masks, forest plan, route; [Reteya](../content/reteya/README.md)) in about 6 minutes, and `install_world.sh` makes it the default one, with start views in `content/world.project.views/` (`start`, `journey`, `landing`, `*-far`, …), e.g. `cargo run --release -p yarra-app-game -- --start-view content/world.project.views/journey.ron`. To start over, build and install again with `--replace`. `cook` continues the existing runtime: it recompiles only cells whose sources changed, updates the terrain hierarchy above them and rebuilds the control tiles. `cook --full` rebuilds the runtime from scratch. `cook` requires existing source and never creates a world. The editor defaults to `content/world.project.sqlite`; the game reads `assets/generated/world.runtime.sqlite`. A fresh public clone needs the local pack inputs before cooking succeeds.
-
-**Save** writes source edits. **Save & Publish** also cooks and atomically replaces the runtime. To publish from a terminal:
-
-```sh
-cargo run -p yarra-world-cook -- cook
-```
-
-Explicit paths: `cook PROJECT_DB RUNTIME_DB`, editor `--project-db PROJECT_DB --world-db RUNTIME_DB`, game `--world-db RUNTIME_DB`. The editor validates the source/runtime pair before opening its window. Recook outdated runtime data; source incompatibility requires an explicit replacement decision, not an automatic reset.
-
-### Terrain from Houdini
-
-A heightfield from a terrain tool defines the world: its footprint sets the cells, and its heights replace the default world's terrain. Houdini's `hython` (Apprentice or Indie) writes the neutral format, version 2: float32 heights, optional masks of one byte per sample, and a JSON manifest:
+| Tool | For |
+| --- | --- |
+| Rust 1.99.0, clippy, rustfmt (pinned in `rust-toolchain.toml`) | everything |
+| [uv](https://docs.astral.sh/uv/) | Python tools; `uv run --with …` fetches NumPy, SciPy, Pillow |
+| `sqlite3` | `install_world.sh`, database copies |
+| Khronos KTX 4.4.2 (`ktx`) | terrain textures, vegetation imports |
+| Xcode | Metal, `xctrace`, iOS |
+| Houdini (`hython`, in `/Applications/Houdini/Current/Frameworks/Houdini.framework/Versions/Current/Resources/bin`), Blender, `luau-analyze` | terrain and tree authoring, detail props, script type checks |
 
 ```sh
-/Applications/Houdini/Current/Frameworks/Houdini.framework/Versions/Current/Resources/bin/hython \
-  tools/houdini_export_heightfield.py assets/local/terrain/reteya-detail-v13/reteya_detail_v13.hiplc \
-  tmp/export --node /obj/ISLAND/OUT_LAYERS --start 2910 3150 --mask sand --mask rock --mask scree
-cargo run --release -p yarra-world-cook -- import-heightfield tmp/export/heightfield.json tmp/world.project.sqlite tmp/world.runtime.sqlite
+rustup toolchain install 1.99.0 --profile minimal --component clippy,rustfmt
 ```
 
-Reteya's own export goes on through 1 m resampling, the mountain detail patches and the forest floors before its import; [its README](../content/reteya/README.md#how-the-inputs-were-made) lists the steps and `build_world.sh` the import.
+The scripts find `ktx` on `PATH`, at `../yarra/.tools/ktx/4.4.2/bin/ktx` beside this checkout, or
+by `--ktx PATH` (`compile_terrain_textures.py` also reads `KTX_BIN`).
 
-The script exports the display node's `height` volume (or `--node SOP`; `--height VOLUME` names another volume, such as the `mask` a Copernicus network outputs) with Houdini's axes unchanged: in the top view +X is right and +Z is down. Each `--mask NAME[=VOLUME]` exports a volume of the same heightfield as `NAME.u8`, 0–1 as 0–255; remap masks to 0–1 in Houdini, since the script clamps (and warns about) values outside. Mask names are lowercase letters, digits and underscores. Slope, height and their derivatives need no export: the cook computes them. Whole-metre spacing from a whole-metre origin lets the import use samples as they are; the script notes other grids.
+### Local assets
 
-`import-heightfield MANIFEST [PROJECT_DB] [RUNTIME_DB]` creates the project if it is missing, then cooks. It samples the heightfield every metre with smooth (Catmull-Rom) interpolation and masks linearly. The world is widened to whole 1 km blocks of flat sea so the terrain hierarchy closes. The `--start` point (by default the shore nearest the centre) becomes the world's start: the game and editor begin there unless `--start-view` overrides it. `start` and `summit` views are also written beside the project. Moving the start recooks nothing.
+Licensed sources and everything made from them stay out of Git under `assets/local/`
+([asset layout](../assets/README.md)); the manifests in `assets/packs/` say what each folder holds.
+Nothing cooks until they are restored. Back `assets/local/` up.
 
-Ground layers are either imported or painted. An imported layer names a mask (editor: Environment → Layer settings → **Coverage from terrain import**), and every import rewrites its coverage from that mask; the editor does not paint it, so touch-ups go on a painted layer above. Painted layers are never touched by imports. New island worlds bind these layers, lowest first, each with its ground; grass grows on the ground as the grass pack says (see [Grass](#grass)):
-
-| Layer | Mask | Ground |
-|---|---|---|
-| Dry meadow | `land` | dry meadow |
-| Green meadow | `green` | meadow |
-| Coastal grass | `coast` | coastal grass |
-| Pine forest floor | `pine_forest` | moss and pine needles |
-| Spruce forest floor | `spruce_forest` | forest floor and needles |
-| Broadleaf forest floor | `broadleaf_forest` | leaf litter and forest floor |
-| Dunes | `dune` | dune sand |
-| Beach | `beach` | beach sand |
-| Scree | `scree` | stony moss and rocky ground |
-| Rock | `rock` | rock and lichen rock |
-
-Without an exported mask of the same name, `land` and `green` come from height and slope, `beach`, `scree` and `rock` from rough height and slope rules, and the others are empty. The import prints masks no layer reads, and fails if a layer reads a mask it neither provides nor generates. Bind a new mask in the editor, save, then re-import. Imported coverage fades out over the world's last 48 m.
-
-The island's Houdini export has `sand`, `rock` and `scree`; `tools/island_masks.py` derives the rest and writes a manifest that adds them, referring to the export's own files by absolute path:
-
-```sh
-manifest=tmp/export/heightfield.json
-uv run --with numpy --with scipy --with pillow python tools/forest_plan.py $manifest tmp/export/forest
-uv run --with numpy --with scipy python tools/island_masks.py $manifest tmp/export/masks \
-  --forest tmp/export/forest/forest.json
-```
-
-Sand splits by height into `beach` (below about 2.5 m, and the whole seabed) and `dune`; `coast` fades inland over about 40 m from the sand; the forest floors are the planned trees of each kind (forms by name: pines, spruces, and birches/oaks/maples/dead trees as broadleaf), blurred so a single tree or a small grove gets litter too. Re-run both after replanting, then `forest_plan.py --apply` plants the same seed.
-
-Re-importing after a change in Houdini rewrites only cells whose heights or imported coverage changed, so the cook that follows is incremental. Objects, roads and painted layers in the project are kept; a cell the new footprint no longer covers is removed and fails if it still holds objects or roads. Sculpt in Houdini, not in the editor: a re-import replaces heights.
-
-To stress streaming on foot, `--render-repro actor-walk --start-view VIEW` walks the player along the view's `route` at 20 m/s. The camera follows, holds its heading for 60 s, then looks back and forth every 20 s. The game caps at 60 fps unless `--fps` says otherwise (0 follows the display). Trees, their shadow cascades and their temporal depth and motion are drawn from one instance buffer (the editor still draws one render entity per mesh); `--tree-shadow-lod 1` casts their shadows from one LOD coarser. `ACTOR_WALK` lines log progress. Whenever an actor waits more than 5 s for ground, the game logs `TERRAIN_STALL` with the loader's state; a loader that stops for good logs `TERRAIN_LOD_FAILED`. To send a log of a normal session: `cargo run --release -p yarra-app-game 2>&1 | tee tmp/walk.log`.
+| Under `assets/local/` | What | Restore |
+| --- | --- | --- |
+| `worlds/reteya-v13/`, `terrain/reteya-detail-v13/` | Reteya's inputs, its Houdini source | backup only |
+| `terrain/baltic/` | terrain texture arrays | [Terrain surfaces](#terrain-surfaces) |
+| `yarra_*/` (13 packs) | trees, shrubs, ground cover | [Creating and revising trees](#creating-and-revising-trees) |
+| `details/*.glb` | stones, pebbles, cobbles, twigs | [Grass and ground details](#grass-and-ground-details) |
+| `characters/female_main/` | player model | backup; check `shasum -a 256` against `assets/packs/characters/female_main.toml` |
+| `map/` | map brushes and fonts | [download](../assets/README.md#map-symbols-and-lettering) |
 
 ### Terrain surfaces
 
-Terrain packs are tracked in `assets/packs/terrain/<pack>.toml`: surfaces in texture-array order, each with its Megascans source folder under `~/Dev/Assets/terrain/sources` (licensed, local only) and its parameters (tile size, normal strength, roughness range, blend height, anti-tiling, optional colour match). The Baltic pack has eighteen: beach and dune sand, coastal grass, gravel, meadow, dry meadow, forest moss, pine needles, forest floor, leaf litter, dirt, rocky ground, rock, lichen rock and stony moss, and for roads packed dirt, road gravel and forest dirt. To change or add a surface, edit the pack and rebuild its local files:
-
 ```sh
-uv run --with numpy --with pillow python tools/import_terrain_surfaces.py [--only KEY…]
-uv run python tools/compile_terrain_textures.py
+uv run --with numpy --with pillow python tools/import_terrain_surfaces.py   # [--only KEY ...]
+uv run python tools/compile_terrain_textures.py                              # [--pack baltic]
 ```
 
-The import resamples each scan to 1024² in linear light with wrapped borders, stores the height map (normalised, times `blend_height`) in base colour alpha, packs normal/AO/roughness, and turns every normal into the engine's frame (+U along world X, +V along world Z), detecting each scan's green convention from its height map (`import-report.json` records the decision). `color_match` scales a surface's albedo to another scan's mean, as dune sand takes the beach sand's colour. `worn` names what roads and paths wear a surface down to (up to two surfaces with weights, such as meadow to dirt and road gravel) and `trampled` what light wear tramples it to (meadow to dry meadow); new worlds copy both with the surfaces. New worlds copy the pack's surfaces; an existing world keeps its own parameters until it is rebuilt. Eighteen 1024² layers take about 52 MB of GPU memory on desktop.
+`assets/packs/terrain/baltic.toml` lists the surfaces in texture-array order with their Megascans
+folders (`~/Dev/Assets/terrain/sources`) and parameters. The import writes
+`assets/local/terrain/baltic/source/`, the compile `runtime/{universal,astc}/*.ktx2`. After
+changing a surface, re-import it (`--only`), compile and rebuild the world: a world keeps the
+surface parameters it was created with.
+
+## Build and install the world
+
+Reteya is the one world ([its README](../content/reteya/README.md)): built from the local inputs and
+the tracked route, then installed as the default world the game and editor open.
+
+```sh
+cargo build --release -p yarra-world-cook
+content/reteya/scripts/build_world.sh tmp/reteya           # about 6 minutes
+content/reteya/scripts/install_world.sh tmp/reteya         # --replace over an existing world
+target/release/yarra-world-cook cook                       # no-op: 0 changed terrain cells
+```
+
+- `build_world.sh [OUT_DIR]` needs the compiled terrain textures and the release cook binary, and
+  refuses a folder that holds a project. It imports terrain, the 13 vegetation packs and the
+  roads without cooking, plants the forest and cooks once. Success leaves `BUILD_DONE`; failure
+  prints `BUILD_FAILED`.
+- `install_world.sh BUILT_DIR [--replace]` requires `BUILD_DONE` and moves the build to the
+  default files: `content/world.project.sqlite`, `content/world.project.views/` (start views),
+  `assets/generated/world.runtime.sqlite`. With `--replace` the old world moves to
+  `tmp/world-backups/<date-time>/`.
+- Editor edits live only in the installed project: a rebuild drops them.
+
+### Rebuild after a format change
+
+No migrations: formats change in place and the world is rebuilt. The versions are
+`PROJECT_SCHEMA_VERSION` and `RUNTIME_SCHEMA_VERSION` in `crates/world/src/lib.rs`.
+
+| What changed | Do |
+| --- | --- |
+| Project schema, an importer, the route, the forest plan | build and install again with `--replace` |
+| Runtime schema or cooked output only | `target/release/yarra-world-cook cook` (a runtime it cannot continue is cooked afresh) |
+| Sources edited without new revisions | `target/release/yarra-world-cook cook --full` |
+
+### Cook and imports
+
+```sh
+target/release/yarra-world-cook cook [PROJECT_DB RUNTIME_DB] [--full]
+target/release/yarra-world-cook import-heightfield MANIFEST [PROJECT_DB RUNTIME_DB] [--no-cook]
+target/release/yarra-world-cook import-roads content/reteya/roads.ron [PROJECT_DB RUNTIME_DB]
+target/release/yarra-world-cook import-grass assets/packs/grass/baltic.ron [PROJECT_DB RUNTIME_DB]
+target/release/yarra-world-cook import-assets CATALOG_RON [PROJECT_DB]
+target/release/yarra-world-cook create-demo NEW_PROJECT_DB        # or create-road-demo
+```
+
+No paths means the default world; no command means `cook` (there is no `--help`). `cook`
+recompiles only changed cells and never creates a project. Imports cook unless given `--no-cook`;
+`import-assets` only registers a catalog whose files are under `assets/`. `create-demo` and
+`create-road-demo` write the two fixtures the unit tests build in code.
+
+### Roll back an install
+
+`install_world.sh --replace` moves the replaced world to `tmp/world-backups/<date-time>/`. To go
+back, close the game and editor and move those files back to `content/` and
+`assets/generated/`. A backup opens only with a build of the same schema versions.
+
+### Terrain from Houdini
+
+Only to change the island. The one Houdini source is
+`assets/local/terrain/reteya-detail-v13/reteya_detail_v13.hiplc`; [how the inputs were
+made](../content/reteya/README.md#how-the-inputs-were-made) lists the steps from its export to
+`assets/local/worlds/reteya-v13/`. The export, one `--mask` per ground mask the stage writes:
+
+```sh
+H=/Applications/Houdini/Current/Frameworks/Houdini.framework/Versions/Current/Resources/bin
+$H/hython tools/houdini_export_heightfield.py \
+  assets/local/terrain/reteya-detail-v13/reteya_detail_v13.hiplc tmp/export \
+  --node /obj/ISLAND/OUT_LAYERS --start 2910 3150 --mask sand --mask rock --mask scree
+```
+
+Sculpt in Houdini, not the editor: a re-import replaces heights (only in changed cells) and keeps
+objects, roads and painted layers.
+
+## Editor
+
+```sh
+cargo run --release -p yarra-app-editor
+cargo run --release -p yarra-app-editor -- --start-view content/world.project.views/summit.ron
+cargo run --release -p yarra-app-editor -- --project-db tmp/roads.project.sqlite \
+  --world-db tmp/roads.runtime.sqlite                  # a create-road-demo fixture, cooked
+```
+
+It takes only these three options, and checks that project and runtime describe the same world
+before opening a window (cook if not). Right drag orbits, Shift + right drag pans, wheel or pinch
+zooms, right mouse + WASD/QE flies.
+
+**Workspaces** (top-left menu; **Tools** opens the workspace's windows):
+
+- **World**: the World window picks a tool; Inspector shows the selection; Tools adds Assets,
+  Navigator, Diagnostics, Areas and Atmosphere.
+  - *Visible assets*: click, Shift- or Cmd-click to select; 1/2/3 move, yaw, scale; Delete.
+  - *Environment*: pick a layer, drag to paint, Shift-drag to erase. Layers that read an imported
+    mask are rewritten by each import and cannot be painted.
+  - *Roads*: a style, **New cart road**, then points, tangents, widths and junctions.
+  - *Areas*: named places for gameplay (`guard/gate_post`): **Draw new area**, click corners,
+    Enter closes, Backspace drops a corner, Esc cancels.
+  - *Atmosphere*: sky, weather presets and sequence, fog and mist; the preview is not saved.
+- **Presets**: shared ground, grass and object presets and road styles in an isolated preview.
+  An unapplied draft blocks saving.
+- **Animation**: previews character models and clips.
+
+**Save** (Cmd+S) writes source changes to the project. **Save & Publish** also cooks, validates
+and atomically replaces the runtime, which the game reads (**Publish** when nothing is unsaved;
+`target/release/yarra-world-cook cook` from a terminal). Cmd+Z / Cmd+Shift+Z undo and redo.
+**Source conflict**: the project changed underneath; reload rather than force.
+
+**Journal:** unsaved edits are journalled to `content/world.project.editor-journal.ron`. After a
+crash the next launch restores them as unsaved changes (Diagnostics says what; undo history starts
+empty). A journal of another project or version is refused. To discard it, close the editor and
+delete the file.
+
+## Game and F1
+
+```sh
+cargo run --release -p yarra-app-game
+cargo run --release -p yarra-app-game -- --start-view content/world.project.views/journey.ron
+cargo run --release -p yarra-app-game -- --help        # every option, no window
+cargo run --release -p yarra-app-game -- --upscaler metalfx-temporal    # the play setup
+```
+
+**The play setup** is native fullscreen, 50% render scale (default), MetalFX Temporal, with the
+day clock and weather running (default in play). The window opens at 1280×720: fullscreen it with
+the green button. Measurements should match this setup.
+
+**Controls:** WASD or left stick moves; click or tap the ground to walk there; right drag,
+two-finger horizontal scroll or right stick orbits; wheel or pinch zooms.
+
+**F1** (or **Performance**) opens the panel, Escape closes it. Always shown: **FPS limit** (Follow
+display → 30 → 60 → 120), **Movement** (Normal / Fast 10×), **Reset launch settings**. Pages:
+Overview, Features (effects on/off), Quality, Weather (presets, clocks, time jumps), Wind
+(session-only), [Compare](#f1-compare), Advanced.
+
+| For | Launch options |
+| --- | --- |
+| Where | `--start-view FILE`, `--world-db FILE` |
+| Time, weather | `--time HH:MM`, `--day-clock on\|off`, `--weather auto\|authored\|clear\|scattered\|overcast\|rain\|storm` |
+| Presentation | `--fps 0\|15..240` (default 60, 0 follows the display), `--resolution-scale 1\|0.75\|0.5\|0.33`, `--upscaler auto\|linear\|metalfx-spatial\|metalfx-temporal`, `--cloud-quality off\|balanced\|high`, `--tree-shadow-lod 0..2` |
+| Panel, logs | `--diagnostics off\|panel\|full` (default full), `--performance-open`, `--timing-log` |
+| Gameplay | `--story DIR` |
+
+Start views: `start`, `journey` (has a walking route), `landing`, `*-far`, `summit-*`,
+`forest-*` and more in `content/world.project.views/`. Keep a log with `2>&1 | tee tmp/game.log`.
+
+## Gameplay content
+
+`content/gameplay/demo` is the authored gameplay project; it runs without the game, a world or art
+([architecture](ARCHITECTURE.md#gameplay-crates)). Build the tool once:
+`cargo build --release -p yarra-game-content`.
+
+### Editing and validating gameplay content
+
+```text
+project.ron                         # identity, source locale, packages, scenario (format 11)
+scenario.ron, scenarios/            # starting conditions and steps
+packages/guard/                     # a package is named after its directory
+  package.ron                       # optional: areas it names, variables it declares
+  actors.ron, items.ron, loot.ron, characters.ron, rules.ron (core only)
+  gate.quest.ron, guard.profile.ron, ready.predicate.ron
+  conversations/reward.dialogue.ron, world/gate.object.ron, world/escort.trigger.ron
+  scripts/guard.luau                # module named after its file
+  en.ftl, uk.ftl                    # the package's text per locale
+```
+
+A file says what it holds by its name (an unrecognised `.ron` is an error). Names such as
+`guard/gate` are identities. Text is `Message("key")`; the source locale's Fluent file decides
+which messages exist. Copy the demo to start a project.
+
+```sh
+target/release/yarra-game-content validate content/gameplay/demo
+target/release/yarra-game-content scenario content/gameplay/demo scenarios/guard.ron
+target/release/yarra-game-content script-api            # the Luau host API, for editors
+```
+
+- `validate` runs `scenario.ron` in a throwaway session and type-checks scripts when
+  `luau-analyze` is on `PATH` or named by `YARRA_LUAU_ANALYZE`.
+- Scenarios `guard`, `guard-refusal`, `guard-gate`, `guard-training` share `guard-start.ron`;
+  `island.ron` is the game slice's start.
+- Focused tests: `cargo test -p yarra-game-content -p yarra-game-types -p yarra-gameplay
+  -p yarra-localization -p yarra-save -p yarra-scripting`.
+
+### Standalone gameplay and saves
+
+```sh
+G=target/release/yarra-game-content; mkdir -p tmp/game-content
+$G demo content/gameplay/demo --locale uk --save-dir tmp/game-content/saves-1
+$G build content/gameplay/demo tmp/game-content/content-1.sqlite
+$G build-language content/gameplay/demo uk tmp/game-content/uk-1.sqlite
+$G validate tmp/game-content/content-1.sqlite --language tmp/game-content/uk-1.sqlite
+$G inspect tmp/game-content/content-1.sqlite --item healing_potion --dialogue guard/reward
+```
+
+`demo` publishes the project, plays its scenario against the bundle and writes fresh save slots.
+Bundles, packs and save folders are never overwritten (new paths each run); other formats are
+refused, not migrated.
+
+### The story slice in the game
+
+```sh
+cargo run --release -p yarra-app-game -- --story content/gameplay/demo
+```
+
+A guard, a gate and a training dummy stand a few metres ahead of the start view. Near the guard
+E talks and T asks about his offer; Space/Enter continues, 1–9 replies, Q leaves; near the dummy F
+strikes, G power-strikes, V stops; H drinks; Z/X/C spend points on strength/wisdom/vitality; F5/F9
+quick save and load. Areas `guard/approach` and `guard/gate_post` are stand-ins until painted in
+the editor. Each run publishes its own bundle under `$TMPDIR/yarra-story/` and deletes it on exit;
+saves stay in `$TMPDIR/yarra-story/saves`. To check it without a keyboard, walk a route and read
+the `Story:` lines:
+
+```sh
+target/release/yarra-app-game --story content/gameplay/demo \
+  --start-view content/world.project.views/journey.ron --render-repro actor-walk \
+  --render-walk-speed 1.5 --render-frames 1800 --render-snapshot tmp/story/walk.png \
+  --render-snapshot-frames 900,1700 2>&1 | grep 'Story'
+```
+
+## Vegetation and assets
+
+Every tree, shrub and ground-cover plant comes from the YarraVegetation kit, checked out at
+`~/Dev/Assets/vegetation`. Judge forms in the game against photos.
+
+### Creating and revising trees
+
+Author shapes in YarraVegetation
+([authoring guide](https://github.com/EugenePisotsky/YarraVegetation/blob/main/TREE_AUTHORING.md)):
+build and validate the forms, refit LOD coverage after changing foliage, bake impostors:
+
+```sh
+cd ~/Dev/Assets/vegetation
+hython scripts/build_shrubs.py && hython scripts/validate_shrubs.py     # per family
+hython scripts/fit_lod_coverage.py shrub_rounded                        # then rebuild
+uv run --with numpy --with pillow python scripts/bake_impostor.py outputs/spruce_forest/current \
+  --leaf-grow 0 --fill 0 --cell 256 --source lod0.glb                 # shrubs, bay: --cell 160
+cd -
+```
+
+Here, import all forms of a pack in one run (an import replaces the pack), register, cook:
+
+```sh
+V=$HOME/Dev/Assets/vegetation/outputs
+python3 tools/import_vegetation_bundle.py --bundle $V/spruce_forest/current \
+  --output assets/local/yarra_spruces --catalog assets/packs/yarra_spruces/spruces.catalog.ron \
+  --lod-screen-heights 480 240 --impostor-screen-height 200
+target/release/yarra-world-cook import-assets assets/packs/yarra_spruces/spruces.catalog.ron
+target/release/yarra-world-cook cook
+```
+
+| `<dir>`, catalog | Forms (one `--bundle $V/<form>/current` each) | Heights |
+| --- | --- | --- |
+| `yarra_birches`, `birches` | `birch_` + `leafy sparse bare crown pendulous double triple` | T |
+| `yarra_oaks`, `oaks` / `yarra_maples`, `maples` | `oak_` / `maple_` + `forest spreading sparse` | T |
+| `yarra_tall_forest`, `tall_forest` | `tall_broadleaf_forest` | T |
+| `yarra_longleaf`, `longleaf` | `pine_longleaf`, and with `_half_bare _nearly_bare _one_sided _tall_bole _broad _leaning _flat_top` | T |
+| `yarra_spruces`, `spruces` | `spruce_forest` | T |
+| `yarra_dead_trees`, `dead_trees` | `dead_` + `upright spreading split slender double triple` | T |
+| `yarra_shrubs`, `shrubs` | `shrub_` + `rounded spreading sparse medium_rounded medium_spreading medium_upright` | S |
+| `yarra_bay`, `bay` | `bay_upright` | S |
+| `yarra_ferns`, `ferns` | `fern_` + `upright spreading sparse` | `140 45` |
+| `yarra_nettles`, `nettles` / `yarra_lilies`, `lilies` | `nettle_` + `young mature patch` / `lily_` + `open full patch` | `100 35` |
+| `yarra_sorrel`, `sorrel` | `sorrel_` + `open full patch` | `80 25` |
+
+`--output assets/local/<dir> --catalog assets/packs/<dir>/<catalog>.catalog.ron`; always pass both
+(they default to the birches). Heights: T is `--lod-screen-heights 480 240
+--impostor-screen-height 200`, S is `480 180` with `60`; ground cover has `--lod-screen-heights`
+only and no impostor.
+
+- `assets/local/<dir>/import.json` records the last import's settings, `--canopy-blend` included.
+- Register again even with unchanged file names (memory estimates change). Registration keeps
+  placements; new forms need [planting](#forest-plan). Restart the game to see new meshes.
+
+### LOD lab
+
+```sh
+target/release/yarra-app-game --start-view content/world.project.views/start.ron \
+  --lod-lab yarra_spruces/spruce_forest --lod-lab-stand yarra_longleaf/pine_longleaf \
+  --lod-lab-spacing 7
+target/release/yarra-app-game --start-view content/world.project.views/start.ron \
+  --lod-lab yarra_spruces/spruce_forest --lod-lab-capture tmp/lod-lab/spruce --resolution-scale 1
+uv run --with numpy --with pillow python tools/lod_lab_sheet.py tmp/lod-lab/spruce
+```
+
+The form (`pack/asset`) stands at the start view's focus, drawn as the game draws it; the panel
+sets distance, bearing, pitch, what draws, wind and sun. LOD distances follow the window's height,
+so judge fullscreen (captures are). For frames without the forest, run `forest_plan.py` with
+`--clear --project` on a copy of the project (`sqlite3 … ".backup …"`), cook the copy to its own
+runtime and pass that as `--world-db` (not tried yet).
+
+### Forest plan
+
+```sh
+uv run --with numpy --with scipy --with pillow python tools/forest_plan.py \
+  assets/local/worlds/reteya-v13/planning/heightfield.json tmp/forest \
+  --roads content/reteya/roads.ron --keep-open tributary --keep-open wetland \
+  --keep-open bedrock --keep-open riverbed --keep-open mud --keep-open wet_bank --keep-open snow
+# check tmp/forest/preview.png; add --apply to plant it in the default world, then cook
+```
+
+This is the plan `build_world.sh` plants. `--apply` replaces the kit's trees and shrubs on the
+landmass at the start (or `--at X Z`) in `--project` (default world) and adds `forest-*` views.
+Reteya's forest-floor masks come from this plan (`tools/island_masks.py`): a different plan needs
+new masks and a rebuild ([Reteya README](../content/reteya/README.md)).
+
+### Grass and ground details
+
+```sh
+target/release/yarra-world-cook import-grass assets/packs/grass/baltic.ron
+/Applications/Blender.app/Contents/MacOS/Blender -b --factory-startup \
+  -P tools/import_detail_props.py -- PACK_DIR assets/local/details/NAME.glb [--albedo L]
+```
+
+`assets/packs/grass/baltic.ron` (fields documented in its header) defines grass types, ground
+details and what grows on each surface. The game reloads looks live; placement and the ground's
+grass colour need `import-grass`, which cooks. Stones, pebbles, cobbles and twigs are made from
+Megascans 3D packs in `~/Dev/Assets/props/sources`; `--albedo` sets the mean linear luminance
+(twigs: 0.1). Ferns, nettles, lilies and sorrel use the vegetation packs' LOD1 files.
 
 ### World map
-
-`tools/render_world_map.py` draws a hand-coloured engraved map, in the style of an 18th-century chart, from the same heightfield export the import reads. `uv run` installs its NumPy, SciPy and Pillow:
 
 ```sh
 uv run tools/render_world_map.py assets/local/worlds/reteya-v13/heightfield.json \
   content/maps/reteya.map.json assets/generated/maps/reteya.png
 ```
 
-The coast comes from heights and sea level. Rivers are channels at least 24 m wide, cut below their surroundings, mostly wet (`wetness` ≥ 0.8) and reaching the sea. Only partly wet banks and old cuts are left out. Homann mountain symbols cover the steep high ground. Groves and fields on `soil` are decorative until forests have source data. `content/maps/*.map.json` holds what the terrain cannot say:
-- the title and the compass position;
-- features, each with a `name`, a `kind` and a world XZ point (`at`):
-  - `range`: the name goes beside the nearest high ground;
-  - `river`: the name follows the river;
-  - `water`: the name follows a strait or bay; `angle` overrides the direction;
-  - `place`: the name goes beside optional `hamlet` and `anchorage` symbols.
+About 25 s and 3 GB. `content/maps/reteya.map.json` holds the title, compass and named features;
+`--no-lettering` leaves names for the game to draw; brushes and fonts are in `assets/local/map/`.
 
-Names are laid out first, and symbols keep clear of them; a name with no room is reported. The PNG covers the land plus 10% sea (`--margin`). Beside it, a JSON file records the world rectangle, +X right and +Z down, for placing markers later. `--no-lettering` leaves names out so the game can draw translated ones. A 3072 px map takes about 25 s and 3 GB. The brushes and fonts are local assets ([asset setup](../assets/README.md#map-symbols-and-lettering)).
-
-## Game and F1
-
-- Click/tap ground for a destination; WASD/left gamepad stick gives camera-relative movement.
-- Right-drag, horizontal trackpad/two-finger gestures or right stick orbit. Wheel/pinch/vertical gestures zoom.
-- Tab cycles demo world spaces only with `--debug-world-switch`; ordinary launches have no world-switch shortcut.
-- F1 or **Performance** opens the panel; Escape closes it or cancels capture. `--performance-open` starts open. `--diagnostics panel` keeps F1 with frame/app timing only; `--diagnostics off` omits F1 and timing instrumentation. Full diagnostics remain the default.
-- The persistent **FPS limit** button cycles Follow display → 30 → 60 → 120. `--fps N` accepts 0 or 15–240; Reset restores the launch cap, including custom values. VSync remains enabled.
-- **Movement** below FPS limit toggles Normal / Fast (10×) for island exploration. It speeds up the player with WASD, gamepad and click-to-move; NPC speeds stay unchanged and unloaded terrain still stops movement. It lasts for this session; **Reset launch settings** restores Normal.
-- Quality controls resolution (100/75/50/33%), upscaler, MSAA, density and terrain/object detail. Auto, Spatial, Temporal and Linear are all supported; Temporal's open cost and blur issues are in the [ledger](EXPERIMENTS.md).
-- **Auto exposure** (Features) turns eye adaptation on or off; the correction eases out over about a second.
-- **Ambient particles** (Features) hides dust motes, seed fluff and falling leaves.
-- **Light shafts and sun rays** (Features) skips the sunbeam passes; the sun's glare stays. The air under crowns that beams light up is authored in the editor's **Fog and mist** section.
-- **Fog & mist** (Features) hides ground haze and valley mist; weather fog stays. Each world authors both in the editor's atmosphere panel (**Fog and mist**). Where mist pools comes from the cooked terrain, so a re-import and cook updates it.
-- Weather follows a random sequence by default. `--weather clear|scattered|overcast|rain|storm` starts in a held preset; `--weather authored` shows the published profile unchanged. **F1 → Weather** forces presets (60 s, 10 s or instant blends), toggles the automatic sequence, starts the next change and accelerates the weather clock (1×/10×/60×/stopped). Its time controls set the day clock (1×/10×/60×/stopped), step an hour either way, jump ahead to the next night, sunrise, noon or sunset, and move to the day with the moon's next phase (**Moon: next phase**, by eighths of a month); the status line shows the day, time, sun elevation and the moon's phase, lit share and elevation. The look-capture key `moon=AGE` moves to the nearest day with the moon that many days old (0 new, 14.8 full), and `tilt=DEGREES` turns the camera up from the game's view to see the sky it never shows (clouds overhead). Time passes at the world's authored day length from its authored start; `--time HH:MM` starts elsewhere, and `--day-clock off` holds it (profiles, repros and captures hold it unless `--day-clock on`). Storms strike lightning (**Lightning strike** forces one ahead). Rain and Storm draw rain streaks, splashes and, as wetness builds up (about 1.5 minutes to soak, 4 minutes to dry), wet surfaces and puddles; ground under trees and other objects stays drier. **Rain rendering** hides streaks and splashes for comparisons.
-
-**Look captures.** To compare presentations (exposure, tonemapper, sun and sky light, crown sky occlusion, eye adaptation, fog and time of day) from one view, list them as variants. The world loads once; wind and weather stand still, and each variant draws for 5 s (adaptation settles) before a fullscreen screenshot. `tools/look_sheet.py` lays them out in a grid: `row|column` names, with the land's mean lightness (L*) and clipped shares. Captures need the display awake. Pass `--gpu-timing-off`: launches in quick succession sometimes fail to allocate Metal's GPU counters and lose the device.
+## Checks before committing
 
 ```sh
-target/release/yarra-app-game --start-view content/world.project.views/start.ron --resolution-scale 1 --gpu-timing-off \
-  --look-capture tmp/look/start --look-variants "tony|EV 13:tone=tony,ev=13;neutral|EV 13:tone=neutral,ev=13,ambient=1.5,canopy=1,auto=on"
-uv run --with numpy --with pillow python tools/look_sheet.py tmp/look/start
+cargo fmt --all && cargo run -p yarra-tidy -- --write     # format, then add blank lines
+cargo fmt --all --check
+cargo run -p yarra-tidy                                   # lists missing blank lines, fails
+cargo clippy --workspace --all-targets
+cargo test --workspace
+cargo run -p yarra-shader-check
+uv run --with numpy --with pillow python -m unittest discover -s tools -p 'test_*.py'
 ```
 
-Keys: `ev` (EV100), `tone` (tony, agx, neutral, filmic, aces, boring, reinhard, none), `ambient` and `sun` (scales of the sky and sun light), `canopy` (0–1), `auto`, `fog`, `particles` and `shafts` (on/off), `air` (scale of the air under crowns), `burst` (that many screenshots one after another, a frame or two apart, for motion), `lightning` (a strike ahead of the camera held that many seconds in, 0–1.1; storms need `--weather storm` for their light), `phase` (time of day as a share of the day: 0.27 is just after sunrise, 0.34 the game's morning, 0.5 noon), `tilt` (degrees the camera turns up, −30–90), `wind` (seconds into the wind's clock, otherwise 0: the wind holds still in captures, so variants at different times show its motion), `wet` (how wet the ground is held, 0–1: puddles without waiting for rain to soak it) and `haze`, `mist` and `depth` (scales of the authored haze and mist extinction and the mist depth). With `tone=none` the frame is the exposed linear image, so its 10–90% mean log2 luminance is what auto exposure meters.
-
-On macOS 14+, capped modes coordinate display callbacks and the Metal minimum presentation interval. Other platforms/older macOS use the timer fallback. This changes app pacing, not the display's system setting. The normal launch caps at 60 fps (`--fps 0` follows the display) and uses 50% resolution with 4× MSAA.
-
-F1 Advanced owns terrain macro variation, terrain page gizmos and canopy reload. Reset and A/B restore include those settings and the actual canopy values. B/G/H/U/V and the old X/P/O/L/K/I renderer handlers were removed. Normal grass always uses the published catalog; separate legacy overlays and banding controls are gone.
-
-## World authoring
-
-World and Inspector are the default windows. Tools opens optional Assets, Navigator and Diagnostics. Switching workspaces retains source drafts/history; opening a window does not automatically activate its authoring tool.
-
-Navigation: right/middle drag orbits, Shift+right drag pans, wheel/pinch zooms, and right mouse + WASD/QE flies. View files (`content/world.project.views/*.ron`, written by the heightfield import and `tools/forest_plan.py --apply`) can be passed to either app as `--start-view FILE`; a file stores a logical view rather than a screenshot.
-
-**Objects:** select visible objects or stable IDs in the bounded asset tree. Shift/Cmd-click builds a multi-selection. 1/2/3 selects move/yaw/uniform-scale gizmos. Delete/Backspace is undoable. Cmd+Z / Cmd+Shift+Z undo/redo; Cmd+S saves. The inspector affects the active object; gizmo operations can apply to selected companions. Source changes are represented by temporary proxies until publication.
-
-**Environment:** choose World → Environment, select a layer, drag to paint, Shift-drag to erase. One stroke is one undo step. Inspector supports Nearby/All, layer creation/order, coverage and per-use settings. **Edit shared preset…** opens Presets with an isolated ground/grass/object preview. **Apply preset changes** and **Apply settings** are distinct undo steps.
-
-**Collections:** Presets → Environment → New → Asset collection. Select registered tree/bush/rock assets, weights, scales, spacing, slope and road clearance. Paint a collection directly or include it in a composition. Layer density/seed control deterministic generated placements. Generated objects are not individually editable; use manual placement when independent identity/editing is needed.
-
-### Creating and revising trees
-
-Tree authoring lives in [YarraVegetation](https://github.com/EugenePisotsky/YarraVegetation),
-not in this game's runtime exporter. Its
-[authoring guide](https://github.com/EugenePisotsky/YarraVegetation/blob/main/TREE_AUTHORING.md)
-records the current recipes, branch/card design lessons, how to add variants or
-species, and the LOD/wind contract. Start there for shape changes. Use
-`tools/import_vegetation_bundle.py` to bring it into the game.
-
-| Current family | Runtime pack / tracked catalog under `assets/packs/` |
-| --- | --- |
-| Birch: leafy, sparse, bare, crown, pendulous, double, triple | `yarra_birches/birches.catalog.ron` |
-| Oak: forest, spreading, sparse | `yarra_oaks/oaks.catalog.ron` |
-| Maple: forest, spreading, sparse | `yarra_maples/maples.catalog.ron` |
-| Tall layered broadleaf | `yarra_tall_forest/tall_forest.catalog.ron` |
-| Generic forest shrubs: rounded, spreading, sparse; medium rounded/spreading/upright (medium forms under review) | `yarra_shrubs/shrubs.catalog.ron` |
-| Bay shrub | `yarra_bay/bay.catalog.ron` |
-| Longleaf: healthy, tall-bole, broad, leaning, flat-top, half-bare, nearly-bare, one-sided | `yarra_longleaf/longleaf.catalog.ron` |
-| Norway spruce | `yarra_spruces/spruces.catalog.ron` |
-| Dead broadleaf: upright, spreading, split, slender, double, triple | `yarra_dead_trees/dead_trees.catalog.ron` |
-
-These are 29 approved forms plus three medium shrub studies and four longleaf shape variants under review, each with three mesh LODs and an impostor. Legacy pine packs and branch-study
-assets remain archived. The current pine scaffold is `pine_longleaf`.
-
-Review a form in the LOD lab (below) by its catalog key, `pack/asset` (e.g.
-`--lod-lab yarra_spruces/spruce_forest`), and in the world after
-`tools/forest_plan.py --apply` plants the kit's trees and shrubs. The per-family
-placement and capture scripts (`place_*_preview.py`, `render_*_preview.py`) and
-their review bookmarks were written for the earlier `Island` world and were
-removed on October 10 (recoverable from Git at `7208dd6`).
-
-1. Build and validate the selected family in YarraVegetation. Keep the seed,
-   source package and settings in a preset, with a separate output name for an
-   experiment. Preserve an approved bundle if a geometry comparison is needed.
-2. Import **every variant in the destination pack in one invocation**, repeating
-   `--bundle` for each. The importer replaces that pack, rather than appending
-   to it. It requires matching shared texture bytes, compresses one texture set
-   with Khronos KTX 4.4.2, and preserves coverage mipmaps. Use an explicit
-   `--output` and `--catalog`; their defaults target the birch pack. Split
-   variants into separate packs if they intentionally use different atlases.
-3. Register the regenerated catalog, then cook the world. Re-register even if
-   URIs are unchanged: mesh memory estimates can change when vertex attributes
-   change. Registration preserves placements; it does not publish by itself.
-   Existing shape updates need no new placements.
-4. Restart the game for a reliable check of new meshes/materials. Do not restart
-   a user's active tuning session without coordinating it: F1 wind settings are
-   temporary. Save requested tuning as source defaults separately.
-
-The spruce is a complete single-member example; the family-specific commands
-below show multi-bundle packs:
-
-```sh
-python3 tools/import_vegetation_bundle.py --ktx /path/to/ktx \
-  --bundle /path/to/YarraVegetation/outputs/spruce_forest/current \
-  --output assets/local/yarra_spruces \
-  --catalog assets/packs/yarra_spruces/spruces.catalog.ron
-cargo run --release -p yarra-world-cook -- import-assets assets/packs/yarra_spruces/spruces.catalog.ron
-cargo run --release -p yarra-world-cook -- cook
-cargo run --release -p yarra-app-game -- --start-view content/world.project.views/start.ron \
-  --lod-lab yarra_spruces/spruce_forest
-```
-
-**Impostors.** Distant trees are drawn as hemi-octahedral impostors. The game hands each
-object to its impostor where the impostor's views hold a texel per output pixel (from `--cell`
-and the view's size), so a sharper bake moves the hand-off closer; the importer's impostor
-threshold only places the editor's hand-off. Each impostor is baked from LOD0, the whole
-tree. The kit's LOD1 and LOD2 drop cards and grow the leafy ones that remain by a scale
-fitted to cover what LOD0 covers, so the switch from LOD2 keeps the crown's density: after
-changing a form's foliage or LOD shares, run `hython scripts/fit_lod_coverage.py NAME` in
-YarraVegetation and rebuild the form before baking. Bake each bundle in YarraVegetation (no
-Houdini needed, about 15 s per form). Then import with an impostor threshold below the mesh ones. The
-descriptor and two KTX2 atlases are added as the last LOD. Each pack's `import.json` and each
-bundle's `impostor/impostor.json` record the settings they were made with:
-
-```sh
-uv run --with numpy --with pillow python scripts/bake_impostor.py outputs/spruce_forest/current \
-  --leaf-grow 0 --fill 0 --cell 256 --source lod0.glb
-# Shrubs and bay: --cell 160 (their 160 px views hold more than a texel per pixel at 60 px).
-python3 tools/import_vegetation_bundle.py ... --lod-screen-heights 480 240 --impostor-screen-height 200
-# Shrubs and bay: --lod-screen-heights 480 180 --impostor-screen-height 60
-```
-
-The bake samples every texel 4×4 and rescales each view's alpha, so the game's 0.5 cut-out
-keeps the coverage the samples measured: thin needles stay thin. `--cell` is the resolution
-of a whole view. The atlases store only each view's crop, the part any view covers, rounded
-to whole blocks of 2^`--mip-levels` texels (default 3, which keeps a tree within a texel per
-pixel past the 2 km far-object range), so the bake's mip levels halve every view on its own:
-colour over coverage in linear light with each view keeping its cut-out coverage, normals
-averaged as vectors, depth and occlusion over coverage. The framing leaves an empty gutter of
-half a texel of the coarsest level (4 texels) round the tree in every view; the game treats a
-ray that near a tile's edge as missing the view, so no read filters in the next one. The
-importer packs the bake's levels for both atlases (a bake before version 4 is refused). The
-second atlas holds:
-- an octahedral normal;
-- the surface's depth toward the viewer, so the game lights each pixel where the crown is,
-  not on the quad;
-- crown occlusion.
-
-Each bake also records the crown (base, top, radius, centre, opacity) for the distant forest
-shadows. The importer adds the far mesh LOD's wind profile and stem height, so the impostor
-sways as that trunk does. Register and cook as usual: the cook regroups impostor-drawn objects into far-object
-blocks, which the game streams out to 2 km ([architecture](ARCHITECTURE.md)). Check a new
-bake in the LOD lab (below).
-
-**LOD lab.** To compare a tree's representations, run the game with `--lod-lab`. The tree
-from a catalog is placed at the start view's focus, outside streaming. It is drawn with the
-game's lighting, AA, render scale and LOD projection. `--lod-lab-stand` surrounds it with
-neighbours, e.g. pines over a spruce.
-
-A panel sets:
-- the distance to the root, with buttons for each switch;
-- the bearing from the sun, and the pitch;
-- what the tree draws: the game's choice, one mesh LOD, the impostor or nothing, or a blink
-  between two;
-- the wind (held still unless ticked, so frames differ only by what the lab changes);
-- the sun and the shadows.
-
-It shows the tree's height on screen and the impostor's texels per screen pixel. LOD distances
-follow the window's logical height, so judge them fullscreen.
-
-```sh
-# Interactive (fullscreen the window to match play):
-cargo run --release -p yarra-app-game -- --start-view content/world.project.views/start.ron \
-  --lod-lab yarra_spruces/spruce_forest --lod-lab-stand yarra_longleaf/pine_longleaf --lod-lab-spacing 7
-# Automated, then contact sheets and metrics:
-cargo run --release -p yarra-app-game -- --start-view content/world.project.views/start.ron \
-  --lod-lab yarra_spruces/spruce_forest --lod-lab-capture tmp/lod-lab/spruce --resolution-scale 1
-uv run --with numpy --with pillow python tools/lod_lab_sheet.py tmp/lod-lab/spruce
-```
-
-A capture runs fullscreen. From each `--lod-lab-yaws` bearing (default 0, 90 and 180° from the
-sun) it records:
-- at 0.8–1.2× each switch: the representation on each side forced, and the game's choice;
-- the game's choice at `--lod-lab-distances` (default 10–800 m);
-- for every pose, a frame with the tree hidden, so its pixels and shadow can be isolated.
-
-From the first bearing it adds a strip through each switch in 1.25% steps. Frames are cropped
-to the tree and its shadow, and `manifest.json` lists the poses. A stand capture takes about a
-minute and 0.5 GB.
-
-A capture also records each switch's dissolve: the camera steps just across the switch and back, and frames are taken as fast as they come until the fade ends. Then, with the wind blowing, it samples the last mesh LOD and the impostor in turn for about 5 s, just past the impostor switch and at 1.75× it.
-
-`lod_lab_sheet.py` writes five files:
-- `sheet-bNNN.png`: per switch row, the before, after and game frames, |before − after| ×4, and
-  coverage, brightness, colour (ΔE) and shadow changes, with rows over the limits marked;
-- `strip.png`: the strip, with a brightness curve. Trees with impostors switch at once and dissolve over time, so a step at their switch is expected;
-- `fade.png`: per switch, the dissolve frame by frame, with the time since the camera crossed
-  and the tree's coverage and shadow as shares of the steady frame;
-- `sway.png`: how far the top of the mesh LOD and of the impostor sways over time, at both distances;
-- `metrics.json`: the numbers behind them.
-
-Captures are cleanest in a runtime database without trees (`--world-db`). In the live world,
-the surrounding forest is part of the frame. `--lod-lab-screenshot FILE` saves the
-interactive window once the trees have drawn, then exits.
-
-Check identifiable leaves/needles and mesh-to-card joins at character scale,
-the whole silhouette from several directions, moving-camera facing behavior,
-LOD transitions and reduced internal resolution. Test calm and strong wind,
-root contact, branch/card attachment, shadows and Temporal motion. A distant
-washed-out crown may involve shadow range or shading as well as asset density;
-a missing connection may involve geometry or alpha mip coverage. Diagnose the
-layer before enlarging cards or adding more overlap. The browser preview does
-not reproduce Yarra's full lighting or connected wind.
-
-Track scripts, presets in the other repo, runtime shaders, pack catalogs and
-docs. Keep source/derived textures, local meshes, captures, caches, databases
-and their backups ignored. A push to both repos preserves the rebuild recipe;
-a fresh checkout still needs licensed sources restored, then build/import/cook.
-Run focused checks for the changed contract. GPU checks need native GPU access
-and imported local packs; missing prerequisites are not a passing result.
-Use [Performance](PERFORMANCE.md) for matched measurements after visual review;
-triangle counts and a few trees at a capped frame rate are not forest budgets.
-
-### Existing forest packs and species recipes
-
-**Forest assets:** Register a pack's tracked catalog with `cargo run -p yarra-world-cook -- import-assets assets/packs/<pack>/<name>.catalog.ron [PROJECT_DB]` (omit the optional project argument for the current world); its runtime files must already be under `assets/local/` (see [asset setup](../assets/README.md)). Restart the editor to refresh the palette, then place the assets manually or select them in a collection. Registration preserves existing world placements and does not publish automatically; Save & Publish after authoring. The game draws every object that ends in an impostor from its far-object block, out to 2,048 m, with mesh LODs as far as their thresholds say; the editor keeps object pages within 192 m in all directions, subject to residency budgets, and draws their mesh LODs, and the blocks' impostors beyond.
-
-**Birch prototype:** `tools/import_vegetation_bundle.py` imports the vegetation project's built `birch_leafy`, `birch_sparse`, and `birch_bare` bundles. It preserves geometry, UVs, wind weights and the authored rotating-card identities; adapts normals to the current experimental `crown_v1` material; and compresses six shared textures to mipmapped UASTC KTX2. Foliage color uses the baker's per-cell alpha-coverage mip levels. `--canopy-blend` controls the import's normal blend (default 0.85); this is not a final lighting decision. Source and converted binaries stay under ignored `assets/local/yarra_birches/`.
-
-```sh
-python3 tools/import_vegetation_bundle.py \
-  --bundle /path/to/vegetation/outputs/birch_leafy/current \
-  --bundle /path/to/vegetation/outputs/birch_sparse/current \
-  --bundle /path/to/vegetation/outputs/birch_bare/current \
-  --bundle /path/to/vegetation/outputs/birch_crown/current \
-  --bundle /path/to/vegetation/outputs/birch_pendulous/current \
-  --bundle /path/to/vegetation/outputs/birch_double/current \
-  --bundle /path/to/vegetation/outputs/birch_triple/current
-cargo run --release -p yarra-world-cook -- import-assets assets/packs/yarra_birches/birches.catalog.ron
-cargo run --release -p yarra-world-cook -- cook
-```
-
-The revised catalog has three mesh LODs (3,104–3,212 / 922 / 366–414 triangles, depending on foliage state) and an impostor. The separate translucency map is not integrated.
-
-The refined birch uses smaller leaves, doubled baked twig thickness and 20% thicker mesh branches. The original broad-leaf look remains in authoring presets `generic_deciduous_leafy/sparse/bare`. Birch selects 25% of LOD0 leafy clusters from the inner crown (54 leafy / 11 sparse / 0 bare) and retains them at every mesh LOD. These two-triangle clusters rotate around their centers and use eight dedicated stemless atlas tiles; structural cards stay fixed. The shared foliage atlas is now 2048×3072, with the original tile detail and no additional material. In Houdini, **Moving share of leafy cards** can be set to 0.20–0.30; changing it reuses the atlas. **Stemless moving foliage** retains leaves and fine twigs but removes the main stem and attachment bases. `_CARD_FACING.xy` stores mode (0 legacy axis, 1 camera facing) and elevation follow (0 preserve tilt, 1 full facing). Change **Facing & detail** in Houdini and rebuild, or compare elevation live in the generated browser preview. Older exports without this optional attribute retain legacy behavior. All passes use the main camera; previous-camera poses drive temporal motion, and culling uses each mesh's measured rotation radius. The current lighting is unchanged.
-
-**Additional birch forms:** `birch_crown` exposes curved bare lower twig cards,
-with occasional living sprays and a fuller leafy top. `birch_pendulous` has
-arched limbs and hanging outer sprays; `birch_double` and `birch_triple` use
-separate ground-planted stems of different heights and lean. All four share
-the original birch atlas, use connected wind and bake crown occlusion for
-`crown_v2`. Their fixed card scales stay constant through LODs. Import all seven
-birch bundles together, since each import replaces the complete local pack.
-The clumps contain multiple stems and are more expensive than one tree.
-
-**Oak prototypes:** Forest, spreading and sparse oaks use the same importer and existing crown lighting. All three share six compressed textures and the same eight shoot recipes, each with leafy, bare and stemless tiles. Imported triangle counts are 2,616/784/374 (forest), 2,814/858/424 (spreading), and 2,616/736/286 (sparse). The original 25% moving subset is supplemented by 24 forest / 40 spreading interior stemless quads, giving 63 / 79 / 15 facing cards at every mesh LOD. IDs and pivots stay stable across LODs. Added fill reuses the same atlas; transparent overlap still needs dense-forest profiling.
-
-Extra oak foliage is distributed near secondary limbs using local foliage density and spacing, instead of concentrated in a central oval. Raising the authoring count retains existing filler positions. The lower fork stays open; sparse oak has no extra fill.
-
-```sh
-python3 tools/import_vegetation_bundle.py \
-  --bundle /path/to/vegetation/outputs/oak_forest/current \
-  --bundle /path/to/vegetation/outputs/oak_spreading/current \
-  --bundle /path/to/vegetation/outputs/oak_sparse/current \
-  --output assets/local/yarra_oaks \
-  --catalog assets/packs/yarra_oaks/oaks.catalog.ron
-cargo run --release -p yarra-world-cook -- import-assets assets/packs/yarra_oaks/oaks.catalog.ron
-cargo run --release -p yarra-world-cook -- cook
-```
-
-An impostor follows the three mesh LODs. The separate translucency texture is still pending runtime work.
-
-**Maple prototypes:** Forest, spreading and sparse forms use paired maple shoots from two supplied leaf sheets, an upright leader and smoother rising forks. All three share six compressed runtime maps. Elm bark is a provisional stand-in. Counts are 2,612/754/362 (forest), 2,968/858/406 (spreading), and 2,630/722/292 (sparse). Their 58/71/17 centered facing cards persist at each mesh LOD, including 16/24/0 density-aware filler cards. The current lighting and renderer are unchanged.
-
-```sh
-python3 tools/import_vegetation_bundle.py \
-  --bundle /path/to/vegetation/outputs/maple_forest/current \
-  --bundle /path/to/vegetation/outputs/maple_spreading/current \
-  --bundle /path/to/vegetation/outputs/maple_sparse/current \
-  --output assets/local/yarra_maples \
-  --catalog assets/packs/yarra_maples/maples.catalog.ron
-cargo run --release -p yarra-world-cook -- import-assets assets/packs/yarra_maples/maples.catalog.ron
-cargo run --release -p yarra-world-cook -- cook
-```
-
-As for oak, an impostor follows the three mesh LODs.
-
-The maple spacing revision reduces each baked spray from 49–65 overlapping leaves to 29–39, with more space between pairs and slightly smaller leaves. The existing sample placements, card counts, mesh LOD budgets and shading remain unchanged. Reimport the three bundles together to refresh their shared texture set and updated mesh bounds.
-
-The user approved the more open maple spacing; retain it as the current maple art checkpoint.
-
-**Tall layered broadleaf:** `tall_broadleaf_forest` is a roughly 24 m foliage-height prototype inspired by local Witcher reference IMG_1369. A low, tapered crown uses staggered limbs, small pointed qgCoa2 leaves and brown elm bark. Its three mesh LODs are 3,466/1,092/592 triangles after the connection trial below. Two compact stemless facing bunches sit within the mid/outer sprays on each leafy side of 28 limbs (112 total), with the same pivots across all mesh LODs. The 232 original sprays stay fixed; narrower, more open bakes and a near-LOD bend reduce long flat panels. The old 40 central fillers and random large rotating sprays are replaced by these branch-facing pairs. Typical leaf length is about 10.8 cm; the atlas remains 2048×3072. See the lighting trial below for its material. This is a larger-tree asset budget; dense-forest/device performance remains unmeasured.
-
-```sh
-python3 tools/import_vegetation_bundle.py \
-  --bundle /path/to/vegetation/outputs/tall_broadleaf_forest/current \
-  --output assets/local/yarra_tall_forest \
-  --catalog assets/packs/yarra_tall_forest/tall_forest.catalog.ron
-cargo run --release -p yarra-world-cook -- import-assets assets/packs/yarra_tall_forest/tall_forest.catalog.ron
-cargo run --release -p yarra-world-cook -- cook
-```
-
-An impostor follows the three mesh LODs.
-
-**Tall-tree lighting trial:** The approved art checkpoint is vegetation `a0818aa` / Yarra `d48e5fd`. The subsequent local trial enables **Crown lighting → Bake crown occlusion**, strength 0.9, for the tall preset. Rebuild and import with the same commands above. The importer selects `crown_v2` only for `crown_sky_v2` source materials (every tree preset since 2026-10-14; see [tree shading contracts](../assets/README.md#tree-shading-contracts)); bundles without the bake retain legacy shading, and older `crown_sky_v1` bundles must be rebuilt. Broad sky visibility is baked into existing vertex colors from the complete crown before LOD thinning. Beyond dynamic-shadow coverage, the shader uses this data and stable crown normals to preserve sun-responsive contrast. Geometry and original foliage textures are unchanged. Restart the rebuilt game to load the new material pipeline and imported assets. Local native before/after captures and bookmarks are under `tmp/crown-occlusion/`; close, 35/65/100/150 m and overhead views were checked. The distant effect approximates crown self-shadowing; it does not extend cast ground shadows. Full weather/sun and dense-forest device profiling remain pending.
-
-**Tall-tree far connections:** LOD2 now retains two existing inner fixed sprays on each of 28 limbs, adding 112 triangles (480 → 592). LOD1 prioritizes these sprays within its unchanged count. Branch radii increase by 1.3 in LOD1 and 1.6 in LOD2, while the trunk, LOD0 and all 112 facing bunches remain unchanged. Connecting sprays share a 1.12 scale across the two simplified LODs. Authoring controls live under **Distant LOD**; 0 connecting sprays and thickness 1 recover the preceding version. It uses identical textures and the existing `crown_v2` shader. Rebuild/import as above and recook the catalog for its updated mesh memory estimates. Native visual comparisons are under `tmp/far-lod-connectors/`; forest GPU profiling remains separate.
-
-Tree foliage animates in both game and editor using shared wind enable/direction/strength and preview transport, with rigid bark and authored leaf weights. The existing game Wind control affects trees and grass together. `--upscaler metalfx-temporal` uses deformation-aware tree motion vectors automatically. To check the wind implementation, run `cargo test -p yarra-engine tree_wind`; with native GPU access, also run `cargo test -p yarra-engine tree_wind::gpu_tests -- --ignored`. The current local exports already include wind metadata; no world recook is needed for the shader/material update.
-
-**Connected tree wind trial:** Rebuilt vegetation bundles use `hierarchy_v2` on both bark and foliage. `_WIND_PIVOT` stores the primary limb root and tree height; `_WIND_AXIS` stores limb direction and compliance. Descendants share that limb transform. The trunk follows a curved, rooted bend; limbs inherit its pose; cards turn toward the camera and flutter about the transformed attachment. The same functions run for colour, depth, shadows and current/previous motion-vector poses. Retained card bindings are identical across LODs; mesh bounds include the maximum allowed swing. Bark keeps its two-texture transition. Older bundles retain their existing wind path.
-
-Open **F1 → Wind** to drag Strength, Gustiness, Direction, Trunk bend, Branch movement, Flutter and Trunk response period. Calm/Breeze/Gusty/Strong set manual shared wind; Follow weather restores the automatic source; Reset wind tuning restores the default response. Manual strength/direction settle smoothly and affect grass as well. Response gains affect connected trees. Controls are session-only, locked during F1 recordings, and included in the capture context; A/B Restore restores rendering settings, not these scene controls. The Features wind switch still disables all vegetation wind.
-
-This is a shallow GPU hierarchy with four coherent frequency bands filtered by a damped response, not a per-branch physical simulation or a fit to measured turbulence. Species compliance, height-based period and foliage load are starting artistic profiles; strength is dimensionless, not m/s. There is no requested 35° target. Trunk/limb hard limits only bound extreme slider values. Ground stems retain their separate feet; tiny secondary twigs inherit their primary limb rather than flexing independently. Trees currently use their uniform instance scale; collision and weather-shelter footprints remain in the rest pose. Dense-forest/device cost and motion tuning still need acceptance.
-
-Rebuild the current birch/oak/maple/bay/tall-forest/longleaf/spruce bundles, import each complete pack with `tools/import_vegetation_bundle.py`, re-register its catalog and cook to update mesh-memory estimates. The vertex contract adds 32 bytes per exported vertex, no triangles or materials. Validate bindings/rest geometry with vegetation `scripts/test_wind_binding.py` and `scripts/validate_wind.py ... --compare-previous`. Engine checks: `cargo test -p yarra-engine tree_wind`, native `tree_wind::gpu_tests -- --ignored`, and `connected_spruce_lods_compile_colour_depth_and_motion -- --ignored`.
-
-For tree LOD dropout regression, run `cargo test -p yarra-engine imported_tree_lod_materials_remain_drawable -- --ignored --nocapture` with native GPU access and the local forest pack. It switches an imported tree through all four LODs without Temporal AA and checks that bark and foliage both have prepared GPU materials and compiled color/depth/motion pipelines on every transition frame. Material conversion must finish before Bevy's asset events; wind bounds expand separately before culling. `--metalfx-timing-log` also logs every camera/history/target reset as `TEMPORAL_HISTORY_RESET`, so remaining full-view flicker can be distinguished from local LOD draw gaps.
-
-For grass streaming/history regression, run `cargo test -p yarra-vegetation-render --features upscaling/metalfx temporal_offscreen_grass_streaming_preserves_history -- --ignored --nocapture` with native MetalFX access. It repacks offscreen pages while stationary, strafing and animating wind, exercises empty/resident and disabled/enabled transitions, and checks history plus depth-derived motion in prepared/procedural paths. Page residency must not reset whole-view history; catalog edits and camera cuts still do. `--metalfx-timing-log` includes `GRASS_TEMPORAL_HISTORY` events with source/catalog/visibility/discontinuity reasons alongside native reset/timing logs.
-
-**Roads:** activate Roads, choose a style, then New cart road and place two points. Edit control points, tangents and widths; extend/split with the tool controls. Road styles define wheel/center/shoulder wear, retained grass, ground mixtures and rut/relief variation. Explicit junctions connect 2–4 arms of any styles (Branch from point, Connect to point); the junction's worn patch takes the style of the road joined to. A style with One track (footpath) has no wheel spacing: one worn track down the middle. Save checkpoints roads and painter changes together; publication derives ground, grass and relief from the same source.
-
-Tools can lay roads out instead: `cargo run --release -p yarra-world-cook -- import-roads content/reteya/roads.ron [PROJECT RUNTIME]` reads cart-track styles (`CartTrackProfile` parameters plus the terrain surfaces their Ground preset lays down) and routes (world XZ points the road curves through, with smooth cubic handles; `from: ("Road name", point)` starts a branch at a point of a road listed before it, joined by a junction in that road's style), writes them into the project by name (importing again replaces them) and cooks. The island's routes were found as least-cost paths over its slopes. `tools/forest_plan.py ... --roads content/roads/island.ron` keeps trunks 1.5 m beyond a road's edge (shrubs half that); crowns may overhang. Styles take `track_wander` and `track_wander_length` beside the editor's parameters; style changes need a recook, and new style fields a rebuilt world (the island: rebuild with the island build steps and import the roads again). The cook draws roads into each page's wear field, and near terrain wears the ground per pixel from it; `cargo test -p yarra-terrain-render near_terrain_wears -- --ignored` (native GPU) checks the shader's laying against the cook's after changing either.
-
-**Atmosphere:** open World → Atmosphere for the active space's profile and preview time/weather. **Weather** edits each preset (clouds, visibility, fog and skylight grey, exposure, wind, rain) and the random sequence (change and hold durations, next-state weights); the preview row shows any preset with a chosen wetness, without saving. Apply authored profile edits through normal undo/save/publication. Preview transport and temporary quality controls do not rewrite startup time/weather merely by being adjusted. **Game start** holds the phase the game starts at, with clouds running, as the game would first show the world; turn it off to edit. Clouds Off removes rendering/shadows, not the weather's ambient response.
-
-**Areas:** choose Areas in the World window to paint the named places gameplay reacts to. **Draw new area**, click corners on the terrain, then click the first corner or press Enter to close the shape; Backspace takes the last corner back and Esc cancels. Click an area to select it, drag a corner to move it, click an edge to add a corner there, and press Delete to remove the corner clicked last. The Areas window renames the selected area (lowercase letters, digits and `_ - / .`, the name gameplay content uses, e.g. `guard/gate_post`), optionally limits it to a height range for places under a bridge or on one floor, and deletes it. Areas save with everything else and have ordinary undo; publishing them recompiles no terrain. Outlines are drawn within 800 m of the camera.
-
-Save conflicts indicate newer source revisions: resolve/reload the draft rather than forcing a stale overwrite. Recovery data under `.editor` is separate from saved source. Generated preview failures must remain visible as stale/error state; they are not publication success.
-
-## Grass
-
-Grass grows on the ground. The grass pack [`assets/packs/grass/baltic.ron`](../assets/packs/grass/baltic.ron) defines the grass types (meadow, tall meadow stems, dry meadow, marram, wavy hair-grass) and, per terrain surface, which types grow there and at what share of their density; its header documents every parameter. Painting a surface paints its grass; exclusions in the Grass channel (presets → Exclusion) and road wear clear it. There is no grass painting or catalog editing in the editor.
-
-New worlds take the pack when created. To put an edited pack into an existing world and publish it:
-
-```sh
-cargo run --release -p yarra-world-cook -- import-grass assets/packs/grass/baltic.ron
-```
-
-The game reloads the types' looks from the pack while it runs (blade shape, clumping, colours, gloss, translucency, wind response and density), so they can be tuned live; which types grow where, and the ground's grass colour, need `import-grass`, which recooks only what the change affects. The pack's `details` strew stones, pebbles, cobbles, twigs, ferns, nettles, lily of the valley and sorrel the same way, by surface share. Plants use the `yarra_*` vegetation bundles' LOD1 files; props are glTF binaries under `assets/local/details/` made from a Megascans 3D pack in `~/Dev/Assets/props/sources` with `/Applications/Blender.app/Contents/MacOS/Blender -b --factory-startup -P tools/import_detail_props.py -- PACK_DIR assets/local/details/NAME.glb [--albedo L]` (pieces centred and standing on the origin, textures as PNG; `--albedo` rescales the base colour to mean linear luminance L, hue kept). Twigs are `wooden_sticks_and_twigs_pdseq_low` at `--albedo 0.1`, the trees' bark level; the scan averages 0.2. Their looks and density reload live like grass's. Sparse grass (marram on the dunes, hair-grass on the forest floor) grows as tussocks because its `patches` drops whole clumps where coverage is partial. Ground under grass is shaded by the blades close up and takes the field's colour from 24 to 48 m, where blades have thinned out; distant terrain is baked with the same colour, so a meadow stays a meadow past the end of its blades. Grass is judged in the world and in the game; the grass study workspace and the canopy look were retired. The Animation workspace independently previews catalog models/clips and transport without changing gameplay actor authority.
-
-### Bay shrub prototype
-
-`bay_upright` uses six curved stems spreading directly from the
-ground, small branch sprays, and the supplied bay leaf sheet. The three
-mesh LODs contain 2,632 / 864 / 426 triangles and preserve all 52 centered facing
-cards; 26 are distributed through the interior crown to fill gaps. Crown occlusion is enabled; elm bark is provisional. The material/shader
-uses the existing foliage path. No additional shader or runtime feature is needed.
-
-```sh
-python3 tools/import_vegetation_bundle.py \
-  --bundle /path/to/vegetation/outputs/bay_upright/current \
-  --output assets/local/yarra_bay \
-  --catalog assets/packs/yarra_bay/bay.catalog.ron
-cargo run --release -p yarra-world-cook -- import-assets assets/packs/yarra_bay/bay.catalog.ron
-cargo run --release -p yarra-world-cook -- cook
-```
-
-An impostor baked from LOD2 follows the three mesh LODs (see Impostors above).
-
-### Current longleaf pine kit
-
-Run `hython scripts/build_longleaf_kit.py` and
-`hython scripts/validate_longleaf_kit.py` in the vegetation project, then:
-
-```sh
-python3 tools/import_vegetation_bundle.py \
-  --bundle /path/to/vegetation/outputs/pine_longleaf/current \
-  --bundle /path/to/vegetation/outputs/pine_longleaf_half_bare/current \
-  --bundle /path/to/vegetation/outputs/pine_longleaf_nearly_bare/current \
-  --bundle /path/to/vegetation/outputs/pine_longleaf_one_sided/current \
-  --bundle /path/to/vegetation/outputs/pine_longleaf_tall_bole/current \
-  --bundle /path/to/vegetation/outputs/pine_longleaf_broad/current \
-  --bundle /path/to/vegetation/outputs/pine_longleaf_leaning/current \
-  --bundle /path/to/vegetation/outputs/pine_longleaf_flat_top/current \
-  --lod-screen-heights 480 240 --impostor-screen-height 200 \
-  --output assets/local/yarra_longleaf \
-  --catalog assets/packs/yarra_longleaf/longleaf.catalog.ron
-target/release/yarra-world-cook import-assets assets/packs/yarra_longleaf/longleaf.catalog.ron
-target/release/yarra-world-cook cook
-```
-
-The half-bare, nearly-bare and one-sided forms retain the approved shape and
-needle scale, with 11 / 3 surviving limbs for the first two forms; the one-sided
-form retains 15% of its opposite-side groups.
-
-The eight longleaf forms are the active pine kit: four healthy shapes grown from
-their own seeds and four needle-loss forms of the approved tree. Old source assets
-remain archived. `tools/forest_plan.py` mixes all eight in pine stands.
-
-### Norway spruce prototype
-
-Build `spruce_forest` in the vegetation project with `scripts/build.py`, then run
-`hython scripts/validate_spruce.py`. Import the resulting bundle:
-
-```sh
-python3 tools/import_vegetation_bundle.py \
-  --bundle /path/to/vegetation/outputs/spruce_forest/current \
-  --output assets/local/yarra_spruces \
-  --catalog assets/packs/yarra_spruces/spruces.catalog.ron
-target/release/yarra-world-cook import-assets assets/packs/yarra_spruces/spruces.catalog.ron
-target/release/yarra-world-cook cook
-```
-
-The generator uses photographed qgpvu2 spruce shoots, fixed V-shaped branches,
-hanging side sprays and a small share of stemless facing fillers. Main sprays
-retain their size and fold at every LOD. Pine bark is a provisional stand-in.
-It uses existing crown lighting, cutout coverage mips and foliage shaders.
-Three mesh LODs and an impostor are registered. The spruce passed user art
-review on 2026-10-03.
-
-### Common nettle
-
-Build `nettle_young`, `nettle_mature` and `nettle_patch` in YarraVegetation with
-`hython scripts/build_nettles.py`, then `hython scripts/validate_nettles.py`.
-The qfyqW2 atlas supplies nine individual serrated leaves. Thin mesh stems carry
-opposed pairs and smaller upper leaves. Forms have 1/3/7 stems, roughly 0.4/0.9/0.9 m
-high, with one shared foliage material. Leaves follow the continuous wind frame
-of their stem attachment ring. All pairs and attachment nodes remain at every LOD.
-
-```sh
-python3 tools/import_vegetation_bundle.py \
-  --bundle /path/to/vegetation/outputs/nettle_young/current \
-  --bundle /path/to/vegetation/outputs/nettle_mature/current \
-  --bundle /path/to/vegetation/outputs/nettle_patch/current \
-  --output assets/local/yarra_nettles \
-  --catalog assets/packs/yarra_nettles/nettles.catalog.ron \
-  --canopy-blend 0 --lod-screen-heights 100 35
-cargo run --release -p yarra-world-cook -- import-assets assets/packs/yarra_nettles/nettles.catalog.ron
-cargo run --release -p yarra-world-cook -- cook
-```
-
-Ground cover has no impostor; its last mesh LOD stays drawn. This foliage pass has no flower/seed clusters. Dense-scene GPU cost is unmeasured.
-
-### Wood-sorrel ground cover
-
-Build `sorrel_open`, `sorrel_full` and `sorrel_patch` in YarraVegetation with
-`hython scripts/build_sorrel.py`, then `hython scripts/validate_sorrel.py`.
-The pdEko2 source supplies complete three-part leaves. Small cluster cards carry
-4–6 heads, with tilted single heads at the edges and two/three loose height bands.
-Fine petioles and leaves share one material and planted wind bindings. All leaves
-remain through the three LODs; the stems become simpler with distance.
-
-```sh
-python3 tools/import_vegetation_bundle.py \
-  --bundle /path/to/vegetation/outputs/sorrel_open/current \
-  --bundle /path/to/vegetation/outputs/sorrel_full/current \
-  --bundle /path/to/vegetation/outputs/sorrel_patch/current \
-  --output assets/local/yarra_sorrel \
-  --catalog assets/packs/yarra_sorrel/sorrel.catalog.ron \
-  --canopy-blend 0 --lod-screen-heights 80 25
-cargo run --release -p yarra-world-cook -- import-assets assets/packs/yarra_sorrel/sorrel.catalog.ron
-cargo run --release -p yarra-world-cook -- cook
-```
-
-Native close/overhead and temporal patch views were reviewed for this first
-pass. Dense-patch overdraw/performance remains unmeasured.
-
-### Lily-of-the-valley foliage
-
-Build `lily_open`, `lily_full` and `lily_patch` in YarraVegetation using
-`hython scripts/build_lilies.py`, then `hython scripts/validate_lilies.py`.
-These are foliage forms using six qgwlD2 photographed leaves. They share one
-atlas and material, with separated ground shoots, outward-fanning upright leaves and subtle rooted
-wind. Heights are roughly 0.42–0.47 m; the broadest patch spans about 1.5 m.
-
-```sh
-python3 tools/import_vegetation_bundle.py \
-  --bundle /path/to/vegetation/outputs/lily_open/current \
-  --bundle /path/to/vegetation/outputs/lily_full/current \
-  --bundle /path/to/vegetation/outputs/lily_patch/current \
-  --output assets/local/yarra_lilies \
-  --catalog assets/packs/yarra_lilies/lilies.catalog.ron \
-  --canopy-blend 0 --lod-screen-heights 100 35
-cargo run --release -p yarra-world-cook -- import-assets assets/packs/yarra_lilies/lilies.catalog.ron
-cargo run --release -p yarra-world-cook -- cook
-```
-
-All leaves survive the 8/5/3-section LODs, retaining their source shape, leaf ID
-and wind root. Native close/patch/far and temporal close captures were reviewed for the first
-pass; the upright revision was checked in native close and temporal patch views.
-User art review and dense-area performance checks remain pending.
-
-### Green fern ground cover
-
-Build `fern_upright`, `fern_spreading` and `fern_sparse` in YarraVegetation with
-`hython scripts/build_ferns.py`, then `hython scripts/validate_ferns.py`.
-The shared s3vss3 source atlas has two whole fronds; all three forms keep every
-frond through LOD changes while reducing blade tessellation. Two loose radial
-layers emerge from a ground-level crown (about 0.55–0.63 m high). They use one
-foliage material and rooted hierarchy wind. Import with the actual curved blade
-normals, without blending toward a tree crown:
-
-```sh
-python3 tools/import_vegetation_bundle.py \
-  --bundle /path/to/vegetation/outputs/fern_upright/current \
-  --bundle /path/to/vegetation/outputs/fern_spreading/current \
-  --bundle /path/to/vegetation/outputs/fern_sparse/current \
-  --output assets/local/yarra_ferns \
-  --catalog assets/packs/yarra_ferns/ferns.catalog.ron --canopy-blend 0 --lod-screen-heights 140 45
-cargo run --release -p yarra-world-cook -- import-assets assets/packs/yarra_ferns/ferns.catalog.ron
-cargo run --release -p yarra-world-cook -- cook
-```
-
-Fronds use 12/8/4 curve sections. The 140/45 screen-height thresholds retain
-smooth arches at player distance; generic tree thresholds remain 480/180.
-The sparse form is full-sized with fewer fronds, and the spreading form is
-about 2.5 m across. No extra material or texture set is needed.
-
-The revised forms passed user art review on 2026-10-03; large-area scattering/performance has not been assessed. Flower and other ground-cover species are separate work.
-
-### Generic forest shrubs
-
-Build and validate the six forms in YarraVegetation (`--medium-only` limits
-the builder to the three medium additions):
-
-```sh
-hython scripts/build_shrubs.py
-hython scripts/validate_shrubs.py
-```
-
-Then import all six together and cook:
-
-```sh
-python3 tools/import_vegetation_bundle.py \
-  --bundle /path/to/vegetation/outputs/shrub_rounded/current \
-  --bundle /path/to/vegetation/outputs/shrub_spreading/current \
-  --bundle /path/to/vegetation/outputs/shrub_sparse/current \
-  --bundle /path/to/vegetation/outputs/shrub_medium_rounded/current \
-  --bundle /path/to/vegetation/outputs/shrub_medium_spreading/current \
-  --bundle /path/to/vegetation/outputs/shrub_medium_upright/current \
-  --output assets/local/yarra_shrubs \
-  --catalog assets/packs/yarra_shrubs/shrubs.catalog.ron
-cargo run --release -p yarra-world-cook -- import-assets assets/packs/yarra_shrubs/shrubs.catalog.ron
-cargo run --release -p yarra-world-cook -- cook
-```
-
-The medium forms are about 3.1 / 2.5 / 3.5 m tall, retaining the small leaf
-scale with more stems and shoots.
-
-The pack shares one oval-leaf atlas and existing crown lighting/wind shaders.
-Retained cards never enlarge at LOD changes. Bare fans and terminal sprays stay
-at all three LODs, followed by an impostor baked from LOD2. All six forms are
-included in the accepted kit.
-
-### Dead broadleaf forms
-
-Build the six presets with vegetation `scripts/build_dead_trees.py` (or use
-`--slender-only` to rebuild just the three narrow forms), then run
-`hython scripts/validate_dead_trees.py`. Import the complete pack together:
-
-```sh
-python3 tools/import_vegetation_bundle.py \
-  --bundle /path/to/vegetation/outputs/dead_upright/current \
-  --bundle /path/to/vegetation/outputs/dead_spreading/current \
-  --bundle /path/to/vegetation/outputs/dead_split/current \
-  --bundle /path/to/vegetation/outputs/dead_slender/current \
-  --bundle /path/to/vegetation/outputs/dead_double/current \
-  --bundle /path/to/vegetation/outputs/dead_triple/current \
-  --output assets/local/yarra_dead_trees \
-  --catalog assets/packs/yarra_dead_trees/dead_trees.catalog.ron
-target/release/yarra-world-cook import-assets assets/packs/yarra_dead_trees/dead_trees.catalog.ron
-target/release/yarra-world-cook cook
-```
-
-The slender single/double/triple forms have thin trunks, ascending limbs and
-distinct planted feet. Their shared materials and wind path need no engine
-changes. The richer, wider forms were approved on 2026-10-03.
-
-These trees reuse the existing elm bark package with curved bare twig cards.
-`vegetation_surface: bare_wood` opts masked materials into existing `plain`
-two-sided lighting and skips the importer's canopy normal blend. This retains
-rounded bark normal detail without adding a renderer shader. The `hierarchy_v2`
-wind bindings remain active; no facing cards or leaf flutter are present. Twig
-cards retain their rest positions through all mesh LODs while wood tessellation
-reduces. Budgets are 3660/1988/1120, 4094/2214/1246 and 3966/2168/1228 triangles
-respectively for the original forms. Slender/double/triple use 2500/1362/750,
-3616/1964/1088 and 4614/2496/1380 triangles, with 106/144/171 fixed cards retained at
-every LOD. An impostor follows the three mesh LODs. Existing living-tree
-material conversion is unchanged.
-The slender forms use smaller staggered twig fans along limbs and upper stems;
-their authoring `Twig richness` control changes this fill without rebaking.
-Crown-width settings are about 25% higher than in the initial slender study, with slightly
-more open double/triple clumps.
-
-Mesh tips now retain the root radius measured by the twig baker, scaled by the
-attached card size. Shared tips meet the widest attached stem; the transition
-is blended along the supporting mesh and persists through all three LODs.
-
-Resolved wind depth mismatch (2026-10-03): Strong wind exposed dark patches on
-both bare and living trees when the depth prepass was enabled. Bypassing MetalFX
-reconstruction left the patches intact. The independently compiled depth and
-colour vertex variants could evaluate wind arithmetic differently; colour
-fragments then failed against their own prepass depth. `tree_wind.wesl` now owns
-the Bevy-compatible vertex output layouts and marks both clip positions
-`@invariant`. Keep these locations synchronized with Bevy's forward/prepass IO
-when upgrading Bevy. Wind motion, material lighting and pass counts are unchanged.
-
-Run `cargo test -p yarra-engine wind_depth_prepass_preserves_colour_coverage -- --ignored --nocapture`
-with native GPU access and local dead-tree/spruce bundles. It compares rendered
-colour with/without depth and motion prepasses in Calm and two Strong poses.
-Removing `@invariant` reproduced 2176 damaged pixels in the bare-tree Strong
-case; the fixed shader produced zero in all six cases. The compute tests under
-`trees::wind::gpu_tests` separately cover attached card roots and deformation
-history. Native Temporal captures are in `tmp/dead-trees-review/`; this is
-correctness coverage, not a dense-forest performance measurement.
-
-## Explicit fixtures and catalog tools
-
-Reteya is the only world. Unit tests build two small fixtures in code, which the cook can also write to a fresh path for a test by hand:
-
-```sh
-cargo run -p yarra-world-cook -- create-road-demo tmp/roads.project.sqlite
-cargo run -p yarra-world-cook -- cook tmp/roads.project.sqlite tmp/roads.runtime.sqlite
-cargo run -p yarra-app-editor -- --project-db tmp/roads.project.sqlite --world-db tmp/roads.runtime.sqlite
-```
-
-`create-demo` is the 32 m grass fixture, `create-road-demo` the 8 m road fixture. Pure compiler fixtures remain available as `layered_meadow` and `cart_track` examples in `yarra-environment-compile`.
-
-`import-grass PACK_RON [PROJECT_DB RUNTIME_DB]` replaces the grass catalog from a grass pack and publishes; it is not a read-only preview.
-
-## Standalone gameplay and saves
-
-The gameplay content tool runs without game/editor startup, cooked worlds or art assets. Start with the checked-in authored project:
-
-```sh
-cargo run --offline -p yarra-game-content -- validate content/gameplay/demo
-cargo run --offline -p yarra-game-content -- demo content/gameplay/demo --locale uk
-```
-
-The demo loads definitions, actors, starting inventories/wallets, scenario actions and Fluent files from disk. It uses a potion, transfers equipped gear to a companion, stores an item in a chest, trades and completes a dialogue reward. It publishes and retains a content bundle, plays the scenario against that bundle, writes manual/quick/auto saves to a new temporary directory, reloads the manual slot and compares the complete state. It also reports how many dialogue graphs were loaded. Expected results are **75 player health**, **80 party gold**, **10 persuasion XP** and **3 saves**. Use `--locale en` for English, or `--save-dir /path/to/new-directory` to choose a fresh destination. Existing demo save directories are refused.
-
-### Playing the slice in the game
-
-```sh
-cargo run --release -p yarra-app-game -- --story content/gameplay/demo
-```
-
-A guard and a gate appear a few metres ahead of the start. Walking up to them enters the `guard/approach` area: your companion remarks on the path (an ambient conversation, shown above the panel while you keep moving) and, because you carry the key, the guard walks to the gate, takes the key and opens it. You can also walk to the guard and press **E**; **Space** continues a line, **1–9** pick a reply, **Q** walks away. The world waits during that conversation. **F5** and **F9** quick save and load, including where everyone stands. The corner text shows which named areas you are in.
-
-Returning the key is worth a level, and the lines under the quest show the hero's sheet. With points to spend, **Z**, **X** and **C** raise strength, wisdom and vitality. Near the guard, **T** asks about what he offers once the gate is open: sword lessons for gold and learning points. **H** drinks a potion. Beside the training dummy, **F** strikes it again and again, **G** lines up a power strike (stamina, then a cooldown) and **V** stops; walking away stops too.
-
-The two areas use stand-in shapes beside the guard until the world has areas painted under the names `guard/approach` and `guard/gate_post`; painted ones win. The project is published to a private bundle under the system temp directory (`yarra-story/`), where the saves also live; a save made with different content still loads, and the game says the content has changed.
-
-### Editing and validating gameplay content
-
-Content refers to things by name: `id: "guard/gate"` in the file that defines a quest, `quest: "guard/gate"` wherever it is used. A name is lowercase letters, digits, `_`, `-`, `/` and `.`, and it is the identity: renaming it makes a different thing. By convention a name starts with its package. In Rust, `QuestId::named("guard/gate")` gives the same identity.
-
-Scripts are `.luau` files in a package; the file name is the module name.
-
-```lua
--- packages/guard/scripts/guard.luau
-local guard = {}
-function guard.take_key(game: Game, scene: Scene)
-    if game.get("guard/rewarded") then return end
-    game.set("guard/rewarded", true)
-    game.consume_item(scene.player, "old_gate_key", 1)
-    game.complete_quest("guard/gate")
-    game.set_locked("guard/old_gate", false)
-end
-return guard
-```
-
-Use it as `actions: [Script("guard.take_key")]` or `condition: Some(Script("guard.ready"))`. A condition function returns a boolean and can only read. `cargo run --offline -p yarra-game-content -- script-api` prints the full typed API. `validate` compiles every script and rejects references to missing functions. With [Luau](https://github.com/luau-lang/luau/releases) installed (`luau-analyze` on `PATH`, or its path in `YARRA_LUAU_ANALYZE`) it also type-checks them in strict mode against that API, so a misspelled function or a wrong argument type fails validation with the script's own line number.
-
-A package declares the variables it introduces in its `package.ron`: `variables: [(id: "old_gate/rewarded", initial: Bool(false))]`. A variable keeps the type of its initial value (`Bool`, `Int` or `Text`). Test one with `Variable(variable: "...", test: Is(Bool(true)))` (also `AtLeast(n)`, `AtMost(n)`), change it with `Set(variable: "...", value: ...)` and `Add(variable: "...", amount: n)`, or from a script with `game.get`, `game.set` and `game.add`. A scenario can start with `variables: {"name": Int(3)}`.
-
-Add `scope: Actor` to a declaration and every actor has its own value, for things one character remembers: `(id: "guard/insulted", initial: Bool(false), scope: Actor)`. Content then says whose value it means with `of: Some(Speaker)` (or `Player`, or `Actor("name")`), and scripts pass the actor last: `game.set("guard/insulted", true, scene.speaker)`, `game.get("guard/insulted", scene.speaker)`. Leaving the actor out, or naming one for a playthrough variable, is an error.
-
-Copy `content/gameplay/demo` to start a project. In source format **11** a project lists package directories, and each file in a package says what it holds by its name:
-
-```text
-project.ron                         # content identity, source locale, packages, scenario
-scenario.ron, scenarios/            # starting conditions and steps
-packages/guard/                     # a package is named after its directory
-  package.ron                       # optional: the areas it names, the variables it declares
-  actors.ron, items.ron, loot.ron   # lists: templates, catalog fragments, loot tables
-  characters.ron                    # list: the characters content names
-  rules.ron                         # the one rules definition of the project
-  gate.quest.ron                    # one quest
-  guard.profile.ron                 # one interaction profile
-  ready.predicate.ron               # one named predicate
-  conversations/reward.dialogue.ron # one conversation graph
-  world/gate.object.ron             # one world object
-  world/escort.trigger.ron          # one trigger
-  scripts/guard.luau                # a script module named after its file
-  en.ftl, uk.ftl                    # the package's text, one or more files per locale
-```
-
-Files are found anywhere under the package directory, in any subdirectories. A `.ron` file whose name says nothing above is an error, so a misnamed file is not silently left out; other files (notes, images) are ignored. `actors.ron`, `characters.ron`, `items.ron` and `loot.ron` may also be called `*.actors.ron` and so on. Catalog fragments share one catalog ID and revision. Every identity is defined once; one defined twice names both files. Paths in `project.ron` are relative to the project root and stay inside it after symlink resolution. Where a file sits and the order of packages change no identity; the order of a node's children does matter.
-
-**Characters.** A template says what a kind of actor is made of; a character is one particular actor, built from a template: `(id: "mira", template: "traveller", name: Some(Message("mira-name")))`. Without a name it goes by its template's. Triggers, conditions, actions and dialogue roles may name only declared characters, so a mistyped name fails the build and says in which record. A scenario's `actors` start declared characters at a position, optionally with a `name` of their own for that playthrough; actors created while playing are not declared.
-
-**Text.** Each package has one text resource, named after the package, made of its `<locale>.ftl` files (several files of one locale are joined, in path order). Content writes `Message("guard-name")` for a message of its own package and `Message("core/item-healing_potion")` for another's; `Literal("Player name")` is shown as written. A message key is unique within its package.
-
-What messages a package has, and what arguments they take, comes from its source-language file (`source_locale` in `project.ron`): an argument used to choose between named variants (`{ $attitude -> [friendly] … *[hostile] … }`) takes one of those names; one used with plural categories or number keys is a number; any other is shown as it is, text or number. A message's arguments include those of the messages it refers to; a term takes only its own. Static labels (item, category, template, character, rule, quest, objective, topic, object and starting names) cannot take arguments. Dialogue nodes pass arguments with `arguments: {"player": ActorName("player")}`; `Localization::format_bound` renders the resulting `BoundText` in a locale.
-
-A translation may leave messages out; they fall back to the source language whole, and `validate` lists them as warnings. It may not define a message the source does not have or use an argument the message does not take. `validate` checks every Fluent branch, reference, attribute, cycle and argument use, including unused terms. Unknown functions and positional term arguments are rejected; literal named term arguments and attributes are supported. A translated message that leans on a term only the source defines falls back whole; a translated line is never mixed with source-language parts. Changing wording changes no mechanical identity and does not touch saves; changing what a message takes does.
-
-Validation also runs the scenario against a disposable session and reports the failed step. It does not prove that every possible story branch succeeds. No validation/build command edits source or existing saves. Each file read is bounded: 16 MiB per RON document, 2 MiB per Fluent source, 1 MiB per script. There is no cap on how many definitions content has. Increment content/catalog revisions for mechanical releases. New-game scenario changes are separate from existing saves' state and RNG.
-
-### Publishing mechanics and language packs
-
-Publish each immutable database at a fresh path:
-
-```sh
-mkdir -p tmp/game-content
-cargo run --offline -p yarra-game-content -- build content/gameplay/demo tmp/game-content/mechanics-v6.sqlite
-cargo run --offline -p yarra-game-content -- build-language content/gameplay/demo en tmp/game-content/en-v1.sqlite
-cargo run --offline -p yarra-game-content -- build-language content/gameplay/demo uk tmp/game-content/uk-v1.sqlite
-cargo run --offline -p yarra-game-content -- validate tmp/game-content/mechanics-v6.sqlite --language tmp/game-content/en-v1.sqlite --language tmp/game-content/uk-v1.sqlite
-cargo run --offline -p yarra-game-content -- demo tmp/game-content/mechanics-v6.sqlite --language tmp/game-content/en-v1.sqlite --language tmp/game-content/uk-v1.sqlite --locale uk
-```
-
-Content schema **12** contains one checksummed record per mechanical asset, text contracts and the tool-only scenario. It contains **no FTL**. Language-pack schema **2** stores one locale's resources and the hash of the contract each was checked against. A wording fix uses `build-language` with a fresh pack path and requires no mechanical rebuild and does not affect saves. The caller explicitly selects packs; nothing is discovered implicitly.
-
-`ContentRepository::open(path)` reads the manifest only. `headers(kind)` lists identities and checksums without payloads; `read(&AssetId::Item(id))` and `read_kind(kind)` return verified assets. A session uses it through the `ContentSource` port: `core()` once, then `dialogue(id)` per conversation. Text **contracts** are read explicitly with `AssetId::Text(resource_id)`; commands never read or parse wording.
-
-`LanguageRepository::open` likewise decodes zero resources; `load(resource_id)` is an indexed, checksummed lookup in one locale. Compose `LanguageSource::new(content_repository, language_repositories)` with `Localization::with_source(source_locale, Box::new(source))`. This is the runtime path. A resource is read and parsed the first time a locale needs it and kept: a game has one per package and a few locales. Replace the service to switch to another pack generation. Use these synchronous readers on an I/O worker when integrating the game.
-
-Inspect mechanics without instantiating a session, executing a scenario or reading packs:
-
-```sh
-cargo run --offline -p yarra-game-content -- inspect tmp/game-content/mechanics-v6.sqlite --item healing_potion
-```
-
-`inspect` accepts repeated `--item` and `--dialogue` flags and prints each requested asset.
-
-`LoadedProject::load_directory` eagerly validates authoring data. `materialize_bundle_for_tools` eagerly validates mechanical assets, fingerprints and scenario without packs. `materialize_with_languages_for_tools(bundle, pack_paths)` additionally validates all supplied wording. These are explicit tool APIs; gameplay reads published bundles through `ContentRepository`. `start` imports the authored seed; `run_scenario` also executes the exercise. Each start creates a fresh playthrough ID; items are numbered by the inventory that makes them, so the same start makes the same items. The demo imports setup/presentation for reporting, then runs commands against the indexed repository and retains content beside its saves.
-
-### Quest-aware NPC interaction
-
-Run the second authored scenario without replacing the inventory/trading regression exercise:
-
-```sh
-cargo run --offline -p yarra-game-content -- scenario content/gameplay/demo scenarios/guard.ron
-cargo run --offline -p yarra-game-content -- scenario content/gameplay/demo scenarios/guard-refusal.ron
-```
-
-`LoadedProject::load_directory_with_scenario(root, relative_path)` and the CLI eagerly validate the project and execute the selected exercise in a disposable tool session. Scenario paths use the same project-root bounds as other sources. Scenarios that start the same way share a start: `base: Some("scenarios/guard-start.ron")` takes the whole starting state from that file, which holds a start and no steps, and the scenario itself holds only steps. Runtime coverage in [`game_content/tests/narrative.rs`](../crates/game_content/tests/narrative.rs) runs these same steps against published SQLite content. The CLI does not yet load external exercises against a retained campaign or provide spatial movement.
-
-The guard package owns two quests, a reusable readiness predicate, one interaction profile, a `guard/rewarded` variable and five conversation assets. The scenario starts with the required key already owned, changes attitude, activates both quests, checks opening priority and independent topics, then returns the key for objective completion, quest completion, attitude and XP. The refusal exercise interrupts between speakers, restarts, remembers a refusal, selects its follow-up, then lets the player return the key via an explicit topic. Quest/objective names and topic labels use the package's English/Ukrainian Fluent resource; dialogue lines can share that resource or own a separate one.
-
-An actor template's `interaction: Some(profile_id)` attaches a profile; `None` explicitly declares no selector. A profile has 1–64 rules with a local ID, priority, tie order, optional topic label, condition and 1–16 positively weighted dialogue variants. Higher priority wins, then lower `order`; duplicate `(priority, order)` pairs are rejected. Automatic opening considers only rules without a topic. Every eligible topic is returned independently, keeping concurrent quests discoverable. Weights select within the winning rule. Derived `DialogueContract` records contain role declarations, history scope, repeat policy and line/choice IDs. Profile previews read these contracts and scoped history to filter ineligible variants; `unavailable_variants` explains repeat/cooldown exclusions. Full graphs remain outside the preview dependency closure.
-
-Conditions support `All`, `Any`, `Not`, `Named`, `Present(actor)`, quest status, objective completion, directed attitude, items, variables, `Stat`, `Skill` (rank), `Level`, `Class`, `CanLearn`, `Gold` and scoped `History` counts. History conditions reference a dialogue and an event (`Started`, `Completed`, `Interrupted` or `Node(id)`); the dialogue contract supplies the scope and validates the node ID. `Relationship` conditions and actions name `Player`, `Speaker` or `Actor(id)`. Trees nest only so deep; named predicates are expanded with a shared depth and work budget, so shared references cannot blow up.
-
-Use `preview_interaction(participant, speaker)` for sorted candidates, observed leaf values and eligibility, `opening()` for the chosen rule, and `topics()` for available topics. Preview does not change state, generation or either RNG stream. Submit `Command::Talk { participant, speaker, topic: None, bindings: Default::default() }` to choose an opening or `Some(rule_id)` to request an eligible topic. Only the selected graph loads. The committed outcome includes `InteractionSelected`; its profile/rule/dialogue are persisted separately from graph progress. An active conversation resumes without rerolling or rebinding, including after save/load; a topic request during it is rejected. Greeting variation uses a saved narrative RNG separate from skill rolls.
-
-`Command::Quest` and `Command::AdjustRelationship` are explicit domain commands. Dialogue `Action::Quest` and `Action::Relationship` can combine these changes with item/XP rewards in one transaction. Required objectives gate completion; failed/completed quests are terminal and duplicate transitions fail. There is no implicit quest auto-completion. World distance/access authorization belongs to the future application adapter.
-
-### Conversation runs, history and rewards
-
-A conversation is one `graph.ron`: `roles`, `history_scope`, `repeat`, an optional `mode`, ordered entry nodes in `start`, and a flat list of `nodes`. `mode: Ambient` marks lines spoken while play goes on, such as companion banter started by a trigger: the engine shows each line for a while and acknowledges it itself, and the graph may not contain choices. The default, `Blocking`, has the player's attention. Conditions and actions are written in the node that uses them; a package lists the `variables` it introduces.
-
-```ron
-(id: "greeting", kind: Line, speaker: "speaker", text: Message((resource: "...", key: "reward")),
-    arguments: {"player": ActorName("player")}, children: ["companion-aside", "answer"]),
-(id: "companion-aside", kind: Line, speaker: "companion", text: ..., children: ["guard-reply"]),
-(id: "return-key", kind: Choice, speaker: "player", text: ...,
-    condition: Some(Named("...")), actions: [If(condition: Variable(variable: "...", test: Is(Bool(false))),
-        then: [Set(variable: "...", value: Bool(true)), ...])]),
-```
-
-Every node has an `id`, a `kind`, a `speaker` role and `text`; `arguments`, `repeat`, `condition`, `actions` and `children` are optional. After a node (or at the start), its children are tried in order and the first eligible one decides what happens: a `Line` is shown and waits to be acknowledged; a `Choice` means every eligible choice among those children is offered. With no eligible child the conversation is complete. A node is eligible when its speaker is taking part, its `repeat` allows it (`Always`, `OncePerRun`, `OnceEver`) and its condition holds.
-
-Roles say who can speak. `player` and `speaker` are always `Required` and are bound by `Talk`/`StartDialogue`. Further roles are `Required` or `Optional` (supplied in the command's `bindings`) or `Actor("uuid")`, a named character who takes part whenever they are in the party. Nodes of a role nobody fills are skipped, so a companion's reaction is simply an earlier child spoken by that companion, and a line for two companions together adds `condition: Some(Present("other-uuid"))`. `Command::Party { actor, member }` changes who travels with the player; a scenario can start with a `party`.
-
-Use `conversation_view(ConversationKey)` for status, token, the current line and the available choices. A line includes the speaking actor's ID and `BoundText`; gameplay returns references and typed values, never rendered strings. Argument sources are `ActorName(role)`, `Stat { role, stat }` (a stat after equipment and effects, or what is left of a resource; both need a `Required` role), static `Text`, integer `Number` and declared `Select`.
-
-Submit `AdvanceLine { key, expected: view.token }` once a line has been presented: it runs the line's actions and records it. `Choose` likewise takes the token of the view the player saw; a stale token is rejected rather than consuming another step.
-
-Graph repeat policies are `Always`, `OnceCompleted` and `Cooldown { millis }` measured from the last committed start using saved logical time. An interrupted introduction with `OnceCompleted` can restart. History scope is `Playthrough`, `Player`, `Speaker` or `Interaction` (the ordered player/NPC pair) and counts starts, completions, interruptions and each node taken.
-
-A reward given once is a boolean variable and `If { condition, then, otherwise }`: test the variable, set it and give the reward in `then`. Later picks skip the group, including its random rolls, while the choice itself can still repeat. Different graphs and NPCs can test one playthrough variable, or a per-actor one with `of: Some(Player)` to reward each player once. A condition on the choice can hide an offer already given. Actions nest at most eight deep. Everything a command did rolls back if it fails, and previews change nothing.
-
-[`conversation_runs.rs`](../crates/game_content/tests/conversation_runs.rs) exercises hub loops, once-only rewards across graphs/NPCs, three-role localization, mid-line restore, remembered refusals, saved cooldowns, and stale inputs. These are standalone domain contracts. Spatial reach/access, proximity scheduling, recent-variant avoidance and role selection from the live party remain application/world follow-ups.
-
-### Characters, levels and abilities
-
-One package owns `rules`: a single file declaring what characters are made of. [The demo's](../content/gameplay/demo/packages/core/rules.ron) is the reference.
-
-- `stats`: each is `Primary(minimum, maximum)`, `Derived(minimum, maximum)` or `Resource(maximum: "other-stat")`. `life` names the resource whose loss is death.
-- `derive` and `check` name two functions in a script module ([`rules.luau`](../content/gameplay/demo/packages/core/scripts/rules.luau)). `derive(c)` returns a table with every derived stat; `c` has `level`, `class`, `stats` (the primaries after equipment and effects) and `skills` (ranks). `check(c, skill, difficulty, roll)` returns whether a check passes; `roll(sides)` is the only source of chance. Keep both free of side effects: `derive` runs whenever a character's build changes.
-- `skills`: `ranks` lists the learning points each rank costs.
-- `classes`: `starting` primaries, `per_level` grants, `at_level` grants for particular levels (level 1 included), and `skills` with the highest rank a trainer can teach that class. Grants are `attribute_points`, `learning_points`, `bonuses` to primaries and `abilities`.
-- `levels`: total experience needed for level 2, 3, …
-- `effects`: `modifiers` and an optional `periodic` change to a resource. Modifiers are `(stat, op)` with `Add(n)`, `Multiply(percent)` or `Override(n)`; items use the same in `mechanics.modifiers`.
-- `abilities`: `duration_ms`, optional `cooldown_ms` and `costs`, `targeted`, and `resolve`, a script function that runs when the ability takes effect. In it `scene.player` is the user and `scene.speaker` the target.
-
-An actor template names its `class` and optionally a `level`, `base` values that differ from the class, starting `skills`, the `equipment` it wears and a `loot` table. Loot tables live in files a package lists under `loot`; an entry is `(item, quantity: (least, most), chance)`. A container object can name one too. Inventories made from them appear when a command first needs them; send `OpenInventory { actor }` before showing a trade or loot screen.
-
-Actions for rewards and trainers: `AwardExperience(amount)` (to the party), `Teach(skill)`, `Pay(amount)`, `ChangeResource(of, resource, amount)`, `ApplyEffect(of, effect, duration_ms)`, `RemoveEffect(of, effect)` and `Check(skill, difficulty, success, failure)`. A trainer is a dialogue choice with `condition: Some(All([CanLearn(skill: "…"), Gold(minimum: 20)]))` and `actions: [Pay(amount: 20), Teach(skill: "…")]`. Scripts have the same through `game.stat`, `game.skill`, `game.level`, `game.class`, `game.gold`, `game.has_effect`, `game.award_experience`, `game.teach`, `game.pay`, `game.change_resource`, `game.apply_effect`, `game.remove_effect`, `game.check` and `game.random`.
-
-Commands a game sends: `Party { actor, member }`, `Control { actor }`, `SpendAttributePoint { actor, stat }`, `Intend { actor, intent, clear }`, `Interrupt { actor }` and `AdvanceTime { millis }`. Time is what makes effects tick and actions resolve; advance it in small steps (the slice uses 100 ms) and not at all while a blocking conversation has the player's attention. `state().actor(id)` has `acting`, `intents` and `cooldowns` for a UI.
-
-A scenario lists `party`, who is `controlled` and the `purse` wallet; an actor may start with `resources: {"health": 50}`. Steps include `SpendAttributePoint`, `Intend`, `StopActing`, `ExpectStat`, `ExpectLevel` and `ExpectSkill`; see [`guard-training.ron`](../content/gameplay/demo/scenarios/guard-training.ron).
-
-### Session and save APIs
-
-`GameSession::new(content_source, state)` reads the always-loaded definitions, brings the state in line with them and checks it in full, reading the graphs of conversations in progress; other graphs are read when first needed. Production uses `ContentRepository`; tools and tests use `ToolContent` over a loaded project. `apply(Command)` returns `CommandOutcome { header, events }`, or an error with state, clock and random streams unchanged. An accepted command also carries out the work it gave rise to (triggers, the conversations they start, walks whose time ran out) before it returns, so the outcome is settled. When a rule refused the command, `error.rejection()` gives a `Rejection` to match on (`Locked`, `NotEnoughGold`, `PartyFull`, `ConversationMoved`…); anything else is a mistake in content or code. `state()` is the whole playthrough; `stat`, `conversation_view`, `preview_interaction`, `quote_trade` and `container_contents` are read models. Absent records read as defaults through the state accessors (`quest`, `relationship`, `history`, `object`, `areas`, `trigger`).
-
-`LoadedProject::start` builds the authored starting state in a tool session and `run_scenario` also plays the scenario steps. To play against published content, take `project.start()?.into_state()` and open a session over a `ContentRepository`.
-
-Before gameplay uses a published bundle, create `ContentLibrary::new(retention_directory)`, call `retain(bundle_path)` and open its returned identity through `library.open(&identity)`. Retained bundles are independent of source files and are not removed automatically. Saves reference mechanics; language packs are selected independently and are not part of save identity.
-
-`SaveDirectory` supports manual slots, quicksave and autosave retention (1–32). A save is one `.save` file: a header line and the state as JSON, written beside the slot and renamed into place. Save format **16** rejects other formats; regenerate fixtures rather than migrate them. `saves.load(slot, content_source)` restores a slot against the content at hand, whichever content it was saved with: stats are worked out again, resources kept within their caps and party levels caught up, then the whole state is checked, and a save that still does not fit is refused with the reason. Compare `saves.content_identity(slot)` with the content's identity to tell the player the content has changed; `library.load(&saves, slot)` restores against the exact content the slot was saved with.
-
-`Driver::new(session, step_ms, trace_capacity)` moves a session through time for the game and for headless runs alike. `elapse(real_time)` turns real time into game time in whole steps (at most a second at once) and keeps the remainder; `submit`, `step` and `advance_until(max_steps, predicate)` use explicit logical time, so no real-time sleeps are required. A trace capacity above zero keeps the events of the last commands; failed commands add nothing. An unmet predicate returns an error after its step budget; steps already accepted stay accepted.
-
-Run the standalone checks:
-
-```sh
-cargo test --offline -p yarra-game-content -p yarra-game-types -p yarra-gameplay -p yarra-localization -p yarra-save
-cargo clippy --offline -p yarra-game-content -p yarra-game-types -p yarra-gameplay -p yarra-localization -p yarra-save --all-targets -- -D warnings
-```
-
-See [gameplay architecture](ARCHITECTURE.md#standalone-gameplay-foundations) for ownership and deferred features. The authoring tool and demo remain separate from game entities and UI.
-
-## Validation and platforms
-
-```sh
-cargo fmt --all -- --check
-cargo clippy --offline --workspace --all-targets
-cargo test --offline --workspace
-python3 -m unittest discover -s tools -p test_grass_profile.py
-```
-
-`--streaming-smoke` explicitly installs `StreamingSmokePlugin`; ordinary game/editor composition contains no smoke state or exit system. It runs the demo-world traversal, cooling/ownership and second-world gameplay checks, then exits. Use the cooked overworld/interior fixture (zero initial gameplay objects, one interior object), not arbitrary authored worlds. Traversal checks canonical destination cells and current source demand after rebasing. The existing 3/7.5/11-second checkpoints are readiness assertions, not performance measurements. It cannot share control/exit ownership with a profile, repro or capture. The default island is not a smoke fixture; run against a separately cooked historical demo. With unused database paths:
-
-```sh
-cargo run -p yarra-world-cook -- create-demo tmp/smoke.project.sqlite
-cargo run -p yarra-world-cook -- cook tmp/smoke.project.sqlite tmp/smoke.runtime.sqlite
-cargo run -p yarra-app-game -- --world-db tmp/smoke.runtime.sqlite --streaming-smoke --diagnostics off
-```
+Judge rendering changes in the running game against [captures](#captures-and-measurement) of the
+same views before and after.
 
 ### Shaders
 
-Shaders are [WESL](https://wesl-lang.dev) (`.wesl`), which Bevy 0.20 composes at runtime when a pipeline is first specialized. `assets/shaders/a/b.wesl` is the module `package::shaders::a::b`; Bevy's own modules are named by crate and path (`bevy_pbr::render::pbr_functions`). A shader definition switches `@if(NAME)` / `@elif` / `@else` on whole declarations, struct members, parameters and statements (an `@if(X) { … }` block does not scope its `let`s), and an integer definition is also `constants::NAME`. Mixed bitwise and arithmetic operators need parentheses (`(a * K) ^ (b * L)`). The few plain-wgpu shaders (`crates/upscaling`, test harnesses) stay `.wgsl`.
+```sh
+cargo run -p yarra-shader-check                  # every variant in crates/shader_check/entries.ron
+cargo run -p yarra-shader-check -- --parse-all   # every .wesl file parses
+cargo run -p yarra-shader-check -- shaders/sky/composite.wesl --each-flag \
+  --defs "ATMOSPHERE,CACHED_CLOUDS,CLOUDS,DUAL_SOURCE_BLENDING,MIST_NOISE_PERIOD=2048,MULTISAMPLED"
+```
 
-A broken branch otherwise shows up only when some view first needs that variant, so check shaders without the game:
+Shaders are WESL in `assets/shaders/`; the game composes a variant only when a view first needs
+it. `--each-flag` flips each `@if` flag in turn, `--print` shows the composed WGSL. Refresh
+`entries.ron` from the `FRAME_SPIKE kind=pipeline` lines of a `YARRA_SPIKE_LOG` run.
+
+### Native GPU tests
+
+Ignored by default; run those a change touches, with GPU access:
 
 ```sh
-cargo run -p yarra-shader-check                     # every variant in crates/shader_check/entries.ron
-cargo run -p yarra-shader-check -- --parse-all      # every .wesl file parses
-cargo run -p yarra-shader-check -- shaders/sky/composite.wesl --defs "ATMOSPHERE,CLOUDS,MULTISAMPLED,MIST_NOISE_PERIOD=2048" --each-flag
+cargo test -p yarra-engine -- --ignored --nocapture          # trees, wind, depth, MSAA store
+cargo test -p yarra-terrain-render -- --ignored --nocapture  # clipmap material
+cargo test -p yarra-atmosphere -- --ignored --nocapture      # terrain shadow search
+cargo test -p yarra-upscaling --features metalfx -- --ignored --nocapture
+cargo test -p yarra-world-cook two_kilometre -- --ignored --nocapture    # after cook changes
 ```
 
-It runs Bevy's compiler (`wesl`, same options and global definitions) against Bevy's crate sources and validates with naga; `--each-flag` also flips each flag the shader tests, one at a time (some flips are combinations the game never builds), and `--print` shows the composed WGSL. `entries.ron` holds the definition sets the game specializes each shader with (bases such as `grass` carry the integer limits Rust passes as `constants::`); refresh it from a `YARRA_SPIKE_LOG` run, whose `kind=pipeline` lines name each pipeline's shaders and definitions. Tests that run a piece of shader code on the GPU compose a small harness importing the module under test with `shader_check::Shaders::compose_source`, never slices of shader text. The grass shading A/B test (`YARRA_GRASS_REFERENCE_SHADERS`) takes a directory mirroring `assets/shaders` with the reference version's grass files. `cargo test -p yarra-shader-check` runs the same checks. Validation does not translate to Metal, where some valid WGSL fails (an `alias` of an array type passed to a function taking the plain array did): after shader changes, also run the GPU tests (`cargo test -p yarra-terrain-render -- --ignored`) or launch the game. Shaders forked from Bevy (`lighting/pbr_lighting` and `lighting/material`, whose notice is `lighting/THIRD_PARTY.md`; `tree_wind`, `tree_wind_prepass`; the sky composite's lookups in `sky/celestial`) are re-merged on each Bevy upgrade: diff ours against the old Bevy original, rebuild from the new one.
+Some need local packs (`wind_depth_prepass_preserves_colour_coverage`,
+`connected_spruce_lods_compile_colour_depth_and_motion`); a missing one is not a pass.
 
-Native GPU/large-fixture tests are ignored by default and run explicitly for relevant changes. For example:
+## Captures and measurement
+
+Build first (`cargo build --release -p yarra-app-game`), and say what a long run answers before
+starting it.
+
+- **Metal HUD GPU milliseconds are not a cost**: macOS clocks the GPU to the load. Use work
+  counts (triangles, instances, overdraw, texture MB), `--timing-log` for CPU spans, and Metal
+  System Trace per pass, divided by an untouched pass in the same trace.
+- Measure the play setup. Profiles, repros and captures hold the clock and use authored weather
+  unless told; work keyed to the sun shows only with `--day-clock on`.
+- Heat moves results 5–30% within a run: alternate A/B/A/B, and do not trace while Houdini or a
+  build runs (`pgrep -fl houdini`).
+
+### Look captures
 
 ```sh
-cargo test --offline -p yarra-engine mountain_cover_uploads_draws_moves_and_rebases -- --ignored --nocapture
-cargo test --offline -p yarra-engine msaa_store -- --include-ignored --nocapture
+target/release/yarra-app-game --start-view content/world.project.views/start.ron \
+  --resolution-scale 1 --gpu-timing-off --look-capture tmp/look/start \
+  --look-variants "tony|EV 13:tone=tony,ev=13;neutral|EV 13:tone=neutral,ev=13,ambient=1.5"
+uv run --with numpy --with pillow python tools/look_sheet.py tmp/look/start
 ```
 
-Use [iOS setup](../ios/README.md) for device build/packaging and [performance](PERFORMANCE.md) for capture conditions. Passing CPU tests does not establish visual parity, smooth pacing or sustained power/thermal acceptance.
+After one load (`--look-settle`, default 25 s) each variant draws 5 s, wind and weather still,
+then a fullscreen screenshot (keep the display awake). `--gpu-timing-off` avoids lost GPU counters
+between quick launches; `row|column` names lay out the sheet.
+Keys: `ev`, `tone` (`tony agx neutral filmic aces boring reinhard none`), `ambient`, `sun`,
+`canopy`, `auto`, `fog`, `particles`, `shafts`, `phase` (0.34 morning, 0.5 noon), `moon`, `tilt`,
+`wind`, `wet`, `lightning`, `burst`, `haze`, `mist`, `depth`, `air`.
 
-### Headless world-action exercise
-
-Run the guard/gate sequence without the engine:
+### Repro routes and snapshots
 
 ```sh
-cargo run --offline -p yarra-game-content -- scenario content/gameplay/demo scenarios/guard-gate.ron
-cargo test --offline -p yarra-game-content --test world_actions
+target/release/yarra-app-game --start-view content/world.project.views/overlook.ron \
+  --render-repro landscape --render-frame-clock --render-ui-off --render-frames 900 \
+  --render-snapshot tmp/repro/overlook.png --render-snapshot-frames 600,840
 ```
 
-A package lists the `areas` it refers to by name and its `objects` and `triggers` as files under `world/`. A trigger names who it is about, what it listens for, an optional condition and its actions:
+Routes: `low-walk`, `grass-close`, `grass-away`, `grass-follow`, `grass-follow-far`, `grass-zoom`,
+`grass-top-down`, `grass-overhead`, `grass-stream`, `grass-soak`, `landscape`, `landscape-turn`,
+`landscape-descent`, `actor-walk` (walks the view's `route`; `journey.ron` has one). `landscape*`
+and `actor-walk` need `--start-view`. `--render-frame-clock` steps by frames, so two builds see
+the same camera. Snapshots follow the 300-frame warm-up; `--render-frames` is at least 900.
+`--render-walk-speed` defaults to 20 m/s (F1's fast walk is about 35).
 
-```ron
-(
-    id: "guard/escort",
-    player: "hero",
-    speaker: Some("guard"),
-    on: [Entered(actor: "hero", area: "guard/approach"), QuestStarted("guard/gate")],
-    condition: Some(All([QuestStatus(quest: "guard/gate", status: Active), InsideArea(area: "guard/approach")])),
-    actions: [Move(actor: Speaker, to: "guard/gate_post", timeout_ms: Some(10000))],
-    repeat: Always,
-)
+### Timed profiles
+
+A timed profile runs the play setup unless told otherwise: fullscreen, the internal size the
+render scale gives (`--profile-size game`, 1728×1084 at 0.5 on a 3456×2168 display), the day
+clock running. Walking the journey:
+
+```sh
+mkdir -p tmp/prof
+target/release/yarra-app-game --start-view content/world.project.views/journey.ron \
+  --render-repro actor-walk --render-walk-speed 35 \
+  --profile-seconds 40 --profile-warmup 10 --profile-fps 60 --profile-native-pacing \
+  --upscaler metalfx-temporal --weather auto --timing-log 2>&1 | tee tmp/prof/walk.log
+grep 'GRASS_PROFILE event=sample' tmp/prof/walk.log \
+  | sed -E 's/.*late_updates=([0-9]+).*/\1/' | paste -sd+ - | bc       # late frames
 ```
 
-`on` takes `Entered`, `Exited`, `Arrived`, `MoveFailed`, `ItemAcquired`, `QuestStarted`, `QuestChanged`, `VariableChanged` and `DialogueCompleted`. Conditions are checked when the signal is processed, so when several things must all be true, listen for each of them and test them all. `repeat` is `Once` (the default), `Always` or `Cooldown(millis: …)`. The actions take effect together or not at all; a failure is reported as `TriggerFailed` and the trigger can fire another time. Two trigger-only actions: `Move(actor, to, timeout_ms)` asks the engine to walk an actor into an area, and `StartDialogue(dialogue, speaker)` queues a conversation with the trigger's player. What should happen on arrival is a second trigger listening for `Arrived`.
+Each second logs `GRASS_PROFILE event=sample` (update FPS, percentiles, `late_updates`);
+`--timing-log` adds `PERFORMANCE_TIMING` (`main_work_ms`, `render_prep_ms`, GPU spans). For
+GPU-bound comparisons drop the route and use `--profile-fps 0` from a fixed view, checking
+`update_fps`. Fullscreen may pace to the display: give `--profile-surface WIDTHxHEIGHT` to run
+windowed at a fixed size.
 
-The engine's side is three commands under `Command::World`:
+### Frame spikes and work counts
 
-- `Observe { actor, position, areas }` reports where an actor is and which named areas contain it. Send it when the set of areas changes, for every actor `observed(actor)` names (party members, anyone asked to walk, anyone a trigger's `Entered`/`Exited` names) and for as long as the engine is still moving one. It produces `Entered`/`Exited`, and `Arrived` when the actor was walking to one of them.
-- `MoveFailed { actor, request }` gives up the walk in `state().world.movements` with that request number. The engine must answer every walk it is asked for, including one for an actor it cannot move.
-- `Record { positions }` stores where actors stand, e.g. before a save. It leaves occupancy alone, so it never sets off a trigger.
+```sh
+YARRA_SPIKE_LOG=8 target/release/yarra-app-game --upscaler metalfx-temporal 2>&1 \
+  | tee tmp/spikes.log | grep FRAME_SPIKE
+RUST_LOG=info,wgpu=error,naga=warn,yarra_engine::trees::gpu=debug \
+  target/release/yarra-app-game 2>&1 | grep TREE_GPU_COUNTS
+```
 
-Signals, triggers and queued conversations are carried out one after another inside the command that raised them, each in its own step. Content whose triggers keep setting each other off is cut short after 256 steps; the rest waits for the next command (`world_work_pending()`), and a scenario step that leaves work behind fails. Occupancy and walks are saved; after a load the engine continues from `state().world.movements` instead of expecting new requests. `AdvanceTime` moves the clock that walk timeouts and cooldowns use.
+`FRAME_SPIKE kind=interval` is an update over 5% late for the cap; other kinds name the slowest
+systems of frames over the threshold (ms) and each pipeline compile. Even gaps between drops mean
+something periodic. `TREE_GPU_COUNTS` gives meshes, triangles and impostors in view and per
+shadow cascade.
 
-Conversations under way wait their turn in `state().floor`: one queue for blocking conversations and one for ambient ones, in the order they started, saved with the rest. The first blocking one is on screen; while there is one, `AdvanceTime` changes nothing, so the world holds still.
+### Metal System Trace
 
-For normal object access, `Open` checks lock/destruction state, then `container_contents` exposes the bound inventory. Use `state().object(content, id)`, `.areas(actor)` and `.trigger(id)` for read models and diagnostics. Engine adapters must authorize access and control. The `--story` slice in the game is one such adapter ([`story/scene.rs`](../crates/app_game/src/story/scene.rs)).
+```sh
+target/release/yarra-app-game --start-view content/world.project.views/forest-pine.ron \
+  --upscaler metalfx-temporal &
+sleep 25                                          # load, warm up, fullscreen the window
+mkdir -p tmp/trace
+xcrun xctrace record --template 'Metal System Trace' --attach yarra-app-game --time-limit 3s \
+  --output tmp/trace/a.trace
+xcrun xctrace export --input tmp/trace/a.trace --output tmp/trace/a-intervals.xml \
+  --xpath '/trace-toc/run[@number="1"]/data/table[@schema="metal-gpu-intervals"]'
+rm -rf tmp/trace/a.trace; rm -f $TMPDIR/instruments*.ktrace; pkill -x yarra-app-game
+```
+
+Keep recordings to 3–11 s; `export --toc` lists tables, `--instrument 'Metal GPU Counters'` adds
+limiters. Each recording leaves about 1 GB of `instruments*.ktrace` in `$TMPDIR`: delete them.
+`tools/summarize_gpu_counters.py reference.csv candidate.csv --output result.json` compares
+Xcode's exported encoder counters (replay work, not live time).
+
+### A/B against a baseline build
+
+The game reads shaders, packs and catalogs from `./assets` first, so a baseline binary needs its
+own assets root, and its own runtime copy when the format changed:
+
+```sh
+R=$PWD; mkdir -p tmp/ab/base                  # before the change (or after git stash)
+cargo build --release -p yarra-app-game && cp target/release/yarra-app-game tmp/ab/base/
+git archive HEAD assets | tar -x -C tmp/ab/base     # tracked shaders, packs, catalogs
+ln -s $R/assets/local tmp/ab/base/assets/local      # ignored local files, shared
+cp -c assets/generated/world.runtime.sqlite tmp/ab/base/
+cd tmp/ab/base && ./yarra-app-game --world-db $PWD/world.runtime.sqlite \
+  --start-view $R/content/world.project.views/forest-pine.ron --upscaler metalfx-temporal; cd $R
+```
+
+Run the candidate from the repository root with the same options, alternating with the base.
+
+### F1 Compare
+
+Fix view, time, weather, render size and FPS cap. **Capture A** (settles ≥ 2 s, samples 10 s),
+change one setting, **Capture B**, **Export** to `tmp/performance/comparison-<timestamp>/`
+(`YARRA_PERFORMANCE_DIR` moves it). Its GPU markers are diagnostics; ten seconds says nothing
+about heat.
+
+### Metal capture
+
+```sh
+MTL_CAPTURE_ENABLED=1 target/release/yarra-app-game --render-repro low-walk \
+  --metal-capture $PWD/tmp/captures/low-walk.gputrace
+```
+
+One frame (from frame 600) to a new absolute `.gputrace` path; the game then exits.
+
+## iOS
+
+Device builds, packaging and phone captures: [ios/README.md](../ios/README.md) (from a built
+default world, plus `rustup target add aarch64-apple-ios`).
+
+## Launch options
+
+Every game option, generated from `crates/app_game/src/launch/flags.rs` (a test keeps this table
+in step; `--help` prints the same with descriptions):
+
+| Purpose | Controls |
+| --- | --- |
+| Scene and presentation | `--world-db FILE`, `--start-view FILE`, `--story DIR`, `--fps 0\|15..240`, `--resolution-scale 1\|0.75\|0.5\|0.33`, `--time HH:MM`, `--day-clock on\|off`, `--weather auto\|authored\|clear\|scattered\|overcast\|rain\|storm`, `--upscaler auto\|linear\|metalfx-spatial\|metalfx-temporal`, `--cloud-quality off\|balanced\|high`, `--tree-shadow-lod 0..2` |
+| Panel and logging | `--diagnostics off\|panel\|full`, `--performance-open`, `--render-audit`, `--render-console`, `--timing-log`, `--gpu-timing-detail`, `--gpu-timing-off`, `--metalfx-timing-log`, `--grass-counters` |
+| Scripted routes | `--render-repro NAME`, `--render-frames N`, `--render-snapshot PATH`, `--render-snapshot-frames N,N`, `--render-prepass`, `--render-walk-speed MPS`, `--render-frame-clock`, `--render-temporal-view motion\|depth`, `--render-ui-off` |
+| Captures and checks | `--metal-capture PATH.gputrace` |
+| Timed profile | `--profile-seconds 2..3600`, `--profile-warmup 1..600`, `--profile-size game\|WIDTHxHEIGHT`, `--profile-surface WIDTHxHEIGHT`, `--profile-window fullscreen\|windowed`, `--profile-fps 0\|15..240`, `--profile-native-pacing`, `--profile-msaa 1\|2\|4`, `--profile-grass full\|off`, `--profile-objects on\|off`, `--profile-terrain on\|off`, `--profile-bloom on\|off`, `--profile-auto-exposure on\|off`, `--profile-fog on\|off`, `--profile-particles on\|off`, `--profile-shafts on\|off`, `--profile-temporal-bypass`, `--profile-diagnostic` |
+| Look captures | `--look-capture DIR`, `--look-variants LIST`, `--look-settle SECONDS` |
+| LOD lab | `--lod-lab PACK/ASSET`, `--lod-lab-stand ASSET`, `--lod-lab-stand-count N`, `--lod-lab-spacing METRES`, `--lod-lab-capture DIR`, `--lod-lab-screenshot FILE`, `--lod-lab-yaws DEGREES,...`, `--lod-lab-scale 0.25..4`, `--lod-lab-pitch DEGREES`, `--lod-lab-distances METRES,...`, `--lod-lab-settle FRAMES` |
+| Output and pacing fallbacks | `--temporal-standard-output`, `--frame-pacing-timer` |

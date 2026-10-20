@@ -41,11 +41,12 @@ package says what it holds by its name (`*.quest.ron`, `*.dialogue.ron`, `*.trig
 `en.ftl`…). A package has one text resource, its Fluent files; content writes
 `Message("key")` for its own package's text, and what a message takes comes from the
 English file. Content names only characters declared in `characters.ron`. `build`
-publishes an immutable SQLite bundle (schema 13) with one checksummed record per asset;
-language packs are published separately and hold the wording.
+publishes an immutable SQLite bundle (schema 14): the always-loaded definitions in one record,
+each dialogue graph and text resource in its own; language packs are published separately and
+hold the wording.
 
 At runtime the whole playthrough state is held in memory and saved as one snapshot file
-per slot (save format 16). A session loads the always-needed definitions once and each
+per slot (save format 17). A session loads the always-needed definitions once and each
 dialogue graph when a conversation needs it. A save loads with changed content, brought
 in line with it; wording updates do not affect it. Old bundles and saves of another
 format are rebuilt, not migrated.
