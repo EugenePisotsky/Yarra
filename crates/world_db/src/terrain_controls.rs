@@ -92,7 +92,7 @@ impl RuntimeReader {
     pub fn terrain_cells(&self, space: WorldSpaceId) -> Result<Vec<CellCoord>, WorldDbError> {
         let mut statement = self.connection.prepare(
             "SELECT cell_x, cell_z FROM cell_pages \
-             WHERE world_space_id=?1 AND domain=?2 AND lod=0 ORDER BY cell_z, cell_x",
+             WHERE world_space_id=?1 AND domain=?2 ORDER BY cell_z, cell_x",
         )?;
         statement
             .query_map(params![space.0, PageDomain::Terrain as i64], |r| {

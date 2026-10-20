@@ -234,7 +234,6 @@ fn worker_keeps_both_snapshots_until_commit_and_rejects_stale_source_work() {
                         space: WorldSpaceId(1),
                         cell: CellCoord::ZERO,
                         domain: PageDomain::Terrain,
-                        lod: 0,
                     },
                 },
             ))

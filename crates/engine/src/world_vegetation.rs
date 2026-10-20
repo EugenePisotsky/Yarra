@@ -132,8 +132,8 @@ impl StreamedTerrainSurface {
     }
 }
 
-fn cell_key(key: PageKey) -> (WorldSpaceId, CellCoord, u8) {
-    (key.space, key.cell, key.lod)
+fn cell_key(key: PageKey) -> (WorldSpaceId, CellCoord) {
+    (key.space, key.cell)
 }
 
 #[derive(Default)]

@@ -45,7 +45,7 @@ pub const DEFAULT_RUNTIME_DATABASE: &str = "generated/world.runtime.sqlite";
 pub const DEFAULT_CELL_SIZE: f32 = 32.0;
 pub const MAX_DECODED_PAGE_BYTES: u64 = 64 * 1024 * 1024;
 pub const PROJECT_SCHEMA_VERSION: i64 = 32;
-pub const RUNTIME_SCHEMA_VERSION: i64 = 32;
+pub const RUNTIME_SCHEMA_VERSION: i64 = 33;
 pub const PAGE_PAYLOAD_VERSION: u16 = 14;
 
 /// Surfaces a terrain page holds, four per RGBA weight page: natural ground and what roads wear
@@ -211,8 +211,17 @@ pub struct AssetId(pub [u8; 32]);
 pub enum PageDomain {
     Terrain = 1,
     StaticObjects = 2,
-    GameplayObjects = 8,
-    Vegetation = 9,
+    GameplayObjects = 3,
+    Vegetation = 4,
+}
+
+impl PageDomain {
+    pub const ALL: [Self; 4] = [
+        Self::Terrain,
+        Self::StaticObjects,
+        Self::GameplayObjects,
+        Self::Vegetation,
+    ];
 }
 
 impl TryFrom<i64> for PageDomain {
@@ -222,8 +231,8 @@ impl TryFrom<i64> for PageDomain {
         match value {
             1 => Ok(Self::Terrain),
             2 => Ok(Self::StaticObjects),
-            8 => Ok(Self::GameplayObjects),
-            9 => Ok(Self::Vegetation),
+            3 => Ok(Self::GameplayObjects),
+            4 => Ok(Self::Vegetation),
             _ => Err(UnknownPageDomain(value)),
         }
     }
@@ -245,7 +254,6 @@ pub struct PageKey {
     pub space: WorldSpaceId,
     pub cell: CellCoord,
     pub domain: PageDomain,
-    pub lod: u8,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -47,7 +47,6 @@ fn terrain_sources_preserve_relief_without_render_assets() {
         space: WorldSpaceId(1),
         cell: CellCoord { x: -3, z: 2 },
         domain: PageDomain::Terrain,
-        lod: 0,
     };
     let PagePayload::TerrainHeightfield(terrain) = height_page(key).decoded.payload else {
         unreachable!()
@@ -98,7 +97,6 @@ fn queue_height(app: &mut App, order: i32, bytes: u64) -> PageKey {
         space: WorldSpaceId(1),
         cell: CellCoord { x: order, z: 0 },
         domain: PageDomain::Terrain,
-        lod: 0,
     };
     let mut page = height_page(key);
 
@@ -213,7 +211,6 @@ fn key(domain: PageDomain, x: i32) -> PageKey {
         space: WorldSpaceId(1),
         cell: CellCoord { x, z: 0 },
         domain,
-        lod: 0,
     }
 }
 

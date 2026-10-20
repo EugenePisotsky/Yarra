@@ -171,7 +171,6 @@ fn cook_snapshot_options(
                     space: world.id,
                     cell: *cell,
                     domain: PageDomain::Terrain,
-                    lod: 0,
                 };
 
                 if stats.incremental {

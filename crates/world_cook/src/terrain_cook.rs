@@ -12,7 +12,7 @@ use world::{
 
 use world_db::{
     EncodedPage, EncodedTerrainNode, MAX_TERRAIN_NODE_QUERY, PreparedTerrainNode, RuntimeManifest,
-    TerrainCookStore, TerrainHierarchySummary, WorldSpaceRecord,
+    TerrainCookStore, WorldSpaceRecord,
 };
 
 /// Cells whose ground page changed since the publication a cook continues, per world.
@@ -24,7 +24,7 @@ pub(super) fn cook_hierarchy(
     staging_path: &Path,
     spaces: &[WorldSpaceRecord],
     changed: Option<&ChangedCells>,
-) -> Result<(RuntimeManifest, Vec<TerrainHierarchySummary>)> {
+) -> Result<RuntimeManifest> {
     let store = match changed {
         Some(_) => TerrainCookStore::open_incremental(staging_path)?,
         None => TerrainCookStore::open_staging(staging_path)?,
@@ -272,18 +272,11 @@ mod tests {
 
         for root in roots {
             assert_eq!(root.resolution, Some(3));
-            let node = reader
-                .read_terrain_node(root.key)
-                .unwrap()
-                .unwrap()
-                .decode()
-                .unwrap();
-            assert_eq!(node.geometric_error, 0.0);
         }
     }
 
     #[test]
-    fn mountain_fixture_has_deterministic_cover_and_conservative_bounds() {
+    fn mountain_fixture_has_deterministic_cover_and_nested_bounds() {
         let output = Output::new();
         let mut project = demo_project_document();
         let space = project.default_world_space;
@@ -332,9 +325,8 @@ mod tests {
                 .fold(f32::NEG_INFINITY, f32::max),
             1500.0
         );
-        assert!(roots.iter().all(|r| r.geometric_error > 0.0));
-        // Descend to every leaf, checking that the advertised parent error bounds
-        // differences even where the coarse grid skips fine mountain samples.
+
+        // Every child's height bounds lie within its parent's, down to the leaves.
         fn check(reader: &RuntimeReader, key: TerrainNodeKey) {
             let node = reader
                 .read_terrain_node(key)
@@ -343,7 +335,7 @@ mod tests {
                 .decode()
                 .unwrap();
             if let Some(keys) = key.children().unwrap() {
-                for (i, key) in keys.into_iter().enumerate() {
+                for key in keys {
                     let child = reader
                         .read_terrain_node(key)
                         .unwrap()
@@ -354,22 +346,6 @@ mod tests {
                         child.height_bounds[0] >= node.height_bounds[0]
                             && child.height_bounds[1] <= node.height_bounds[1]
                     );
-                    let field = child.heightfield.as_ref().unwrap();
-                    let n = usize::from(field.resolution);
-
-                    for z in 0..n {
-                        for x in 0..n {
-                            let p = [
-                                (i % 2) as f32 * 0.5 + x as f32 / (n - 1) as f32 * 0.5,
-                                (i / 2) as f32 * 0.5 + z as f32 / (n - 1) as f32 * 0.5,
-                            ];
-                            let delta = (node.heightfield.as_ref().unwrap().sample(p, 1.0).height
-                                - field.height_at(x, z))
-                            .abs();
-                            assert!(delta + child.geometric_error <= node.geometric_error + 0.001);
-                        }
-                    }
-
                     check(reader, key);
                 }
             }
@@ -378,12 +354,6 @@ mod tests {
             check(&reader, root.key);
         }
 
-        let bytes: u64 = roots.iter().map(|r| r.gpu_bytes_estimate).sum();
-        eprintln!(
-            "512m mountain fixture: 256 leaves -> {} coarse roots, {} coarse triangles, {bytes} estimated geometry bytes",
-            roots.len(),
-            roots.len() * 32 * 32 * 2
-        );
         drop(reader);
         let second = publish_runtime_database(&output.path(), &build).unwrap();
         assert_eq!(first.content_hash, second.content_hash);

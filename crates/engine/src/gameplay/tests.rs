@@ -60,7 +60,6 @@ fn headless_game(input: bool, camera: bool, marker: bool) -> App {
             space: world::WorldSpaceId(1),
             cell: world::CellCoord::ZERO,
             domain: world::PageDomain::Terrain,
-            lod: 0,
         },
         cell_size: 16.,
         heightfield: world::TerrainHeightfield::from_heights(2, &[5.; 4], 5., 5., 16.).unwrap(),

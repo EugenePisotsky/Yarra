@@ -23,7 +23,6 @@ pub fn published_terrain_leaf(
         space,
         cell,
         domain: PageDomain::Terrain,
-        lod: 0,
     };
     let Some(page) = reader.read_page(key)? else {
         return Ok(None);

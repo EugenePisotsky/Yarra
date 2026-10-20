@@ -159,7 +159,7 @@ fn publish_staged_runtime(
     changed: Option<&terrain_cook::ChangedCells>,
 ) -> Result<(RuntimeManifest, f64)> {
     let start = std::time::Instant::now();
-    let (manifest, _) = terrain_cook::cook_hierarchy(temporary_path, spaces, changed)?;
+    let manifest = terrain_cook::cook_hierarchy(temporary_path, spaces, changed)?;
     let hierarchy_seconds = start.elapsed().as_secs_f64();
     control_cook::cook(temporary_path, spaces)?;
     let reader = world_db::RuntimeReader::open_immutable(temporary_path)

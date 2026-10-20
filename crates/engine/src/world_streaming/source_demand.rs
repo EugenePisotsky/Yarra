@@ -212,7 +212,6 @@ pub(super) fn demand(
                         space: position.space,
                         cell: d.cell,
                         domain,
-                        lod: 0,
                     },
                     priority,
                 );
@@ -478,7 +477,6 @@ mod tests {
             space: position().space,
             cell: caster.cell,
             domain: PageDomain::StaticObjects,
-            lod: 0,
         };
         let ahead = forest_frustum();
         let behind = PerspectiveProjection::default().compute_frustum(&GlobalTransform::from(
@@ -591,7 +589,6 @@ mod tests {
                 space: WorldSpaceId(1),
                 cell,
                 domain,
-                lod: 0,
             })
         };
         assert!(has(CellCoord { x: 10, z: 0 }, PageDomain::Vegetation));
@@ -636,7 +633,6 @@ mod tests {
                 space: WorldSpaceId(1),
                 cell: inside,
                 domain: PageDomain::StaticObjects,
-                lod: 0
             }));
 
             // Terrain for near ground detail: 32 m cells out to its end past both cells, 8 m

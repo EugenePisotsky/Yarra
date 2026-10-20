@@ -10,6 +10,7 @@ use crate::{
 
 use rusqlite::{Connection, OptionalExtension, params};
 use std::path::Path;
+use world::PageDomain;
 
 pub fn write_runtime_database(path: &Path, build: &RuntimeBuild) -> Result<(), WorldDbError> {
     ensure_new_database_path(path)?;
@@ -146,15 +147,14 @@ fn write_runtime_spatial(
     for page in &build.pages {
         transaction.execute(
             "INSERT INTO cell_pages( \
-                world_space_id, cell_x, cell_z, domain, lod, codec, encoded_bytes, \
+                world_space_id, cell_x, cell_z, domain, codec, encoded_bytes, \
                 decoded_bytes, gpu_bytes_estimate, checksum, payload \
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 page.key.space.0,
                 page.key.cell.x,
                 page.key.cell.z,
                 page.key.domain as i64,
-                i64::from(page.key.lod),
                 page.codec as i64,
                 i64::try_from(page.payload.len()).map_err(|_| WorldDbError::IntegerOverflow)?,
                 i64::try_from(page.decoded_bytes).map_err(|_| WorldDbError::IntegerOverflow)?,
@@ -169,14 +169,12 @@ fn write_runtime_spatial(
     for dependency in &build.dependencies {
         transaction.execute(
             "INSERT INTO page_dependencies( \
-                world_space_id, cell_x, cell_z, domain, lod, asset_id, asset_lod \
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                world_space_id, cell_x, cell_z, asset_id, asset_lod \
+             ) VALUES (?1, ?2, ?3, ?4, ?5)",
             params![
                 dependency.page.space.0,
                 dependency.page.cell.x,
                 dependency.page.cell.z,
-                dependency.page.domain as i64,
-                i64::from(dependency.page.lod),
                 dependency.asset.0.as_slice(),
                 i64::from(dependency.asset_lod)
             ],
@@ -186,14 +184,12 @@ fn write_runtime_spatial(
     for dependency in &build.definition_dependencies {
         transaction.execute(
             "INSERT INTO page_object_definitions( \
-                world_space_id, cell_x, cell_z, domain, lod, definition_id \
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                world_space_id, cell_x, cell_z, definition_id \
+             ) VALUES (?1, ?2, ?3, ?4)",
             params![
                 dependency.page.space.0,
                 dependency.page.cell.x,
                 dependency.page.cell.z,
-                dependency.page.domain as i64,
-                i64::from(dependency.page.lod),
                 dependency.definition.0.as_slice(),
             ],
         )?;
@@ -202,14 +198,12 @@ fn write_runtime_spatial(
     for dependency in &build.terrain_surface_dependencies {
         transaction.execute(
             "INSERT INTO page_terrain_surfaces( \
-                world_space_id, cell_x, cell_z, domain, lod, surface_id \
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                world_space_id, cell_x, cell_z, surface_id \
+             ) VALUES (?1, ?2, ?3, ?4)",
             params![
                 dependency.page.space.0,
                 dependency.page.cell.x,
                 dependency.page.cell.z,
-                dependency.page.domain as i64,
-                i64::from(dependency.page.lod),
                 dependency.surface.0.as_slice(),
             ],
         )?;
@@ -313,14 +307,8 @@ impl RuntimeCookWriter {
             .connection
             .query_row(
                 "SELECT checksum FROM cell_pages WHERE world_space_id=?1 AND cell_x=?2 AND \
-                 cell_z=?3 AND domain=?4 AND lod=?5",
-                params![
-                    key.space.0,
-                    key.cell.x,
-                    key.cell.z,
-                    key.domain as i64,
-                    key.lod
-                ],
+                 cell_z=?3 AND domain=?4",
+                params![key.space.0, key.cell.x, key.cell.z, key.domain as i64],
                 |r| r.get(0),
             )
             .optional()?;
@@ -361,7 +349,7 @@ impl RuntimeCookWriter {
             .try_fold(0_u64, |bytes, page| bytes.checked_add(page.decoded_bytes));
 
         if batch.cells.len() != 1
-            || batch.pages.len() > 9
+            || batch.pages.len() > PageDomain::ALL.len()
             || decoded_bytes.is_none_or(|bytes| bytes > MAX_COOK_CELL_BYTES)
             || batch.dependencies.len() > MAX_COOK_CATALOG_ROWS
             || batch.definition_dependencies.len() > MAX_COOK_MANUAL_OBJECTS_PER_CELL

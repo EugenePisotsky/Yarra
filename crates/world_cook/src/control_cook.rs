@@ -88,7 +88,6 @@ fn group(
             space,
             cell,
             domain: PageDomain::Terrain,
-            lod: 0,
         };
         let PagePayload::TerrainHeightfield(page) = reader
             .read_page(key)?

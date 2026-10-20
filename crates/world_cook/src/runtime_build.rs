@@ -937,7 +937,6 @@ fn page_key(source_cell: &SourceCellRecord, domain: PageDomain) -> PageKey {
         space: source_cell.space,
         cell: source_cell.cell,
         domain,
-        lod: 0,
     }
 }
 
@@ -1248,7 +1247,6 @@ fn hash_page(hasher: &mut blake3::Hasher, page: &EncodedPage) {
     hasher.update(&page.key.cell.x.to_le_bytes());
     hasher.update(&page.key.cell.z.to_le_bytes());
     hasher.update(&(page.key.domain as i64).to_le_bytes());
-    hasher.update(&[page.key.lod]);
     hasher.update(&page.checksum);
 }
 

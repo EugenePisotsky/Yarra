@@ -35,7 +35,7 @@ pub(crate) fn rebuild(connection: &Connection) -> Result<FarObjectStats, WorldDb
     let mut query = connection.prepare(
         "SELECT world_space_id, cell_x, cell_z, codec, decoded_bytes, gpu_bytes_estimate, \
                 checksum, payload \
-         FROM cell_pages WHERE domain = ?1 AND lod = 0 \
+         FROM cell_pages WHERE domain = ?1 \
          ORDER BY world_space_id, cell_x, cell_z",
     )?;
     let mut rows = query.query([PageDomain::StaticObjects as i64])?;
@@ -51,7 +51,6 @@ pub(crate) fn rebuild(connection: &Connection) -> Result<FarObjectStats, WorldDb
                 space: WorldSpaceId(space),
                 cell,
                 domain: PageDomain::StaticObjects,
-                lod: 0,
             },
             codec: PageCodec::try_from(row.get::<_, i64>(3)?)
                 .map_err(|_| invalid("static-object page has an unknown codec"))?,
@@ -306,7 +305,7 @@ mod tests {
         .unwrap();
         connection
             .execute(
-                "INSERT INTO cell_pages VALUES (1,?1,?2,?3,0,0,?4,?4,0,?5,?6)",
+                "INSERT INTO cell_pages VALUES (1,?1,?2,?3,0,?4,?4,0,?5,?6)",
                 params![
                     cell.x,
                     cell.z,
