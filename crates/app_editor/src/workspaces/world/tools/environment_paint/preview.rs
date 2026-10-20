@@ -56,7 +56,7 @@ pub(crate) fn compile_source_cells_with_roads(
     library_revision: u64,
     cells: &[CellCoord],
     overrides: &[SourceEnvironmentCellRecord],
-    roads: &[crate::road_authoring::working::RoadChange],
+    roads: &[crate::workspaces::world::tools::road_authoring::working::RoadChange],
 ) -> Result<Vec<CompiledCell>, String> {
     let halo = environment_dependency_cells(cells).map_err(|e| e.to_string())?;
 

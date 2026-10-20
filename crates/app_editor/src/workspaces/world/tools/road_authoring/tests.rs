@@ -1,6 +1,6 @@
 use super::*;
 use crate::editing::EditorObjectWorkingSet;
-use crate::environment_paint::preview::compile_source_cells_with_roads;
+use crate::workspaces::world::tools::environment_paint::preview::compile_source_cells_with_roads;
 use std::collections::BTreeSet;
 use world_db::*;
 

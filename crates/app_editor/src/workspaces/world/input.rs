@@ -1,5 +1,6 @@
 //! World shortcuts, source selection and interaction cancellation.
 use crate::{
+    activity::SourceActivity,
     domain_editing::SourceWorkingSets,
     editing::{EditorHistory, EditorObjectWorkingSet, EditorSelection},
     project_store::ProjectEditorStore,
@@ -49,27 +50,17 @@ pub(crate) fn handle_editor_shortcuts(
     mut objects: ResMut<EditorObjectWorkingSet>,
     mut dense_domains: ResMut<SourceWorkingSets>,
     mut history: ResMut<EditorHistory>,
-    publication: Res<RuntimePublicationState>,
+    (publication, project): (Res<RuntimePublicationState>, Res<ProjectEditorStore>),
     mut save: ResMut<EditorSaveCoordinator>,
     tools: Res<EditorToolRegistry>,
-    paint: Res<crate::environment_paint::EnvironmentPaintState>,
+    paint: Res<crate::workspaces::world::tools::environment_paint::EnvironmentPaintState>,
     presets: Res<crate::workspaces::presets::PresetAuthoringState>,
 ) {
     let object_tool_active = tools
         .active(EditorWorkspace::World)
         .is_some_and(|tool| tool.id == OBJECT_TOOL.id);
 
-    if capture.wants_keyboard
-        || paint.has_unapplied_changes()
-        || presets.dirty()
-        || (object_tool_active && gizmo.active)
-        || objects.saving()
-        || dense_domains.saving()
-        || dense_domains.gesture_active
-        || dense_domains.atmospheres.gesture.is_some()
-        || publication.active()
-        || save.active()
-    {
+    if capture.wants_keyboard || (object_tool_active && gizmo.active) {
         return;
     }
 
@@ -81,6 +72,14 @@ pub(crate) fn handle_editor_shortcuts(
         gizmo_settings.mode = TransformGizmoMode::Scale;
     }
 
+    // The same rules as the toolbar's buttons.
+    let activity = SourceActivity::of(&project, &save, &publication, &objects, &dense_domains)
+        .with_drafts(paint.has_unapplied_changes() || presets.dirty());
+
+    if !activity.can_step() {
+        return;
+    }
+
     if command_pressed(&keys) && keys.just_pressed(KeyCode::KeyZ) {
         if shift_pressed(&keys) {
             history.redo(&mut objects, &mut dense_domains);
@@ -89,8 +88,8 @@ pub(crate) fn handle_editor_shortcuts(
         }
     } else if control_pressed(&keys) && keys.just_pressed(KeyCode::KeyY) {
         history.redo(&mut objects, &mut dense_domains);
-    } else if command_pressed(&keys) && keys.just_pressed(KeyCode::KeyS) && !publication.active() {
-        if objects.dirty_count() + dense_domains.dirty_count() > 0 {
+    } else if command_pressed(&keys) && keys.just_pressed(KeyCode::KeyS) {
+        if activity.can_save() && objects.dirty_count() + dense_domains.dirty_count() > 0 {
             save.request_save();
         }
     } else if (keys.just_pressed(KeyCode::Delete) || keys.just_pressed(KeyCode::Backspace))

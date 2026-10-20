@@ -10,8 +10,9 @@ mod viewport;
 pub(crate) mod working;
 
 use crate::{
+    activity::SourceActivity,
     domain_editing::SourceWorkingSets,
-    editing::EditorHistory,
+    editing::{EditorHistory, EditorObjectWorkingSet},
     project_store::{ProjectEditorStore, ProjectStoreUpdate},
     publication::RuntimePublicationState,
     saving::EditorSaveCoordinator,
@@ -190,7 +191,7 @@ fn reconcile(
     if let Some(record) = project.gameplay_areas() {
         dense.areas.pin(record);
     }
-    if let Some((id, result)) = project.area_completion.take()
+    if let Some((id, result)) = project.take_area_completion()
         && dense.areas.saving == Some(id)
     {
         let committed = dense.areas.complete(result);
@@ -209,12 +210,19 @@ fn window(
     mut history: ResMut<EditorHistory>,
     mut state: ResMut<AreaToolState>,
     mut focus: ResMut<EditorCameraFocusRequest>,
-    publication: Res<RuntimePublicationState>,
-    save: Res<EditorSaveCoordinator>,
+    (publication, save, project, objects): (
+        Res<RuntimePublicationState>,
+        Res<EditorSaveCoordinator>,
+        Res<ProjectEditorStore>,
+        Res<EditorObjectWorkingSet>,
+    ),
 ) {
     let Some(root) = frame.0.as_mut() else {
         return;
     };
+
+    // The panel's own drags are gestures, so it may edit while one is under way.
+    let editable = SourceActivity::of(&project, &save, &publication, &objects, &dense).can_edit();
 
     // A scrubbed or typed value is one undo step, taken when the pointer lifts or the field
     // is left.
@@ -274,8 +282,7 @@ fn window(
                 return;
             }
 
-            let busy = publication.active() || save.active() || dense.saving();
-            ui.add_enabled_ui(!busy, |ui| {
+            ui.add_enabled_ui(editable, |ui| {
                 contents(
                     ui,
                     space,

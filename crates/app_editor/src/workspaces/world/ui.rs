@@ -1,18 +1,20 @@
 //! World toolbar and floating-window composition. Visibility does not activate authoring tools.
 //! Each window is its own system, drawn after the toolbar while it is open.
 use crate::{
+    activity::SourceActivity,
     domain_editing::SourceWorkingSets,
     editing::{EditorHistory, EditorObjectWorkingSet, EditorSelection, TransformInspectorDraft},
-    environment_paint::{EnvironmentLayerBrowser, EnvironmentPaintState, EnvironmentPreview},
-    grass::GrassPreview,
     journal::EditorJournalStatus,
     listings::ProjectListings,
     project_store::ProjectEditorStore,
     publication::RuntimePublicationState,
-    road_authoring::RoadToolState,
     saving::EditorSaveCoordinator,
     shell::{EditorUiFrame, EditorWindowDescriptor, EditorWindowId, EditorWindowRegistry},
     tools::EditorToolRegistry,
+    workspaces::world::tools::environment_paint::{
+        EnvironmentLayerBrowser, EnvironmentPaintState, EnvironmentPreview,
+    },
+    workspaces::world::tools::road_authoring::RoadToolState,
     workspaces::{
         EditorWorkspace,
         presets::PresetAuthoringState,
@@ -171,7 +173,6 @@ pub(crate) struct InspectorResources<'w> {
     tools: Res<'w, EditorToolRegistry>,
     gizmo_settings: Res<'w, TransformGizmoSettings>,
     environment_preview: Res<'w, EnvironmentPreview>,
-    grass: Res<'w, GrassPreview>,
     save: Res<'w, EditorSaveCoordinator>,
     publication: Res<'w, RuntimePublicationState>,
     presets: Res<'w, PresetAuthoringState>,
@@ -199,7 +200,6 @@ pub(crate) fn inspector_window(
         tools,
         gizmo_settings,
         environment_preview,
-        grass,
         save,
         publication,
         presets,
@@ -214,6 +214,11 @@ pub(crate) fn inspector_window(
         mut paint,
         mut layer_browser,
     } = resources;
+
+    // Panels apply edits as history steps do, presets' draft included.
+    let editable = SourceActivity::of(&project, &save, &publication, &objects, &dense_domains)
+        .with_drafts(presets.dirty())
+        .can_step();
     let layout = Layout {
         position: |area| [area.right() - 332.0 - MARGIN, area.top() + MARGIN],
         size: [332.0, 560.0],
@@ -243,11 +248,7 @@ pub(crate) fn inspector_window(
                 &mut layer_browser,
                 &environment_preview,
                 origin.space(),
-                grass.catalog(),
-                save.active()
-                    || publication.active()
-                    || project.save_in_flight()
-                    || presets.dirty(),
+                editable,
             );
         },
     );

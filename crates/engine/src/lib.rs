@@ -1,4 +1,8 @@
 mod actor;
+mod asset_root;
+
+pub use asset_root::resolve_asset_root;
+
 mod camera_input_diagnostics;
 
 pub use camera_input_diagnostics::CameraInputDiagnostics;

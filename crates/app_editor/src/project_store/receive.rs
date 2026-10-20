@@ -13,11 +13,9 @@ pub(super) fn receive_project_results(
             Ok(ProjectResult::SaveAtmospheres(id, result)) => {
                 let result = *result;
 
-                if store.atmosphere_save_in_flight != Some(id) {
+                if !store.atmosphere_saves.answered(id) {
                     continue;
                 }
-
-                store.atmosphere_save_in_flight = None;
 
                 if let Ok(world_db::AtmosphereWriteResult::Committed(records)) = &result {
                     store.source_epoch = store.source_epoch.wrapping_add(1).max(1);
@@ -33,15 +31,13 @@ pub(super) fn receive_project_results(
                     }
                 }
 
-                store.atmosphere_completion = Some((id, result));
+                store.atmosphere_saves.complete(id, result);
             }
 
             Ok(ProjectResult::SaveGameplayAreas(id, result)) => {
-                if store.area_save_in_flight != Some(id) {
+                if !store.area_saves.answered(id) {
                     continue;
                 }
-
-                store.area_save_in_flight = None;
 
                 if let Ok(world_db::GameplayAreasWriteResult::Committed(record)) = &result {
                     // Publishing compares epochs to know the source moved on.
@@ -49,7 +45,7 @@ pub(super) fn receive_project_results(
                     store.gameplay_areas = Some(record.clone());
                 }
 
-                store.area_completion = Some((id, result));
+                store.area_saves.complete(id, result);
             }
 
             Ok(ProjectResult::Opened(result)) => match result {
@@ -122,10 +118,8 @@ pub(super) fn receive_project_results(
                     }
                 }
             }
-            Ok(ProjectResult::SaveObjectTransaction { request_id, result }) => {
-                if store.save_in_flight == Some(request_id) {
-                    store.save_in_flight = None;
-                }
+            Ok(ProjectResult::SaveObjectTransaction(request_id, result)) => {
+                store.object_saves.answered(request_id);
 
                 let outcome = match result {
                     Ok(ObjectWriteTransactionResult::Committed(commits)) => {
@@ -140,15 +134,10 @@ pub(super) fn receive_project_results(
                     }
                     Err(error) => ObjectSaveOutcome::Failed(error),
                 };
-                store.save_completion = Some(ObjectSaveCompletion {
-                    request_id,
-                    outcome,
-                });
+                store.object_saves.complete(request_id, outcome);
             }
-            Ok(ProjectResult::SaveDenseTransaction { request_id, result }) => {
-                if store.dense_save_in_flight == Some(request_id) {
-                    store.dense_save_in_flight = None;
-                }
+            Ok(ProjectResult::SaveDenseTransaction(request_id, result)) => {
+                store.dense_saves.answered(request_id);
 
                 let outcome = match result {
                     Ok(EnvironmentSourceWriteResult::Committed(commits)) => {
@@ -187,10 +176,7 @@ pub(super) fn receive_project_results(
                     }
                     Err(error) => DenseSaveOutcome::Failed(error),
                 };
-                store.dense_save_completion = Some(DenseSaveCompletion {
-                    request_id,
-                    outcome,
-                });
+                store.dense_saves.complete(request_id, outcome);
             }
             Err(TryRecvError::Empty) => break,
             Err(TryRecvError::Disconnected) => {

@@ -121,22 +121,27 @@ fn road_style_renaming_keeps_preview_geometry_and_refreshes_the_authoring_name()
     );
 
     let mut styles = road_styles::Styles::default();
-    let mut roads = crate::road_authoring::working::RoadWorkingSet::default();
+    let mut roads =
+        crate::workspaces::world::tools::road_authoring::working::RoadWorkingSet::default();
     let original_profile = original.road.unwrap().profile;
     let key = world_db::RoadRecordKey::Profile(original_profile.id);
     roads
-        .apply(&[crate::road_authoring::working::RoadChange {
-            key,
-            record: Some(world_db::RoadSourceRecord::Profile(original_profile)),
-        }])
+        .apply(&[
+            crate::workspaces::world::tools::road_authoring::working::RoadChange {
+                key,
+                record: Some(world_db::RoadSourceRecord::Profile(original_profile)),
+            },
+        ])
         .unwrap();
     assert!(styles.refresh(&roads));
     let renamed_profile = renamed.road.unwrap().profile;
     roads
-        .apply(&[crate::road_authoring::working::RoadChange {
-            key,
-            record: Some(world_db::RoadSourceRecord::Profile(renamed_profile.clone())),
-        }])
+        .apply(&[
+            crate::workspaces::world::tools::road_authoring::working::RoadChange {
+                key,
+                record: Some(world_db::RoadSourceRecord::Profile(renamed_profile.clone())),
+            },
+        ])
         .unwrap();
     assert!(!styles.refresh(&roads));
     assert_eq!(
@@ -343,7 +348,7 @@ pub(super) fn road_request() -> fixture::Request {
     r.underlay = Some(DRY_MEADOW);
     r.footprint = Footprint::Full;
     r.road = Some(fixture::RoadFixture {
-        profile: crate::road_authoring::commands::default_profile(
+        profile: crate::workspaces::world::tools::road_authoring::commands::default_profile(
             DRY_GROUND,
             environment::GRASS_CHANNEL,
         ),
@@ -442,13 +447,16 @@ fn road_preview_wears_the_ground_and_its_grass_follows() {
 #[test]
 fn road_style_draft_participates_in_global_save_guard() {
     let mut state = PresetAuthoringState::default();
-    let mut roads = crate::road_authoring::working::RoadWorkingSet::default();
+    let mut roads =
+        crate::workspaces::world::tools::road_authoring::working::RoadWorkingSet::default();
     let p = road_request().road.unwrap().profile;
     roads
-        .apply(&[crate::road_authoring::working::RoadChange {
-            key: world_db::RoadRecordKey::Profile(p.id),
-            record: Some(world_db::RoadSourceRecord::Profile(p)),
-        }])
+        .apply(&[
+            crate::workspaces::world::tools::road_authoring::working::RoadChange {
+                key: world_db::RoadRecordKey::Profile(p.id),
+                record: Some(world_db::RoadSourceRecord::Profile(p)),
+            },
+        ])
         .unwrap();
     state.styles.refresh(&roads);
     assert!(!state.dirty());

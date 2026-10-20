@@ -14,15 +14,7 @@ pub(crate) struct DirtyDefinitionSnapshot {
 pub(super) struct DefinitionEntry<T = EnvironmentDefinition> {
     pub(super) base: T,
     pub(super) current: T,
-    pub(super) state: DefinitionSaveState<T>,
-}
-
-#[derive(Debug, Clone)]
-pub(super) enum DefinitionSaveState<T = EnvironmentDefinition> {
-    Idle,
-    Saving(u64),
-    Conflict(Option<T>),
-    Failed(String),
+    pub(super) state: SaveState<T>,
 }
 
 impl<T: PartialEq> DefinitionEntry<T> {
@@ -52,22 +44,22 @@ impl SourceWorkingSets {
     pub(super) fn definitions_saving(&self) -> bool {
         self.presets
             .as_ref()
-            .is_some_and(|p| matches!(p.state, DefinitionSaveState::Saving(_)))
+            .is_some_and(|p| matches!(p.state, SaveState::Saving(_)))
             || self
                 .definitions
                 .values()
-                .any(|e| matches!(e.state, DefinitionSaveState::Saving(_)))
+                .any(|e| matches!(e.state, SaveState::Saving(_)))
     }
 
     pub(super) fn definition_conflict_count(&self) -> usize {
         usize::from(
             self.presets
                 .as_ref()
-                .is_some_and(|p| matches!(p.state, DefinitionSaveState::Conflict(_))),
+                .is_some_and(|p| matches!(p.state, SaveState::Conflict(_))),
         ) + self
             .definitions
             .values()
-            .filter(|e| matches!(e.state, DefinitionSaveState::Conflict(_)))
+            .filter(|e| matches!(e.state, SaveState::Conflict(_)))
             .count()
     }
 
@@ -76,8 +68,8 @@ impl SourceWorkingSets {
             return Some(status);
         }
         self.definitions.values().find_map(|e| match &e.state {
-            DefinitionSaveState::Failed(error) => Some(format!("Environment save failed: {error}")),
-            DefinitionSaveState::Conflict(_) => Some("The layer definitions changed in the database. Resolve the conflict before continuing.".into()),
+            SaveState::Failed(error) => Some(format!("Environment save failed: {error}")),
+            SaveState::Conflict(_) => Some("The layer definitions changed in the database. Resolve the conflict before continuing.".into()),
             _ => None,
         })
     }
@@ -114,7 +106,7 @@ impl SourceWorkingSets {
             DefinitionEntry {
                 base: snapshot.base,
                 current: snapshot.current,
-                state: DefinitionSaveState::Idle,
+                state: SaveState::Idle,
             },
         );
         self.plants = Some(plants.clone());
@@ -139,8 +131,7 @@ impl SourceWorkingSets {
         for definition in project.environments() {
             match self.definitions.get_mut(&definition.space) {
                 Some(entry)
-                    if matches!(entry.state, DefinitionSaveState::Idle)
-                        && entry.base != *definition =>
+                    if matches!(entry.state, SaveState::Idle) && entry.base != *definition =>
                 {
                     let pinned = self
                         .entries
@@ -148,7 +139,7 @@ impl SourceWorkingSets {
                         .any(|(key, cell)| key.space == definition.space && cell.pinned());
 
                     if entry.dirty() || pinned {
-                        entry.state = DefinitionSaveState::Conflict(Some(definition.clone()));
+                        entry.state = SaveState::Conflict(Some(definition.clone()));
                     } else {
                         entry.base = definition.clone();
                         entry.current = definition.clone();
@@ -162,7 +153,7 @@ impl SourceWorkingSets {
                         DefinitionEntry {
                             base: definition.clone(),
                             current: definition.clone(),
-                            state: DefinitionSaveState::Idle,
+                            state: SaveState::Idle,
                         },
                     );
                     changed = true;
@@ -237,7 +228,7 @@ impl SourceWorkingSets {
 
         if current != entry.current {
             entry.current = current;
-            entry.state = DefinitionSaveState::Idle;
+            entry.state = SaveState::Idle;
             self.bump_definitions();
         }
 
@@ -259,10 +250,10 @@ impl SourceWorkingSets {
         if let Some(p) = &mut self.presets
             && p.dirty()
         {
-            p.state = DefinitionSaveState::Saving(request);
+            p.state = SaveState::Saving(request);
         }
         for entry in self.definitions.values_mut().filter(|e| e.dirty()) {
-            entry.state = DefinitionSaveState::Saving(request);
+            entry.state = SaveState::Saving(request);
         }
     }
 
@@ -270,10 +261,10 @@ impl SourceWorkingSets {
         self.finish_presets(request, outcome);
 
         for entry in self.definitions.values_mut() {
-            if matches!(entry.state,DefinitionSaveState::Saving(id) if id==request) {
+            if matches!(entry.state,SaveState::Saving(id) if id==request) {
                 entry.state = match outcome {
-                    DenseSaveOutcome::Failed(error) => DefinitionSaveState::Failed(error.clone()),
-                    _ => DefinitionSaveState::Idle,
+                    DenseSaveOutcome::Failed(error) => SaveState::Failed(error.clone()),
+                    _ => SaveState::Idle,
                 };
             }
         }
@@ -284,7 +275,7 @@ impl SourceWorkingSets {
                     if let Some(entry) = self.definitions.get_mut(&definition.space) {
                         entry.base = definition.clone();
                         entry.current = definition.clone();
-                        entry.state = DefinitionSaveState::Idle;
+                        entry.state = SaveState::Idle;
                     }
                     self.retarget_definition(definition.space, definition.revision);
                 }
@@ -294,7 +285,7 @@ impl SourceWorkingSets {
             }
             DenseSaveOutcome::DefinitionConflict { space, actual } => {
                 if let Some(entry) = self.definitions.get_mut(space) {
-                    entry.state = DefinitionSaveState::Conflict(actual.clone());
+                    entry.state = SaveState::Conflict(actual.clone());
                 }
             }
             _ => {}
@@ -302,11 +293,11 @@ impl SourceWorkingSets {
     }
 
     pub(super) fn can_keep_definition_conflicts(&self) -> bool {
-        self.can_resolve_presets(true) || self.definitions.values().any(|e|matches!(&e.state,DefinitionSaveState::Conflict(Some(actual)) if same_grid(actual,&e.current)))
+        self.can_resolve_presets(true) || self.definitions.values().any(|e|matches!(&e.state,SaveState::Conflict(Some(actual)) if same_grid(actual,&e.current)))
     }
 
     pub(super) fn can_accept_definition_conflicts(&self) -> bool {
-        self.can_resolve_presets(false) || self.definitions.values().any(|e|matches!(&e.state,DefinitionSaveState::Conflict(Some(actual)) if same_grid(actual,&e.current) && self.coverage_fits_definition(actual) && self.presets().is_some_and(|p|actual.validate_layers(p).is_ok())))
+        self.can_resolve_presets(false) || self.definitions.values().any(|e|matches!(&e.state,SaveState::Conflict(Some(actual)) if same_grid(actual,&e.current) && self.coverage_fits_definition(actual) && self.presets().is_some_and(|p|actual.validate_layers(p).is_ok())))
     }
 
     pub(super) fn resolve_definition_conflicts(&mut self, keep_local: bool) -> usize {
@@ -315,7 +306,7 @@ impl SourceWorkingSets {
             .definitions
             .iter()
             .filter_map(|(space, e)| match &e.state {
-                DefinitionSaveState::Conflict(Some(actual))
+                SaveState::Conflict(Some(actual))
                     if same_grid(actual, &e.current)
                         && (keep_local
                             || (self.coverage_fits_definition(actual)
@@ -331,7 +322,7 @@ impl SourceWorkingSets {
 
         for space in &spaces {
             let entry = self.definitions.get_mut(space).unwrap();
-            let DefinitionSaveState::Conflict(Some(actual)) = &entry.state else {
+            let SaveState::Conflict(Some(actual)) = &entry.state else {
                 unreachable!()
             };
             let actual = actual.clone();
@@ -343,7 +334,7 @@ impl SourceWorkingSets {
             }
 
             entry.base = actual.clone();
-            entry.state = DefinitionSaveState::Idle;
+            entry.state = SaveState::Idle;
             self.retarget_definition(*space, actual.revision);
         }
 
@@ -443,7 +434,7 @@ mod tests {
         dense.mark_definitions_saving(1);
 
         for entry in dense.entries.values_mut().filter(|e| e.dirty()) {
-            entry.save_state = DenseSaveState::Saving(1);
+            entry.save_state = SaveState::Saving(1);
         }
 
         let EnvironmentSourceWriteResult::Committed(commit) = writer
@@ -499,7 +490,7 @@ mod tests {
             DefinitionEntry {
                 base: definition.clone(),
                 current: definition.clone(),
-                state: DefinitionSaveState::Idle,
+                state: SaveState::Idle,
             },
         );
         let mut added = definition.clone();

@@ -1,5 +1,4 @@
 //! The shared library participates in the same source transaction and undo intent as layers.
-use super::definitions::DefinitionSaveState;
 use super::*;
 use environment::{EnvironmentDefinition, PresetLibrary};
 use serde::{Deserialize, Serialize};
@@ -58,8 +57,8 @@ impl SourceWorkingSets {
 
     pub(super) fn preset_status(&self) -> Option<String> {
         self.presets.as_ref().and_then(|p|match &p.state {
-            DefinitionSaveState::Conflict(_)=>Some("Shared presets changed in the database; local edits are retained. Resolve the conflict.".into()),
-            DefinitionSaveState::Failed(e)=>Some(format!("Preset save failed: {e}")),_=>None
+            SaveState::Conflict(_)=>Some("Shared presets changed in the database; local edits are retained. Resolve the conflict.".into()),
+            SaveState::Failed(e)=>Some(format!("Preset save failed: {e}")),_=>None
         })
     }
 
@@ -96,7 +95,7 @@ impl SourceWorkingSets {
 
         if current != entry.current {
             entry.current = current;
-            entry.state = DefinitionSaveState::Idle;
+            entry.state = SaveState::Idle;
             self.bump_definitions();
         }
     }
@@ -110,18 +109,16 @@ impl SourceWorkingSets {
                 self.presets = Some(DefinitionEntry {
                     base: saved.clone(),
                     current: saved.clone(),
-                    state: DefinitionSaveState::Idle,
+                    state: SaveState::Idle,
                 });
                 self.bump_definitions();
             }
-            Some(entry)
-                if entry.base != *saved && matches!(entry.state, DefinitionSaveState::Idle) =>
-            {
+            Some(entry) if entry.base != *saved && matches!(entry.state, SaveState::Idle) => {
                 if entry.dirty()
                     || self.definitions.values().any(|e| e.dirty())
                     || self.entries.values().any(|e| e.pinned())
                 {
-                    entry.state = DefinitionSaveState::Conflict(Some(saved.clone()));
+                    entry.state = SaveState::Conflict(Some(saved.clone()));
                 } else {
                     entry.base = saved.clone();
                     entry.current = saved.clone();
@@ -137,10 +134,10 @@ impl SourceWorkingSets {
             return;
         };
 
-        if matches!(entry.state,DefinitionSaveState::Saving(id) if id==request) {
+        if matches!(entry.state,SaveState::Saving(id) if id==request) {
             entry.state = match outcome {
-                DenseSaveOutcome::Failed(e) => DefinitionSaveState::Failed(e.clone()),
-                _ => DefinitionSaveState::Idle,
+                DenseSaveOutcome::Failed(e) => SaveState::Failed(e.clone()),
+                _ => SaveState::Idle,
             };
         }
 
@@ -149,12 +146,12 @@ impl SourceWorkingSets {
                 if let Some(library) = &commit.presets {
                     entry.base = library.clone();
                     entry.current = library.clone();
-                    entry.state = DefinitionSaveState::Idle;
+                    entry.state = SaveState::Idle;
                     self.bump_definitions();
                 }
             }
             DenseSaveOutcome::LibraryConflict { actual } => {
-                entry.state = DefinitionSaveState::Conflict(Some(actual.clone()))
+                entry.state = SaveState::Conflict(Some(actual.clone()))
             }
             _ => {}
         }
@@ -162,7 +159,7 @@ impl SourceWorkingSets {
 
     fn resolved_preset_conflict(&self, keep: bool) -> Option<PresetLibrary> {
         let entry = self.presets.as_ref()?;
-        let DefinitionSaveState::Conflict(Some(actual)) = &entry.state else {
+        let SaveState::Conflict(Some(actual)) = &entry.state else {
             return None;
         };
         let mut result = actual.clone();
@@ -204,12 +201,12 @@ impl SourceWorkingSets {
             return 0;
         };
         let entry = self.presets.as_mut().unwrap();
-        let DefinitionSaveState::Conflict(Some(actual)) = &entry.state else {
+        let SaveState::Conflict(Some(actual)) = &entry.state else {
             unreachable!()
         };
         entry.base = actual.clone();
         entry.current = current;
-        entry.state = DefinitionSaveState::Idle;
+        entry.state = SaveState::Idle;
         self.bump_definitions();
         1
     }
@@ -239,7 +236,7 @@ impl SourceWorkingSets {
         self.presets = Some(DefinitionEntry {
             base: snapshot.base,
             current: snapshot.current,
-            state: DefinitionSaveState::Idle,
+            state: SaveState::Idle,
         });
         self.plants = Some(plants.clone());
         self.bump_definitions();
@@ -251,7 +248,7 @@ impl SourceWorkingSets {
             self.presets = Some(DefinitionEntry {
                 base: library.clone(),
                 current: library.clone(),
-                state: DefinitionSaveState::Idle,
+                state: SaveState::Idle,
             });
             self.bump_definitions();
         }

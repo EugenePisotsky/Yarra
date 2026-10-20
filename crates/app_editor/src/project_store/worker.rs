@@ -50,34 +50,36 @@ pub(super) fn project_worker(
                 domains,
                 result: query_window(&reader, window, domains).map_err(|error| error.to_string()),
             },
-            ProjectRequest::SaveObjectTransaction(request) => {
-                ProjectResult::SaveObjectTransaction {
-                    request_id: request.request_id,
-                    result: save(&mut writer, |writer| {
-                        writer.apply_object_transaction(&request.writes)
+            ProjectRequest::SaveObjectTransaction(id, writes) => {
+                ProjectResult::SaveObjectTransaction(
+                    id,
+                    save(&mut writer, |writer| {
+                        writer.apply_object_transaction(&writes)
                     }),
-                }
+                )
             }
-            ProjectRequest::SaveDenseTransaction(request) => ProjectResult::SaveDenseTransaction {
-                request_id: request.request_id,
-                result: save(&mut writer, |writer| {
-                    writer.apply_environment_and_roads_transaction(
-                        request.library_revision,
-                        request.presets.as_ref(),
-                        &request.definitions,
-                        &request.writes,
-                        &request.roads,
-                        &request.road_dependencies,
-                    )
-                }),
-            },
+            ProjectRequest::SaveDenseTransaction(id, request) => {
+                ProjectResult::SaveDenseTransaction(
+                    id,
+                    save(&mut writer, |writer| {
+                        writer.apply_environment_and_roads_transaction(
+                            request.library_revision,
+                            request.presets.as_ref(),
+                            &request.definitions,
+                            &request.writes,
+                            &request.roads,
+                            &request.road_dependencies,
+                        )
+                    }),
+                )
+            }
             ProjectRequest::SaveAtmospheres(id, writes) => ProjectResult::SaveAtmospheres(
                 id,
                 Box::new(save(&mut writer, |writer| {
                     writer.write_atmospheres(&writes)
                 })),
             ),
-            ProjectRequest::SaveGameplayAreas(id, expected_revision, areas) => {
+            ProjectRequest::SaveGameplayAreas(id, (expected_revision, areas)) => {
                 ProjectResult::SaveGameplayAreas(
                     id,
                     save(&mut writer, |writer| {

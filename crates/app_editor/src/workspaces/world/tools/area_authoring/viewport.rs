@@ -361,10 +361,7 @@ pub(super) fn input(
         return;
     }
 
-    let blocked = input.ground.paused()
-        || input.project.save_in_flight()
-        || dense.saving()
-        || dense.has_any_conflict();
+    let blocked = !input.ground.can_edit(&input.project, &dense);
 
     if (!enabled || blocked) && state.dragging.is_some() {
         state.finish(&mut dense, &mut history, false);

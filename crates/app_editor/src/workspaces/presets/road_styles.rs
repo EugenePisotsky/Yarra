@@ -4,7 +4,7 @@ use super::*;
 
 use crate::{
     editing::EditorHistory,
-    road_authoring::{
+    workspaces::world::tools::road_authoring::{
         commands::default_profile,
         working::{RoadChange, RoadWorkingSet, same},
     },

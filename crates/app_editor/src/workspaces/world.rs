@@ -53,6 +53,7 @@ mod ground_tool;
 mod input;
 mod objects;
 mod overlay;
+pub(crate) mod tools;
 mod ui;
 
 pub(crate) struct WorldWorkspacePlugin;
@@ -78,8 +79,8 @@ impl Plugin for WorldWorkspacePlugin {
             ASSETS_WINDOW,
             NAVIGATOR_WINDOW,
             DIAGNOSTICS_WINDOW,
-            crate::atmosphere_authoring::WINDOW,
-            crate::area_authoring::WINDOW,
+            crate::workspaces::world::tools::atmosphere_authoring::WINDOW,
+            crate::workspaces::world::tools::area_authoring::WINDOW,
         ] {
             app.world_mut()
                 .resource_mut::<EditorWindowRegistry>()
@@ -101,10 +102,10 @@ impl Plugin for WorldWorkspacePlugin {
             .add_plugins((
                 TransformGizmoPlugin,
                 crate::grass::GrassPlugin,
-                crate::environment_paint::EnvironmentPaintPlugin,
-                crate::road_authoring::RoadAuthoringPlugin,
-                crate::atmosphere_authoring::AtmosphereAuthoringPlugin,
-                crate::area_authoring::AreaAuthoringPlugin,
+                crate::workspaces::world::tools::environment_paint::EnvironmentPaintPlugin,
+                crate::workspaces::world::tools::road_authoring::RoadAuthoringPlugin,
+                crate::workspaces::world::tools::atmosphere_authoring::AtmosphereAuthoringPlugin,
+                crate::workspaces::world::tools::area_authoring::AreaAuthoringPlugin,
             ))
             .configure_sets(
                 PostUpdate,

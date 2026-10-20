@@ -66,20 +66,13 @@ pub(super) fn input(
 
     if input.ground.keys.just_pressed(KeyCode::Escape) {
         finish(&mut state, &mut dense, &mut history, true);
-        state.creating = false;
-        state.extending = false;
-        state.branching = false;
-        state.connecting = false;
+        state.mode = RoadMode::Select;
         state.first = None;
         state.status = None;
         return;
     }
 
-    let blocked = input.ground.paused()
-        || input.project.save_in_flight()
-        || dense.saving()
-        || dense.has_any_conflict()
-        || input.presets.dirty();
+    let blocked = !input.ground.can_edit(&input.project, &dense) || input.presets.dirty();
 
     if !enabled || blocked {
         finish(&mut state, &mut dense, &mut history, false);
@@ -87,10 +80,7 @@ pub(super) fn input(
 
     if !enabled {
         state.hover = None;
-        state.creating = false;
-        state.extending = false;
-        state.branching = false;
-        state.connecting = false;
+        state.mode = RoadMode::Select;
         state.first = None;
         return;
     }
@@ -99,83 +89,40 @@ pub(super) fn input(
         return;
     }
 
-    let Some(space) = input.ground.origin.space() else {
-        if !input.ground.buttons.pressed(MouseButton::Left) {
-            finish(&mut state, &mut dense, &mut history, false);
-        }
-        return;
-    };
+    let space = input.ground.origin.space();
 
-    if state.space != Some(space) {
+    if let Some(space) = space
+        && state.space != Some(space)
+    {
         finish(&mut state, &mut dense, &mut history, false);
         state.space = Some(space);
         state.road = None;
         state.knot = None;
         state.span = None;
-        state.creating = false;
-        state.extending = false;
-        state.branching = false;
-        state.connecting = false;
+        state.mode = RoadMode::Select;
         state.first = None;
         state.hover = None;
     }
 
-    let Some(size) = dense.definition(space).map(|d| d.cell_size) else {
-        if !input.ground.buttons.pressed(MouseButton::Left) {
-            finish(&mut state, &mut dense, &mut history, false);
-        }
-        return;
-    };
-    let Some(cursor) = input.ground.window.cursor_position() else {
-        if !input.ground.buttons.pressed(MouseButton::Left) {
-            finish(&mut state, &mut dense, &mut history, false);
-        }
-        return;
-    };
-    let Ok(ray) = input
-        .ground
-        .camera
-        .0
-        .viewport_to_world(input.ground.camera.1, cursor)
+    let pressed = input.ground.buttons.pressed(MouseButton::Left);
+    let size = space.and_then(|space| dense.definition(space).map(|d| d.cell_size));
+    let Some(((cursor, point), space, size)) = space
+        .zip(size)
+        .and_then(|(space, size)| Some((pointer(&input, size)?, space, size)))
     else {
-        if !input.ground.buttons.pressed(MouseButton::Left) {
-            finish(&mut state, &mut dense, &mut history, false);
-        }
-        return;
-    };
-    let hit =
-        engine::raycast_resident_terrain(&input.ground.origin, input.ground.terrain.iter(), ray)
-            .map(|(_, point)| point);
-    let Some(hit) = hit else {
+        // No ground under the pointer: a drag ends once the button is up.
         state.hover = None;
 
-        if !input.ground.buttons.pressed(MouseButton::Left) {
+        if !pressed {
             finish(&mut state, &mut dense, &mut history, false);
         }
 
-        return;
-    };
-    let Ok(point) = RoadPoint::from_relative(
-        input.ground.origin.cell(),
-        [hit.x as f64, hit.z as f64],
-        size as f64,
-    ) else {
-        if !input.ground.buttons.pressed(MouseButton::Left) {
-            finish(&mut state, &mut dense, &mut history, false);
-        }
         return;
     };
     state.hover = Some(point);
 
     if state.drag.is_some() {
-        update_drag(
-            &mut state,
-            &mut dense,
-            &mut history,
-            point,
-            size,
-            !input.ground.buttons.pressed(MouseButton::Left),
-        );
+        update_drag(&mut state, &mut dense, &mut history, point, size, !pressed);
         return;
     }
 
@@ -183,85 +130,152 @@ pub(super) fn input(
         return;
     }
 
-    if state.creating {
-        if !state.can_create_at(space, point.cell) {
-            state.status = Some("Wait for nearby road controls to load".into());
-            return;
-        }
+    let state = &mut *state;
+    let (dense, history) = (&mut *dense, &mut *history);
 
-        if let Some(start) = state.first {
-            let Some(style) = state.style else { return };
-            match commands::create(&dense.roads, space, size, style, start, point) {
-                Ok((road, knot, changes)) => {
-                    let span = changes.iter().find_map(|c| {
-                        if let RoadRecordKey::Span(id) = c.key {
-                            Some(id)
-                        } else {
-                            None
-                        }
-                    });
-                    if state.commit(&mut dense, &mut history, Ok(changes)) {
-                        state.road = Some(road);
-                        state.knot = Some(knot);
-                        state.span = span;
-                        state.creating = false;
-                        state.first = None;
-                    }
-                }
-                Err(e) => state.status = Some(e),
+    match state.mode {
+        RoadMode::Create => create_click(state, dense, history, space, size, point),
+        RoadMode::Branch => branch_click(state, dense, history, size, point),
+        RoadMode::Extend => extend_click(state, dense, history, size, point),
+        RoadMode::Select | RoadMode::Connect => {
+            if let Some((knot, handle)) = pick_handle(&input, state, dense, space, size, cursor) {
+                handle_click(state, dense, history, size, point, knot, handle);
+            } else if state.mode == RoadMode::Connect {
+                state.status = Some(
+                    "Click a road point; split a curve first to create a connection point".into(),
+                );
+            } else if let Some((span, road)) = pick_span(&input, dense, space, size, cursor) {
+                state.span = Some(span);
+                state.road = Some(road);
+                state.knot = None;
             }
-        } else {
-            state.first = Some(point);
-            state.status = Some("Click the end of the first curve".into());
         }
+    }
+}
 
+/// The cursor and the ground point under it.
+fn pointer(input: &Input, size: f32) -> Option<(Vec2, RoadPoint)> {
+    let cursor = input.ground.window.cursor_position()?;
+    let (camera, transform) = (input.ground.camera.0, input.ground.camera.1);
+    let ray = camera.viewport_to_world(transform, cursor).ok()?;
+    let (_, hit) =
+        engine::raycast_resident_terrain(&input.ground.origin, input.ground.terrain.iter(), ray)?;
+    let point = RoadPoint::from_relative(
+        input.ground.origin.cell(),
+        [hit.x as f64, hit.z as f64],
+        size as f64,
+    )
+    .ok()?;
+    Some((cursor, point))
+}
+
+/// The first new section among `changes`, to select after the command.
+fn first_span(changes: &[RoadChange]) -> Option<RoadSpanId> {
+    changes.iter().find_map(|c| match c.key {
+        RoadRecordKey::Span(id) => Some(id),
+        _ => None,
+    })
+}
+
+/// A new road: the first click marks its start, the second ends its first curve.
+fn create_click(
+    state: &mut RoadToolState,
+    dense: &mut SourceWorkingSets,
+    history: &mut EditorHistory,
+    space: WorldSpaceId,
+    size: f32,
+    point: RoadPoint,
+) {
+    if !state.can_create_at(space, point.cell) {
+        state.status = Some("Wait for nearby road controls to load".into());
         return;
     }
 
-    if state.branching {
-        if let Some(knot) = state.knot {
-            match junctions::branch(&dense.roads, knot, size, point) {
-                Ok((road, end, changes)) => {
-                    let span = changes.iter().find_map(|c| match &c.record {
-                        Some(RoadSourceRecord::Span(s)) if s.road == road => Some(s.id),
-                        _ => None,
-                    });
-                    if state.commit(&mut dense, &mut history, Ok(changes)) {
-                        state.road = Some(road);
-                        state.knot = Some(end);
-                        state.span = span;
-                        state.branching = false;
-                    }
-                }
-                Err(e) => state.status = Some(e),
+    let Some(start) = state.first else {
+        state.first = Some(point);
+        state.status = Some("Click the end of the first curve".into());
+        return;
+    };
+    let Some(style) = state.style else { return };
+
+    match commands::create(&dense.roads, space, size, style, start, point) {
+        Ok((road, knot, changes)) => {
+            let span = first_span(&changes);
+
+            if state.commit(dense, history, Ok(changes)) {
+                state.road = Some(road);
+                state.knot = Some(knot);
+                state.span = span;
+                state.mode = RoadMode::Select;
+                state.first = None;
             }
         }
-        return;
+        Err(e) => state.status = Some(e),
     }
+}
 
-    if state.extending {
-        if let Some(knot) = state.knot {
-            match commands::extend(&dense.roads, knot, size, point) {
-                Ok((id, changes)) => {
-                    let span = changes.iter().find_map(|c| {
-                        if let RoadRecordKey::Span(id) = c.key {
-                            Some(id)
-                        } else {
-                            None
-                        }
-                    });
-                    if state.commit(&mut dense, &mut history, Ok(changes)) {
-                        state.knot = Some(id);
-                        state.span = span;
-                        state.extending = false;
-                    }
-                }
-                Err(e) => state.status = Some(e),
+/// A new road from the selected point to the click.
+fn branch_click(
+    state: &mut RoadToolState,
+    dense: &mut SourceWorkingSets,
+    history: &mut EditorHistory,
+    size: f32,
+    point: RoadPoint,
+) {
+    let Some(knot) = state.knot else { return };
+
+    match junctions::branch(&dense.roads, knot, size, point) {
+        Ok((road, end, changes)) => {
+            let span = changes.iter().find_map(|c| match &c.record {
+                Some(RoadSourceRecord::Span(s)) if s.road == road => Some(s.id),
+                _ => None,
+            });
+
+            if state.commit(dense, history, Ok(changes)) {
+                state.road = Some(road);
+                state.knot = Some(end);
+                state.span = span;
+                state.mode = RoadMode::Select;
             }
         }
-        return;
+        Err(e) => state.status = Some(e),
     }
+}
 
+/// A new section from the selected end of a road to the click.
+fn extend_click(
+    state: &mut RoadToolState,
+    dense: &mut SourceWorkingSets,
+    history: &mut EditorHistory,
+    size: f32,
+    point: RoadPoint,
+) {
+    let Some(knot) = state.knot else { return };
+
+    match commands::extend(&dense.roads, knot, size, point) {
+        Ok((id, changes)) => {
+            let span = first_span(&changes);
+
+            if state.commit(dense, history, Ok(changes)) {
+                state.knot = Some(id);
+                state.span = span;
+                state.mode = RoadMode::Select;
+            }
+        }
+        Err(e) => state.status = Some(e),
+    }
+}
+
+/// The point or handle within 12 px of the cursor, nearest first.
+fn pick_handle(
+    input: &Input,
+    state: &RoadToolState,
+    dense: &SourceWorkingSets,
+    space: WorldSpaceId,
+    size: f32,
+    cursor: Vec2,
+) -> Option<(world_db::SourceRoadKnot, Handle)> {
+    let (camera, transform) = (input.ground.camera.0, input.ground.camera.1);
     let mut picks = vec![];
 
     for e in dense.roads.entries.values() {
@@ -276,20 +290,13 @@ pub(super) fn input(
             continue;
         }
 
-        for (handle, p) in handles(
-            &k.knot,
-            !state.connecting && state.knot == Some(k.knot.id),
-            size,
-        ) {
-            let Some(p) = project_point(&input, p, size) else {
+        let selected = state.mode != RoadMode::Connect && state.knot == Some(k.knot.id);
+
+        for (handle, p) in handles(&k.knot, selected, size) {
+            let Some(p) = project_point(input, p, size) else {
                 continue;
             };
-            let Ok(screen) = input
-                .ground
-                .camera
-                .0
-                .world_to_viewport(input.ground.camera.1, p)
-            else {
+            let Ok(screen) = camera.world_to_viewport(transform, p) else {
                 continue;
             };
             let distance = screen.distance(cursor);
@@ -300,55 +307,73 @@ pub(super) fn input(
         }
     }
 
-    picks.sort_by(|a, b| a.0.total_cmp(&b.0));
+    picks
+        .into_iter()
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, knot, handle)| (knot, handle))
+}
 
-    if let Some((_, k, handle)) = picks.into_iter().next() {
-        if state.connecting {
-            if let Some(source) = state.knot {
-                let changes = junctions::join(&dense.roads, source, k.knot.id, size);
-                if state.commit(&mut dense, &mut history, changes) {
-                    state.connecting = false;
-                }
+/// A click on a point or handle: joins it to the selected point while connecting, otherwise
+/// selects it and starts dragging once its neighbours have loaded.
+#[allow(clippy::too_many_arguments)]
+fn handle_click(
+    state: &mut RoadToolState,
+    dense: &mut SourceWorkingSets,
+    history: &mut EditorHistory,
+    size: f32,
+    point: RoadPoint,
+    k: world_db::SourceRoadKnot,
+    handle: Handle,
+) {
+    if state.mode == RoadMode::Connect {
+        if let Some(source) = state.knot {
+            let changes = junctions::join(&dense.roads, source, k.knot.id, size);
+
+            if state.commit(dense, history, changes) {
+                state.mode = RoadMode::Select;
             }
-            return;
         }
-
-        state.road = Some(k.road);
-        state.knot = Some(k.knot.id);
-        state.span = dense.roads.entries.values().find_map(|e| {
-            if let Some(RoadSourceRecord::Span(s)) = &e.current {
-                (s.start == k.knot.id || s.end == k.knot.id).then_some(s.id)
-            } else {
-                None
-            }
-        });
-
-        if junctions::ready(&dense.roads, k.knot.id) {
-            let connected_before = if handle == Handle::Point {
-                junctions::drag_before(&dense.roads, k.knot.id)
-            } else {
-                vec![]
-            };
-            state.drag = Some(Drag {
-                connected_before,
-                before: k,
-                handle,
-                start: point,
-            });
-            dense.gesture_active = true;
-        } else {
-            state.status = Some("Loading adjoining curves; drag again when ready".into());
-        }
-
         return;
     }
 
-    if state.connecting {
-        state.status =
-            Some("Click a road point; split a curve first to create a connection point".into());
+    state.road = Some(k.road);
+    state.knot = Some(k.knot.id);
+    state.span = dense.roads.entries.values().find_map(|e| match &e.current {
+        Some(RoadSourceRecord::Span(s)) => {
+            (s.start == k.knot.id || s.end == k.knot.id).then_some(s.id)
+        }
+        _ => None,
+    });
+
+    if !junctions::ready(&dense.roads, k.knot.id) {
+        state.status = Some("Loading adjoining curves; drag again when ready".into());
         return;
     }
 
+    let connected_before = if handle == Handle::Point {
+        junctions::drag_before(&dense.roads, k.knot.id)
+    } else {
+        vec![]
+    };
+    state.drag = Some(Drag {
+        connected_before,
+        before: k,
+        handle,
+        start: point,
+    });
+    dense.gesture_active = true;
+}
+
+/// The section whose curve passes within 10 px of the cursor, nearest first.
+fn pick_span(
+    input: &Input,
+    dense: &SourceWorkingSets,
+    space: WorldSpaceId,
+    size: f32,
+    cursor: Vec2,
+) -> Option<(RoadSpanId, RoadId)> {
+    let (camera, transform) = (input.ground.camera.0, input.ground.camera.1);
+    let origin = input.ground.origin.cell();
     let mut nearest: Option<(f32, RoadSpanId, RoadId)> = None;
 
     for e in dense.roads.entries.values() {
@@ -366,29 +391,19 @@ pub(super) fn input(
         let Some(span) = commands::span(&dense.roads, s.id) else {
             continue;
         };
-        let controls = span.control_points(input.ground.origin.cell(), size);
+        let controls = span.control_points(origin, size);
         let mut last = None;
 
         for i in 0..=48 {
-            let point = RoadPoint::from_relative(
-                input.ground.origin.cell(),
-                cubic(controls, i as f64 / 48.0),
-                size as f64,
-            )
-            .ok();
-            let screen = point
-                .and_then(|p| project_point(&input, p, size))
-                .and_then(|p| {
-                    input
-                        .ground
-                        .camera
-                        .0
-                        .world_to_viewport(input.ground.camera.1, p)
-                        .ok()
-                });
+            let screen =
+                RoadPoint::from_relative(origin, cubic(controls, i as f64 / 48.0), size as f64)
+                    .ok()
+                    .and_then(|p| project_point(input, p, size))
+                    .and_then(|p| camera.world_to_viewport(transform, p).ok());
 
             if let (Some(a), Some(b)) = (last, screen) {
                 let distance = distance_to_segment(cursor, a, b);
+
                 if distance < 10.0 && nearest.is_none_or(|v| distance < v.0) {
                     nearest = Some((distance, s.id, s.road));
                 }
@@ -398,11 +413,7 @@ pub(super) fn input(
         }
     }
 
-    if let Some((_, id, road)) = nearest {
-        state.span = Some(id);
-        state.road = Some(road);
-        state.knot = None;
-    }
+    nearest.map(|(_, span, road)| (span, road))
 }
 
 fn update_drag(
@@ -701,7 +712,7 @@ pub(super) fn draw(
     }
 
     let first = state.first.or_else(|| {
-        if state.branching || state.extending {
+        if matches!(state.mode, RoadMode::Branch | RoadMode::Extend) {
             state
                 .knot
                 .and_then(|id| match dense.roads.get(RoadRecordKey::Knot(id)) {

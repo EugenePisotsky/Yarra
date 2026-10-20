@@ -37,18 +37,17 @@ const INTERACTIVE_PREVIEW_FRAME_RATE: f64 = 60.0;
 const UNFOCUSED_FRAME_RATE: f64 = 5.0;
 
 pub(crate) fn run() -> std::result::Result<(), String> {
-    let asset_root = resolve_asset_root();
-    let runtime_database = runtime_database_path(&asset_root);
-    let project_database = project_database_path();
-    let mut args = std::env::args_os();
-    let start_path = if args.any(|a| a == "--start-view") {
-        Some(std::path::PathBuf::from(
-            args.next().ok_or("--start-view requires a file")?,
-        ))
-    } else {
-        None
-    };
-    let start_view = engine::WorldStartView::load(start_path.as_deref())?;
+    let arguments = Arguments::parse(std::env::args_os().skip(1))?;
+    let asset_root = engine::resolve_asset_root();
+    let runtime_database = arguments
+        .world_db
+        .unwrap_or_else(|| asset_root.join(world::DEFAULT_RUNTIME_DATABASE));
+
+    // The project lives beside the assets, in the repository's content folder.
+    let project_database = arguments
+        .project_db
+        .unwrap_or_else(|| asset_root.join("..").join(world::DEFAULT_PROJECT_DATABASE));
+    let start_view = engine::WorldStartView::load(arguments.start_view.as_deref())?;
     crate::startup::validate_databases(&project_database, &runtime_database)?;
     App::new()
         .insert_resource(start_view)
@@ -359,63 +358,64 @@ fn reactive_update_mode(frame_rate: f64, wake_on_input: bool) -> UpdateMode {
     }
 }
 
-fn runtime_database_path(asset_root: &std::path::Path) -> PathBuf {
-    let mut arguments = std::env::args_os();
-
-    while let Some(argument) = arguments.next() {
-        if argument == "--world-db" {
-            return arguments
-                .next()
-                .map(PathBuf::from)
-                .unwrap_or_else(|| panic!("--world-db requires a database path"));
-        }
-    }
-
-    asset_root.join(world::DEFAULT_RUNTIME_DATABASE)
+/// The editor's command line.
+#[derive(Debug, Default, PartialEq)]
+struct Arguments {
+    start_view: Option<PathBuf>,
+    world_db: Option<PathBuf>,
+    project_db: Option<PathBuf>,
 }
 
-fn project_database_path() -> PathBuf {
-    let mut arguments = std::env::args_os();
+impl Arguments {
+    const USAGE: &str =
+        "usage: yarra-app-editor [--start-view FILE] [--world-db FILE] [--project-db FILE]";
 
-    while let Some(argument) = arguments.next() {
-        if argument == "--project-db" {
-            return arguments
+    fn parse(arguments: impl IntoIterator<Item = std::ffi::OsString>) -> Result<Self, String> {
+        let mut parsed = Self::default();
+        let mut arguments = arguments.into_iter();
+
+        while let Some(argument) = arguments.next() {
+            let slot = match argument.to_str() {
+                Some("--start-view") => &mut parsed.start_view,
+                Some("--world-db") => &mut parsed.world_db,
+                Some("--project-db") => &mut parsed.project_db,
+                _ => {
+                    return Err(format!(
+                        "unknown argument {}\n{}",
+                        argument.to_string_lossy(),
+                        Self::USAGE
+                    ));
+                }
+            };
+            let path = arguments
                 .next()
-                .map(PathBuf::from)
-                .unwrap_or_else(|| panic!("--project-db requires a database path"));
+                .ok_or_else(|| format!("{} requires a file", argument.to_string_lossy()))?;
+            *slot = Some(PathBuf::from(path));
         }
+
+        Ok(parsed)
     }
-
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .join(world::DEFAULT_PROJECT_DATABASE)
-}
-
-fn resolve_asset_root() -> PathBuf {
-    let mut candidates = Vec::new();
-
-    if let Ok(current_directory) = std::env::current_dir() {
-        candidates.push(current_directory.join("assets"));
-    }
-
-    if let Ok(executable) = std::env::current_exe()
-        && let Some(executable_directory) = executable.parent()
-    {
-        candidates.push(executable_directory.join("assets"));
-        candidates.push(executable_directory.join("../Resources/assets"));
-    }
-
-    candidates.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets"));
-
-    candidates
-        .into_iter()
-        .find(|candidate| candidate.is_dir())
-        .unwrap_or_else(|| PathBuf::from("assets"))
 }
 
 #[cfg(test)]
 mod window_registry_tests {
     use super::*;
+
+    #[test]
+    fn arguments_take_a_file_each_and_refuse_anything_else() {
+        let parse = |args: &[&str]| Arguments::parse(args.iter().map(std::ffi::OsString::from));
+        assert_eq!(parse(&[]), Ok(Arguments::default()));
+        assert_eq!(
+            parse(&["--world-db", "w.sqlite", "--start-view", "v.ron"]),
+            Ok(Arguments {
+                start_view: Some("v.ron".into()),
+                world_db: Some("w.sqlite".into()),
+                project_db: None,
+            })
+        );
+        assert!(parse(&["--project-db"]).is_err());
+        assert!(parse(&["--fps", "60"]).is_err());
+    }
 
     const WORLD_WINDOW: EditorWindowDescriptor = EditorWindowDescriptor {
         id: EditorWindowId("test.world"),

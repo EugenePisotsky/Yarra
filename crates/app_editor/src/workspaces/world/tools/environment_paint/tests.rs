@@ -1,4 +1,5 @@
 use super::*;
+use crate::editing::EditorObjectWorkingSet;
 use environment_compile::{CompilePlan, CompileProfile};
 
 use world_db::{

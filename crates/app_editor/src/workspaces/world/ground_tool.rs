@@ -4,6 +4,10 @@ use bevy::{ecs::system::SystemParam, prelude::*, window::PrimaryWindow};
 use engine::{StreamedTerrainSurface, WorldOrigin, WorldViewCamera};
 
 use crate::{
+    activity::SourceActivity,
+    domain_editing::SourceWorkingSets,
+    editing::EditorObjectWorkingSet,
+    project_store::ProjectEditorStore,
     publication::RuntimePublicationState,
     saving::EditorSaveCoordinator,
     shell::EditorInputCapture,
@@ -35,6 +39,7 @@ pub(crate) struct GroundToolInput<'w, 's> {
     tools: Res<'w, EditorToolRegistry>,
     publication: Res<'w, RuntimePublicationState>,
     save: Res<'w, EditorSaveCoordinator>,
+    objects: Res<'w, EditorObjectWorkingSet>,
 }
 
 impl GroundToolInput<'_, '_> {
@@ -56,5 +61,12 @@ impl GroundToolInput<'_, '_> {
             || MODIFIERS.iter().any(|key| self.keys.pressed(*key))
             || self.publication.active()
             || self.save.active()
+    }
+
+    /// Whether the pointer may change the source now ([`SourceActivity::can_edit`]).
+    pub(crate) fn can_edit(&self, project: &ProjectEditorStore, dense: &SourceWorkingSets) -> bool {
+        !self.paused()
+            && SourceActivity::of(project, &self.save, &self.publication, &self.objects, dense)
+                .can_edit()
     }
 }

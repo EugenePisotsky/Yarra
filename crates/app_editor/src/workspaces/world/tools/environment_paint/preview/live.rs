@@ -15,8 +15,26 @@ use std::{
 use world::TerrainPreviewProducts;
 use world_db::RuntimeReader;
 
-type SourceContext = (WorldSpaceId, u64, u64, u64, String);
-type SourceSignature = (SourceContext, u64, u64, Vec<CellCoord>);
+/// What a preview is compiled against: the world space, its layer definitions and grass
+/// catalog as edited, the project's source epoch and the published generation.
+#[derive(Clone, Debug, PartialEq)]
+struct SourceContext {
+    space: WorldSpaceId,
+    definitions: u64,
+    grass: u64,
+    source_epoch: u64,
+    generation: String,
+}
+
+/// Everything that asks for a new preview when it changes: the context, coverage and road
+/// edits, and the resident cells.
+#[derive(Clone, Debug, PartialEq)]
+struct SourceSignature {
+    context: SourceContext,
+    coverage: u64,
+    roads: u64,
+    resident: Vec<CellCoord>,
+}
 
 #[cfg(test)]
 mod tests;
@@ -30,7 +48,7 @@ struct Input {
     definition_revision: u64,
     library_revision: u64,
     records: Vec<SourceEnvironmentCellRecord>,
-    roads: Vec<crate::road_authoring::working::RoadChange>,
+    roads: Vec<crate::workspaces::world::tools::road_authoring::working::RoadChange>,
     regions: Option<Vec<RoadCellBounds>>,
     resident: Vec<CellCoord>,
     global: bool,
@@ -138,13 +156,13 @@ pub(crate) fn update(
     ) else {
         return;
     };
-    let context = (
+    let context = SourceContext {
         space,
-        source.dense.definition_edit_revision(),
-        source.grass.revision(),
-        source.project.source_epoch(),
-        source.runtime.generation_id().to_owned(),
-    );
+        definitions: source.dense.definition_edit_revision(),
+        grass: source.grass.revision(),
+        source_epoch: source.project.source_epoch(),
+        generation: source.runtime.generation_id().to_owned(),
+    };
     let mut resident: Vec<_> = source
         .terrain
         .iter()
@@ -158,18 +176,17 @@ pub(crate) fn update(
         (i64::from(c.x) - i64::from(center.x)).abs() + (i64::from(c.z) - i64::from(center.z)).abs()
     });
     resident.truncate(MAX_PREVIEW_CELLS);
-    let signature = (
-        context.clone(),
-        source.dense.edit_revision(),
-        source.dense.roads.revision,
-        resident.clone(),
-    );
+    let signature = SourceSignature {
+        context: context.clone(),
+        coverage: source.dense.edit_revision(),
+        roads: source.dense.roads.revision,
+        resident: resident.clone(),
+    };
 
     if state.signature.as_ref() != Some(&signature) {
-        let changed_world = state
-            .accepted
-            .as_ref()
-            .is_some_and(|s| s.input.context.0 != space || s.input.context.4 != context.4);
+        let changed_world = state.accepted.as_ref().is_some_and(|s| {
+            s.input.context.space != space || s.input.context.generation != context.generation
+        });
 
         if changed_world {
             state.accepted = None;
@@ -254,7 +271,7 @@ pub(crate) fn update(
                 Ok(snapshot) => {
                     live.request = Some(TerrainPreviewRequest {
                         revision: result.revision,
-                        generation: snapshot.input.context.4.clone(),
+                        generation: snapshot.input.context.generation.clone(),
                         space,
                         products: snapshot.products.clone(),
                     });
@@ -276,7 +293,9 @@ pub(crate) fn update(
         preview.accepted = snapshot
             .cells
             .iter()
-            .filter(|((s, c), _)| *s == space && state.signature.as_ref().unwrap().3.contains(c))
+            .filter(|((s, c), _)| {
+                *s == space && state.signature.as_ref().unwrap().resident.contains(c)
+            })
             .map(|(k, v)| (*k, v.clone()))
             .collect();
         preview.assets = snapshot.assets.clone();
@@ -346,12 +365,12 @@ fn compile_inner(
     let cancelled = || token.load(Ordering::Relaxed) != job.revision;
     let reader = RuntimeReader::open_immutable(runtime)?;
 
-    if reader.manifest().generation_id != job.context.4 {
+    if reader.manifest().generation_id != job.context.generation {
         bail!("Published terrain changed during preview; retry after adoption")
     }
 
     let source = ProjectReader::open_read_only(project)?;
-    let space = job.context.0;
+    let space = job.context.space;
     let mut cells: BTreeSet<_> = job.resident.iter().copied().collect();
 
     if let Some(base) = &job.base {
@@ -463,8 +482,8 @@ fn compile_inner(
         let mut hash = blake3::Hasher::new();
         hash.update(&dependency_stamp(
             job.plan.fingerprint(),
-            job.context.3,
-            &job.context.4,
+            job.context.source_epoch,
+            &job.context.generation,
             cell,
             &stamps,
         ));
@@ -587,7 +606,7 @@ pub(crate) fn apply_sources(
         let page = state
             .accepted
             .as_ref()
-            .filter(|s| s.input.context.0 == surface.key.space)
+            .filter(|s| s.input.context.space == surface.key.space)
             .and_then(|s| s.products.leaves.get(&surface.key.cell));
         let cell = preview.cell(surface.key.space, surface.key.cell);
         let height = cell

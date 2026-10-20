@@ -14,7 +14,7 @@ pub(crate) use preview::EnvironmentPreview;
 
 use crate::{
     domain_editing::{SourceWorkingSets, reconcile_dense_working_sets},
-    editing::{EditorHistory, EditorObjectWorkingSet},
+    editing::EditorHistory,
     grass::GrassPreviewSync,
     project_store::{ProjectEditorStore, ProjectStoreUpdate},
     saving::drive_editor_save,
@@ -145,33 +145,22 @@ impl EnvironmentPaintState {
     }
 }
 
-#[derive(SystemParam)]
-struct PaintInput<'w, 's> {
-    ground: GroundToolInput<'w, 's>,
-    objects: Res<'w, EditorObjectWorkingSet>,
-}
-
 fn paint_input(
-    input: PaintInput,
+    input: GroundToolInput,
     mut project: ResMut<ProjectEditorStore>,
     mut dense: ResMut<SourceWorkingSets>,
     mut history: ResMut<EditorHistory>,
     mut paint: ResMut<EnvironmentPaintState>,
 ) {
-    let enabled = input.ground.active(&ENVIRONMENT_TOOL) && input.ground.window.focused;
-    let blocked = paint.has_unapplied_changes()
-        || input.ground.paused()
-        || project.save_in_flight()
-        || dense.saving()
-        || dense.has_any_conflict()
-        || input.objects.saving();
+    let enabled = input.active(&ENVIRONMENT_TOOL) && input.window.focused;
+    let blocked = paint.has_unapplied_changes() || !input.can_edit(&project, &dense);
 
-    if input.ground.keys.just_pressed(KeyCode::Escape) && paint.stroke.is_some() {
+    if input.keys.just_pressed(KeyCode::Escape) && paint.stroke.is_some() {
         paint.finish(&mut dense, &mut history, true);
         paint.status = Some("Stroke cancelled".into());
     }
 
-    if !enabled || blocked || !input.ground.buttons.pressed(MouseButton::Left) {
+    if !enabled || blocked || !input.buttons.pressed(MouseButton::Left) {
         paint.finish(&mut dense, &mut history, false);
     }
 
@@ -182,7 +171,7 @@ fn paint_input(
         return;
     }
 
-    let Some(space) = input.ground.origin.space() else {
+    let Some(space) = input.origin.space() else {
         return;
     };
     let Some(definition) = dense
@@ -247,32 +236,26 @@ fn paint_input(
         return;
     }
 
-    let Some(cursor) = input.ground.window.cursor_position() else {
+    let Some(cursor) = input.window.cursor_position() else {
         if let Some(stroke) = &mut paint.stroke {
             stroke.last_point = None;
         }
         return;
     };
-    let Ok(ray) = input
-        .ground
-        .camera
-        .0
-        .viewport_to_world(input.ground.camera.1, cursor)
-    else {
+    let Ok(ray) = input.camera.0.viewport_to_world(input.camera.1, cursor) else {
         return;
     };
-    let hit =
-        engine::raycast_resident_terrain(&input.ground.origin, input.ground.terrain.iter(), ray);
+    let hit = engine::raycast_resident_terrain(&input.origin, input.terrain.iter(), ray);
     let Some((entity, point)) = hit else {
         if let Some(stroke) = &mut paint.stroke {
             stroke.last_point = None;
         }
         return;
     };
-    let Ok((_, terrain)) = input.ground.terrain.get(entity) else {
+    let Ok((_, terrain)) = input.terrain.get(entity) else {
         return;
     };
-    let origin = input.ground.origin.cell().origin(definition.cell_size);
+    let origin = input.origin.cell().origin(definition.cell_size);
     let logical = [
         origin[0] + f64::from(point.x),
         origin[1] + f64::from(point.z),
@@ -340,12 +323,10 @@ fn paint_input(
         }
     };
 
-    if input.ground.buttons.just_pressed(MouseButton::Left) {
+    if input.buttons.just_pressed(MouseButton::Left) {
         let mut brush = paint.brush;
 
-        if input.ground.keys.pressed(KeyCode::ShiftLeft)
-            || input.ground.keys.pressed(KeyCode::ShiftRight)
-        {
+        if input.keys.pressed(KeyCode::ShiftLeft) || input.keys.pressed(KeyCode::ShiftRight) {
             brush.operation = BrushOperation::Erase;
         }
 

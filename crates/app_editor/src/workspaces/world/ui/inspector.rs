@@ -33,13 +33,12 @@ pub(super) fn draw_context_inspector(
     focus_request: &mut EditorCameraFocusRequest,
     tools: &EditorToolRegistry,
     gizmo_mode: TransformGizmoMode,
-    roads: &mut crate::road_authoring::RoadToolState,
-    paint: &mut crate::environment_paint::EnvironmentPaintState,
-    layer_browser: &mut crate::environment_paint::EnvironmentLayerBrowser,
-    environment_preview: &crate::environment_paint::EnvironmentPreview,
+    roads: &mut crate::workspaces::world::tools::road_authoring::RoadToolState,
+    paint: &mut crate::workspaces::world::tools::environment_paint::EnvironmentPaintState,
+    layer_browser: &mut crate::workspaces::world::tools::environment_paint::EnvironmentLayerBrowser,
+    environment_preview: &crate::workspaces::world::tools::environment_paint::EnvironmentPreview,
     space: Option<world::WorldSpaceId>,
-    plants: Option<&vegetation::VegetationCatalog>,
-    busy: bool,
+    editable: bool,
 ) {
     let Some(active_tool) = tools.active(EditorWorkspace::World) else {
         ui.weak("No active World tool.");
@@ -68,14 +67,14 @@ pub(super) fn draw_context_inspector(
     }
 
     if active_tool.id == ROAD_TOOL.id {
-        crate::road_authoring::inspector(
+        crate::workspaces::world::tools::road_authoring::inspector(
             ui,
             roads,
             dense_domains,
             history,
             space,
             environment_preview,
-            busy,
+            editable,
         );
         return;
     }
@@ -91,17 +90,15 @@ pub(super) fn draw_context_inspector(
             ui.weak("Paint area is incomplete; wait for the source query.");
         }
 
-        crate::environment_paint::inspector(
+        crate::workspaces::world::tools::environment_paint::inspector(
             ui,
             paint,
             layer_browser,
             environment_preview,
-            project,
             space,
             history,
             dense_domains,
-            plants,
-            busy,
+            editable,
         );
         return;
     }
