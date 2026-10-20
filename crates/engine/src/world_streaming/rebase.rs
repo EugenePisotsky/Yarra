@@ -146,7 +146,7 @@ mod tests {
         };
         let object = app
             .world_mut()
-            .spawn((StreamedPageEntity(key), Transform::from_xyz(310., 0., 8.)))
+            .spawn((StreamedPageEntity, Transform::from_xyz(310., 0., 8.)))
             .id();
         let pending = PageKey {
             domain: PageDomain::Terrain,

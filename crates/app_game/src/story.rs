@@ -97,9 +97,11 @@ impl Story {
         }
 
         std::fs::create_dir_all(work).map_err(|e| text(&e))?;
-        let bundle = work.join("content.sqlite");
 
-        // Publication never replaces a bundle; this one is a private copy for the session.
+        // Publication never replaces a bundle; this one is a private copy for the session, one
+        // per process so two games never rebuild each other's. Saves are shared.
+        let bundle = work.join(format!("content-{}.sqlite", std::process::id()));
+
         match std::fs::remove_file(&bundle) {
             Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(text(&e)),
             _ => {}
@@ -709,6 +711,13 @@ impl Story {
             }
             Err(error) => format!("Load failed: {error}"),
         };
+    }
+}
+
+/// The session's bundle goes with it; its saves stay.
+impl Drop for Story {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.bundle);
     }
 }
 

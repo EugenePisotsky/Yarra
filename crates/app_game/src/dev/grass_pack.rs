@@ -1,8 +1,11 @@
-//! Live grass tuning: while the game runs, edits to the grass pack's types
-//! (`assets/packs/grass/baltic.ron`) replace the published looks of the types with the same keys.
-//! Which types grow where stays as published; `yarra-world-cook import-grass` publishes that.
+//! Live grass tuning: while the game runs, edits to the grass pack's types replace the
+//! published looks of the types with the same keys. Which types grow where stays as published;
+//! `yarra-world-cook import-grass` publishes that.
 use bevy::prelude::*;
 use std::{path::PathBuf, time::SystemTime};
+
+/// The grass pack worlds are cooked with (`world_cook::grass_pack`), under the asset root.
+pub(crate) const PACK: &str = "packs/grass/baltic.ron";
 
 /// Seconds between checks of the file's modification time.
 const CHECK_INTERVAL: f64 = 0.5;

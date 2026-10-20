@@ -266,8 +266,9 @@ pub(super) fn sample(
     } else if now - recording.started >= SETTLE_SECONDS && !busy {
         recording.sampling_since = Some(now);
         recording.timing_start = *stamp;
-        recording.capture.thermal_start =
-            crate::render_audit::logging::power_state().thermal.into();
+        recording.capture.thermal_start = crate::dev::render_audit::logging::power_state()
+            .thermal
+            .into();
         recording.capture.camera = camera.0.to_matrix();
         recording.capture.phase = atmosphere.phase;
         recording.capture.weather = atmosphere.weather;
@@ -336,7 +337,9 @@ pub(super) fn sample(
             );
         }
 
-        recording.capture.thermal_end = crate::render_audit::logging::power_state().thermal.into();
+        recording.capture.thermal_end = crate::dev::render_audit::logging::power_state()
+            .thermal
+            .into();
 
         if recording.capture.thermal_start != recording.capture.thermal_end {
             add_warning(

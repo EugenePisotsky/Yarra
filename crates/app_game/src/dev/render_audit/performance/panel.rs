@@ -6,8 +6,8 @@ use super::{
 };
 
 use crate::{
+    dev::render_audit::{AuditPanel, Control, font, timing},
     frame_pacing::FramePacing,
-    render_audit::{AuditPanel, Control, font, timing},
     runtime_settings::{RuntimeSettings, RuntimeSettingsInit},
 };
 
@@ -104,7 +104,7 @@ pub(super) fn install(app: &mut App) {
                 super::capture::sample.pipe(capture_finished),
             )
                 .chain()
-                .before(crate::render_audit::buttons),
+                .before(crate::dev::render_audit::buttons),
         )
         .add_systems(PostUpdate, (refresh, visibility).chain());
 }
@@ -159,9 +159,9 @@ fn initialize(
         });
 
         for (tab, note, controls) in [
-            (Tab::Features, "Grass Disabled skips its render preparation, compute and draws; source streaming remains. Terrain/object draw switches keep streaming, animation and collision. Sky + haze keeps authored illumination. Cloud Off skips cloud passes; shared material bookkeeping remains. Fog & mist hides ground haze and valley mist; weather fog stays. Ambient particles hides dust motes, seed fluff and falling leaves. Light shafts and sun rays skips the sunbeam passes; the sun's glare stays.", &[Control::Clouds, Control::GrassEnabled, Control::Sky, Control::Bloom, Control::AutoExposure, Control::Fog, Control::Particles, Control::LightShafts, Control::Terrain, Control::Objects, Control::Shadows, Control::ShadowMap, Control::Wind][..]),
-            (Tab::Quality, "Click to cycle. Object LOD size below 1 selects coarser available assets. Lower resolution affects the 3D scene only.", &[Control::Scale, Control::Upscaler, Control::TemporalDebug, Control::Antialiasing, Control::ObjectDetail][..]),
-            (Tab::Advanced, "Diagnostic experiments. Compute only hides grass draws but keeps generation; Schedule only omits generation. Draw frozen locks controls. These settings do not change published content.", &[Control::Grass, Control::Scene, Control::Prepass, Control::Counters, Control::GpuPassTimings, Control::Lock, Control::PageGizmos, Control::TerrainMacro][..]),
+            (Tab::Features, "Grass Disabled skips its render preparation, compute and draws; source streaming remains. Terrain/object draw switches keep streaming, animation and collision. Sky + haze keeps authored illumination. Cloud Off skips cloud passes; shared material bookkeeping remains. Fog & mist hides ground haze and valley mist; weather fog stays. Ambient particles hides dust motes, seed fluff and falling leaves. Light shafts and sun rays skips the sunbeam passes; the sun's glare stays.", Control::FEATURES),
+            (Tab::Quality, "Click to cycle. Object LOD size below 1 selects coarser available assets. Lower resolution affects the 3D scene only.", Control::QUALITY),
+            (Tab::Advanced, "Diagnostic experiments. Compute only hides grass draws but keeps generation; Schedule only omits generation. Draw frozen locks controls. These settings do not change published content.", Control::ADVANCED),
         ] {
             panel.spawn((Page(tab), page_node())).with_children(|page| {
                 page.spawn((Text::new(note), font(12.0)));
@@ -332,7 +332,7 @@ fn refresh(
     let peak = t.peak_ms;
     t.graph.push_back(peak);
     t.peak_ms = 0.0;
-    let power = crate::render_audit::logging::power_state();
+    let power = crate::dev::render_audit::logging::power_state();
 
     for mut text in &mut texts.p3() {
         let value = session.progress(time.elapsed_secs_f64()).map_or_else(

@@ -1,5 +1,5 @@
 use super::*;
-use crate::repro::Route;
+use crate::dev::repro::Route;
 
 fn parse(args: &[&str]) -> Result<LaunchOptions, String> {
     LaunchOptions::parse(args.iter().map(OsString::from))
@@ -9,7 +9,6 @@ fn parse(args: &[&str]) -> Result<LaunchOptions, String> {
 fn defaults_and_paths_are_explicit() {
     let options = parse(&[]).unwrap();
     assert_eq!(options.fps, 60);
-    assert!(!options.debug_world_switch);
     assert!(!options.counters);
     assert_eq!(options.upscaler, upscaling::UpscaleMethod::Auto);
     assert!(options.profile.is_none());
@@ -64,7 +63,6 @@ fn profile_and_repro_ownership_is_validated() {
             "--render-snapshot",
             "a.png",
         ],
-        vec!["--streaming-smoke", "--profile-seconds", "10"],
         vec![
             "--render-repro",
             "grass-close",
@@ -108,12 +106,10 @@ fn supported_automation_commands_keep_their_configuration() {
         "4",
         "--profile-grass",
         "full",
-        "--grass-candidate-reference",
     ])
     .unwrap();
     assert!(options.profile.is_some());
     assert_eq!(options.repro.unwrap().route, Route::GrassSoak);
-    assert!(options.candidate_reference);
     assert!(options.audit_log);
 
     for route in Route::ALL {
@@ -159,7 +155,6 @@ fn diagnostic_composition_is_explicit_and_rejects_incompatible_controls() {
         vec!["--diagnostics", "off", "--render-audit"],
         vec!["--diagnostics", "off", "--grass-counters"],
         vec!["--diagnostics", "off", "--metalfx-timing-log"],
-        vec!["--diagnostics", "off", "--trace-camera-input"],
         vec!["--diagnostics", "off", "--timing-log"],
         vec!["--diagnostics", "panel", "--gpu-timing-detail"],
         vec!["--diagnostics", "panel", "--gpu-timing-off"],
@@ -219,9 +214,13 @@ fn time_passes_in_play_and_holds_in_measurements() {
     assert!(play.day_clock);
     assert_eq!(play.time, None);
     assert!(!parse(&["--render-repro", "grass-close"]).unwrap().day_clock);
-    assert!(!parse(&["--profile-seconds", "10"]).unwrap().day_clock);
+
+    // A timed profile measures the game as played; captures hold the time.
+    assert!(parse(&["--profile-seconds", "10"]).unwrap().day_clock);
+    let walk = ["--profile-seconds", "10", "--render-repro", "grass-close"];
+    assert!(parse(&walk).unwrap().day_clock);
     assert!(
-        parse(&["--profile-seconds", "10", "--day-clock", "on"])
+        !parse(&["--profile-seconds", "10", "--day-clock", "off"])
             .unwrap()
             .day_clock
     );
@@ -240,7 +239,10 @@ fn time_passes_in_play_and_holds_in_measurements() {
 
 #[test]
 fn one_mode_holds_the_camera_and_ends_the_run() {
-    let mode = |args: &[&str]| parse(args).unwrap().mode;
+    let mode = |args: &[&str]| {
+        let args = Args::collect(args.iter().map(OsString::from)).unwrap();
+        RunMode::of(&args).unwrap()
+    };
     assert_eq!(mode(&[]), RunMode::Play);
     assert_eq!(mode(&["--render-repro", "grass-close"]), RunMode::Repro);
     assert_eq!(mode(&["--profile-seconds", "10"]), RunMode::Profile);
@@ -259,14 +261,13 @@ fn one_mode_holds_the_camera_and_ends_the_run() {
         "view.ron",
     ];
     assert_eq!(mode(&look), RunMode::LookCapture);
-    assert_eq!(mode(&["--streaming-smoke"]), RunMode::Smoke);
     let capture =
         std::env::temp_dir().join(format!("yarra-launch-{}.gputrace", std::process::id()));
     let capture = capture.to_str().unwrap();
 
     if cfg!(target_vendor = "apple") {
         let options = parse(&["--metal-capture", capture]).unwrap();
-        assert_eq!(options.mode, RunMode::Play);
+        assert_eq!(mode(&["--metal-capture", capture]), RunMode::Play);
 
         // A capture is a measurement: authored weather, held time.
         assert_eq!(options.weather, engine::WeatherStart::Authored);
@@ -276,16 +277,12 @@ fn one_mode_holds_the_camera_and_ends_the_run() {
         [base, extra].concat()
     }
     for args in [
-        with(&look, &["--streaming-smoke"]),
         with(&look, &["--metal-capture", capture]),
         with(&look, &["--profile-seconds", "10"]),
         with(&look, &["--render-repro", "grass-close"]),
         with(&lab, &["--metal-capture", capture]),
         with(&lab, &["--profile-diagnostic", "--metal-capture", capture]),
         with(&lab, &["--render-repro", "grass-close"]),
-        with(&lab, &["--streaming-smoke"]),
-        vec!["--streaming-smoke", "--render-repro", "grass-close"],
-        vec!["--streaming-smoke", "--metal-capture", capture],
     ] {
         assert!(parse(&args).is_err(), "{args:?}");
     }
@@ -304,7 +301,6 @@ fn every_option_needs_what_it_configures() {
         vec!["--profile-objects", "off"],
         vec!["--profile-auto-exposure", "off"],
         vec!["--diagnostics", "panel", "--timing-log"],
-        vec!["--diagnostics", "off", "--trace-camera-input"],
     ] {
         assert!(parse(&args).is_err(), "{args:?}");
     }
@@ -417,14 +413,11 @@ fn presentation_options_and_profile_scale() {
         .profile
         .unwrap();
     assert_eq!(scaled.resolution_scale(), 0.75);
-    let default = profile(&["--profile-size", "game"])
-        .unwrap()
-        .profile
-        .unwrap();
+    let default = profile(&[]).unwrap().profile.unwrap();
     assert_eq!(default.resolution_scale(), 0.5);
 
     // A fixed pixel size has no scale to honour.
-    assert!(profile(&["--resolution-scale", "0.75"]).is_err());
+    assert!(profile(&["--profile-size", "2560x1440", "--resolution-scale", "0.75"]).is_err());
     let switches = profile(&[
         "--profile-objects",
         "off",
@@ -449,16 +442,20 @@ fn presentation_options_and_profile_scale() {
 }
 
 #[test]
-fn help_and_the_performance_guide_list_every_option() {
+fn help_lists_every_group() {
     assert!(LaunchOptions::help().contains("\nScripted routes:\n  --render-repro NAME\n"));
+}
+
+#[test]
+fn the_workflows_guide_lists_every_option() {
     let table = flags::markdown_table();
     let guide = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../docs/PERFORMANCE.md"
+        "/../../docs/WORKFLOWS.md"
     ))
     .unwrap();
     assert!(
         guide.contains(&table),
-        "docs/PERFORMANCE.md's launch table is out of date; replace it with:\n\n{table}"
+        "docs/WORKFLOWS.md's launch table is out of date; replace it with:\n\n{table}"
     );
 }

@@ -1,6 +1,5 @@
 //! Measurements keep their source-frame identity across the render thread and async readback.
 //! System wrappers preserve access, conditions, ordering and deferred commands (Bevy 0.20).
-#[path = "timing/gpu.rs"]
 mod gpu;
 
 use bevy::{

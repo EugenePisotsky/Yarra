@@ -1,5 +1,5 @@
 //! The launch option registry: spelling, value syntax, help group and requirement of every
-//! flag in one table, which also generates `--help` and the launch table in docs/PERFORMANCE.md.
+//! flag in one table, which also generates `--help` and the launch table in docs/WORKFLOWS.md.
 use super::DiagnosticsMode;
 use std::{collections::BTreeMap, ffi::OsString, fmt::Display, ops::RangeInclusive, path::PathBuf};
 
@@ -13,13 +13,11 @@ pub(crate) enum Group {
     Profile,
     Look,
     LodLab,
-    GrassReference,
     Reference,
-    Input,
 }
 
 impl Group {
-    const ALL: [Self; 11] = [
+    const ALL: [Self; 9] = [
         Self::Help,
         Self::Scene,
         Self::Diagnostics,
@@ -28,9 +26,7 @@ impl Group {
         Self::Profile,
         Self::Look,
         Self::LodLab,
-        Self::GrassReference,
         Self::Reference,
-        Self::Input,
     ];
 
     fn title(self) -> &'static str {
@@ -43,9 +39,7 @@ impl Group {
             Self::Profile => "Timed profile",
             Self::Look => "Look captures",
             Self::LodLab => "LOD lab",
-            Self::GrassReference => "Grass references",
-            Self::Reference => "Output and pacing references",
-            Self::Input => "Input and demo controls",
+            Self::Reference => "Output and pacing fallbacks",
         }
     }
 }
@@ -100,10 +94,7 @@ const FULL: Needs = Needs::Diagnostics(DiagnosticsMode::Full);
 const LAB: Needs = Needs::Flag("--lod-lab");
 const LOOK: Needs = Needs::Flag("--look-capture");
 
-use Group::{
-    Captures, Diagnostics, GrassReference, Help, Input, LodLab, Look, Profile, Reference, Repro,
-    Scene,
-};
+use Group::{Captures, Diagnostics, Help, LodLab, Look, Profile, Reference, Repro, Scene};
 
 const FLAGS: &[Flag] = &[
     flag("--help", "", Help, "Show launch options without starting the renderer"),
@@ -137,7 +128,7 @@ const FLAGS: &[Flag] = &[
         "--day-clock",
         "on|off",
         Scene,
-        "Let the time of day pass; profiles, repros and captures default to off",
+        "Let the time of day pass; untimed repros and captures default to off",
     ),
     flag(
         "--weather",
@@ -222,7 +213,7 @@ const FLAGS: &[Flag] = &[
         "--render-repro",
         "NAME",
         Repro,
-        "Repeatable camera route (names in docs/PERFORMANCE.md)",
+        "Repeatable camera route (names in docs/WORKFLOWS.md)",
     ),
     flag(
         "--render-frames",
@@ -269,12 +260,6 @@ const FLAGS: &[Flag] = &[
         "One native Apple GPU capture",
     ),
     flag(
-        "--streaming-smoke",
-        "",
-        Captures,
-        "Run the demo-world traversal/residency regression and exit",
-    ),
-    flag(
         "--profile-seconds",
         "2..3600",
         Profile,
@@ -291,21 +276,21 @@ const FLAGS: &[Flag] = &[
         "--profile-size",
         "game|WIDTHxHEIGHT",
         Profile,
-        "Internal pixels (default 2560x1440)",
+        "Internal pixels (default game: the window at the render scale)",
     )
     .needs(Needs::Profile),
     flag(
         "--profile-surface",
         "WIDTHxHEIGHT",
         Profile,
-        "Physical window pixels",
+        "Physical pixels of a windowed profile",
     )
     .needs(Needs::Profile),
     flag(
         "--profile-window",
         "fullscreen|windowed",
         Profile,
-        "Window mode (default windowed)",
+        "Window mode (default fullscreen, windowed with --profile-surface)",
     )
     .needs(Needs::Profile),
     flag(
@@ -465,18 +450,6 @@ const FLAGS: &[Flag] = &[
     )
     .needs(LAB),
     flag(
-        "--grass-candidate-reference",
-        "",
-        GrassReference,
-        "Disable the source acceptance cache",
-    ),
-    flag(
-        "--msaa-store-reference",
-        "",
-        Reference,
-        "Preserve multisample color for comparison",
-    ),
-    flag(
         "--temporal-standard-output",
         "",
         Reference,
@@ -487,19 +460,6 @@ const FLAGS: &[Flag] = &[
         "",
         Reference,
         "Compare timer pacing with native display pacing",
-    ),
-    flag(
-        "--trace-camera-input",
-        "",
-        Input,
-        "macOS: bounded native input trace",
-    )
-    .needs(PANEL),
-    flag(
-        "--debug-world-switch",
-        "",
-        Input,
-        "Enable the demo Tab world-space switch",
     ),
 ];
 
@@ -591,6 +551,17 @@ impl Args {
             })
     }
 
+    /// A frame rate: 0 (no cap of its own) or 15..240, 60 when absent. Following a 120 Hz
+    /// display kept the GPU busy whenever it had headroom, and loud.
+    pub(crate) fn fps(&self, key: &str) -> Result<u32, String> {
+        self.value(key)?
+            .unwrap_or("60")
+            .parse::<u32>()
+            .ok()
+            .filter(|&fps| fps == 0 || (15..=240).contains(&fps))
+            .ok_or_else(|| format!("{key} requires 0 or 15..240"))
+    }
+
     /// `on | off`, on when absent.
     pub(crate) fn switch(&self, key: &str) -> Result<bool, String> {
         self.choice(key, "on", &[("on", true), ("off", false)])
@@ -635,7 +606,7 @@ pub(crate) fn help() -> String {
     help
 }
 
-/// The launch table in docs/PERFORMANCE.md, one row per group (a test keeps them equal).
+/// The launch table in docs/WORKFLOWS.md, one row per group (a test keeps them equal).
 #[cfg(test)]
 pub(crate) fn markdown_table() -> String {
     let mut table = String::from("| Purpose | Controls |\n| --- | --- |\n");

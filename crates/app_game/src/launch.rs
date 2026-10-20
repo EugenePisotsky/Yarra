@@ -8,7 +8,6 @@ use std::{ffi::OsString, path::PathBuf};
 #[derive(Resource, Clone, Default)]
 pub(crate) struct LaunchOptions {
     pub help: bool,
-    pub mode: RunMode,
     pub world_db: Option<PathBuf>,
     pub start_view: Option<PathBuf>,
     pub story: Option<PathBuf>,
@@ -30,25 +29,20 @@ pub(crate) struct LaunchOptions {
     pub gpu_off: bool,
     pub metalfx_timing: bool,
     pub counters: bool,
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-    pub input_trace: bool,
-    pub debug_world_switch: bool,
     /// How many LODs coarser than the drawn one instanced trees cast shadows from.
     pub tree_shadow_lod: usize,
     pub timer_pacing: bool,
-    pub candidate_reference: bool,
-    pub msaa_store_reference: bool,
     pub temporal_standard_output: bool,
     pub metal_capture: Option<PathBuf>,
-    pub profile: Option<crate::profile::ProfileSettings>,
+    pub profile: Option<crate::dev::profile::ProfileSettings>,
     pub repro: Option<ReproOptions>,
     /// Render scale at launch (one of `RESOLUTION_SCALES`).
     pub resolution_scale: Option<f32>,
     pub lod_lab: Option<LodLabOptions>,
-    pub look_capture: Option<crate::look_capture::LookCaptureOptions>,
+    pub look_capture: Option<crate::dev::look_capture::LookCaptureOptions>,
 }
 
-/// `--lod-lab`: one tree's representations compared in place ([`crate::lod_lab`]).
+/// `--lod-lab`: one tree's representations compared in place ([`crate::dev::lod_lab`]).
 #[derive(Clone, Debug)]
 pub(crate) struct LodLabOptions {
     /// Catalog key (`pack/asset`) of the tree under study.
@@ -80,8 +74,6 @@ pub(crate) enum RunMode {
     Profile,
     LodLab,
     LookCapture,
-    /// The demo-world streaming regression.
-    Smoke,
 }
 
 /// Startup composition; Full preserves the existing instrumentation by default.
@@ -95,7 +87,7 @@ pub(crate) enum DiagnosticsMode {
 
 #[derive(Clone)]
 pub(crate) struct ReproOptions {
-    pub route: crate::repro::Route,
+    pub route: crate::dev::repro::Route,
     pub prepass: bool,
     pub hide_ui: bool,
     pub frame_clock: bool,
@@ -134,10 +126,6 @@ impl LaunchOptions {
             return Err("GPU timing off conflicts with detailed GPU timing".into());
         }
 
-        if args.has("--trace-camera-input") && !cfg!(target_os = "macos") {
-            return Err("Camera input tracing requires macOS".into());
-        }
-
         let resolution_scale = resolution_scale(&args)?;
         let upscaler = args.choice(
             "--upscaler",
@@ -152,7 +140,7 @@ impl LaunchOptions {
                 ),
             ],
         )?;
-        let profile = crate::profile::ProfileSettings::parse(&args, resolution_scale)?;
+        let profile = crate::dev::profile::ProfileSettings::parse(&args, resolution_scale)?;
 
         if profile.is_some() && args.has("--fps") && !args.has("--profile-native-pacing") {
             return Err(
@@ -169,15 +157,17 @@ impl LaunchOptions {
 
         let repro = ReproOptions::parse(&args)?;
 
-        // Measurements and regressions must not change weather or time unless asked explicitly.
+        // Measurements and regressions keep the authored weather unless asked otherwise. Captures
+        // and untimed routes also hold the time so their images repeat; a timed profile measures
+        // the game as played, with the sun moving.
         let measured = mode != RunMode::Play || args.has("--metal-capture");
+        let held_time = measured && !args.has("--profile-seconds");
         Ok(Self {
             help: false,
-            mode,
             world_db: args.path("--world-db"),
             start_view: args.path("--start-view"),
             story: args.path("--story"),
-            fps: fps(&args)?,
+            fps: args.fps("--fps")?,
             upscaler,
             clouds: args.choice(
                 "--cloud-quality",
@@ -196,7 +186,7 @@ impl LaunchOptions {
             time: time(&args)?,
             day_clock: args.choice(
                 "--day-clock",
-                if measured { "off" } else { "on" },
+                if held_time { "off" } else { "on" },
                 &[("on", true), ("off", false)],
             )?,
             diagnostics,
@@ -208,12 +198,8 @@ impl LaunchOptions {
             gpu_off: args.has("--gpu-timing-off"),
             metalfx_timing: args.has("--metalfx-timing-log"),
             counters: args.has("--grass-counters"),
-            input_trace: args.has("--trace-camera-input"),
-            debug_world_switch: args.has("--debug-world-switch"),
             tree_shadow_lod: args.number("--tree-shadow-lod", 0, 0..=2)?,
             timer_pacing: args.has("--frame-pacing-timer"),
-            candidate_reference: args.has("--grass-candidate-reference"),
-            msaa_store_reference: args.has("--msaa-store-reference"),
             temporal_standard_output: args.has("--temporal-standard-output"),
             metal_capture: metal_capture(&args)?,
             profile,
@@ -237,7 +223,6 @@ impl RunMode {
             ("--render-repro", Self::Repro),
             ("--lod-lab", Self::LodLab),
             ("--look-capture", Self::LookCapture),
-            ("--streaming-smoke", Self::Smoke),
         ]
         .into_iter()
         .filter(|(flag, _)| args.has(flag))
@@ -278,16 +263,6 @@ impl DiagnosticsMode {
             Self::Full => "full",
         }
     }
-}
-
-// Following a 120 Hz display kept the GPU busy whenever it had headroom, and loud.
-fn fps(args: &Args) -> Result<u32, String> {
-    args.value("--fps")?
-        .unwrap_or("60")
-        .parse::<u32>()
-        .ok()
-        .filter(|&fps| fps == 0 || (15..=240).contains(&fps))
-        .ok_or_else(|| "--fps requires 0 or 15..240".into())
 }
 
 fn resolution_scale(args: &Args) -> Result<Option<f32>, String> {
@@ -355,7 +330,9 @@ fn metal_capture(args: &Args) -> Result<Option<PathBuf>, String> {
     Ok(Some(capture))
 }
 
-fn look_capture(args: &Args) -> Result<Option<crate::look_capture::LookCaptureOptions>, String> {
+fn look_capture(
+    args: &Args,
+) -> Result<Option<crate::dev::look_capture::LookCaptureOptions>, String> {
     let Some(dir) = args.path("--look-capture") else {
         return Ok(None);
     };
@@ -364,9 +341,9 @@ fn look_capture(args: &Args) -> Result<Option<crate::look_capture::LookCaptureOp
         return Err("--look-capture shows the --start-view".into());
     }
 
-    Ok(Some(crate::look_capture::LookCaptureOptions {
+    Ok(Some(crate::dev::look_capture::LookCaptureOptions {
         dir,
-        variants: crate::look_capture::parse_variants(
+        variants: crate::dev::look_capture::parse_variants(
             args.value("--look-variants")?
                 .ok_or("--look-capture needs --look-variants")?,
         )?,
@@ -379,7 +356,7 @@ impl ReproOptions {
         let Some(name) = args.value("--render-repro")? else {
             return Ok(None);
         };
-        let route = crate::repro::Route::parse(name)?;
+        let route = crate::dev::repro::Route::parse(name)?;
 
         if route.needs_start_view() && !args.has("--start-view") {
             return Err(format!("{name} requires --start-view"));

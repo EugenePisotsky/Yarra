@@ -4,37 +4,8 @@ use super::{
     timing::{self, Kind},
 };
 
-use crate::render_audit::Control;
+use crate::dev::render_audit::Control;
 use std::time::{SystemTime, UNIX_EPOCH};
-
-const ALL_CONTROLS: &[Control] = &[
-    Control::FrameRate,
-    Control::MovementSpeed,
-    Control::Clouds,
-    Control::Sky,
-    Control::Bloom,
-    Control::AutoExposure,
-    Control::Fog,
-    Control::Particles,
-    Control::LightShafts,
-    Control::Grass,
-    Control::Terrain,
-    Control::Objects,
-    Control::Shadows,
-    Control::ShadowMap,
-    Control::Wind,
-    Control::Scale,
-    Control::Upscaler,
-    Control::TemporalDebug,
-    Control::Antialiasing,
-    Control::ObjectDetail,
-    Control::Prepass,
-    Control::Counters,
-    Control::GpuPassTimings,
-    Control::Scene,
-    Control::PageGizmos,
-    Control::TerrainMacro,
-];
 
 #[derive(Debug, Default)]
 pub(super) struct Stats {
@@ -118,7 +89,7 @@ pub(super) fn comparison(state: &CaptureSession) -> String {
         );
         let mut differences = 0;
 
-        for &control in ALL_CONTROLS {
+        for control in Control::settings() {
             let from = control.label(&a.settings, a.frame_rate);
             let to = control.label(&b.settings, b.frame_rate);
 

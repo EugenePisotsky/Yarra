@@ -183,7 +183,6 @@ fn apply_pending(world: &mut World) {
 }
 
 #[cfg(test)]
-#[path = "frame_pacing/tests.rs"]
 mod tests;
 
 #[cfg(target_os = "macos")]

@@ -176,6 +176,16 @@ fn setup(
     commands.insert_resource(GameRenderAssets { target, upscaled });
 }
 
+/// What the output setup reads of the world camera.
+#[derive(bevy::ecs::query::QueryData)]
+struct WorldCamera {
+    entity: Entity,
+    target: &'static RenderTarget,
+    temporal: Option<&'static upscaling::temporal::TemporalView>,
+    upscale: Option<&'static upscaling::UpscaleView>,
+    status: Option<&'static upscaling::UpscaleStatus>,
+}
+
 // Disjoint camera/UI queries and saved root visibility.
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn apply_settings(
@@ -184,16 +194,7 @@ fn apply_settings(
     assets: Res<GameRenderAssets>,
     mut images: ResMut<Assets<Image>>,
     window: Single<&Window, With<PrimaryWindow>>,
-    camera: Single<
-        (
-            Entity,
-            &RenderTarget,
-            Option<&upscaling::temporal::TemporalView>,
-            Option<&upscaling::UpscaleView>,
-            Option<&upscaling::UpscaleStatus>,
-        ),
-        With<WorldViewCamera>,
-    >,
+    camera: Single<WorldCamera, With<WorldViewCamera>>,
     mut composite: Single<&mut ImageNode, With<GameComposite>>,
     mut ui_roots: Query<
         (Entity, &mut Visibility, Option<&SavedUiVisibility>),
@@ -249,20 +250,20 @@ fn apply_settings(
             reset_epoch: 0,
             debug: s.temporal_debug,
         };
-        if camera.2 != Some(&request) {
+        if camera.temporal != Some(&request) {
             commands
-                .entity(camera.0)
+                .entity(camera.entity)
                 .insert((request, bevy::camera::MainPassResolutionOverride(size)));
             // The world camera has HDR effects only; UI is composited afterward.
             // Retain the original output path for matched performance comparisons.
             if s.direct_temporal_output {
                 commands
-                    .entity(camera.0)
+                    .entity(camera.entity)
                     .insert(upscaling::DirectTonemapOutput);
             }
         }
-    } else if camera.2.is_some() {
-        commands.entity(camera.0).remove::<(
+    } else if camera.temporal.is_some() {
+        commands.entity(camera.entity).remove::<(
             upscaling::temporal::TemporalView,
             upscaling::DirectTonemapOutput,
             bevy::camera::MainPassResolutionOverride,
@@ -272,13 +273,13 @@ fn apply_settings(
         )>();
     }
 
-    let needs_image_target = !matches!(camera.1, RenderTarget::Image(target)
+    let needs_image_target = !matches!(camera.target, RenderTarget::Image(target)
         if &target.handle == world_target && target.scale_factor == target_scale);
 
     if needs_image_target {
         // Preserve logical viewport dimensions (and tree LOD) while varying physical pixels.
         commands
-            .entity(camera.0)
+            .entity(camera.entity)
             .insert(RenderTarget::Image(ImageRenderTarget {
                 handle: world_target.clone(),
                 scale_factor: target_scale,
@@ -300,14 +301,16 @@ fn apply_settings(
     }
 
     if linear {
-        if camera.3.is_some() {
-            commands.entity(camera.0).remove::<upscaling::UpscaleView>();
+        if camera.upscale.is_some() {
+            commands
+                .entity(camera.entity)
+                .remove::<upscaling::UpscaleView>();
         }
 
         let status = linear_status(size, window.physical_size());
 
-        if camera.4 != Some(&status) {
-            commands.entity(camera.0).insert(status);
+        if camera.status != Some(&status) {
+            commands.entity(camera.entity).insert(status);
         }
     }
 
@@ -316,16 +319,18 @@ fn apply_settings(
     }
 
     if !linear {
-        commands.entity(camera.0).insert(upscaling::UpscaleView {
-            input: assets.target.clone(),
-            output: assets.upscaled.clone(),
-            method: s.upscaler,
-            enabled: true,
-        });
+        commands
+            .entity(camera.entity)
+            .insert(upscaling::UpscaleView {
+                input: assets.target.clone(),
+                output: assets.upscaled.clone(),
+                method: s.upscaler,
+                enabled: true,
+            });
     }
 
     commands
-        .entity(camera.0)
+        .entity(camera.entity)
         .insert(if temporal { Msaa::Off } else { s.msaa });
 
     for (entity, mut visibility, saved) in &mut ui_roots {

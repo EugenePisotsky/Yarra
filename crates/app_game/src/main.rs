@@ -10,22 +10,10 @@ use bevy::{
 
 use engine::{MinimalGamePlugin, WorldVegetationPlugin};
 
-#[cfg(target_os = "macos")]
-mod camera_input_trace;
-
+mod dev;
 mod frame_pacing;
 mod game_render;
-mod grass_pack;
 mod launch;
-mod lod_lab;
-mod look_capture;
-
-#[cfg(any(target_os = "macos", target_os = "ios"))]
-mod metal_capture;
-
-mod profile;
-mod render_audit;
-mod repro;
 mod runtime_settings;
 mod story;
 
@@ -53,9 +41,6 @@ fn run() -> Result<(), String> {
     let mut app = App::new();
     app.insert_resource(options.clone())
         .insert_resource(start_view)
-        .insert_resource(engine::WorldDebugControls {
-            world_switch: options.debug_world_switch,
-        })
         .insert_resource(engine::TreeInstancing {
             shadow_lod: options.tree_shadow_lod,
             ..default()
@@ -85,17 +70,11 @@ fn run() -> Result<(), String> {
         .add_plugins(MinimalGamePlugin::new(runtime_database))
         .add_plugins(game_render::GameRenderPlugin);
 
-    if options.mode == launch::RunMode::Smoke {
-        app.add_plugins(engine::StreamingSmokePlugin);
-    }
-
     frame_pacing::install(
         &mut app,
         frame_pacing::FrameRate::new(options.fps),
         options.timer_pacing,
     );
-    #[cfg(target_os = "macos")]
-    camera_input_trace::install(&mut app);
 
     // Variety between sessions; the seed is logged when weather starts.
     let weather_seed = std::time::SystemTime::now()
@@ -107,9 +86,6 @@ fn run() -> Result<(), String> {
         .add_plugins(engine::GameDayClockPlugin);
     app.add_plugins((
         WorldVegetationPlugin,
-        grass_pack::GrassPackPlugin {
-            path: asset_root.join("packs/grass/baltic.ron"),
-        },
         engine::TreeWindPlugin,
         engine::OceanPlugin,
     ))
@@ -125,16 +101,7 @@ fn run() -> Result<(), String> {
     }
 
     app.add_plugins(runtime_settings::RuntimeSettingsPlugin);
-
-    // Explicit precedence: launch defaults, reproduction, then profile settings.
-    profile::install(&mut app);
-    repro::install(&mut app);
-    profile::apply_runtime_settings(&mut app);
-    lod_lab::install(&mut app)?;
-    look_capture::install(&mut app);
-    render_audit::install(&mut app);
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    metal_capture::install(&mut app);
+    dev::install(&mut app, &asset_root)?;
     app.run();
     Ok(())
 }
