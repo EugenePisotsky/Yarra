@@ -1,5 +1,5 @@
-//! GPU-driven trees (docs/REFACTORING.md "GPU-driven trees", step 2): the game draws every
-//! tree and shrub that ends in an impostor without a render entity of its own.
+//! GPU-driven trees (docs/DECISIONS.md): the game and the editor draw every tree and shrub that
+//! ends in an impostor without a render entity of its own.
 //!
 //! Far-object blocks carry each object's whole LOD chain (`world::FarObjectForm`) out to
 //! 2 km. Their batches go into one instance pool ([`pool`]); each form's mesh LODs come from

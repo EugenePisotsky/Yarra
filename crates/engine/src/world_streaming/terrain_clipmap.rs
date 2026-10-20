@@ -1,5 +1,5 @@
-//! Terrain v2 (the terrain rendering roadmap in docs/REFACTORING.md): the ground drawn from GPU
-//! height clipmaps with CDLOD patches (`terrain_render::clipmap`).
+//! Terrain v2 (docs/DECISIONS.md): the ground drawn from GPU height clipmaps with CDLOD patches
+//! (`terrain_render::clipmap`).
 //!
 //! Every level keeps a window of nodes around the camera resident in its clipmap layer. Nodes
 //! are read from the world database in batches, decoded on a pool thread and written into their

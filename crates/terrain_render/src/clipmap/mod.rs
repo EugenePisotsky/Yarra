@@ -1,5 +1,5 @@
-//! Terrain v2: GPU height clipmaps with CDLOD patches. See the terrain rendering roadmap in
-//! docs/REFACTORING.md.
+//! Terrain v2: GPU height clipmaps with CDLOD patches and per-pixel materials (why: the terrain
+//! entries in docs/DECISIONS.md).
 mod gpu;
 mod patch;
 mod select;

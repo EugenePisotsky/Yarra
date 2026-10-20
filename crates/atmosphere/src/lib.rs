@@ -44,7 +44,7 @@ use world::{
 
 /// The world cameras' display transform. Khronos PBR Neutral keeps mid-tones as lit, so sunny
 /// ground keeps its colour and contrast where Tony McMapface's compression read as milky haze
-/// (docs/EXPERIMENTS.md, October 7). Its toe keeps hue (`tonemapping`).
+/// (docs/DECISIONS.md). Its toe keeps hue (`tonemapping`).
 pub const WORLD_TONEMAPPING: Tonemapping = Tonemapping::KhronosPbrNeutral;
 
 /// The cameras' white balance as Bevy's (temperature, tint) offsets of the white point from D65:
