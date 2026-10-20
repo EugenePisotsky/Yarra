@@ -1,6 +1,8 @@
 //! The environment the sky, clouds, air, sea and every lit surface share: one parameter buffer
 //! (`EnvironmentParams`, `shaders/environment/params.wesl`) written from the atmosphere state each
 //! frame, and its maps (cloud shadow, rain shelter, forest shadow, valley mist, shore).
+#[cfg(test)]
+mod layout_tests;
 mod material;
 mod publish;
 mod surface;

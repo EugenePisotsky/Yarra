@@ -11,4 +11,5 @@ bytemuck.workspace = true
 half = "2.7"
 
 [dev-dependencies]
+naga.workspace = true
 shader-check.workspace = true
