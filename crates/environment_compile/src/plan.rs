@@ -37,6 +37,8 @@ pub struct CompilePlan {
     pub(crate) worn: Vec<Vec<(usize, f64)>>,
     /// What light wear tramples each surface (by index) to, if anything.
     pub(crate) trampled: Vec<Option<usize>>,
+    /// Whether roads wear each surface (by index) across their whole width.
+    pub(crate) whole_road: Vec<bool>,
     pub(crate) catalog: VegetationCatalog,
     pub(crate) profile: CompileProfile,
     pub(crate) fingerprint: [u8; 32],
@@ -127,9 +129,11 @@ impl CompilePlan {
         let index = |s: &world::TerrainSurfaceId| definition.surfaces.binary_search(s).unwrap();
         let mut worn = vec![vec![]; definition.surfaces.len()];
         let mut trampled = vec![None; definition.surfaces.len()];
+        let mut whole_road = vec![false; definition.surfaces.len()];
 
         for w in &definition.worn {
             trampled[index(&w.surface)] = w.trampled.as_ref().map(index);
+            whole_road[index(&w.surface)] = w.whole_road;
             let total: f64 = w.ground.iter().map(|g| f64::from(g.weight)).sum();
             worn[index(&w.surface)] = w
                 .ground
@@ -189,8 +193,8 @@ impl CompilePlan {
 
         // v5: grass follows the ground that shows, not faint blend weights.
         // v7: up to twelve surfaces a page, those shared along its edges kept first.
-        // v8: details that grow by how worn the ground is.
-        hash.update(b"yarra.environment.compiler.v8");
+        // v9: surfaces roads wear across their whole width.
+        hash.update(b"yarra.environment.compiler.v9");
         hash.update(&bytes);
         Ok(Self {
             presets: presets.clone(),
@@ -199,6 +203,7 @@ impl CompilePlan {
             grass: bindings,
             worn,
             trampled,
+            whole_road,
             catalog: grass.clone(),
             profile,
             fingerprint: *hash.finalize().as_bytes(),

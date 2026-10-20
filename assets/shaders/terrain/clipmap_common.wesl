@@ -174,11 +174,15 @@ fn softness(packed: u32) -> vec2<f32> {
     return vec2(dot(s.shares, depths), dot(s.shares, select(vec3(0.0), vec3(1.0), depths > vec3(0.0))));
 }
 
-// The soft layer's depth over the firm ground at a cell's fraction `f`, between its corners'
-// softness: soft ground's own depth where it covers most of the ground, thinning to its edge.
-fn cell_soft_layer(c: ControlCell, corners: array<vec2<f32>, 4>, f: vec2<f32>) -> f32 {
-    let s = mix(mix(corners[0], corners[1], f.x), mix(corners[2], corners[3], f.x), f.y);
+// The soft layer's depth over the firm ground for a softness: soft ground's own depth where it
+// covers most of the ground, thinning to its edge.
+fn soft_layer_depth(s: vec2<f32>) -> f32 {
     return s.x / max(s.y, 1e-4) * smoothstep(SOFT_EDGE.y, SOFT_EDGE.x, s.y);
+}
+
+// The soft layer's depth at a cell's fraction `f`, between its corners' softness.
+fn cell_soft_layer(c: ControlCell, corners: array<vec2<f32>, 4>, f: vec2<f32>) -> f32 {
+    return soft_layer_depth(mix(mix(corners[0], corners[1], f.x), mix(corners[2], corners[3], f.x), f.y));
 }
 
 fn cell_softness(c: ControlCell) -> array<vec2<f32>, 4> {
@@ -208,16 +212,18 @@ fn soft_layer(level: u32, leaf: vec2<i32>, fraction: vec2<f32>) -> f32 {
         return 0.0;
     }
     if uniform_cell(c) {
-        let s = softness(c.packed.x);
-        return s.x / max(s.y, 1e-4) * smoothstep(SOFT_EDGE.y, SOFT_EDGE.x, s.y);
+        return soft_layer_depth(softness(c.packed.x));
     }
     return cell_soft_layer(c, cell_softness(c), c.f);
 }
 
-// The soft layer's slope along x and z within a control cell.
-fn soft_layer_slope(c: ControlCell) -> vec2<f32> {
-    if !soft_cell(c) || uniform_cell(c) {
-        return vec2(0.0);
+// The soft layer's depth and its slope along x and z within a control cell.
+fn soft_layer_slope(c: ControlCell) -> vec3<f32> {
+    if !soft_cell(c) {
+        return vec3(0.0);
+    }
+    if uniform_cell(c) {
+        return vec3(soft_layer_depth(softness(c.packed.x)), 0.0, 0.0);
     }
     let corners = cell_softness(c);
     let e = 0.1;
@@ -225,7 +231,7 @@ fn soft_layer_slope(c: ControlCell) -> vec2<f32> {
     let z = vec2(clamp(c.f.y - e, 0.0, 1.0), clamp(c.f.y + e, 0.0, 1.0));
     let dx = (cell_soft_layer(c, corners, vec2(x.y, c.f.y)) - cell_soft_layer(c, corners, vec2(x.x, c.f.y))) / max((x.y - x.x) * c.spacing, 1e-6);
     let dz = (cell_soft_layer(c, corners, vec2(c.f.x, z.y)) - cell_soft_layer(c, corners, vec2(c.f.x, z.x))) / max((z.y - z.x) * c.spacing, 1e-6);
-    return vec2(dx, dz);
+    return vec3(cell_soft_layer(c, corners, c.f), dx, dz);
 }
 
 // How much of the soft layer stands at `distance` metres from the camera.

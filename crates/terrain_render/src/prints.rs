@@ -1,8 +1,11 @@
-//! Ground prints: where feet press soft ground down. The application lists the feet touching the
-//! ground each frame ([`GroundPresses`]); presses are kept in a log, and a compute pass draws them
-//! into two toroidal windows centred on the player, 41 m at 2 cm and 164 m at 8 cm
-//! (`shaders/terrain/press.wesl`). The terrain material sinks, tilts and shades its soft surfaces
-//! by them (`shaders/terrain/prints.wesl`, `world::TerrainSurface::soft_depth`).
+//! Ground prints: where feet push the soft layer (snow) down. The application lists the feet
+//! within its reach each frame ([`GroundPresses`]); presses are kept in a log, and a compute pass
+//! draws them into two toroidal windows centred on the player, 41 m at 2 cm and 164 m at 8 cm
+//! (`shaders/terrain/press.wesl`). Like Rise of the Tomb Raider's deformation map, a window holds
+//! not the snow but how high over the firm ground it may stand: a foot passing through the layer
+//! lowers it to its sole, with walls rising steeply beside it, and the lowest sole near. The
+//! terrain lowers its soft layer to that and raises rims beside it (`shaders/terrain/prints.wesl`,
+//! `world::TerrainSurface::soft_depth`), so shallow snow takes prints and deep snow trenches.
 //!
 //! The windows hold nothing the log does not: ground a window moves onto starts undisturbed and
 //! takes again every logged press that reaches it, so a trail lasts as long as the log holds it,
@@ -28,29 +31,26 @@ const TEXEL_METRES: [f64; LEVELS] = [0.02, 0.08];
 /// Texels per side of a tile: windows move by whole tiles, and the pass updates tiles.
 const TILE: i64 = 8;
 
-/// Presses the log keeps: a walker logs about ten a second, so half an hour of walking.
-const LOG_CAPACITY: usize = 16384;
+/// Presses the log keeps: a walker through deep snow logs about thirty a second, so half an hour
+/// of it.
+const LOG_CAPACITY: usize = 65536;
 
-/// A foot held where it was is logged again only once it presses this much deeper (metres) or
-/// moves this far.
-const LOG_DEEPER: f32 = 0.002;
+/// A foot is logged again only once it moves this far (metres, under half a sole) or reaches this
+/// much lower. A moving foot logs its sweep since its last press, from that heel to its ball,
+/// so its way through deep snow is one smooth trench, not a row of soles.
+const LOG_MOVED: f64 = 0.1;
 
-const LOG_MOVED: f64 = 0.01;
+const LOG_LOWER: f32 = 0.01;
 
 /// Most presses taken in a frame.
 const MAX_PRESSES: usize = 64;
 
-/// Deepest press drawn, metres; the ground's own soft depth limits it further.
-const MAX_DEPTH: f32 = 0.5;
+/// Feet higher than this over the firm ground press nothing: no soft layer is deeper.
+const SOFT_REACH: f32 = 0.6;
 
-/// The sole in the ground: the wall from its outline down to the print's floor (a texel of the
-/// fine window: a narrower wall stair-steps), how far past the outline the snow it pushed aside
-/// rises, and that rim's height as a share of the print's depth.
-const WALL_METRES: f32 = 0.02;
-
-const RIM_REACH_METRES: f32 = 0.05;
-
-const RIM_SHARE: f32 = 0.2;
+/// How far past its outline a sole's trench wall still matters (its shape is
+/// `terrain/print_map.wesl`'s), metres.
+const WALL_REACH_METRES: f32 = 0.2;
 
 /// A foot pressing the ground this frame. Its sole is two circles, at the heel and the ball,
 /// joined along their tangents and drawn in a little at the arch.
@@ -63,9 +63,9 @@ pub struct GroundPress {
     pub ball: Vec2,
     /// Radii of the heel and ball circles, metres.
     pub radii: [f32; 2],
-    /// How far below the undisturbed surface the heel and the ball press, metres; zero or less
-    /// is not touching.
-    pub depth: [f32; 2],
+    /// How high over the firm ground the heel's and the ball's undersides are, metres: the soft
+    /// layer is pushed down to them where it stands higher.
+    pub floor: [f32; 2],
 }
 
 /// What presses the ground this frame, listed by the application.
@@ -90,19 +90,31 @@ struct Logged {
     heel: DVec2,
     ball: DVec2,
     radii: [f32; 2],
-    depth: [f32; 2],
+    floor: [f32; 2],
 }
 
 impl Logged {
-    fn presses_more_than(&self, last: &Self) -> bool {
-        (0..2).any(|i| self.depth[i] > last.depth[i] + LOG_DEEPER)
-            || self.heel.distance(last.heel) > LOG_MOVED
-            || self.ball.distance(last.ball) > LOG_MOVED
+    fn moved_from(&self, last: &Self) -> bool {
+        self.heel.distance(last.heel) > LOG_MOVED || self.ball.distance(last.ball) > LOG_MOVED
+    }
+
+    fn lower_than(&self, last: &Self) -> bool {
+        (0..2).any(|i| self.floor[i] < last.floor[i] - LOG_LOWER)
+    }
+
+    /// The ground a foot swept from `last` to here: from its heel then to its ball now.
+    fn swept_from(&self, last: &Self) -> Self {
+        Self {
+            heel: last.heel,
+            ball: self.ball,
+            radii: [last.radii[0], self.radii[1]],
+            floor: [last.floor[0], self.floor[1]],
+        }
     }
 
     /// The world tiles of a window's level the press reaches, as [x0, z0, x1, z1).
     fn tiles(&self, level: usize) -> [i64; 4] {
-        let reach = f64::from(self.radii[0].max(self.radii[1]) + RIM_REACH_METRES);
+        let reach = f64::from(self.radii[0].max(self.radii[1]) + WALL_REACH_METRES);
         let tile = TEXEL_METRES[level] * TILE as f64;
         let min = self.heel.min(self.ball) - reach;
         let max = self.heel.max(self.ball) + reach;
@@ -114,7 +126,7 @@ impl Logged {
         ]
     }
 
-    /// Heel and ball in render space, their radii and depths.
+    /// Heel and ball in render space, their radii and floors.
     fn stamp(&self, origin: DVec2) -> [f32; 8] {
         let heel = (self.heel - origin).as_vec2();
         let ball = (self.ball - origin).as_vec2();
@@ -125,8 +137,8 @@ impl Logged {
             ball.y,
             self.radii[0],
             self.radii[1],
-            self.depth[0],
-            self.depth[1],
+            self.floor[0],
+            self.floor[1],
         ]
     }
 }
@@ -138,7 +150,7 @@ pub(crate) struct GroundPrints {
     /// Each window's first texel (a world texel index, a whole tile), once there is a focus.
     windows: Option<[[i64; 2]; LEVELS]>,
     log: VecDeque<Logged>,
-    /// Each touching foot's last logged press.
+    /// Each foot in reach's last logged press.
     last: HashMap<u64, Logged>,
     pub(crate) frame: PrintFrame,
 }
@@ -155,7 +167,7 @@ pub(crate) struct PrintFrame {
     pub(crate) tiles: Vec<[u32; 4]>,
     /// Stamps by tile, oldest first.
     pub(crate) indices: Vec<u32>,
-    /// Render-space heel and ball, radii and depths, as [`Logged::stamp`] lays them out.
+    /// Render-space heel and ball, radii and floors, as [`Logged::stamp`] lays them out.
     pub(crate) stamps: Vec<[f32; 8]>,
 }
 
@@ -212,10 +224,10 @@ impl GroundPrints {
                 && press
                     .radii
                     .iter()
-                    .chain(&press.depth)
+                    .chain(&press.floor)
                     .all(|v| v.is_finite());
 
-            if !finite || press.depth.iter().all(|&d| d <= 0.0) {
+            if !finite || press.floor.iter().all(|&f| f >= SOFT_REACH) {
                 continue;
             }
 
@@ -225,21 +237,24 @@ impl GroundPrints {
                 heel: at(press.heel),
                 ball: at(press.ball),
                 radii: press.radii.map(|r| r.clamp(0.005, 0.3)),
-                depth: press.depth.map(|d| d.min(MAX_DEPTH)),
+                floor: press.floor.map(|f| f.clamp(0.0, SOFT_REACH)),
             };
 
-            if self
-                .last
-                .get(&press.source)
-                .is_none_or(|last| logged.presses_more_than(last))
-            {
+            let stamp = match self.last.get(&press.source) {
+                Some(last) if logged.moved_from(last) => Some(logged.swept_from(last)),
+                Some(last) if logged.lower_than(last) => Some(logged),
+                Some(_) => None,
+                None => Some(logged),
+            };
+
+            if let Some(stamp) = stamp {
                 self.last.insert(press.source, logged);
-                self.log.push_back(logged);
+                self.log.push_back(stamp);
                 fresh += 1;
             }
         }
 
-        // A lifted foot's next touch is logged whatever it was before.
+        // A foot out of reach is logged whatever it was before when it comes back.
         self.last.retain(|source, _| touching.contains(source));
 
         while self.log.len() > LOG_CAPACITY {
@@ -436,9 +451,9 @@ impl Work {
     }
 }
 
-/// The sole's shape constants, as the pass reads them: wall, rim reach, rim share.
+/// The sole's reach, as the pass reads it.
 fn shape() -> [f32; 4] {
-    [WALL_METRES, RIM_REACH_METRES, RIM_SHARE, 0.0]
+    [WALL_REACH_METRES, 0.0, 0.0, 0.0]
 }
 
 #[cfg(test)]

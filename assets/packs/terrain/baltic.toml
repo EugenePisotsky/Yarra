@@ -19,6 +19,9 @@
 #   (at most two); a surface without wears to itself.
 # - `trampled`: what light wear (path edges, little-used tracks) tramples it to, a surface key;
 #   without, light wear goes straight to `worn`.
+# - `whole_road`: roads wear it across their whole width, not only where traffic wears the
+#   ground (snow: any road packs it).
+# - `soft_depth`: metres its soft ground (snow) lies over the firm ground; feet sink through it.
 pack_key = "baltic"
 storage = "local-ignored"
 sources = "~/Dev/Assets/terrain/sources"
@@ -313,3 +316,20 @@ blend_height = 0.3
 anti_tiling = true
 # Settled snow lies 40 cm over the ground: feet sink through it to the ground.
 soft_depth = 0.4
+worn = [["packed-snow", 1.0]]
+trampled = "packed-snow"
+whole_road = true
+
+[[surfaces]]
+key = "packed-snow"
+name = "Packed snow"
+source = "fresh_windswept_snow_uhpjdeyn_8k"
+# Snow trodden and driven flat on roads and paths: greyer, smoother, flatter and shallow, so roads
+# through snow run lower than the snow beside them and take shallow prints.
+color_match = [0.66, 0.68, 0.72]
+tile_size = 2.0
+normal_strength = 0.15
+roughness = [0.4, 0.75]
+blend_height = 0.2
+anti_tiling = true
+soft_depth = 0.06

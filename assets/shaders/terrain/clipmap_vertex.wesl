@@ -7,12 +7,14 @@
 // shadow cascades draw the same surface. Detail patches, parts of a leaf on soft ground, place
 // their vertices on the leaves' triangles and morph the same way. Near the camera every vertex
 // stands on the soft layer (snow) over the firm ground the heights hold, morphing to the lift the
-// coarser level gives it, so levels still meet.
+// coarser level gives it, so levels still meet, and lowered where feet pushed it down
+// (terrain/prints.wesl).
 import bevy_pbr::render::{mesh_functions, view_transformations::position_world_to_clip};
 import package::shaders::terrain::clipmap_common::{
     DETAIL_LEVELS, eye, heights, intervals, leaf_spacing, leaf_surface_height, level_normal, levels,
     normals, render_xz, settings, soft_layer, soft_layer_reach, texel, unpack_normal,
 };
+import package::shaders::terrain::prints::{pressed_layer_at, print_view};
 @if(PREPASS_PIPELINE) import bevy_pbr::prepass::io::VertexOutput;
 @else import bevy_pbr::render::forward_io::VertexOutput;
 
@@ -122,6 +124,9 @@ fn vertex(vertex: Vertex) -> VertexOutput {
             if k > 0.0 {
                 lift = mix(lift, level_lift(even, level, level + 1u), k);
             }
+        }
+        if lift > 0.0 {
+            lift = pressed_layer_at(print_view(position.xz), position.xz, lift);
         }
         position.y += lift * reach;
     }

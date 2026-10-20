@@ -264,6 +264,13 @@ impl TerrainRoad {
             .fold(0.0, f64::max)
     }
 
+    /// How fully the road's whole width covers a point `offset` from its centre line, `world`
+    /// (XZ, metres): tracks, centre strip and shoulders alike.
+    pub fn corridor(&self, offset: &RoadOffset, world: [f64; 2]) -> f64 {
+        let z = self.shape.zones(offset, world);
+        z.tracks.max(z.center).max(z.shoulder) * f64::from(self.strength)
+    }
+
     /// How much of the road's ground replaces the natural ground at a point `offset` from its
     /// centre line, `world` (XZ, metres), as the compiler lays it into page weights.
     pub fn ground(&self, offset: &RoadOffset, world: [f64; 2]) -> f64 {
@@ -355,6 +362,16 @@ impl TerrainRoads {
     /// each junction, replacing that share of all ground laid before with its own. Amounts per
     /// layer: roads by index, then junctions after them.
     pub fn layers(&self, origin: [f64; 2], local: [f64; 2]) -> Vec<f64> {
+        self.layers_by(origin, local, TerrainRoad::ground)
+    }
+
+    /// Each road's share at `local` by `share`, then each junction's ground.
+    fn layers_by(
+        &self,
+        origin: [f64; 2],
+        local: [f64; 2],
+        share: impl Fn(&TerrainRoad, &RoadOffset, [f64; 2]) -> f64,
+    ) -> Vec<f64> {
         let world = [origin[0] + local[0], origin[1] + local[1]];
         let mut layers: Vec<_> = (0..self.roads.len())
             .map(|road| {
@@ -368,7 +385,7 @@ impl TerrainRoads {
                     .filter(|j| j.joins(road))
                     .map(|j| j.blend(local, world))
                     .fold(0.0, f64::max);
-                self.roads[road].ground(&hit.offset, world) * (1.0 - joined)
+                share(&self.roads[road], &hit.offset, world) * (1.0 - joined)
             })
             .collect();
         layers.extend(
@@ -421,12 +438,18 @@ impl TerrainRoads {
 
     /// The share of the ground at `local` that roads and junctions lay, of all their kinds.
     pub fn ground(&self, origin: [f64; 2], local: [f64; 2]) -> f64 {
-        1.0 - self
-            .layers(origin, local)
-            .into_iter()
-            .map(|a| 1.0 - a)
-            .product::<f64>()
+        combined(self.layers(origin, local))
     }
+
+    /// How fully roads' whole widths and junctions cover the ground at `local`.
+    pub fn corridor(&self, origin: [f64; 2], local: [f64; 2]) -> f64 {
+        combined(self.layers_by(origin, local, TerrainRoad::corridor))
+    }
+}
+
+/// Overlapping shares combined as independent layers.
+fn combined(layers: Vec<f64>) -> f64 {
+    1.0 - layers.into_iter().map(|a| 1.0 - a).product::<f64>()
 }
 
 /// How fully a junction's worn patch replaces its roads `distance` metres from its centre, at

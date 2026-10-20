@@ -192,7 +192,7 @@ pub struct ClipmapTerrainMaterial {
     #[texture(11, dimension = "2d_array")]
     #[sampler(12)]
     wear: Option<Handle<Image>>,
-    #[texture(13, dimension = "2d_array", sample_type = "float", filterable = false)]
+    #[texture(13, dimension = "2d_array", sample_type = "u_int")]
     prints: Option<Handle<Image>>,
     #[texture(14, sample_type = "u_int")]
     print_windows: Option<Handle<Image>>,

@@ -166,12 +166,17 @@ impl CompilePlan {
                     x as f64 / (resolution - 1) as f64,
                     z as f64 / (resolution - 1) as f64,
                 ];
-                let natural = self.surface_weights(cell, coverage, uv, base);
+                let local = uv.map(|v| v * size);
+                let natural = self.road_packed(
+                    self.surface_weights(cell, coverage, uv, base),
+                    roads,
+                    origin,
+                    local,
+                );
                 let edge = x == 0 || z == 0 || x + 1 == resolution || z + 1 == resolution;
                 let priority = if edge { EDGE_PRIORITY } else { 1.0 };
 
                 if wearing {
-                    let local = uv.map(|v| v * size);
                     let laid = roads.ground(origin, local);
                     let bare =
                         world::bare_share(laid, [origin[0] + local[0], origin[1] + local[1]]);
@@ -253,6 +258,48 @@ impl CompilePlan {
             },
             wear,
         ))
+    }
+
+    /// The natural ground's `weights` with the surfaces roads wear across their whole width
+    /// already worn under their corridors at `local`: the pages hold them so, and the wear field
+    /// (`world::TerrainWear::lay`) wears only where traffic does. They go to what they are
+    /// trampled to, else to their worn ground.
+    fn road_packed(
+        &self,
+        mut weights: Vec<f64>,
+        roads: &crate::roads::TerrainRoads,
+        origin: [f64; 2],
+        local: [f64; 2],
+    ) -> Vec<f64> {
+        if roads.roads.is_empty() || !self.whole_road.iter().any(|&w| w) {
+            return weights;
+        }
+
+        let corridor = roads.corridor(origin, local);
+
+        if corridor <= 0.0 {
+            return weights;
+        }
+
+        for i in 0..weights.len() {
+            if !self.whole_road[i] || weights[i] <= 0.0 {
+                continue;
+            }
+
+            let given = weights[i] * corridor;
+            weights[i] -= given;
+
+            match self.trampled[i] {
+                Some(t) => weights[t] += given,
+                None => {
+                    for &(j, share) in &self.worn[i] {
+                        weights[j] += given * share;
+                    }
+                }
+            }
+        }
+
+        weights
     }
 
     /// The natural ground's `weights` (per surface) worn by `wear`, `bare` of it bare and the
@@ -386,12 +433,17 @@ impl CompilePlan {
                     (x as f64 + 0.5) / resolution as f64,
                     (z as f64 + 0.5) / resolution as f64,
                 ];
-                let natural = self.surface_weights(cell, coverage, uv, base);
+                let local = uv.map(|v| v * size);
+                let natural = self.road_packed(
+                    self.surface_weights(cell, coverage, uv, base),
+                    page_roads,
+                    origin,
+                    local,
+                );
                 let unworn = wear.map(|_| shown(natural.clone()));
                 let surfaces = if page_roads.roads.is_empty() {
                     shown(natural)
                 } else {
-                    let local = uv.map(|v| v * size);
                     let wear = page_roads.ground(origin, local);
                     let bare =
                         world::bare_share(wear, [origin[0] + local[0], origin[1] + local[1]]);

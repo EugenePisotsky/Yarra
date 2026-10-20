@@ -341,6 +341,7 @@ pub(super) fn road_request() -> fixture::Request {
             weight: 1.0,
         }],
         trampled: None,
+        whole_road: false,
     }];
 
     // The hole in the reference ground shows bare base ground.

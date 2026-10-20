@@ -71,6 +71,9 @@ pub struct WornGround {
     pub surface: TerrainSurfaceId,
     pub ground: Vec<SurfaceWeight>,
     pub trampled: Option<TerrainSurfaceId>,
+    /// Roads lay it across their whole width, tracks, centre strip and shoulders alike, not only
+    /// where traffic wears the ground: any road packs snow flat.
+    pub whole_road: bool,
 }
 
 /// Most surfaces one surface wears down to: what near terrain draws per page slot.

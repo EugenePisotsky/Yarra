@@ -1,21 +1,21 @@
 // Ground prints (crates/terrain_render/src/prints.rs): each workgroup updates one 8×8 tile of a
-// window, starting it undisturbed when the window has just moved onto it, then pressing the
-// stamps listed for it in log order. A texel holds the ground's relief in metres: below zero a
-// sole pressed it down, above zero the snow pushed aside rises beside the sole.
+// window, starting it untouched when the window has just moved onto it, then pressing the stamps
+// listed for it (terrain/print_map.wesl): a sole caps the soft layer at its floor under it, its
+// wall rising steeply beyond, and marks its floor as far as it reaches.
+import package::shaders::terrain::print_map::{print_values, wall_rise};
 
 struct Prints {
     // Per window, two texels (prints.rs PrintFrame::windows): the render-space corner of its first
     // texel (f32 bits) and the toroidal texel holding it; metres per texel (f32 bits), texels per
     // side, drawn, and samples per texel side.
     windows: array<vec4<u32>, 4>,
-    // The sole's wall and how far its rim reaches past the outline, metres; the rim's height as a
-    // share of the print's depth.
+    // x: how far past its outline a sole reaches, metres.
     shape: vec4<f32>,
     // x: tiles listed.
     counts: vec4<u32>,
 }
 
-// Heel and ball centres (render xz); their radii and how deep each presses.
+// Heel and ball centres (render xz); their radii and floors over the firm ground.
 struct Stamp { ends: vec4<f32>, sole: vec4<f32>, }
 
 @group(0) @binding(0) var<uniform> prints: Prints;
@@ -24,7 +24,7 @@ struct Stamp { ends: vec4<f32>, sole: vec4<f32>, }
 @group(0) @binding(1) var<storage, read> tiles: array<vec4<u32>>;
 @group(0) @binding(2) var<storage, read> indices: array<u32>;
 @group(0) @binding(3) var<storage, read> stamps: array<Stamp>;
-@group(0) @binding(4) var map: texture_storage_2d_array<r32float, read_write>;
+@group(0) @binding(4) var map: texture_storage_2d_array<r32uint, read_write>;
 
 // prints/gpu.rs DISPATCH_ROW.
 const DISPATCH_ROW: u32 = 256u;
@@ -32,9 +32,8 @@ const DISPATCH_ROW: u32 = 256u;
 const ARCH: f32 = 0.22;
 const PI: f32 = 3.14159265;
 
-// How far a stamp presses the ground at render xz `p` down (x), and how far the snow it pushed
-// aside rises there (y).
-fn stamp_at(s: Stamp, p: vec2<f32>) -> vec2<f32> {
+// The values a stamp gives render xz `p`: its cap there and, within its reach, its floor.
+fn stamp_values(s: Stamp, p: vec2<f32>) -> vec2<f32> {
     let heel = s.ends.xy;
     let along = s.ends.zw - heel;
     let length2 = dot(along, along);
@@ -42,23 +41,11 @@ fn stamp_at(s: Stamp, p: vec2<f32>) -> vec2<f32> {
     let radius = mix(s.sole.x, s.sole.y, t) * (1.0 - ARCH * sin(PI * t));
     // Distance outside the sole's outline; negative inside.
     let edge = length(p - heel - along * t) - radius;
-    let depth = max(mix(s.sole.z, s.sole.w, t), 0.0);
-    let down = depth * smoothstep(0.0, prints.shape.x, -edge);
-    let u = clamp(edge / prints.shape.y, 0.0, 1.0);
-    let up = select(0.0, depth * prints.shape.z * 4.0 * u * (1.0 - u), edge > 0.0);
-    return vec2(down, up);
-}
-
-// Deeper presses win and nothing raises pressed ground again; pushed-aside snow rises only
-// where no sole pressed the ground down.
-fn combine(relief: f32, pressed: vec2<f32>) -> f32 {
-    if pressed.x > 0.0005 {
-        return min(relief, -pressed.x);
+    if edge >= prints.shape.x {
+        return vec2(0.0);
     }
-    if relief > -0.002 {
-        return max(relief, pressed.y);
-    }
-    return relief;
+    let floor = max(mix(s.sole.z, s.sole.w, t), 0.0);
+    return print_values(vec2(floor + wall_rise(max(edge, 0.0)), floor));
 }
 
 @compute @workgroup_size(8, 8, 1)
@@ -77,22 +64,22 @@ fn press(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_id) 
     let samples = max(b.w, 1u);
     let texel = tile.xy * 8u + local.xy;
     let at = vec2<i32>((texel + a.zw) % b.y);
-    var relief = 0.0;
+    var held = vec2(0.0);
     if (tile.w & 2u) == 0u {
-        relief = textureLoad(map, at, level).r;
+        held = unpack2x16float(textureLoad(map, at, level).r);
     }
     // A coarse texel takes a stamp's mean over the fine texels it covers.
     let weight = 1.0 / f32(samples * samples);
     for (var i = 0u; i < count; i += 1u) {
         let s = stamps[indices[tile.z + i]];
-        var pressed = vec2(0.0);
+        var values = vec2(0.0);
         for (var y = 0u; y < samples; y += 1u) {
             for (var x = 0u; x < samples; x += 1u) {
                 let offset = (vec2(f32(x), f32(y)) + 0.5) / f32(samples);
-                pressed += stamp_at(s, corner + (vec2<f32>(texel) + offset) * texel_metres);
+                values += stamp_values(s, corner + (vec2<f32>(texel) + offset) * texel_metres);
             }
         }
-        relief = combine(relief, pressed * weight);
+        held = max(held, values * weight);
     }
-    textureStore(map, at, level, vec4(relief, 0.0, 0.0, 0.0));
+    textureStore(map, at, level, vec4(pack2x16float(held), 0u, 0u, 0u));
 }

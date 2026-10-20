@@ -28,6 +28,9 @@ struct Surface {
     /// What light wear tramples it to: a surface key.
     #[serde(default)]
     trampled: Option<String>,
+    /// Whether roads lay its worn ground across their whole width.
+    #[serde(default)]
+    whole_road: bool,
     /// How deep its soft ground lies over the firm ground, in metres; most ground is firm.
     #[serde(default)]
     soft_depth: f32,
@@ -97,6 +100,7 @@ impl TerrainPack {
             .filter(|s| !s.worn.is_empty() || s.trampled.is_some())
             .map(|s| environment::WornGround {
                 surface: Self::surface_id(pack, &s.key),
+                whole_road: s.whole_road,
                 trampled: s.trampled.as_ref().map(|key| {
                     assert!(
                         manifest.surfaces.iter().any(|o| &o.key == key),

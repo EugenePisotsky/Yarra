@@ -37,6 +37,7 @@ pub fn fixture() -> (
                 weight: 1.0,
             }],
             trampled: None,
+            whole_road: false,
         }],
         layers: library.presets[..3]
             .iter()

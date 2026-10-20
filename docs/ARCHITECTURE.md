@@ -125,8 +125,9 @@ SQLite. The renderers (Bevy) have no SQLite: `engine` is the only library joinin
 - Owns deterministic cell compilation: `CompilePlan::new`, then `compile_cells` gives
   `CompiledCell` (ground palette and weight pages, vegetation fields, generated objects, roads,
   wear field, input fingerprint). Budgets are explicit in `CompileProfile`.
-- Owns how roads wear and grade the ground (`TerrainRoads`, `RoadShape`, `junction_blend`) and
-  scatter thinning.
+- Owns how roads wear and grade the ground (`TerrainRoads`, `RoadShape`, `junction_blend`),
+  ground they wear across their whole width (`WornGround::whole_road`, snow packed under a road's
+  corridor in the page's own weights) and scatter thinning.
 - Invariants: no Bevy, SQLite, filesystem or GPU work. A batch is all or error and returns cells
   in canonical order. Road relief grades the original source heights, never earlier output.
   Scatter roots do not move when paint or density change.
@@ -248,10 +249,12 @@ SQLite. The renderers (Bevy) have no SQLite: `engine` is the only library joinin
   `ClipmapTextures`, `ClipmapUploads`, CDLOD selection (`ClipmapLayout`, `LodRanges`, `select`,
   `MORPH_SHARE` = 0.3), ground surfaces (`TerrainSurfaceLayer`), and `ClipmapPatch` (one cell
   outside streaming, for the editor's preset preview).
-- Owns ground prints (`prints`): the application lists feet touching the ground each frame
-  (`GroundPresses`, in `GroundPressSystems`); presses go into a log of 16,384 and a compute pass
-  draws them into two toroidal windows centred on the player (2048² at 2 cm and at 8 cm), which
-  the material reads on surfaces with a `soft_depth`.
+- Owns ground prints (`prints`): the application lists feet within the snow's reach each frame
+  (`GroundPresses`, in `GroundPressSystems`, heights of their soles over the firm ground);
+  presses go into a log of 65,536 and a compute pass draws them into two toroidal windows centred
+  on the player (2048² at 2 cm and at 8 cm, `terrain/print_map.wesl`): how high the soft layer
+  may stand and the lowest sole near. The vertices lower the layer to it and raise rims beside
+  trenches; the material slopes and packs it.
 - Invariants: selection uses distance to a node's box, so turning the camera changes only
   culling. A node splits only when all four children are resident and vertices morph to the
   coarser grid, so levels meet without cracks. Soft leaves near the camera split into detail
@@ -374,7 +377,7 @@ origins, and grass, wind and details are anchored to canonical coordinates
 All shaders are WESL in `assets/shaders/`, a folder per subsystem:
 
 - `terrain/`: clipmap material and vertex shader, height blend, road wear, anti-tiling, ground
-  prints (`prints` read by the material, `press` the compute pass).
+  prints (`print_map` their texels, `prints` read by the terrain, `press` the compute pass).
 - `vegetation/`: grass `schedule`, `placement/`, `candidate_cache`, `blade`, `draw/`,
   `trample`, sharing `types`, `random` and `lod`.
 - `tree/`: tree material, bark, wind and its prepass, impostors, the LOD compute pass.
@@ -422,7 +425,7 @@ resets. Change a format, bump its constant and rebuild (Reteya from its inputs).
 
 | Format | Constant, file | Value |
 | --- | --- | --- |
-| Project database, blobs included | `PROJECT_SCHEMA_VERSION`, `world/src/lib.rs` | 34 |
+| Project database, blobs included | `PROJECT_SCHEMA_VERSION`, `world/src/lib.rs` | 35 |
 | Runtime database, blobs included | `RUNTIME_SCHEMA_VERSION`, `world/src/lib.rs` | 35 |
 | Gameplay project (`project.ron`) | `SOURCE_FORMAT_VERSION`, `game_content/src/project.rs` | 11 |
 | Content bundle | `BUNDLE_SCHEMA_VERSION`, `game_content/src/bundle.rs` | 14 |

@@ -1,6 +1,6 @@
-//! The windows' texture (R32Float, one layer per window, the ground's relief in metres: negative
-//! pressed down, positive pushed up), the compute pass pressing each frame's tiles into it, and a
-//! small texture telling the terrain material where the windows lie. Both textures are GPU-only
+//! The windows' texture (R32Uint, one layer per window, two half floats a texel:
+//! `terrain/print_map.wesl`), the compute pass pressing each frame's tiles into it, and a small
+//! texture telling the terrain material where the windows lie. Both textures are GPU-only
 //! images under fixed handles, so every terrain material binds them from the start.
 use super::{LEVELS, PrintFrame, SIDE};
 
@@ -41,7 +41,7 @@ pub(super) fn init_images(mut images: ResMut<Assets<Image>>) {
             depth_or_array_layers: LEVELS as u32,
         },
         TextureDimension::D2,
-        TextureFormat::R32Float,
+        TextureFormat::R32Uint,
         RenderAssetUsages::RENDER_WORLD,
     );
     map.texture_descriptor.usage |= TextureUsages::STORAGE_BINDING;
@@ -85,7 +85,7 @@ pub(super) fn install(app: &mut App) {
 #[repr(C)]
 struct PressGpu {
     windows: [[u32; 8]; LEVELS],
-    /// The sole's wall, rim reach and rim share.
+    /// The sole's reach.
     shape: [f32; 4],
     /// Tiles listed.
     counts: [u32; 4],
@@ -122,7 +122,7 @@ fn init_pass(
                 storage_buffer_read_only_sized(false, None),
                 storage_buffer_read_only_sized(false, None),
                 storage_buffer_read_only_sized(false, None),
-                texture_storage_2d_array(TextureFormat::R32Float, StorageTextureAccess::ReadWrite),
+                texture_storage_2d_array(TextureFormat::R32Uint, StorageTextureAccess::ReadWrite),
             ),
         ),
     );

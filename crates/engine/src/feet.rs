@@ -1,7 +1,7 @@
-//! Characters' feet pressing soft ground (`terrain_render::GroundPresses`). Each model names its
-//! foot joints and sole in the character catalog; every frame each foot lists the sole under it,
-//! each end pressed while it touches the ground, so a planted foot leaves its whole print, a
-//! rolling one its ball and a lifted one nothing.
+//! Characters' feet pushing the soft layer down (`terrain_render::GroundPresses`). Each model
+//! names its foot joints and sole in the character catalog; every frame each foot lists its sole
+//! and how high over the firm ground its heel and ball are. Characters stand on the firm ground,
+//! so a planted foot pushes the snow to it and one swinging low through deep snow ploughs it.
 use crate::{
     WorldCatalog, WorldOrigin, WorldViewpoint, actor::CharacterMotion,
     character_catalog::FeetDefinition,
@@ -10,15 +10,6 @@ use crate::{
 use bevy::{math::DVec2, prelude::*, transform::TransformSystems};
 use std::collections::HashSet;
 use terrain_render::{GroundPress, GroundPressSystems, GroundPresses};
-
-/// How far a foot standing on soft ground sinks into it, metres. Characters walk on the surface
-/// they are grounded on; their prints go this far below the soles.
-const PRESS_DEPTH: f32 = 0.07;
-
-/// How high over the ground a sole still touches it fully, and where it no longer does, metres.
-/// A foot comes down and leaves at a shallow angle: pressing whenever it was within the print's
-/// depth of the ground dragged each print out to twice the sole's length.
-const CONTACT_METRES: [f32; 2] = [0.015, 0.035];
 
 /// A character's feet: its catalog sole and each foot's ankle and toe joints, once its scene has
 /// spawned them.
@@ -64,15 +55,12 @@ impl CharacterFeet {
     fn press(&self, ground: f32, ankle: Vec3, toe: Vec3) -> Press {
         let s = &self.sole;
         let forward = (toe.xz() - ankle.xz()).normalize_or(Vec2::Y);
-        let depth = |joint: Vec3, height: f32| {
-            let above = joint.y - height - ground;
-            PRESS_DEPTH * (1.0 - smoothstep(CONTACT_METRES[0], CONTACT_METRES[1], above))
-        };
+        let floor = |joint: Vec3, height: f32| (joint.y - height - ground).max(0.0);
         Press {
             heel: ankle.xz() - forward * (s.heel_behind_ankle_m - s.heel_radius_m),
             ball: toe.xz() + forward * (s.toe_ahead_m - s.ball_radius_m),
             radii: [s.heel_radius_m, s.ball_radius_m],
-            depth: [depth(ankle, s.ankle_height_m), depth(toe, s.toe_height_m)],
+            floor: [floor(ankle, s.ankle_height_m), floor(toe, s.toe_height_m)],
         }
     }
 }
@@ -83,7 +71,7 @@ struct Press {
     heel: Vec2,
     ball: Vec2,
     radii: [f32; 2],
-    depth: [f32; 2],
+    floor: [f32; 2],
 }
 
 pub(crate) fn plugin(app: &mut App) {
@@ -169,15 +157,10 @@ fn list_ground_presses(
                 heel: press.heel,
                 ball: press.ball,
                 radii: press.radii,
-                depth: press.depth,
+                floor: press.floor,
             });
         }
     }
-}
-
-fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
-    let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
 }
 
 #[cfg(test)]
@@ -197,13 +180,13 @@ mod tests {
     }
 
     #[test]
-    fn a_flat_foot_presses_its_whole_sole_to_the_press_depth() {
+    fn a_flat_foot_holds_its_whole_sole_on_the_ground() {
         let press = feet().press(
             10.0,
             Vec3::new(0.0, 10.068, 0.0),
             Vec3::new(0.0, 10.012, 0.13),
         );
-        assert!(press.depth.iter().all(|d| (d - PRESS_DEPTH).abs() < 1e-5));
+        assert!(press.floor.iter().all(|f| f.abs() < 1e-5));
 
         // The sole reaches from 6.5 cm behind the ankle to 6 cm past the toe joint.
         assert!((press.heel.y - press.radii[0] - -0.065).abs() < 1e-5);
@@ -212,16 +195,13 @@ mod tests {
     }
 
     #[test]
-    fn a_rising_heel_presses_less_and_a_lifted_foot_not_at_all() {
+    fn a_rolling_foot_lifts_its_heel_and_a_swinging_one_rides_over_the_ground() {
         let f = feet();
         let rolling = f.press(0.0, Vec3::new(0.0, 0.12, 0.0), Vec3::new(0.0, 0.01, 0.12));
-        assert!(rolling.depth[0] < 0.02 && (rolling.depth[1] - PRESS_DEPTH).abs() < 1e-5);
-        let lifted = f.press(0.0, Vec3::new(0.0, 0.22, 0.0), Vec3::new(0.0, 0.15, 0.12));
-        assert!(lifted.depth.iter().all(|&d| d <= 0.0));
-
-        // A sole a few centimetres up on its way down presses nothing yet.
-        let landing = f.press(0.0, Vec3::new(0.0, 0.11, 0.0), Vec3::new(0.0, 0.06, 0.12));
-        assert!(landing.depth.iter().all(|&d| d <= 0.0));
+        assert!((rolling.floor[0] - 0.052).abs() < 1e-5 && rolling.floor[1] == 0.0);
+        let swinging = f.press(0.0, Vec3::new(0.0, 0.22, 0.0), Vec3::new(0.0, 0.15, 0.12));
+        assert!((swinging.floor[0] - 0.152).abs() < 1e-5);
+        assert!((swinging.floor[1] - 0.138).abs() < 1e-5);
     }
 
     #[test]

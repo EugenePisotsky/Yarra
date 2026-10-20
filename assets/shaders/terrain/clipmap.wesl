@@ -9,7 +9,7 @@
 import package::shaders::lighting::pbr_lighting::apply_pbr_lighting;
 import package::shaders::terrain::clipmap_common::{ControlCell, Sample, clipmap_normal, control_cell, intervals, leaf_height, leaf_spacing, levels, node_of, origin_samples, resident_level, settings, soft_layer_reach, soft_layer_slope, unpack, wear_slot};
 import package::shaders::terrain::wear::{WEAR_TEXEL, bare_share, rut_at, rut_parallax, wear_at, wear_patch, wheel_grooves};
-import package::shaders::terrain::prints::{print_parallax, print_relief, print_relief_slope, print_view};
+import package::shaders::terrain::prints::{pressed_layer, pressed_layer_at, print_caps, print_view};
 import package::shaders::weather::ground_wetness::apply_rain_puddles;
 import package::shaders::lighting::surface::{ground_celestial_irradiance, surface_weather};
 import package::shaders::terrain::stochastic::{quarter_turn, stochastic_vertex_turn, stochastic_vertex_offset};
@@ -60,9 +60,9 @@ const PUDDLE_DISTANCE: f32 = 80.0;
 // its second half) and at most this deep; how deep a print packs the ground fully, and what packing
 // does to it.
 const PRINT_DISTANCE: f32 = 100.0;
-const PRINT_SINK_RANGE: vec2<f32> = vec2(20.0, 35.0);
-const PRINT_DEEPEST: f32 = 0.2;
 const PRINT_PACKED: f32 = 0.06;
+// The prints' slope is taken over one texel of the fine window.
+const PRINT_SLOPE_STEP: f32 = 0.02;
 // Steepest a print's wall tilts the ground (tan 56°): snow scatters light into its own shade, so
 // walls drawn as steep as the relief went near black facing away from the sun.
 const PRINT_STEEPEST: f32 = 1.5;
@@ -91,29 +91,6 @@ fn share(s: Sample, layer: u32) -> f32 {
 
 struct Top { layers: vec3<u32>, weights: vec3<f32>, }
 
-fn soft_depths(top: Top) -> vec3<f32> {
-    return vec3(surfaces[top.layers.x].soft.x, surfaces[top.layers.y].soft.x, surfaces[top.layers.z].soft.x);
-}
-
-// How deep the soft layer of the ground's three heaviest surfaces lies, by their shares.
-fn soft_depth(top: Top) -> f32 {
-    return dot(top.weights, soft_depths(top)) / max(dot(top.weights, vec3(1.0)), 0.000001);
-}
-
-// How deep the soft layer of the surface that shows at world XZ `p` lies: the three blended by their
-// heights, one plain sample each, as the ground draws them. By shares alone, grass growing over
-// a little snow took whole prints.
-fn shown_soft_depth(top: Top, p: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>) -> f32 {
-    var heights = vec3(0.0);
-    for (var i = 0; i < 3; i += 1) {
-        if top.weights[i] > 0.0 {
-            let layer = top.layers[i];
-            let size = surfaces[layer].texture.x;
-            heights[i] = textureSampleGrad(base_color, repeat_sampler, p / size, i32(layer), dx / size, dy / size).a;
-        }
-    }
-    return dot(height_blend(top.weights, heights), soft_depths(top));
-}
 
 // Ranks a candidate into the three heaviest; a layer already ranked is not ranked again.
 fn rank(top: Top, layer: u32, weight: f32) -> Top {
@@ -158,9 +135,9 @@ fn level_surfaces(cell: ControlCell) -> Top {
     return top;
 }
 
-// The ground's three heaviest surfaces, and the soft layer's slope where they come from the leaf
-// level's control samples (zero elsewhere).
-struct Ground { top: Top, soft_slope: vec2<f32>, }
+// The ground's three heaviest surfaces, and the soft layer's depth and slope where they come
+// from the leaf level's control samples (zero elsewhere).
+struct Ground { top: Top, soft: vec3<f32>, }
 
 // The ground for a footprint of 2^lod control samples: a level's samples, or over the last part
 // of its octave the next coarser level's at a share of pixels that grows across it (the
@@ -175,8 +152,8 @@ fn ground_surfaces(leaf: vec2<i32>, fraction: vec2<f32>, lod: f32, pixel: vec2<f
     let noise = fract(52.9829189 * fract(dot(pixel + 5.588238 * frame, vec2(0.06711056, 0.00583715))));
     let level = select(fine, coarse, noise < t);
     let cell = control_cell(level, leaf, fraction);
-    let slope = select(vec2(0.0), soft_layer_slope(cell), level == 0u);
-    return Ground(level_surfaces(cell), slope);
+    let soft = select(vec3(0.0), soft_layer_slope(cell), level == 0u);
+    return Ground(level_surfaces(cell), soft);
 }
 
 fn triangular(uv: vec2<f32>) -> vec2<f32> { return vec2(uv.x + uv.y * 0.5773502692, uv.y * 1.1547005384); }
@@ -392,43 +369,37 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         hollow = max(hollow, terrain_hollow(leaf, fraction));
     }
 
-    // The soft layer stands over the firm ground (terrain/clipmap_vertex.wesl): its banks, where
-    // soft ground gives way to firm, slope the ground, from the leaf level's control samples the
-    // surfaces were read from.
-    let slope = ground.soft_slope * soft_layer_reach(distance_to_camera);
-    ground_normal = normalize(ground_normal - vec3(slope.x, 0.0, slope.y));
-
-    // Soft ground near the player: prints sink by parallax, tilt the ground with their walls,
-    // and pack it, darker in their depths. Undisturbed ground shows itself: a view ray entering
-    // it is already at the surface, so only ground with relief marches and takes slopes.
-    var packed = 0.0;
-    // The share of the ground's view a print's tilt turns from the sky to the snow around it.
-    var turned = 0.0;
-    if soft_depth(top) > 0.001 && distance_to_camera < PRINT_DISTANCE {
-        let windows = print_view(in.world_position.xz);
-        var soft = 0.0;
-        if dot(windows.shares, vec2(1.0)) > 0.0 && abs(print_relief(windows, in.world_position.xz, PRINT_DEEPEST)) > 0.0001 {
-            soft = shown_soft_depth(top, p, world_dx, world_dy);
-        }
-        if soft > 0.001 {
-            var at = in.world_position.xz;
-            let sink = 1.0 - smoothstep(PRINT_SINK_RANGE.x, PRINT_SINK_RANGE.y, distance_to_camera);
-            if sink > 0.0 {
-                let to_eye = normalize(view.world_position - in.world_position.xyz);
-                let found = print_parallax(windows, at, soft, to_eye, ground_normal, min(soft, PRINT_DEEPEST) * sink);
-                at += found.xy;
-                sampled += found.xy;
+    // The soft layer (terrain/clipmap_vertex.wesl) as feet left it (terrain/prints.wesl): its
+    // slope tilts the ground, from banks where soft ground gives way to firm and from prints and
+    // trenches, whose snow is packed, darker in their depths and lit by the snow around them.
+    // Nothing is pressed or risen but where a sole went below the layer's top.
+    var layer_slope = ground.soft.yz;
+    var pressed = 0.0;
+    if ground.soft.x > 0.001 && distance_to_camera < PRINT_DISTANCE {
+        let xz = in.world_position.xz;
+        let windows = print_view(xz);
+        if dot(windows.shares, vec2(1.0)) > 0.0 {
+            let caps = print_caps(windows, xz);
+            if caps.y < ground.soft.x {
+                pressed = max(ground.soft.x - pressed_layer(ground.soft.x, caps), 0.0);
+                let e = vec2(PRINT_SLOPE_STEP, 0.0);
+                let d = ground.soft.x;
+                let s = ground.soft.yz * PRINT_SLOPE_STEP;
+                layer_slope = vec2(
+                    pressed_layer_at(windows, xz + e, d + s.x) - pressed_layer_at(windows, xz - e, d - s.x),
+                    pressed_layer_at(windows, xz + e.yx, d + s.y) - pressed_layer_at(windows, xz - e.yx, d - s.y),
+                ) / (2.0 * PRINT_SLOPE_STEP);
             }
-            let relief = print_relief_slope(windows, at, soft);
-            let slope = relief.yz * min(1.0, PRINT_STEEPEST / max(length(relief.yz), 1e-6));
-            let tilted = normalize(ground_normal - vec3(slope.x, 0.0, slope.y));
-            turned = 0.5 - 0.5 * dot(tilted, ground_normal);
-            ground_normal = tilted;
-            let depth = max(-relief.x, 0.0);
-            packed = smoothstep(0.0, PRINT_PACKED, depth);
-            occlusion *= 1.0 - 0.25 * smoothstep(0.02, 0.15, depth);
         }
     }
+    var slope = layer_slope * soft_layer_reach(distance_to_camera);
+    slope *= min(1.0, PRINT_STEEPEST / max(length(slope), 1e-6));
+    let tilted = normalize(ground_normal - vec3(slope.x, 0.0, slope.y));
+    // The share of the ground's view its tilt turns from the sky to the snow around it.
+    let turned = 0.5 - 0.5 * dot(tilted, ground_normal);
+    ground_normal = tilted;
+    let packed = smoothstep(0.0, PRINT_PACKED, pressed);
+    occlusion *= 1.0 - 0.3 * smoothstep(0.02, 0.3, pressed);
 
     let side = side_share(n);
     let plane = side_projection(in.world_position.xyz, n, dpdx(in.world_position.xyz), dpdy(in.world_position.xyz));

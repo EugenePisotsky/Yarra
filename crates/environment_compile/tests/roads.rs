@@ -82,6 +82,49 @@ fn cart_tracks_keep_grass_down_the_middle_and_outside_and_keep_population_identi
 }
 
 #[test]
+fn a_road_covers_its_whole_width_where_its_centre_strip_lays_little_ground() {
+    let (d, l, p, c, mut r) = cart_tracks();
+    straight(&mut r);
+    let plan = CompilePlan::new(&d, &p, &l, CompileProfile::default()).unwrap();
+    let cells = compile(&plan, &c, &r);
+    let roads = &cells[0].roads;
+    let size = f64::from(d.cell_size);
+    let origin = [f64::from(CELLS[0].x) * size, f64::from(CELLS[0].z) * size];
+
+    // The road runs along x at z = 4 with tracks 0.775 m either side; grass grows between them,
+    // but snow there is packed like the tracks.
+    let (centre, track, beside) = ([4.0, 4.0], [4.0, 4.775], [4.0, 0.5]);
+    assert!(roads.ground(origin, centre) < 0.5);
+    assert!(roads.corridor(origin, centre) >= roads.ground(origin, track) - 1e-6);
+    assert!(roads.corridor(origin, beside) < 0.01);
+}
+
+#[test]
+fn ground_worn_across_the_whole_road_is_worn_in_the_centre_strip_too() {
+    let (mut d, l, p, c, mut r) = cart_tracks();
+    straight(&mut r);
+    let plan = CompilePlan::new(&d, &p, &l, CompileProfile::default()).unwrap();
+    let centre = ground_at(&compile(&plan, &c, &r)[0], 32, 32);
+    d.worn[0].whole_road = true;
+    let plan = CompilePlan::new(&d, &p, &l, CompileProfile::default()).unwrap();
+    let cells = compile(&plan, &c, &r);
+    assert!(
+        centre < 128,
+        "the grassy centre strip keeps most of its meadow: {centre}"
+    );
+    assert!(
+        ground_at(&cells[0], 32, 32) > 230,
+        "it is worn like the tracks"
+    );
+    assert!(ground_at(&cells[0], 32, 26) > 230);
+    assert_eq!(
+        ground_at(&cells[0], 32, 2),
+        0,
+        "off the road nothing changes"
+    );
+}
+
+#[test]
 fn traffic_wears_a_quiet_track_to_trampled_lines_and_a_busy_one_to_a_bare_band() {
     let (d, l, p, c, mut r) = cart_tracks();
     straight(&mut r);

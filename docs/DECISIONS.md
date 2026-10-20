@@ -69,21 +69,29 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
   search; v2 draws ruts from a wear atlas, for horses and carts, never cars.
 - **Neighbouring pages agree at edges.** *Kept* (`602ac07`). Up to 12 surfaces per cell, chosen with
   edge weight ×16 and road ground first; independent choices of eight drew 328 seams.
-- **Ground prints from a press log, drawn per pixel.** *Kept* (October 20). Feet stamp a log;
+- **Ground prints as caps on the snow, from a press log.** *Kept* (October 21). Feet stamp a log;
   two toroidal windows around the player (2 cm over 41 m, 8 cm over 164 m) are drawn from it, so
-  trails survive walking away and back. A surface's `soft_depth` says how far feet press in
-  (snow 0.25 m). Prints sink by parallax and tilt the normal; characters stay on the surface,
-  pressing 7 cm only while a sole is within 1.5–3.5 cm of the ground (pressing whenever it was
-  within the print's depth dragged prints to twice their length). Walls are lit by snow-bright
-  bounce (the shared ground light assumes grass albedo and left them near black). Cost about
-  0.25 ms with snow filling the screen at the play setup. Real displaced geometry (no tessellation
-  in wgpu) waits for deep snow.
+  trails survive walking away and back. As in Rise of the Tomb Raider, a texel holds not relief
+  but how high over the firm ground the snow may stand, and the lowest sole that reached it; the
+  vertices lower the soft layer to that, so a planted foot pushes 40 cm of snow to the ground and
+  one swinging low ploughs a trench, while 6 cm of packed snow takes prints. Rims rise beside a
+  trench where a sole went below the snow's top, by the distance past the sole recovered from the
+  cap. A moving foot logs its sweep from its last heel (a row of soles scalloped the walls).
+  Parallax prints over the surface went with real geometry (characters on the surface, 7 cm,
+  only within 1.5–3.5 cm of the ground). Walls are lit by snow-bright bounce (the shared ground
+  light assumes grass albedo). Walking through deep snow measured within noise of the build
+  before snow.
 - **Detail levels below the leaves for deep snow, not tessellation.** *Kept* (October 20). wgpu has
   no tessellation; shipped deep snow (Rise of the Tomb Raider, God of War Ragnarök, Ghost of Yōtei)
   displaces real geometry near the camera and keeps parallax for far or fallback snow (Batman:
   Arkham Origins: parallax "will never be as thick"). CDLOD splits soft leaves further near the
   camera, on the leaves' triangles: +260k triangles on the pass basin with no measurable cost, and
   4M triangles in the main pass measured within noise, so geometry is not the limit.
+- **Roads pack snow across their whole width.** *Kept* (October 21). Snow wears and tramples to
+  packed snow (`soft_depth` 0.06), and `whole_road` packs it under a road's whole corridor, not
+  only its wheel tracks (a cart track's centre strip kept 40 cm of snow between two trenches), in
+  the page's own weights: the wear field wears only where traffic does. Roads through snow run as
+  packed tracks below the banks, taking shallow prints.
 - **Snow as a layer over the firm ground.** *Kept* (October 20). Heights stay the ground, actors
   keep standing on it and wade; the vertex shader raises soft surfaces by their `soft_depth`
   (snow 0.4 m) out to 300 m, and banks form where the control shares give way to firm ground

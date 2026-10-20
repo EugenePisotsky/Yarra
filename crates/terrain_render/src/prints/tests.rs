@@ -2,21 +2,25 @@ use super::*;
 
 const N: i64 = SIDE as i64 / TILE;
 
-fn press(source: u64, at: Vec2, depth: f32) -> GroundPress {
+fn press(source: u64, at: Vec2, floor: f32) -> GroundPress {
     GroundPress {
         source,
         heel: at,
         ball: at + Vec2::new(0.0, 0.15),
         radii: [0.04, 0.045],
-        depth: [depth; 2],
+        floor: [floor; 2],
     }
+}
+
+fn list_origin() -> DVec2 {
+    DVec2::new(1000.0, -2000.0)
 }
 
 fn presses(focus: Vec2, list: Vec<GroundPress>) -> GroundPresses {
     GroundPresses {
         space: Some(WorldSpaceId(1)),
         focus: Some(Vec3::new(focus.x, 0.0, focus.y)),
-        origin: DVec2::new(1000.0, -2000.0),
+        origin: list_origin(),
         presses: list,
     }
 }
@@ -80,23 +84,33 @@ fn entered_tiles_are_exactly_the_new_ones() {
 }
 
 #[test]
-fn a_held_foot_logs_once_and_again_when_it_presses_deeper_or_touches_again() {
+fn a_held_foot_logs_once_and_again_when_it_reaches_lower_moves_or_comes_back() {
     let mut prints = GroundPrints::default();
     let at = Vec2::new(3.0, 4.0);
 
     prints.update(&presses(at, vec![press(7, at, 0.05)]));
-    prints.update(&presses(at, vec![press(7, at, 0.051)]));
+    prints.update(&presses(at, vec![press(7, at, 0.045)]));
     assert_eq!(prints.log.len(), 1, "a foot held still is logged once");
 
-    prints.update(&presses(at, vec![press(7, at, 0.06)]));
-    assert_eq!(prints.log.len(), 2, "pressing deeper is logged");
+    prints.update(&presses(at, vec![press(7, at, 0.02)]));
+    assert_eq!(prints.log.len(), 2, "reaching lower is logged");
 
-    prints.update(&presses(at, vec![press(7, at + Vec2::X * 0.02, 0.06)]));
+    prints.update(&presses(at, vec![press(7, at + Vec2::X * 0.12, 0.02)]));
     assert_eq!(prints.log.len(), 3, "moving is logged");
+    let sweep = prints.log[2];
+    assert_eq!(
+        sweep.heel, prints.log[1].heel,
+        "a move sweeps from the last heel"
+    );
+    assert_eq!(
+        sweep.ball,
+        list_origin() + (at + Vec2::new(0.12, 0.15)).as_dvec2(),
+        "to the ball now"
+    );
 
-    prints.update(&presses(at, vec![press(7, at, -0.01)]));
-    prints.update(&presses(at, vec![press(7, at, 0.06)]));
-    assert_eq!(prints.log.len(), 4, "a lifted foot logs its next touch");
+    prints.update(&presses(at, vec![press(7, at, SOFT_REACH)]));
+    prints.update(&presses(at, vec![press(7, at, 0.02)]));
+    assert_eq!(prints.log.len(), 4, "a foot back in reach is logged");
 
     prints.update(&presses(at, vec![press(8, at, f32::NAN)]));
     assert_eq!(prints.log.len(), 4, "a press that is not finite is ignored");
@@ -187,8 +201,8 @@ fn ground_a_window_returns_to_takes_its_logged_presses_again() {
 fn a_tile_takes_its_stamps_oldest_first_and_each_tile_is_listed_once() {
     let mut prints = GroundPrints::default();
     let at = Vec2::new(1.0, 1.0);
-    prints.update(&presses(at, vec![press(1, at, 0.03)]));
-    prints.update(&presses(at, vec![press(1, at, 0.05), press(2, at, 0.04)]));
+    prints.update(&presses(at, vec![press(1, at, 0.05)]));
+    prints.update(&presses(at, vec![press(1, at, 0.03), press(2, at, 0.04)]));
     let frame = &prints.frame;
     let mut seen = HashSet::new();
 
