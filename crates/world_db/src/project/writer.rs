@@ -1,7 +1,6 @@
 use crate::catalog::{read_vegetation_catalog, write_vegetation_catalog};
 
 use crate::project::query::source_object_from_row;
-use crate::storage::ensure_schema_version;
 
 use crate::{
     MAX_OBJECT_WRITES_PER_TRANSACTION, ObjectWriteTransactionResult, SourceObjectTransform,
@@ -9,11 +8,10 @@ use crate::{
     environment_store,
 };
 
-use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use std::collections::HashSet;
 use std::path::Path;
 use vegetation::VegetationCatalog;
-use world::PROJECT_SCHEMA_VERSION;
 
 /// Narrow transactional writer used by the editor's authoring worker.
 ///
@@ -25,9 +23,7 @@ pub struct ProjectWriter {
 
 impl ProjectWriter {
     pub fn open(path: &Path) -> Result<Self, WorldDbError> {
-        let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
-        connection.execute_batch("PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 1000;")?;
-        ensure_schema_version(&connection, PROJECT_SCHEMA_VERSION, "project")?;
+        let connection = crate::storage::open_project(path, true)?;
         Ok(Self { connection })
     }
 

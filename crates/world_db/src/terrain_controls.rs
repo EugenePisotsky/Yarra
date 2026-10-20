@@ -2,13 +2,12 @@
 //! and level, zstd-compressed little-endian samples. A cell's leaf tile is written with the
 //! cell; the levels above are built from the leaves when a cook publishes.
 use crate::runtime::RuntimeReader;
-use crate::storage::ensure_schema_version;
 use crate::{TerrainRenderResources, WorldDbError};
-use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use std::io::Read;
 use std::path::Path;
 
-use world::{CONTROL_SAMPLES, CellCoord, RUNTIME_SCHEMA_VERSION, TerrainNodeKey, WorldSpaceId};
+use world::{CONTROL_SAMPLES, CellCoord, TerrainNodeKey, WorldSpaceId};
 
 const TILE_BYTES: usize = CONTROL_SAMPLES * CONTROL_SAMPLES * 4;
 
@@ -46,8 +45,7 @@ pub struct TerrainControlStore {
 
 impl TerrainControlStore {
     pub fn open_staging(path: &Path) -> Result<Self, WorldDbError> {
-        let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
-        ensure_schema_version(&connection, RUNTIME_SCHEMA_VERSION, "runtime")?;
+        let connection = crate::storage::open_staging_runtime(path)?;
         connection.execute_batch("BEGIN IMMEDIATE;")?;
         Ok(Self { connection })
     }

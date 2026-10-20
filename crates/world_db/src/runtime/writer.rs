@@ -219,15 +219,8 @@ impl RuntimeCookWriter {
     /// Continues a copy of the previous publication, whose unchanged cells are kept.
     /// The caller checks that its header hash matches this cook's.
     pub fn open_incremental(path: &Path) -> Result<Self, WorldDbError> {
-        let connection = Connection::open(path)?;
-        crate::storage::ensure_schema_version(
-            &connection,
-            world::RUNTIME_SCHEMA_VERSION,
-            "runtime",
-        )?;
-        connection.execute_batch(
-            "PRAGMA foreign_keys=ON; PRAGMA cache_size=-8192; PRAGMA temp_store=FILE; BEGIN IMMEDIATE;",
-        )?;
+        let connection = crate::storage::open_staging_runtime(path)?;
+        connection.execute_batch("BEGIN IMMEDIATE;")?;
         Ok(Self { connection })
     }
 

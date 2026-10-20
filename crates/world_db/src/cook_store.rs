@@ -5,7 +5,6 @@ use crate::catalog::{
 };
 
 use crate::project::query::{query_source_catalog, source_cell_from_row, source_object_from_row};
-use crate::storage::ensure_schema_version;
 
 use crate::{
     COOK_KEY_BATCH, MAX_COOK_CATALOG_BYTES, MAX_COOK_CATALOG_ROWS,
@@ -14,10 +13,10 @@ use crate::{
 };
 
 use environment::{CoverageSnapshot, EnvironmentDefinition, TerrainSource};
-use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
-use world::{CellCoord, PROJECT_SCHEMA_VERSION, WorldSpaceId};
+use world::{CellCoord, WorldSpaceId};
 
 pub struct ProjectCookSnapshot {
     connection: Connection,
@@ -42,9 +41,10 @@ pub struct CookSourceCell {
 
 impl ProjectCookSnapshot {
     pub fn open(path: &Path) -> Result<Self, WorldDbError> {
-        let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-        connection.execute_batch("PRAGMA query_only=ON; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=1000; PRAGMA cache_size=-8192; PRAGMA temp_store=FILE; BEGIN DEFERRED;")?;
-        ensure_schema_version(&connection, PROJECT_SCHEMA_VERSION, "project")?;
+        let connection = crate::storage::open_project(path, false)?;
+        connection.execute_batch(
+            "PRAGMA cache_size = -8192; PRAGMA temp_store = FILE; BEGIN DEFERRED;",
+        )?;
         check_catalog_budget(&connection)?;
 
         if connection

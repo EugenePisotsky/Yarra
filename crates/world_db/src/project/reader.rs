@@ -5,14 +5,12 @@ use crate::project::query::{
     source_object_view_from_row, validate_spatial_query,
 };
 
-use crate::storage::ensure_schema_version;
-
 use crate::{
     ProjectManifest, SourceCellQuery, SourceObjectOutlinerCursor, SourceObjectOutlinerPage,
     SourceObjectPaletteCursor, SourceObjectPalettePage, SourceObjectViewQuery, WorldDbError,
 };
 
-use rusqlite::{Connection, OpenFlags, params};
+use rusqlite::{Connection, params};
 use std::path::Path;
 use vegetation::VegetationCatalog;
 use world::{CellCoord, PROJECT_SCHEMA_VERSION, WorldSpaceId};
@@ -28,11 +26,7 @@ pub struct ProjectReader {
 
 impl ProjectReader {
     pub fn open_read_only(path: &Path) -> Result<Self, WorldDbError> {
-        let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-        connection.execute_batch(
-            "PRAGMA query_only = ON; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 250;",
-        )?;
-        ensure_schema_version(&connection, PROJECT_SCHEMA_VERSION, "project")?;
+        let connection = crate::storage::open_project(path, false)?;
         let world_spaces = query_world_spaces(&connection)?;
         let default_world_space = connection.query_row(
             "SELECT default_world_space_id FROM project_settings WHERE singleton = 1",

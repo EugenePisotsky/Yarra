@@ -1,6 +1,6 @@
 //! SQLite version/path checks and checked binary column conversion.
 use crate::WorldDbError;
-use rusqlite::Connection;
+use rusqlite::{Connection, OpenFlags};
 use std::fs;
 use std::path::Path;
 
@@ -14,6 +14,36 @@ pub(crate) fn ensure_new_database_path(path: &Path) -> Result<(), WorldDbError> 
     }
 
     Ok(())
+}
+
+/// Opens an existing project database, read-only or for writing, with foreign keys on and
+/// waiting up to a second for another writer; its schema must be this build's.
+pub(crate) fn open_project(path: &Path, write: bool) -> Result<Connection, WorldDbError> {
+    let flags = if write {
+        OpenFlags::SQLITE_OPEN_READ_WRITE
+    } else {
+        OpenFlags::SQLITE_OPEN_READ_ONLY
+    };
+    let connection = Connection::open_with_flags(path, flags)?;
+    connection.execute_batch("PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 1000;")?;
+
+    if !write {
+        connection.execute_batch("PRAGMA query_only = ON;")?;
+    }
+
+    ensure_schema_version(&connection, world::PROJECT_SCHEMA_VERSION, "project")?;
+    Ok(connection)
+}
+
+/// Opens an unpublished runtime database for a cook to write: foreign keys on, a larger page
+/// cache and temporary data on disk; its schema must be this build's.
+pub(crate) fn open_staging_runtime(path: &Path) -> Result<Connection, WorldDbError> {
+    let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
+    connection.execute_batch(
+        "PRAGMA foreign_keys = ON; PRAGMA cache_size = -8192; PRAGMA temp_store = FILE;",
+    )?;
+    ensure_schema_version(&connection, world::RUNTIME_SCHEMA_VERSION, "runtime")?;
+    Ok(connection)
 }
 
 pub(crate) fn ensure_schema_version(

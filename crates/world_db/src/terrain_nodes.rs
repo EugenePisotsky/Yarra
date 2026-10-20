@@ -1,14 +1,14 @@
 //! Bounded terrain-node IO. A cook store only mutates an unpublished staging generation.
 use crate::runtime::{read_page_connection, read_runtime_manifest};
-use crate::storage::{blob_array, ensure_schema_version};
+use crate::storage::blob_array;
 use crate::{EncodedPage, RuntimeManifest, RuntimeReader, WorldDbError, WorldSpaceRecord};
-use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use std::io::{Cursor, Read};
 use std::path::Path;
 
 use world::{
-    CellCoord, MAX_TERRAIN_NODE_BYTES, PageCodec, PageDomain, PageKey, RUNTIME_SCHEMA_VERSION,
-    TerrainNode, TerrainNodeKey, WorldSpaceId, decode_terrain_node, encode_terrain_node,
+    CellCoord, MAX_TERRAIN_NODE_BYTES, PageCodec, PageDomain, PageKey, TerrainNode, TerrainNodeKey,
+    WorldSpaceId, decode_terrain_node, encode_terrain_node,
 };
 
 pub const MAX_TERRAIN_NODE_QUERY: usize = 128;
@@ -129,10 +129,8 @@ pub struct TerrainCookStore {
 
 impl TerrainCookStore {
     fn open(path: &Path) -> Result<Connection, WorldDbError> {
-        let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
-        ensure_schema_version(&connection, RUNTIME_SCHEMA_VERSION, "runtime")?;
-        connection
-            .execute_batch("PRAGMA foreign_keys=ON; PRAGMA cache_size=-8192; BEGIN IMMEDIATE;")?;
+        let connection = crate::storage::open_staging_runtime(path)?;
+        connection.execute_batch("BEGIN IMMEDIATE;")?;
         Ok(connection)
     }
 
@@ -647,7 +645,7 @@ mod tests {
             let space = WorldSpaceId(1);
             let header = RuntimeHeader {
                 manifest: RuntimeManifest {
-                    schema_version: RUNTIME_SCHEMA_VERSION,
+                    schema_version: world::RUNTIME_SCHEMA_VERSION,
                     generation_id: "before".into(),
                     content_hash: [7; 32],
                     default_world_space: space,
