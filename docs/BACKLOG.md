@@ -31,6 +31,11 @@ decision when one is made.
 - **Forest planting.** `forest_plan.py` v2: edges, young trees and understory.
 - **Terrain.** Dual-scale tiling and slope snow, if a view shows the need; grazing-angle normal
   aliasing.
+- **Snow.** Deep snow: finer CDLOD levels inside the print windows so legs sink into displaced
+  ground, with slower walking; prints filling in while it snows; snowfall above a snow line, its
+  fog and blizzards; snow cover building up. The ground light under every material assumes grass
+  albedo, so characters and trees on snowfields lack the snow's bounce. Sand and mud could take
+  prints with a small `soft_depth`.
 
 ## Performance
 

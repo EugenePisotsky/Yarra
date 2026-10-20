@@ -69,6 +69,15 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
   search; v2 draws ruts from a wear atlas, for horses and carts, never cars.
 - **Neighbouring pages agree at edges.** *Kept* (`602ac07`). Up to 12 surfaces per cell, chosen with
   edge weight ×16 and road ground first; independent choices of eight drew 328 seams.
+- **Ground prints from a press log, drawn per pixel.** *Kept* (October 20). Feet stamp a log;
+  two toroidal windows around the player (2 cm over 41 m, 8 cm over 164 m) are drawn from it, so
+  trails survive walking away and back. A surface's `soft_depth` says how far feet press in
+  (snow 0.25 m). Prints sink by parallax and tilt the normal; characters stay on the surface,
+  pressing 7 cm only while a sole is within 1.5–3.5 cm of the ground (pressing whenever it was
+  within the print's depth dragged prints to twice their length). Walls are lit by snow-bright
+  bounce (the shared ground light assumes grass albedo and left them near black). Cost about
+  0.25 ms with snow filling the screen at the play setup. Real displaced geometry (no tessellation
+  in wgpu) waits for deep snow.
 - **Terrain shadows and sky occlusion from a GPU horizon map.** *Kept* (`3a151a2`). The CPU search
   on every core each 0.5° of sun dropped a frame every ~2 s, only with the day clock on (214
   drops → 8).

@@ -248,9 +248,14 @@ SQLite. The renderers (Bevy) have no SQLite: `engine` is the only library joinin
   `ClipmapTextures`, `ClipmapUploads`, CDLOD selection (`ClipmapLayout`, `LodRanges`, `select`,
   `MORPH_SHARE` = 0.3), ground surfaces (`TerrainSurfaceLayer`), and `ClipmapPatch` (one cell
   outside streaming, for the editor's preset preview).
+- Owns ground prints (`prints`): the application lists feet touching the ground each frame
+  (`GroundPresses`, in `GroundPressSystems`); presses go into a log of 16,384 and a compute pass
+  draws them into two toroidal windows centred on the player (2048² at 2 cm and at 8 cm), which
+  the material reads on surfaces with a `soft_depth`.
 - Invariants: selection uses distance to a node's box, so turning the camera changes only
   culling. A node splits only when all four children are resident and vertices morph to the
-  coarser grid, so levels meet without cracks.
+  coarser grid, so levels meet without cracks. The print windows hold nothing the log does not:
+  ground a window moves onto starts undisturbed and takes every logged press reaching it.
 - Must not depend on `world_db` or `engine`.
 
 ### vegetation_render
@@ -270,7 +275,8 @@ SQLite. The renderers (Bevy) have no SQLite: `engine` is the only library joinin
 - Objects and vegetation: `ObjectLodPlugin`, GPU trees and wind (`TreeWindPlugin`,
   `TreeInstancing`), `WorldVegetationPlugin`, ground details, `OceanPlugin`.
 - Actors: `GameplayPlugins` (player, camera, input, destination marker), `GameplaySystems`,
-  `MoveIntent`, and `MinimalGamePlugin` (environment, terrain, streaming and actors).
+  `MoveIntent`, and `MinimalGamePlugin` (environment, terrain, streaming and actors). Characters'
+  feet (`feet`, joints and soles from the character catalog) list their presses on the ground.
 - Time and weather: `GameDayClock`, `GameWeather`, `GameLightning`.
 - Invariants: actor roots own movement; presentation scenes are children and never move them.
   Libraries do not read process arguments; the apps inject settings. The `gameplay` module here
@@ -314,8 +320,9 @@ The game camera (`WorldViewCamera`) renders in HDR and tone-maps into an offscre
 share of the window's physical size (`resolution_scale`, 0.5 by default) with 4× MSAA; with
 MetalFX Temporal, MSAA is off and the backend reconstructs at output size. In order:
 
-1. Compute before the camera: grass trampling, candidate cache and placement; GPU tree LOD and
-   culling (`shaders/tree/lod.wesl`); the terrain-horizon search; cloud shadows.
+1. Compute before the camera: grass trampling, candidate cache and placement; ground prints
+   (`shaders/terrain/press.wesl`); GPU tree LOD and culling (`shaders/tree/lod.wesl`); the
+   terrain-horizon search; cloud shadows.
 2. Main passes: terrain v2 patches (one shared grid mesh and `ClipmapTerrainMaterial`; heights
    come from the clipmap), grass as indirect opaque draws (no shadows), trees and impostors as
    indirect draws per form and representation in the main, prepass and shadow phases, meshes.
@@ -362,7 +369,8 @@ origins, and grass, wind and details are anchored to canonical coordinates
 
 All shaders are WESL in `assets/shaders/`, a folder per subsystem:
 
-- `terrain/`: clipmap material and vertex shader, height blend, road wear, anti-tiling.
+- `terrain/`: clipmap material and vertex shader, height blend, road wear, anti-tiling, ground
+  prints (`prints` read by the material, `press` the compute pass).
 - `vegetation/`: grass `schedule`, `placement/`, `candidate_cache`, `blade`, `draw/`,
   `trample`, sharing `types`, `random` and `lod`.
 - `tree/`: tree material, bark, wind and its prepass, impostors, the LOD compute pass.
@@ -410,8 +418,8 @@ resets. Change a format, bump its constant and rebuild (Reteya from its inputs).
 
 | Format | Constant, file | Value |
 | --- | --- | --- |
-| Project database, blobs included | `PROJECT_SCHEMA_VERSION`, `world/src/lib.rs` | 33 |
-| Runtime database, blobs included | `RUNTIME_SCHEMA_VERSION`, `world/src/lib.rs` | 34 |
+| Project database, blobs included | `PROJECT_SCHEMA_VERSION`, `world/src/lib.rs` | 34 |
+| Runtime database, blobs included | `RUNTIME_SCHEMA_VERSION`, `world/src/lib.rs` | 35 |
 | Gameplay project (`project.ron`) | `SOURCE_FORMAT_VERSION`, `game_content/src/project.rs` | 11 |
 | Content bundle | `BUNDLE_SCHEMA_VERSION`, `game_content/src/bundle.rs` | 14 |
 | Language pack | `VERSION`, `game_content/src/languages.rs` | 3 |
@@ -419,7 +427,7 @@ resets. Change a format, bump its constant and rebuild (Reteya from its inputs).
 | Editor journal | `JOURNAL_SCHEMA_VERSION`, `app_editor/src/journal.rs` | 15 |
 | Heightfield manifest | `VERSION`, `world_cook/src/heightfield_import.rs` | 2 |
 | Asset import catalog | literal in `AssetImportCatalog::validate` | 1 |
-| Character catalog | literal in `engine/src/character_catalog.rs` | 1 |
+| Character catalog | literal in `engine/src/character_catalog.rs` | 2 |
 | Impostor descriptor | literal in `engine/src/trees/impostor.rs` | 3 |
 
 The SQLite formats keep their version in `PRAGMA user_version`; bundles and language packs also
