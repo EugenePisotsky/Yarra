@@ -33,10 +33,9 @@ decision when one is made.
   aliasing.
 - **Snow.** Slower walking in deep snow, and snow thrown up at the legs; depth varying with
   exposure and hollows; prints filling in while it snows (the caps rising); snowfall above a snow
-  line, its fog and blizzards; snow cover building up. Banks seen past the detail levels show
-  their triangles and stair-stepped shadows. The ground light under every material assumes grass
-  albedo, so characters and trees on snowfields lack the snow's bounce. Sand and mud could take
-  prints with a small `soft_depth`.
+  line, its fog and blizzards; snow cover building up. The ground light under every material
+  assumes grass albedo, so characters and trees on snowfields lack the snow's bounce. Sand and
+  mud could take prints with a small `soft_depth`.
 
 ## Performance
 

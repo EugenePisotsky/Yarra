@@ -76,7 +76,37 @@ impl TerrainControlStore {
     }
 }
 
-fn read_controls(
+/// Each texture layer's soft depth (`world::TerrainSurface::soft_depth`) in a space's texture
+/// set, by layer; empty for a space without terrain.
+pub(crate) fn read_layer_soft_depths(
+    connection: &Connection,
+    space: WorldSpaceId,
+) -> Result<Vec<f32>, WorldDbError> {
+    let mut statement = connection.prepare_cached(
+        "SELECT l.layer, s.soft_depth FROM world_space_terrain_profiles p \
+         JOIN terrain_texture_set_layers l ON l.texture_set_id = p.texture_set_id \
+         JOIN terrain_surfaces s ON s.surface_id = l.surface_id \
+         WHERE p.world_space_id = ?1",
+    )?;
+    let mut depths = Vec::new();
+
+    for row in statement.query_map([space.0], |r| {
+        Ok((r.get::<_, i64>(0)?, r.get::<_, f64>(1)?))
+    })? {
+        let (layer, depth) = row?;
+        let layer = usize::try_from(layer).map_err(|_| invalid("terrain layer"))?;
+
+        if depths.len() <= layer {
+            depths.resize(layer + 1, 0.0);
+        }
+
+        depths[layer] = depth as f32;
+    }
+
+    Ok(depths)
+}
+
+pub(crate) fn read_controls(
     connection: &Connection,
     keys: &[TerrainNodeKey],
 ) -> Result<Vec<Option<Vec<u8>>>, WorldDbError> {
@@ -101,6 +131,11 @@ impl RuntimeReader {
         keys: &[TerrainNodeKey],
     ) -> Result<Vec<Option<Vec<u8>>>, WorldDbError> {
         read_controls(&self.connection, keys)
+    }
+
+    /// Each texture layer's soft depth in a space, by layer.
+    pub fn layer_soft_depths(&self, space: WorldSpaceId) -> Result<Vec<f32>, WorldDbError> {
+        read_layer_soft_depths(&self.connection, space)
     }
 
     /// Every cell of a space; each has ground.

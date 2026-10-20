@@ -1,5 +1,6 @@
-//! Camera-independent terrain topology. Heights are finalized before entering this hierarchy.
-use crate::{CellCoord, TerrainHeightfield, WorldSpaceId};
+//! Camera-independent terrain topology. Heights are finalized before entering this hierarchy;
+//! a leaf's are its drawn ground, the top of any soft layer over it (`soft_layer`).
+use crate::{CellCoord, SoftLayer, TERRAIN_HEIGHT_STEP, TerrainHeightfield, WorldSpaceId};
 use serde::{Deserialize, Serialize};
 
 pub const MAX_TERRAIN_NODE_LEVEL: u8 = 30;
@@ -83,6 +84,9 @@ pub struct TerrainNode {
     pub height_bounds: [f32; 2],
     /// Partial nodes contain traversal metadata only, never invented ground across missing cells.
     pub heightfield: Option<TerrainHeightfield>,
+    /// A leaf's soft layer: how deep it lies over the firm ground at each sample, in terrain
+    /// height steps. Empty where there is none, and above the leaves.
+    pub soft_depths: Vec<u16>,
 }
 
 impl TerrainNode {
@@ -147,9 +151,58 @@ impl TerrainNode {
             child_mask: 0,
             height_bounds: field.height_bounds(),
             heightfield: Some(field),
+            soft_depths: Vec::new(),
         };
         node.validate()?;
         Ok(node)
+    }
+
+    /// The leaf under a soft layer: its heights raised to the layer's top, its normals tilted to
+    /// it, and the layer's depths kept.
+    pub fn with_soft_layer(mut self, layer: SoftLayer) -> Result<Self, TerrainHierarchyError> {
+        let field = self
+            .heightfield
+            .as_mut()
+            .filter(|_| self.key.level == 0)
+            .ok_or(invalid("a soft layer lies on a leaf"))?;
+
+        if layer.depths.len() != field.heights.len() || layer.slopes.len() != field.heights.len() {
+            return Err(invalid("soft layer size"));
+        }
+
+        for (i, (&depth, slope)) in layer.depths.iter().zip(&layer.slopes).enumerate() {
+            field.heights[i] += f32::from(depth) * TERRAIN_HEIGHT_STEP;
+
+            // Codes do not survive decoding and encoding again exactly: an untilted normal keeps
+            // its own, as a neighbour without a layer keeps the shared border's.
+            if *slope == [0.0; 2] {
+                continue;
+            }
+
+            let n = crate::decode_octahedral_normal(field.normals_oct[i]);
+            field.normals_oct[i] = crate::encode_octahedral_normal([
+                n[0] - n[1] * slope[0],
+                n[1],
+                n[2] - n[1] * slope[1],
+            ]);
+        }
+
+        self.height_bounds = field.height_bounds();
+        self.soft_depths = layer.depths;
+        self.validate()?;
+        Ok(self)
+    }
+
+    /// A leaf's firm ground: its heights less the soft layer over them, exactly, as both lie on
+    /// the heights' grid. Its normals stay the drawn ground's.
+    pub fn firm_ground(&self) -> Option<TerrainHeightfield> {
+        let mut field = self.heightfield.clone()?;
+
+        for (height, &depth) in field.heights.iter_mut().zip(&self.soft_depths) {
+            *height -= f32::from(depth) * TERRAIN_HEIGHT_STEP;
+        }
+
+        Some(field)
     }
 
     pub fn parent(
@@ -183,6 +236,7 @@ impl TerrainNode {
             child_mask: mask,
             height_bounds: bounds,
             heightfield: None,
+            soft_depths: Vec::new(),
         };
         let Some(fields) = children
             .map(|child| child.and_then(|c| c.heightfield.as_ref()))
@@ -296,6 +350,14 @@ impl TerrainNode {
             }
         } else if self.key.level == 0 {
             return Err(invalid("invalid partial node"));
+        }
+
+        let samples = self.heightfield.as_ref().map_or(0, |f| f.heights.len());
+
+        if !self.soft_depths.is_empty()
+            && (self.key.level != 0 || self.soft_depths.len() != samples)
+        {
+            return Err(invalid("soft layer disagrees with the leaf"));
         }
 
         Ok(())
@@ -576,5 +638,43 @@ mod tests {
         let mut bad = node;
         bad.height_bounds[1] = f32::NAN;
         assert!(encode_terrain_node(&bad).is_err());
+    }
+
+    #[test]
+    fn a_soft_layer_raises_the_leaf_and_its_firm_ground_comes_back_exactly() {
+        let firm = rough_leaf(0, 0);
+        let layer = SoftLayer {
+            depths: (0..81).map(|i| (i % 9) as u16 * 40).collect(),
+            slopes: vec![[0.3, 0.0]; 81],
+        };
+        let covered = firm.clone().with_soft_layer(layer.clone()).unwrap();
+        let (a, b) = (
+            firm.heightfield.as_ref().unwrap(),
+            covered.heightfield.as_ref().unwrap(),
+        );
+        assert_eq!(b.heights[8], a.heights[8] + 320.0 * TERRAIN_HEIGHT_STEP);
+        assert_eq!(covered.height_bounds, b.height_bounds());
+        assert!(
+            b.normal_at(4, 4)[0] < a.normal_at(4, 4)[0],
+            "tilted against the rise"
+        );
+        assert_eq!(covered.firm_ground().unwrap().heights, a.heights);
+
+        let bytes = encode_terrain_node(&covered).unwrap();
+        assert_eq!(decode_terrain_node(&bytes).unwrap(), covered);
+
+        // Flat layers leave the normals' codes exactly as they were.
+        let flat = SoftLayer {
+            slopes: vec![[0.0; 2]; 81],
+            ..layer.clone()
+        };
+        let lifted = firm.clone().with_soft_layer(flat).unwrap();
+        assert_eq!(lifted.heightfield.unwrap().normals_oct, a.normals_oct);
+
+        let short = SoftLayer {
+            depths: vec![1; 80],
+            ..layer
+        };
+        assert!(firm.with_soft_layer(short).is_err());
     }
 }

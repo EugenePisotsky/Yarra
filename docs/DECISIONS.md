@@ -92,13 +92,16 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
   only its wheel tracks (a cart track's centre strip kept 40 cm of snow between two trenches), in
   the page's own weights: the wear field wears only where traffic does. Roads through snow run as
   packed tracks below the banks, taking shallow prints.
-- **Snow as a layer over the firm ground.** *Kept* (October 20). Heights stay the ground, actors
-  keep standing on it and wade; the vertex shader raises soft surfaces by their `soft_depth`
-  (snow 0.4 m) out to 300 m, and banks form where the control shares give way to firm ground
-  (no thickness past 300 m, where 40 cm is a pixel or two). Cost on a screen of snow about
-  0.3–0.6 ms, firm ground none. Carrying the control cell through the fragment shader for the
-  banks' slope cost 0.7 ms by register pressure alone; carrying only the slope out of
-  `ground_surfaces` and skipping cells without a soft layer by a bit mask brought it down.
+- **Snow cooked into the leaves as a layer over the firm ground.** *Kept* (October 21). Actors
+  stand on the firm ground and wade; feet press the layer down to it. Drawn at run time from the
+  half-metre control samples (October 20: raised by each surface's `soft_depth` out to 300 m),
+  banks stair-stepped along the samples, their triangles and shadows showed past the detail
+  levels and shading lost the banks past level 0, for 0.3–0.6 ms on a screen of snow. The cook
+  now smooths the depth over 0.75 m (reading neighbouring cells, every sum in one order so
+  shared borders agree exactly) and raises each leaf to the layer's top, its normals tilted with
+  it; parents decimate it like any relief, so snow stands at every distance. Leaves keep the
+  depth in height steps, so the firm ground comes back exactly. The run-time lift and slope are
+  gone; a screen of snow measured within noise of the run-time layer.
 - **Terrain shadows and sky occlusion from a GPU horizon map.** *Kept* (`3a151a2`). The CPU search
   on every core each 0.5° of sun dropped a frame every ~2 s, only with the day clock on (214
   drops → 8).

@@ -41,6 +41,10 @@ mod terrain_control;
 
 pub use terrain_control::*;
 
+mod soft_layer;
+
+pub use soft_layer::*;
+
 /// Default authoring source relative to the repository root.
 pub const DEFAULT_PROJECT_DATABASE: &str = "content/world.project.sqlite";
 
@@ -54,7 +58,7 @@ pub const MAX_DECODED_PAGE_BYTES: u64 = 64 * 1024 * 1024;
 /// ([`codec`]): any change to a stored type bumps one.
 pub const PROJECT_SCHEMA_VERSION: i64 = 35;
 
-pub const RUNTIME_SCHEMA_VERSION: i64 = 35;
+pub const RUNTIME_SCHEMA_VERSION: i64 = 36;
 
 #[cfg(test)]
 mod tests;

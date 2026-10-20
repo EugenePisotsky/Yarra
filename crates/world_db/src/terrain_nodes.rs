@@ -291,6 +291,23 @@ impl TerrainCookStore {
         )
     }
 
+    /// Each texture layer's soft depth in a space, by layer.
+    pub fn layer_soft_depths(&self, space: WorldSpaceId) -> Result<Vec<f32>, WorldDbError> {
+        crate::terrain_controls::read_layer_soft_depths(&self.connection, space)
+    }
+
+    /// Decoded control tiles of `keys`, in order; `None` where a node has none.
+    pub fn controls(&self, keys: &[TerrainNodeKey]) -> Result<Vec<Option<Vec<u32>>>, WorldDbError> {
+        crate::terrain_controls::read_controls(&self.connection, keys)?
+            .into_iter()
+            .map(|payload| {
+                payload
+                    .map(|p| crate::decode_terrain_control(&p))
+                    .transpose()
+            })
+            .collect()
+    }
+
     pub fn contains(&self, key: TerrainNodeKey) -> Result<bool, WorldDbError> {
         Ok(self.connection.query_row(
             "SELECT EXISTS(SELECT 1 FROM terrain_nodes WHERE world_space_id=?1 AND level=?2 AND \

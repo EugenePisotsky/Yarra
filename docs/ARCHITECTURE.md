@@ -95,7 +95,9 @@ SQLite. The renderers (Bevy) have no SQLite: `engine` is the only library joinin
   `FarObjectForm`, `FAR_OBJECT_BLOCK_CELLS` = 16).
 - Terrain contracts: `TerrainHeightfieldPage` (heights, surfaces, `TerrainWear`), the hierarchy
   (`TerrainNodeKey`, `TerrainNode`), control tiles (`TerrainControlTile`, `CONTROL_SAMPLES` = 65,
-  `CONTROL_TOP_LEVEL` = 5), editor previews (`TerrainPreviewProducts`).
+  `CONTROL_TOP_LEVEL` = 5), the soft layer (`SoftGround`, `SoftLayer`: snow's depth over the
+  firm ground from the control tiles, smoothed across cells), editor previews
+  (`TerrainPreviewProducts`).
 - Renderer-free atmosphere and weather (`AtmosphereProfile`, `evaluate_at`,
   `weather::WeatherRuntime`), `GameplayArea`, `WorldViewBookmark`, `road_noise`.
 - Invariants:
@@ -160,6 +162,8 @@ SQLite. The renderers (Bevy) have no SQLite: `engine` is the only library joinin
   - Reads and writes happen in key order on the cook thread, so output matches a sequential
     cook. An incremental cook (same global inputs and terrain cells) recompiles only cells whose
     input fingerprint changed, and their ancestors; tests hold it to a full cook's content hash.
+    A leaf's soft layer reads its neighbours' control tiles, so a changed tile rebuilds the
+    leaves around it, in the cook and in previews.
   - Output is staged, validated, then renamed over the runtime: a failed cook leaves the
     previous generation. Previews never modify either database.
 - Must not depend on Bevy or the engine.
@@ -259,9 +263,9 @@ SQLite. The renderers (Bevy) have no SQLite: `engine` is the only library joinin
   culling. A node splits only when all four children are resident and vertices morph to the
   coarser grid, so levels meet without cracks. Soft leaves near the camera split into detail
   levels (`DETAIL_LEVELS` = 3: 0.5, 0.25 and 0.125 m within 48, 24 and 12 m) whose vertices lie
-  on the leaves' triangles. Heights are the firm ground; soft surfaces (`soft_depth`, snow
-  0.4 m) stand that much higher within 300 m of the camera, thinning to banks where they give way
-  to firm ground, and every vertex morphs to the coarser level's lift, so levels still meet. The print windows hold nothing the log does not:
+  on the leaves' triangles. Heights are the drawn ground, snow's top where it lies (the cook
+  raises leaves by their soft layer); the leaves' layer depths, uploaded to a level-0 texture,
+  are all the prints need to lower it. The print windows hold nothing the log does not:
   ground a window moves onto starts undisturbed and takes every logged press reaching it.
 - Must not depend on `world_db` or `engine`.
 
@@ -359,7 +363,8 @@ consumer that sent it. Four kinds of data stream independently:
 - **Terrain clipmap nodes** (`ClipmapTerrain`): a 31×31-node window per level, six levels from
   32 m leaves to 1 km nodes, toroidal 1024² layers (512² on iOS), parents first. Shaders read
   the first resident level at or above the one wanted, so a loading node shows its parent,
-  never a hole; actors stand on resident leaf triangles (`ClipmapTerrain::ground_height`).
+  never a hole; actors stand on resident leaf triangles less their soft layer
+  (`ClipmapTerrain::ground_height`), wading through snow.
 - **Far-object blocks**: 16×16-cell blocks of impostor-ending objects within 2 km, carrying
   whole LOD chains into the GPU trees' instance pool and the forest shadow map.
 - **Coarse maps**: every level-3 node, read once per generation for the valley mist, shore and

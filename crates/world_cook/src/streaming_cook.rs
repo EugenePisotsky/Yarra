@@ -142,6 +142,9 @@ fn cook_snapshot_options(
             .find(|d| d.space == world.id)
             .context("world with source cells requires an environment definition")?;
 
+        // Cells whose control tile changed: their soft layer, and their neighbours', read it.
+        let mut controls = BTreeSet::new();
+
         for batch in keys.chunks(world_db::COOK_KEY_BATCH) {
             let input = CellInput {
                 snapshot: &snapshot,
@@ -176,12 +179,31 @@ fn cook_snapshot_options(
                         changes.ground.entry(world.id).or_default().insert(*cell);
                     }
 
+                    if writer.control_payload(world.id, *cell)?.as_ref() != Some(&cooked.control) {
+                        controls.insert(*cell);
+                    }
+
                     writer.remove_cell(world.id, *cell)?;
                 }
 
                 writer.append_cell(&cooked, cells[cell].input)?;
                 changes.cells.entry(world.id).or_default().insert(*cell);
                 stats.terrain_cells += 1;
+            }
+        }
+
+        for cell in controls
+            .iter()
+            .flat_map(|&c| world::soft_layer_neighbours(c))
+        {
+            let ground = PageKey {
+                space: world.id,
+                cell,
+                domain: PageDomain::Terrain,
+            };
+
+            if writer.page_checksum(ground)?.is_some() {
+                changes.ground.entry(world.id).or_default().insert(cell);
             }
         }
     }
@@ -566,35 +588,7 @@ mod tests {
         assert_eq!(unchanged.manifest.content_hash, first.manifest.content_hash);
 
         // Paint one cell: it and the neighbours whose halo reads it are recompiled.
-        let record = project
-            .environment_cells
-            .iter()
-            .find(|r| r.space == project.default_world_space && r.cell == CellCoord { x: 2, z: 3 })
-            .unwrap();
-        let mut edited = record.clone();
-        let n = project.environments[0].mask_resolution as usize;
-
-        // Every layer's interior samples, so the ground shown changes; borders are shared
-        // with the neighbouring cells.
-        for tile in &mut edited.tiles {
-            for y in n / 3..n / 2 {
-                for x in 1..n - 1 {
-                    let sample = &mut tile.samples[y * n + x];
-                    *sample = 255 - *sample;
-                }
-            }
-        }
-
-        assert!(matches!(
-            ProjectWriter::open(&fixture.source())
-                .unwrap()
-                .apply_environment_cell_transaction(&[EnvironmentCellWrite {
-                    expected_source_revision: Some(record.source_revision),
-                    record: edited,
-                }])
-                .unwrap(),
-            EnvironmentCellWriteResult::Committed(_)
-        ));
+        repaint(&project, &fixture, CellCoord { x: 2, z: 3 });
         let incremental = cook_project_with_report(&fixture.source(), &fixture.runtime()).unwrap();
         assert!(incremental.stats.incremental);
         assert_eq!(incremental.stats.terrain_cells, 9);
@@ -649,6 +643,111 @@ mod tests {
             raised.manifest.content_hash,
             incremental.manifest.content_hash
         );
+        fixture.assert_no_staging_files();
+    }
+
+    /// Paints a band across a cell: every layer's interior samples, so the ground shown changes;
+    /// borders are shared with the neighbouring cells.
+    fn repaint(project: &ProjectDocument, fixture: &Fixture, cell: CellCoord) {
+        let record = project
+            .environment_cells
+            .iter()
+            .find(|r| r.space == project.default_world_space && r.cell == cell)
+            .unwrap();
+        let mut edited = record.clone();
+        let n = project.environments[0].mask_resolution as usize;
+
+        for tile in &mut edited.tiles {
+            for y in n / 3..n / 2 {
+                for x in 1..n - 1 {
+                    let sample = &mut tile.samples[y * n + x];
+                    *sample = 255 - *sample;
+                }
+            }
+        }
+
+        assert!(matches!(
+            ProjectWriter::open(&fixture.source())
+                .unwrap()
+                .apply_environment_cell_transaction(&[EnvironmentCellWrite {
+                    expected_source_revision: Some(record.source_revision),
+                    record: edited,
+                }])
+                .unwrap(),
+            EnvironmentCellWriteResult::Committed(_)
+        ));
+    }
+
+    #[test]
+    fn repainting_soft_ground_rebuilds_the_neighbouring_leaves_its_layer_reaches() {
+        // The demo's ground is meadow and dry meadow: snow on one, banks where they meet.
+        let mut project = road_demo::document();
+        let meadow = project
+            .terrain_surfaces
+            .iter_mut()
+            .find(|s| s.key == "meadow")
+            .unwrap();
+        meadow.soft_depth = 0.4;
+
+        let fixture = Fixture::new(&project);
+        cook_project_with_report(&fixture.source(), &fixture.runtime()).unwrap();
+        let space = project.default_world_space;
+        let node = |path: &Path, cell| {
+            RuntimeReader::open_immutable(path)
+                .unwrap()
+                .read_terrain_node(world::TerrainNodeKey::leaf(space, cell))
+                .unwrap()
+                .unwrap()
+                .decode()
+                .unwrap()
+        };
+        let neighbour = CellCoord { x: 1, z: 3 };
+        let before = node(&fixture.runtime(), neighbour);
+        assert!(
+            !before.soft_depths.is_empty(),
+            "the fixture lies under a soft layer"
+        );
+        let published = fixture.dir.join("published.sqlite");
+        std::fs::copy(fixture.runtime(), &published).unwrap();
+
+        let painted = CellCoord { x: 2, z: 3 };
+        repaint(&project, &fixture, painted);
+        let incremental = cook_project_with_report(&fixture.source(), &fixture.runtime()).unwrap();
+        assert!(incremental.stats.incremental);
+        assert_ne!(
+            node(&fixture.runtime(), neighbour),
+            before,
+            "the neighbour's layer reads the repainted cell"
+        );
+        let full_path = fixture.dir.join("full.sqlite");
+        let full = cook_project_fresh(&fixture.source(), &full_path).unwrap();
+        assert_eq!(
+            incremental.manifest.content_hash,
+            full.manifest.content_hash
+        );
+        assert_eq!(
+            node(&fixture.runtime(), neighbour),
+            node(&full_path, neighbour)
+        );
+
+        // The editor's live preview of the repainted cell over the old publication draws the
+        // neighbour as the cook does.
+        let leaf = crate::published_terrain_leaf(
+            &RuntimeReader::open_immutable(&full_path).unwrap(),
+            space,
+            painted,
+        )
+        .unwrap()
+        .unwrap();
+        let preview = crate::preview_terrain(
+            &RuntimeReader::open_immutable(&published).unwrap(),
+            space,
+            [(painted, std::sync::Arc::new(leaf))].into(),
+            || false,
+        )
+        .unwrap();
+        let key = world::TerrainNodeKey::leaf(space, neighbour);
+        assert_eq!(*preview.nodes[&key], node(&full_path, neighbour));
         fixture.assert_no_staging_files();
     }
 

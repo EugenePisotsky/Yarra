@@ -83,9 +83,10 @@ const NODE_SAMPLES: u16 = 33;
 #[derive(Default)]
 struct Resident {
     bounds: HashMap<TerrainNodeKey, [f32; 2]>,
-    /// Level-0 samples for grounding actors on the drawn surface.
+    /// Level-0 firm ground for grounding actors: the drawn surface less any soft layer, which
+    /// they wade through.
     leaves: HashMap<TerrainNodeKey, TerrainHeightfield>,
-    /// Leaves whose cells hold a soft surface, among the streamed pages.
+    /// Leaves under a soft layer, where detail levels may be drawn.
     soft: HashSet<TerrainNodeKey>,
 }
 
@@ -103,7 +104,13 @@ struct Decoded {
     key: TerrainNodeKey,
     bounds: [f32; 2],
     block: NodeBlock,
-    leaf: Option<TerrainHeightfield>,
+    leaf: Option<Leaf>,
+}
+
+/// A leaf's firm ground and whether a soft layer lies over it.
+struct Leaf {
+    firm: TerrainHeightfield,
+    soft: bool,
 }
 
 /// Counts for the log and the F1 panel.
@@ -333,6 +340,7 @@ impl ClipmapTerrain {
     fn evict(&mut self, key: TerrainNodeKey) {
         self.resident.bounds.remove(&key);
         self.resident.leaves.remove(&key);
+        self.resident.soft.remove(&key);
 
         if let Some(layout) = &self.layout {
             self.residency.set(layout, key, false);
@@ -431,7 +439,13 @@ impl ClipmapTerrain {
         self.resident.bounds.insert(node.key, node.bounds);
 
         if let Some(leaf) = node.leaf {
-            self.resident.leaves.insert(node.key, leaf);
+            self.resident.leaves.insert(node.key, leaf.firm);
+
+            if leaf.soft {
+                self.resident.soft.insert(node.key);
+            } else {
+                self.resident.soft.remove(&node.key);
+            }
         }
 
         self.residency.set(layout, node.key, true);
@@ -476,8 +490,8 @@ impl ClipmapTerrain {
         !self.resident.leaves.is_empty()
     }
 
-    /// The drawn leaf surface's height under a render-space position, once its node is
-    /// resident: the same triangles the patch draws within the leaf range.
+    /// The firm ground's height under a render-space position, once its leaf is resident: the
+    /// triangles the patch draws within the leaf range, less any soft layer over them.
     pub fn ground_height(&self, render: Vec3, origin: &WorldOrigin) -> Option<f32> {
         let (key, local) = self.leaf_under(render, origin)?;
         let field = self.resident.leaves.get(&key)?;
@@ -537,8 +551,8 @@ fn decode(
         .collect()
 }
 
-/// A node's block with its heights and normals, its height bounds and, at level 0, its
-/// samples for grounding.
+/// A node's block with its heights and normals, its height bounds and, at level 0, its firm
+/// ground for grounding.
 fn relief(node: &TerrainNode, intervals: u32) -> Result<Decoded, String> {
     let block = NodeBlock::relief_of(node, intervals)?;
     Ok(Decoded {
@@ -546,8 +560,12 @@ fn relief(node: &TerrainNode, intervals: u32) -> Result<Decoded, String> {
         bounds: node.height_bounds,
         block,
         leaf: (node.key.level == 0)
-            .then(|| node.heightfield.clone())
-            .flatten(),
+            .then(|| node.firm_ground())
+            .flatten()
+            .map(|firm| Leaf {
+                firm,
+                soft: !node.soft_depths.is_empty(),
+            }),
     })
 }
 
@@ -735,7 +753,6 @@ pub(super) fn update(
     );
     terrain.move_windows(&layout, [eye.x, eye.z]);
     terrain.take_decoded(&layout, &mut uploads);
-    terrain.follow_soft_ground(space, &sources);
     terrain.request_nodes(&worker, &layout, &ranges, eye);
     terrain.draw_patches(&mut commands, &layout, &ranges, eye, origin.cell(), offset);
     terrain.stats.uploads = uploads.uploaded_blocks;
@@ -782,29 +799,6 @@ pub(super) fn update(
 }
 
 impl ClipmapTerrain {
-    /// The leaves whose streamed pages hold a soft surface, where detail levels may be drawn.
-    fn follow_soft_ground(
-        &mut self,
-        space: WorldSpaceId,
-        sources: &Query<(Entity, Ref<super::StreamedTerrainWear>)>,
-    ) {
-        let Some(textures) = self.gpu.as_ref() else {
-            return;
-        };
-        self.resident.soft = sources
-            .iter()
-            .filter(|(_, page)| {
-                page.key.space == space && page.layers.iter().any(|&l| textures.soft_layer(l))
-            })
-            .map(|(_, page)| TerrainNodeKey {
-                space,
-                level: 0,
-                x: page.key.cell.x,
-                z: page.key.cell.z,
-            })
-            .collect();
-    }
-
     /// Another space or cell size, a new layout or a failure some seconds old start over; a
     /// new publication of the same space is read again in place.
     fn follow_publication(

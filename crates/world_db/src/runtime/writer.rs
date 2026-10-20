@@ -289,6 +289,23 @@ impl RuntimeCookWriter {
             .transpose()?)
     }
 
+    /// A cell's encoded leaf control tile, as `append_cell` wrote it.
+    pub fn control_payload(
+        &self,
+        space: WorldSpaceId,
+        cell: CellCoord,
+    ) -> Result<Option<Vec<u8>>, WorldDbError> {
+        Ok(self
+            .connection
+            .query_row(
+                "SELECT payload FROM terrain_controls \
+                 WHERE world_space_id=?1 AND level=0 AND node_x=?2 AND node_z=?3",
+                params![space.0, cell.x, cell.z],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+
     /// Removes a cell, every row that depends on it and its leaf control tile.
     pub fn remove_cell(&self, space: WorldSpaceId, cell: CellCoord) -> Result<(), WorldDbError> {
         for table in [

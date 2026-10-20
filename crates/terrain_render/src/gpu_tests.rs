@@ -247,7 +247,6 @@ fn setup(
         texture: Vec4::new(1.0, 1.0, 1.0, 1.0),
         material: Vec4::new(0.3, 0.9, 0.0, 0.0),
         grass: Vec4::ZERO,
-        soft: Vec4::new(0.25, 0.0, 0.0, 0.0),
     };
     let ground = ClipmapGround {
         surfaces: vec![surface; 2],
@@ -266,7 +265,15 @@ fn setup(
         .collect();
     let field = world::TerrainHeightfield::from_heights(33, &heights, -0.1, 0.1, 4.0).unwrap();
     let key = world::TerrainNodeKey::leaf(world::WorldSpaceId(1), world::CellCoord::ZERO);
-    let node = world::TerrainNode::leaf(key, &field, 33).unwrap();
+
+    // Under a soft layer, so the shaders' pressed-ground path runs too.
+    let node = world::TerrainNode::leaf(key, &field, 33)
+        .unwrap()
+        .with_soft_layer(world::SoftLayer {
+            depths: vec![256; n * n],
+            slopes: vec![[0.0; 2]; n * n],
+        })
+        .unwrap();
     let control = vec![
         world::pack_control([(0, 0.6), (1, 0.4), (0, 0.0)]);
         world::CONTROL_SAMPLES * world::CONTROL_SAMPLES

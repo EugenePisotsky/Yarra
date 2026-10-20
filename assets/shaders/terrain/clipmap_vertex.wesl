@@ -5,14 +5,13 @@
 // lower even neighbour, so at the range the patch is the coarser grid and meets coarser
 // neighbours without cracks. Distances are from the main camera (the state texture's eye), so
 // shadow cascades draw the same surface. Detail patches, parts of a leaf on soft ground, place
-// their vertices on the leaves' triangles and morph the same way. Near the camera every vertex
-// stands on the soft layer (snow) over the firm ground the heights hold, morphing to the lift the
-// coarser level gives it, so levels still meet, and lowered where feet pushed it down
-// (terrain/prints.wesl).
+// their vertices on the leaves' triangles and morph the same way. The heights are the soft
+// layer's (snow's) top; on the leaves, where feet pushed the layer down (terrain/prints.wesl),
+// vertices stand on it as they left it.
 import bevy_pbr::render::{mesh_functions, view_transformations::position_world_to_clip};
 import package::shaders::terrain::clipmap_common::{
     DETAIL_LEVELS, eye, heights, intervals, leaf_spacing, leaf_surface_height, level_normal, levels,
-    normals, render_xz, settings, soft_layer, soft_layer_reach, texel, unpack_normal,
+    normals, origin_samples, render_xz, settings, soft_depth, texel, unpack_normal,
 };
 import package::shaders::terrain::prints::{pressed_layer_at, print_view};
 @if(PREPASS_PIPELINE) import bevy_pbr::prepass::io::VertexOutput;
@@ -67,13 +66,16 @@ fn detail_normal(sample: vec2<i32>, detail: u32) -> vec3<f32> {
     return level_normal(0u, detail_leaf(sample, detail), detail_fraction(sample, detail));
 }
 
-fn detail_lift(sample: vec2<i32>, detail: u32) -> f32 {
-    return soft_layer(0u, detail_leaf(sample, detail), detail_fraction(sample, detail));
-}
-
-// A level's sample, lifted as the control samples of level `control` hold the soft layer.
-fn level_lift(sample: vec2<i32>, level: u32, control: u32) -> f32 {
-    return soft_layer(control, sample << vec2(level), vec2(0.0));
+// The ground at render xz `p` as feet left the soft layer over it: `height` lowered by however
+// far below its top they pushed it.
+fn pressed_height(p: vec2<f32>, height: f32) -> f32 {
+    let r = p / leaf_spacing();
+    let cell = floor(r);
+    let depth = soft_depth(origin_samples() + vec2<i32>(cell), r - cell);
+    if depth <= 0.0 {
+        return height;
+    }
+    return height + pressed_layer_at(print_view(p), p, depth) - depth;
 }
 
 @vertex
@@ -112,23 +114,9 @@ fn vertex(vertex: Vertex) -> VertexOutput {
             normal = normalize(mix(normal, sample_normal(even, level), k));
         }
     }
-    // Every vertex, even ones that do not move, blends to the coarser grid's lift at the
-    // sample it morphs onto, read at that grid's own level.
-    let reach = soft_layer_reach(distance(eye(), position));
-    if reach > 0.0 {
-        var lift: f32;
-        if detailed {
-            lift = mix(detail_lift(sample, detail), detail_lift(even, detail), k);
-        } else {
-            lift = level_lift(sample, level, level);
-            if k > 0.0 {
-                lift = mix(lift, level_lift(even, level, level + 1u), k);
-            }
-        }
-        if lift > 0.0 {
-            lift = pressed_layer_at(print_view(position.xz), position.xz, lift);
-        }
-        position.y += lift * reach;
+    // Only the leaves hold their soft layer's depth.
+    if detailed || level == 0u {
+        position.y = pressed_height(position.xz, position.y);
     }
     out.world_position = vec4(position, 1.0);
     out.position = position_world_to_clip(position);

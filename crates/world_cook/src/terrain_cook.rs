@@ -3,11 +3,13 @@
 //! the sample data held at once. The whole-document path is retained for reference fixtures.
 use crate::parallel;
 use anyhow::{Context, Result, bail};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 
 use world::{
-    CellCoord, MAX_TERRAIN_NODE_LEVEL, PagePayload, TerrainNode, TerrainNodeKey, WorldSpaceId,
+    CellCoord, ControlNeighbourhood, MAX_TERRAIN_NODE_LEVEL, PagePayload, SoftGround,
+    TerrainHeightfield, TerrainNode, TerrainNodeKey, WorldSpaceId, control_neighbourhood,
+    soft_layer_neighbours,
 };
 
 use world_db::{
@@ -15,8 +17,26 @@ use world_db::{
     TerrainCookStore, WorldSpaceRecord,
 };
 
-/// Cells whose ground page changed since the publication a cook continues, per world.
+/// Cells per world: cooked again, or whose leaf is to be built again.
 pub(super) type ChangedCells = BTreeMap<WorldSpaceId, BTreeSet<CellCoord>>;
+
+/// A cell's leaf node: its ground page's heights on the hierarchy's grid, under the soft layer
+/// the control tiles around it lay.
+pub(crate) fn leaf_node(
+    key: TerrainNodeKey,
+    field: &TerrainHeightfield,
+    resolution: u16,
+    tiles: &ControlNeighbourhood,
+    soft: &SoftGround,
+) -> Result<TerrainNode> {
+    let node = TerrainNode::leaf(key, field, resolution)?;
+    Ok(
+        match soft.layer(tiles, resolution).map_err(anyhow::Error::msg)? {
+            Some(layer) => node.with_soft_layer(layer)?,
+            None => node,
+        },
+    )
+}
 
 /// Builds the hierarchy into empty staging, or with `changed` updates the copied hierarchy
 /// of a publication with the same terrain cells: only changed leaves and their ancestors.
@@ -34,8 +54,17 @@ pub(super) fn cook_hierarchy(
         // A world uses one hierarchy grid. In particular, the compiler's 2x2 flat
         // optimization must not create incompatible topology next to detailed relief.
         let resolution = store.grid_resolution(space.id)?;
+        let leaves = Leaves {
+            store: &store,
+            space: space.id,
+            resolution,
+            soft: SoftGround {
+                layer_depths: store.layer_soft_depths(space.id)?,
+                cell_size: space.cell_size,
+            },
+        };
         let Some(changed) = changed else {
-            build(&store, space.id, resolution)?;
+            build(&leaves)?;
             continue;
         };
         let cells = if store
@@ -47,13 +76,58 @@ pub(super) fn cook_hierarchy(
         } else {
             changed.get(&space.id).cloned().unwrap_or_default()
         };
-        update(&store, space.id, resolution, &cells)?;
+        update(&leaves, &cells)?;
     }
 
     Ok(store.finish(spaces)?)
 }
 
-fn build(store: &TerrainCookStore, space: WorldSpaceId, resolution: u16) -> Result<()> {
+/// What a world's leaves are built from.
+struct Leaves<'a> {
+    store: &'a TerrainCookStore,
+    space: WorldSpaceId,
+    resolution: u16,
+    soft: SoftGround,
+}
+
+impl Leaves<'_> {
+    /// The leaves of `pages`, built on every core.
+    fn prepare(&self, pages: &[EncodedPage]) -> Result<Vec<Result<PreparedTerrainNode>>> {
+        // The control tiles their soft layer reads: theirs and their neighbours'.
+        let mut tiles = HashMap::new();
+
+        if self.soft.has_soft_ground() {
+            let cells: BTreeSet<_> = pages
+                .iter()
+                .flat_map(|p| soft_layer_neighbours(p.key.cell))
+                .collect();
+            let keys: Vec<_> = cells
+                .iter()
+                .map(|&c| TerrainNodeKey::leaf(self.space, c))
+                .collect();
+
+            for (cell, tile) in cells.into_iter().zip(self.store.controls(&keys)?) {
+                if let Some(tile) = tile {
+                    tiles.insert(cell, tile);
+                }
+            }
+        }
+
+        let (resolution, soft) = (self.resolution, &self.soft);
+        Ok(parallel::map(pages, |page| {
+            let key = TerrainNodeKey::leaf(page.key.space, page.key.cell);
+            let PagePayload::TerrainHeightfield(terrain) = page.clone().decode()?.payload else {
+                bail!("terrain hierarchy requires finalized heightfield pages at {key:?}");
+            };
+            let around = control_neighbourhood(page.key.cell, |c| tiles.get(&c).map(Vec::as_slice));
+            let node = leaf_node(key, &terrain.heightfield, resolution, &around, soft)?;
+            Ok(PreparedTerrainNode::new(&node)?)
+        }))
+    }
+}
+
+fn build(leaves: &Leaves) -> Result<()> {
+    let (store, space) = (leaves.store, leaves.space);
     let mut cursor = None;
 
     loop {
@@ -63,7 +137,7 @@ fn build(store: &TerrainCookStore, space: WorldSpaceId, resolution: u16) -> Resu
         };
         cursor = Some(last.key.cell);
 
-        for node in prepare_leaves(&pages, resolution) {
+        for node in leaves.prepare(&pages)? {
             store.write(&node?, false)?;
         }
     }
@@ -123,12 +197,8 @@ fn build(store: &TerrainCookStore, space: WorldSpaceId, resolution: u16) -> Resu
 
 /// Replaces the leaves of `cells`, then each level of their ancestors. The leaf set is
 /// unchanged, so the tree keeps its shape and only existing ancestors are rebuilt.
-fn update(
-    store: &TerrainCookStore,
-    space: WorldSpaceId,
-    resolution: u16,
-    cells: &BTreeSet<CellCoord>,
-) -> Result<()> {
+fn update(leaves: &Leaves, cells: &BTreeSet<CellCoord>) -> Result<()> {
+    let (store, space) = (leaves.store, leaves.space);
     let cells: Vec<_> = cells.iter().copied().collect();
 
     for batch in cells.chunks(MAX_TERRAIN_NODE_QUERY) {
@@ -140,7 +210,7 @@ fn update(
                     .with_context(|| format!("changed terrain cell {cell:?} has no ground page"))
             })
             .collect::<Result<Vec<_>>>()?;
-        for node in prepare_leaves(&pages, resolution) {
+        for node in leaves.prepare(&pages)? {
             store.write(&node?, true)?;
         }
     }
@@ -166,20 +236,6 @@ fn update(
     }
 
     Ok(())
-}
-
-fn prepare_leaves(pages: &[EncodedPage], resolution: u16) -> Vec<Result<PreparedTerrainNode>> {
-    parallel::map(pages, |page| {
-        let key = TerrainNodeKey::leaf(page.key.space, page.key.cell);
-        let PagePayload::TerrainHeightfield(terrain) = page.clone().decode()?.payload else {
-            bail!("terrain hierarchy requires finalized heightfield pages at {key:?}");
-        };
-        Ok(PreparedTerrainNode::leaf(
-            key,
-            &terrain.heightfield,
-            resolution,
-        )?)
-    })
 }
 
 /// Builds `parents` from their stored children, which are loaded per batch.

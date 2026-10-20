@@ -1,10 +1,11 @@
 //! The clipmap's textures, its material and the uploads that fill them.
 //!
-//! Four textures, all written in place by the render world: heights (R32Float, one layer per
+//! Five textures, all written in place by the render world: heights (R32Float, one layer per
 //! level, read with `textureLoad`), normals (Rg16Float x and z, filtered), control (R32Uint, the
 //! ground's three heaviest surfaces per sample at twice the heights' density,
-//! `world::terrain_control`) and a one-row state texture (Rgba32Uint) with the frame's eye,
-//! render origin, windows and node residency. The
+//! `world::terrain_control`), the leaves' soft layer (R16Float depth over the firm ground, level
+//! 0 only, filtered: what feet press, `world::soft_layer`) and a one-row state texture
+//! (Rgba32Uint) with the frame's eye, render origin, windows and node residency. The
 //! state is a texture rather than material data so the material, and every patch drawing it,
 //! stays unchanged from frame to frame. Uploads move to the render world during extraction, so
 //! the state a frame draws with is the one its patches were selected with.
@@ -65,16 +66,9 @@ pub struct ClipmapSettings {
     macro_scales: Vec4,
     /// Macro contrast, whether macro variation is on, control texels per side.
     ground: Vec4,
-    /// Range of the first detail level on soft ground (0: none), and the soft texture layers as
-    /// a bit mask (its bits).
+    /// Range of the first detail level on soft ground (0: none).
     detail: Vec4,
-    /// How deep each texture layer's soft ground lies over the firm ground, metres, four a
-    /// vector: the vertex stage's copy of the surface table's (`SOFT_LAYERS` layers).
-    soft: [Vec4; SOFT_LAYERS / 4],
 }
-
-/// Texture layers the control tiles can name (five bits).
-const SOFT_LAYERS: usize = 32;
 
 /// One of the world's ground surfaces, by texture array layer.
 #[derive(Clone, Copy, Debug, Default, ShaderType)]
@@ -86,9 +80,6 @@ pub struct ClipmapSurface {
     pub material: Vec4,
     /// The grass field's linear colour and how fully it covers the surface.
     pub grass: Vec4,
-    /// x: how deep its soft ground lies over the firm ground, metres
-    /// (`world::TerrainSurface::soft_depth`).
-    pub soft: Vec4,
 }
 
 /// Grass covering this much of a surface hides its ground: it shades by the field colour.
@@ -136,7 +127,6 @@ impl ClipmapGround {
                     0.0,
                 ),
                 grass: Vec4::from_array(s.grass),
-                soft: Vec4::new(surface.soft_depth, 0.0, 0.0, 0.0),
             };
         }
 
@@ -196,6 +186,8 @@ pub struct ClipmapTerrainMaterial {
     prints: Option<Handle<Image>>,
     #[texture(14, sample_type = "u_int")]
     print_windows: Option<Handle<Image>>,
+    #[texture(15)]
+    soft: Option<Handle<Image>>,
 }
 
 impl Material for ClipmapTerrainMaterial {
@@ -227,6 +219,7 @@ pub struct ClipmapTextures {
     heights: Handle<Image>,
     normals: Handle<Image>,
     control: Handle<Image>,
+    soft: Handle<Image>,
     wear: Handle<Image>,
     state: Handle<Image>,
 }
@@ -277,19 +270,17 @@ impl ClipmapTextures {
         );
 
         // Toroidal: bilinear filtering wraps across the texture edge as the window does.
-        let normals = image(
-            side,
-            side,
-            layers,
-            TextureFormat::Rg16Float,
+        let toroidal = || {
             ImageSampler::Descriptor(ImageSamplerDescriptor {
                 address_mode_u: ImageAddressMode::Repeat,
                 address_mode_v: ImageAddressMode::Repeat,
                 mag_filter: ImageFilterMode::Linear,
                 min_filter: ImageFilterMode::Linear,
                 ..default()
-            }),
-        );
+            })
+        };
+        let normals = image(side, side, layers, TextureFormat::Rg16Float, toroidal());
+        let soft = image(side, side, 1, TextureFormat::R16Float, toroidal());
         let control_side = control_layout(&layout).side;
         let control = image(
             control_side,
@@ -340,18 +331,13 @@ impl ClipmapTextures {
                     ground.macro_albedo_strength,
                 ),
                 ground: Vec4::new(ground.macro_contrast, 1.0, control_side as f32, 0.0),
-                detail: Vec4::new(
-                    ranges.detail as f32,
-                    f32::from_bits(soft_mask(&ground.surfaces)),
-                    0.0,
-                    0.0,
-                ),
-                soft: soft_depths(&ground.surfaces),
+                detail: Vec4::new(ranges.detail as f32, 0.0, 0.0, 0.0),
             },
             heights: Some(heights.clone()),
             normals: Some(normals.clone()),
             state: Some(state.clone()),
             control: Some(control.clone()),
+            soft: Some(soft.clone()),
             surfaces: surfaces.clone(),
             base_color: Some(ground.base_color),
             normal_material: Some(ground.normal_material),
@@ -368,31 +354,11 @@ impl ClipmapTextures {
             heights,
             normals,
             control,
+            soft,
             wear,
             state,
         }
     }
-}
-
-/// Each texture layer's soft depth, four a vector.
-fn soft_depths(surfaces: &[ClipmapSurface]) -> [Vec4; SOFT_LAYERS / 4] {
-    let mut depths = [Vec4::ZERO; SOFT_LAYERS / 4];
-
-    for (layer, surface) in surfaces.iter().enumerate().take(SOFT_LAYERS) {
-        depths[layer / 4][layer % 4] = surface.soft.x;
-    }
-
-    depths
-}
-
-/// The soft texture layers, a bit each.
-fn soft_mask(surfaces: &[ClipmapSurface]) -> u32 {
-    surfaces
-        .iter()
-        .take(SOFT_LAYERS)
-        .enumerate()
-        .filter(|(_, s)| s.soft.x > 0.0)
-        .fold(0, |mask, (layer, _)| mask | 1 << layer)
 }
 
 /// The control texture's layout: twice the samples of the heights' per node.
@@ -405,13 +371,6 @@ fn control_layout(layout: &ClipmapLayout) -> ClipmapLayout {
 }
 
 impl ClipmapTextures {
-    /// Whether feet press into the surface at texture layer `layer`.
-    pub fn soft_layer(&self, layer: u16) -> bool {
-        self.surface_table
-            .get(usize::from(layer))
-            .is_some_and(|s| s.soft.x > 0.0)
-    }
-
     /// Marks the surfaces roads wear ground bare to (the layers of their pages' worn slots), which
     /// near the camera follow the fine wear field (`terrain/clipmap.wesl`). True when one was new.
     pub fn mark_bare_ground(
@@ -448,6 +407,8 @@ pub struct NodeBlock {
     pub key: TerrainNodeKey,
     /// Heights, and unit normals' x and z as half floats.
     pub relief: Option<(Vec<f32>, Vec<[u16; 2]>)>,
+    /// A leaf's soft layer depths in metres as half floats, zero where it has none.
+    pub soft: Option<Vec<u16>>,
     /// Packed control samples, `2 × intervals + 1` per side (`world::CONTROL_SAMPLES`).
     pub control: Option<Vec<u32>>,
 }
@@ -458,6 +419,7 @@ impl NodeBlock {
         Self {
             key,
             relief: None,
+            soft: None,
             control: None,
         }
     }
@@ -498,7 +460,18 @@ impl NodeBlock {
 
         let n = usize::from(field.resolution);
         let normals: Vec<_> = (0..n * n).map(|i| field.normal_at(i % n, i / n)).collect();
-        Ok(Self::new(node.key).with_relief(field.heights.clone(), &normals))
+        let mut block = Self::new(node.key).with_relief(field.heights.clone(), &normals);
+
+        if node.key.level == 0 {
+            let depth = |i: usize| node.soft_depths.get(i).map_or(0.0, |&d| f32::from(d));
+            block.soft = Some(
+                (0..n * n)
+                    .map(|i| half::f16::from_f32(depth(i) * world::TERRAIN_HEIGHT_STEP).to_bits())
+                    .collect(),
+            );
+        }
+
+        Ok(block)
     }
 }
 
@@ -567,6 +540,7 @@ struct Target {
     heights: AssetId<Image>,
     normals: AssetId<Image>,
     control: AssetId<Image>,
+    soft: AssetId<Image>,
     wear: AssetId<Image>,
     state: AssetId<Image>,
     layout: ClipmapLayout,
@@ -579,6 +553,7 @@ impl ClipmapUploads {
             heights: textures.heights.id(),
             normals: textures.normals.id(),
             control: textures.control.id(),
+            soft: textures.soft.id(),
             wear: textures.wear.id(),
             state: textures.state.id(),
             layout: textures.layout,
@@ -723,10 +698,11 @@ fn upload_one(uploads: &mut Queue, images: &RenderAssets<GpuImage>, queue: &Rend
     let target = uploads.target;
 
     // Images appear a frame or more after they are added: keep everything until then.
-    let (Some(heights), Some(normals), Some(control), Some(wear), Some(state)) = (
+    let (Some(heights), Some(normals), Some(control), Some(soft), Some(wear), Some(state)) = (
         images.get(target.heights),
         images.get(target.normals),
         images.get(target.control),
+        images.get(target.soft),
         images.get(target.wear),
         images.get(target.state),
     ) else {
@@ -769,6 +745,11 @@ fn upload_one(uploads: &mut Queue, images: &RenderAssets<GpuImage>, queue: &Rend
         if let Some((h, n)) = &block.relief {
             write_block(queue, heights, &layout, origin, layer, bytemuck_f32(h));
             write_block(queue, normals, &layout, origin, layer, bytemuck_u16(n));
+        }
+
+        if let Some(depths) = &block.soft {
+            let bytes = depths.iter().flat_map(|d| d.to_le_bytes()).collect();
+            write_block(queue, soft, &layout, origin, 0, bytes);
         }
 
         if let Some(samples) = &block.control {
@@ -991,18 +972,24 @@ mod tests {
     }
 
     #[test]
-    fn soft_layers_reach_the_vertex_stage_by_layer() {
-        let surface = |soft| ClipmapSurface {
-            soft: Vec4::new(soft, 0.0, 0.0, 0.0),
-            ..default()
+    fn leaves_upload_their_soft_layer_in_metres_and_clear_it_without_one() {
+        let key = TerrainNodeKey::leaf(world::WorldSpaceId(1), world::CellCoord { x: 0, z: 0 });
+        let field = world::TerrainHeightfield::from_heights(3, &[1.0; 9], 0.0, 2.0, 32.0).unwrap();
+        let firm = world::TerrainNode::leaf(key, &field, 3).unwrap();
+        let layer = world::SoftLayer {
+            depths: vec![410; 9],
+            slopes: vec![[0.0; 2]; 9],
         };
-        let surfaces: Vec<_> = (0..6)
-            .map(|l| surface(if l == 5 { 0.4 } else { 0.0 }))
-            .collect();
-        assert_eq!(soft_mask(&surfaces), 1 << 5);
-        let depths = soft_depths(&surfaces);
-        assert_eq!(depths[1], Vec4::new(0.0, 0.4, 0.0, 0.0));
-        assert_eq!(depths[0], Vec4::ZERO);
+        let covered = firm.clone().with_soft_layer(layer).unwrap();
+        let depth =
+            |node: &world::TerrainNode| NodeBlock::relief_of(node, 2).unwrap().soft.unwrap()[4];
+        let metres = half::f16::from_bits(depth(&covered)).to_f32();
+        assert!((metres - 0.4).abs() < 0.001, "{metres}");
+        assert_eq!(
+            depth(&firm),
+            0,
+            "a leaf without one clears what its texels held"
+        );
     }
 
     #[test]

@@ -20,6 +20,19 @@ pub fn published_terrain_leaf(
     space: WorldSpaceId,
     cell: CellCoord,
 ) -> Result<Option<TerrainPreviewLeaf>> {
+    let Some(page) = published_ground(reader, space, cell)? else {
+        return Ok(None);
+    };
+    let control = published_terrain_control(reader, TerrainNodeKey::leaf(space, cell))?
+        .context("a published cell has no control tile")?;
+    Ok(Some(TerrainPreviewLeaf { page, control }))
+}
+
+fn published_ground(
+    reader: &RuntimeReader,
+    space: WorldSpaceId,
+    cell: CellCoord,
+) -> Result<Option<TerrainHeightfieldPage>> {
     let key = PageKey {
         space,
         cell,
@@ -31,9 +44,7 @@ pub fn published_terrain_leaf(
     let PagePayload::TerrainHeightfield(page) = page.decode()?.payload else {
         bail!("unexpected terrain leaf payload");
     };
-    let control = published_terrain_control(reader, TerrainNodeKey::leaf(space, cell))?
-        .context("a published cell has no control tile")?;
-    Ok(Some(TerrainPreviewLeaf { page, control }))
+    Ok(Some(page))
 }
 
 /// The texture layer of each of a world's ground surfaces, to lay out edited cells' control
@@ -120,9 +131,10 @@ pub fn preview_terrain(
     })
 }
 
-/// Changed leaves' nodes and every ancestor up to the roots. Borders are checked even across
-/// separate coarse roots, where parent validation alone would never see a mismatch; a missing
-/// relief halo fails closed.
+/// Changed leaves' nodes and every ancestor up to the roots: the edited leaves' and, where the
+/// world has soft ground, their neighbours', whose soft layer reads the edited control tiles.
+/// Borders are checked even across separate coarse roots, where parent validation alone would
+/// never see a mismatch; a missing relief halo fails closed.
 fn preview_nodes(
     reader: &RuntimeReader,
     space: WorldSpaceId,
@@ -134,26 +146,68 @@ fn preview_nodes(
         .into_iter()
         .map(|d| d.key)
         .collect();
+    let soft = SoftGround {
+        layer_depths: reader.layer_soft_depths(space)?,
+        cell_size: reader
+            .manifest()
+            .world_space(space)
+            .context("missing terrain space")?
+            .cell_size,
+    };
+    let around = |cells: &mut dyn Iterator<Item = CellCoord>| -> BTreeSet<CellCoord> {
+        if soft.has_soft_ground() {
+            cells.flat_map(soft_layer_neighbours).collect()
+        } else {
+            cells.collect()
+        }
+    };
+    let cells = around(&mut leaves.keys().copied());
+    let mut tiles = HashMap::new();
+
+    if soft.has_soft_ground() {
+        for cell in around(&mut cells.iter().copied()) {
+            let tile = match leaves.get(&cell) {
+                Some(leaf) => Some(leaf.control.clone()),
+                None => published_terrain_control(reader, TerrainNodeKey::leaf(space, cell))?,
+            };
+
+            if let Some(tile) = tile {
+                tiles.insert(cell, tile);
+            }
+        }
+    }
+
     let mut nodes = BTreeMap::new();
     let mut changed = BTreeSet::new();
 
-    for (&cell, leaf) in leaves {
+    for cell in cells {
         if cancelled() {
             bail!("superseded terrain preview")
         }
 
         let key = TerrainNodeKey::leaf(space, cell);
-        let old = reader
-            .read_terrain_node(key)?
-            .context("preview cannot add terrain outside the published domain")?
-            .decode()?;
-        let node = TerrainNode::leaf(
+        let edited = leaves.get(&cell);
+        let Some(old) = reader.read_terrain_node(key)? else {
+            if edited.is_some() {
+                bail!("preview cannot add terrain outside the published domain");
+            }
+            continue;
+        };
+        let old = old.decode()?;
+        let page = match edited {
+            Some(leaf) => leaf.page.clone(),
+            None => published_ground(reader, space, cell)?
+                .context("a published leaf has no ground page")?,
+        };
+        let node = crate::terrain_cook::leaf_node(
             key,
-            &leaf.page.heightfield,
+            &page.heightfield,
             old.heightfield
                 .as_ref()
                 .context("missing leaf samples")?
                 .resolution,
+            &control_neighbourhood(cell, |c| tiles.get(&c).map(Vec::as_slice)),
+            &soft,
         )?;
 
         if node != old {

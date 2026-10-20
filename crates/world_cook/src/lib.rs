@@ -190,8 +190,9 @@ impl Drop for RuntimeStaging {
     }
 }
 
-/// What an incremental cook changed: the cells it cooked again, and those of them whose ground
-/// page changed.
+/// What an incremental cook changed: the cells it cooked again, and the cells whose terrain leaf
+/// must be built again: their ground page changed, or their soft layer reads a control tile that
+/// did.
 struct Changes {
     cells: terrain_cook::ChangedCells,
     ground: terrain_cook::ChangedCells,
