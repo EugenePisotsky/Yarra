@@ -35,7 +35,13 @@ fn live_road_edit_move_save_undo_and_cancel() {
     let catalog = plan.catalog().clone();
     let mut job = Input {
         revision: 1,
-        context: (space, 1, 1, 1, manifest.generation_id.clone()),
+        context: SourceContext {
+            space,
+            definitions: 1,
+            grass: 1,
+            source_epoch: 1,
+            generation: manifest.generation_id.clone(),
+        },
         plan: Arc::new(plan),
         catalog,
         definition_revision: definition.revision,
@@ -128,7 +134,7 @@ fn live_road_edit_move_save_undo_and_cancel() {
     job.base = Some(moved);
     job.roads.clear();
     job.regions = Some(vec![]);
-    job.context.3 += 1;
+    job.context.source_epoch += 1;
     let saved = compile_inner(&source, &runtime, &job, &token).unwrap();
     assert_eq!(saved.products.leaves, edited_leaves);
     assert_eq!(reader.manifest().generation_id, manifest.generation_id);

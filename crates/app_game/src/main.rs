@@ -45,7 +45,7 @@ fn run() -> Result<(), String> {
     }
 
     let start_view = engine::WorldStartView::load(options.start_view.as_deref())?;
-    let asset_root = resolve_asset_root();
+    let asset_root = engine::resolve_asset_root();
     let runtime_database = options
         .world_db
         .clone()
@@ -189,26 +189,4 @@ fn game_window() -> Window {
     };
 
     window
-}
-
-fn resolve_asset_root() -> std::path::PathBuf {
-    let mut candidates = Vec::new();
-
-    if let Ok(current_directory) = std::env::current_dir() {
-        candidates.push(current_directory.join("assets"));
-    }
-
-    if let Ok(executable) = std::env::current_exe()
-        && let Some(executable_directory) = executable.parent()
-    {
-        candidates.push(executable_directory.join("assets"));
-        candidates.push(executable_directory.join("../Resources/assets"));
-    }
-
-    candidates.push(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets"));
-
-    candidates
-        .into_iter()
-        .find(|candidate| candidate.is_dir())
-        .unwrap_or_else(|| std::path::PathBuf::from("assets"))
 }
