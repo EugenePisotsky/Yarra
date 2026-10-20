@@ -1,9 +1,11 @@
-//! Explicit GPU smoke test: compile and draw every terrain diagnostic with real Bevy imports.
+//! Explicit GPU smoke test: compile and draw the clipmap material with real Bevy imports, on a
+//! one-node patch as the editor's preview draws it.
 use super::*;
-use bevy::image::ImageAddressMode;
 
+use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::{
     app::PluginsState,
+    asset::RenderAssetUsages,
     camera::RenderTarget,
     core_pipeline::prepass::DepthPrepass,
     render::{
@@ -14,19 +16,29 @@ use bevy::{
             CachedPipelineState, Extent3d, PipelineCache, PipelineDescriptor, TextureDimension,
             TextureFormat,
         },
+        storage::ShaderBuffer,
     },
     window::ExitCondition,
     winit::WinitPlugin,
 };
 
+use clipmap::{
+    ClipmapGround, ClipmapPatch, ClipmapSurface, ClipmapTerrainMaterial, ClipmapUploads,
+};
 use std::sync::{Arc, Mutex};
 
 #[derive(Resource, Default, Clone)]
 struct Pixels(Arc<Mutex<Vec<u8>>>);
 
+#[derive(Resource)]
+struct TestPatch(ClipmapPatch);
+
+/// Where the camera looks down from onto the 4 m patch.
+const EYE: Vec3 = Vec3::new(2.0, 5.0, 2.1);
+
 #[test]
 #[ignore = "requires a native GPU adapter; run explicitly on a development machine"]
-fn terrain_variants_compile_and_render() {
+fn clipmap_material_compiles_and_renders() {
     let mut app = App::new();
     app.add_plugins(
         DefaultPlugins
@@ -48,7 +60,8 @@ fn terrain_variants_compile_and_render() {
     )
     .add_plugins(TerrainRenderPlugin)
     .init_resource::<Pixels>()
-    .add_systems(Startup, setup);
+    .add_systems(Startup, setup)
+    .add_systems(Update, follow);
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
 
     while app.plugins_state() != PluginsState::Ready {
@@ -61,7 +74,10 @@ fn terrain_variants_compile_and_render() {
 
     app.finish();
     app.cleanup();
-    let shader: Handle<Shader> = app.world().resource::<AssetServer>().load(TERRAIN_SHADER);
+    let shader: Handle<Shader> = app
+        .world()
+        .resource::<AssetServer>()
+        .load("shaders/terrain/clipmap.wesl");
     let mut consecutive_ready = 0;
 
     loop {
@@ -88,7 +104,7 @@ fn terrain_variants_compile_and_render() {
             }
         }
 
-        consecutive_ready = if ready >= 4 { consecutive_ready + 1 } else { 0 };
+        consecutive_ready = if ready >= 1 { consecutive_ready + 1 } else { 0 };
 
         // Keep drawing after all variants compile to also exercise their bind groups.
         if consecutive_ready >= 5 {
@@ -98,26 +114,20 @@ fn terrain_variants_compile_and_render() {
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
 
-    // Repeat rates, macro variation and MSAA change at draw time; a stationary view must
-    // keep its pixels across frames, including on negative coordinates.
+    // Macro variation and MSAA change at draw time; a stationary view must keep its pixels
+    // across frames.
     for variant in 0..3 {
+        if variant == 1 {
+            *app.world_mut().resource_mut::<TerrainMacroVariation>() =
+                TerrainMacroVariation::Disabled;
+        }
+
         if variant == 2 {
             let world = app.world_mut();
             let mut cameras = world.query_filtered::<&mut Msaa, With<Camera3d>>();
 
             for mut msaa in cameras.iter_mut(world) {
                 *msaa = Msaa::Sample4;
-            }
-        }
-
-        if variant > 0 {
-            for (_, material) in app
-                .world_mut()
-                .resource_mut::<Assets<TerrainMaterial>>()
-                .iter_mut()
-            {
-                material.settings.tile_sizes.x *= 0.7;
-                material.settings.macro_settings.y = if variant == 1 { 0.0 } else { 1.0 };
             }
         }
 
@@ -163,11 +173,19 @@ fn settled_pixels(app: &mut App) -> Vec<u8> {
     }
 }
 
+/// The patch's frame follows the camera, as the preview's does.
+fn follow(patch: Res<TestPatch>, mut uploads: ResMut<ClipmapUploads>) {
+    patch.0.follow(EYE, &mut uploads);
+}
+
+#[allow(clippy::too_many_arguments)]
 fn setup(
     mut commands: Commands,
     mut images: ResMut<Assets<Image>>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<TerrainMaterial>>,
+    mut buffers: ResMut<Assets<ShaderBuffer>>,
+    mut materials: ResMut<Assets<ClipmapTerrainMaterial>>,
+    mut uploads: ResMut<ClipmapUploads>,
     pixels: Res<Pixels>,
 ) {
     let mut target = Image::new_target_texture(128, 128, TextureFormat::Bgra8UnormSrgb, None);
@@ -182,7 +200,7 @@ fn setup(
     commands.spawn((
         Camera3d::default(),
         RenderTarget::Image(target.into()),
-        Transform::from_xyz(0.0, 5.0, 0.1).looking_at(Vec3::ZERO, Vec3::Y),
+        Transform::from_translation(EYE).looking_at(Vec3::new(2.0, 0.0, 2.0), Vec3::Y),
         Msaa::Off,
         DepthPrepass,
     ));
@@ -225,42 +243,47 @@ fn setup(
         });
         image
     };
-    let weights = images.add(make_image(1));
-    let array = images.add(make_image(2));
-    let mut plane = Plane3d::default().mesh().size(1.5, 1.5).build();
-    plane.generate_tangents().unwrap();
-    let mesh = meshes.add(plane);
+    let surface = ClipmapSurface {
+        texture: Vec4::new(1.0, 1.0, 1.0, 1.0),
+        material: Vec4::new(0.3, 0.9, 0.0, 0.0),
+        grass: Vec4::ZERO,
+    };
+    let ground = ClipmapGround {
+        surfaces: vec![surface; 2],
+        base_color: images.add(make_image(2)),
+        normal_material: images.add(make_image(2)),
+        macro_variation: images.add(make_image(1)),
+        macro_scales: [8.0, 32.0, 128.0],
+        macro_contrast: 1.0,
+        macro_albedo_strength: 0.5,
+    };
 
-    for (i, mode) in [
-        TerrainShadingMode::Production,
-        TerrainShadingMode::SurfaceUnlit,
-        TerrainShadingMode::SingleTexture,
-        TerrainShadingMode::Flat,
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        let material = materials.add(TerrainMaterial {
-            shading_mode: mode,
-            weights: weights.clone(),
-            base_color_array: array.clone(),
-            normal_material_array: array.clone(),
-            macro_variation: weights.clone(),
-            ..TerrainMaterial::for_tests(TerrainMaterialUniform {
-                chunk_minimum: Vec2::splat(-2.0),
-                chunk_extent: Vec2::splat(4.0),
-                surface_layers: Vec4::new(0.0, 1.0, 2.0, 0.0),
-                tile_sizes: Vec4::ONE,
-                normal_settings: Vec4::ONE,
-                roughness_ranges: Vec4::new(0.1, 0.9, 0.1, 0.9),
-                macro_scales: Vec4::ONE,
-                macro_settings: Vec4::ONE,
-            })
-        });
-        commands.spawn((
-            Mesh3d(mesh.clone()),
-            MeshMaterial3d(material),
-            Transform::from_xyz((i % 2) as f32 * 1.8 - 0.9, 0.0, (i / 2) as f32 * 1.8 - 0.9),
-        ));
-    }
+    // Gentle relief, two surfaces mixed.
+    let n = 33;
+    let heights: Vec<f32> = (0..n * n)
+        .map(|i| 0.1 * ((i % n) as f32 * 0.4).sin() * ((i / n) as f32 * 0.3).cos())
+        .collect();
+    let field = world::TerrainHeightfield::from_heights(33, &heights, -0.1, 0.1, 4.0).unwrap();
+    let key = world::TerrainNodeKey::leaf(world::WorldSpaceId(1), world::CellCoord::ZERO);
+    let node = world::TerrainNode::leaf(key, &field, 33).unwrap();
+    let control = vec![
+        world::pack_control([(0, 0.6), (1, 0.4), (0, 0.0)]);
+        world::CONTROL_SAMPLES * world::CONTROL_SAMPLES
+    ];
+    let patch = ClipmapPatch::new(
+        &node,
+        4.0,
+        control,
+        None,
+        ground,
+        &mut uploads,
+        clipmap::PatchAssets {
+            images: &mut images,
+            buffers: &mut buffers,
+            materials: &mut materials,
+        },
+    )
+    .unwrap();
+    commands.spawn(patch.bundle(&mut meshes));
+    commands.insert_resource(TestPatch(patch));
 }

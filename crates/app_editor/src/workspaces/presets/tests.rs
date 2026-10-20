@@ -253,7 +253,8 @@ fn preset_workspace_restores_scene_lighting_wind_and_camera_ownership() {
         .init_resource::<GlobalAmbientLight>()
         .init_resource::<Assets<Image>>()
         .init_resource::<Assets<Mesh>>()
-        .init_resource::<Assets<terrain_render::TerrainMaterial>>()
+        .init_resource::<Assets<terrain_render::clipmap::ClipmapTerrainMaterial>>()
+        .init_resource::<terrain_render::clipmap::ClipmapUploads>()
         .add_systems(OnEnter(EditorWorkspace::Presets), viewport::enter)
         .add_systems(OnExit(EditorWorkspace::Presets), viewport::leave)
         .add_systems(Update, crate::shell::sync_workspace_cameras);
@@ -354,7 +355,7 @@ pub(super) fn road_request() -> fixture::Request {
 }
 
 #[test]
-fn road_relief_preview_uses_the_same_heightfield_for_mesh_and_grass() {
+fn road_relief_preview_uses_the_same_heightfield_for_ground_and_grass() {
     let mut r = road_request();
     let p = &mut r.road.as_mut().unwrap().profile;
     p.relief.road_depth = 0.15;
@@ -370,17 +371,7 @@ fn road_relief_preview_uses_the_same_heightfield_for_mesh_and_grass() {
         assert_eq!(h.height_at(i % n, i / n), grass.heights[i]);
     }
 
-    let mesh = terrain_render::build_heightfield_mesh(h, output.size).unwrap();
-    let bevy::mesh::VertexAttributeValues::Float32x3(vertices) =
-        mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap()
-    else {
-        panic!()
-    };
-    assert!(vertices.iter().any(|v| v[1] < -0.15));
-
-    for (i, v) in vertices.iter().enumerate() {
-        assert_eq!(v[1], grass.heights[i]);
-    }
+    assert!(h.heights.iter().any(|&height| height < -0.1));
 }
 
 #[test]

@@ -116,6 +116,8 @@ pub(super) struct Product {
     pub assets: Vec<world_db::CollectionAssetView>,
     pub scene: VegetationScene,
     pub ground: CompiledGround,
+    /// Where the fixture's road wears the ground.
+    pub wear: Option<world::TerrainWear>,
     pub terrain: Option<world::TerrainHeightfield>,
     pub size: f32,
     pub candidates: u32,
@@ -272,7 +274,8 @@ impl Request {
                 .map(|mut cells| cells.remove(0))
         }
         .map_err(|e| e.to_string())?;
-        let surface = cell.terrain.as_ref().map_or_else(
+        let terrain = cell.terrain.as_ref().map(node_samples).transpose()?;
+        let surface = terrain.as_ref().map_or_else(
             || VegetationSurfaceField::flat(2, 0.0, [0.0, 1.0, 0.0]),
             |h| {
                 let n = usize::from(h.resolution);
@@ -294,17 +297,19 @@ impl Request {
             }],
         };
         scene.validate().map_err(|e| e.to_string())?;
+
+        // Grass blades are what the limit guards; ground details (ferns and the like) are
+        // drawn apart from them.
         let candidates = scene
             .pages
             .iter()
             .flat_map(|page| {
-                page.fields.iter().map(|field| {
-                    vegetation::candidate_domain(
-                        page.origin_xz,
-                        page.size,
-                        scene.catalog.grass(field.grass).unwrap(),
+                page.fields.iter().filter_map(|field| {
+                    let grass = scene.catalog.grass(field.grass)?;
+                    Some(
+                        vegetation::candidate_domain(page.origin_xz, page.size, grass)
+                            .candidate_count(),
                     )
-                    .candidate_count()
                 })
             })
             .fold(0u32, u32::saturating_add);
@@ -318,49 +323,35 @@ impl Request {
             asset_ids: plan.collection_assets(),
             assets: vec![],
             scene,
-            ground: worn_ground(cell.ground, cell.wear.as_ref(), f64::from(self.size)),
-            terrain: cell.terrain,
+            ground: cell.ground,
+            wear: cell.wear,
+            terrain,
             size: self.size as f32,
             candidates,
         })
     }
 }
 
-/// The preview shades its weights directly: the natural ground worn where the road wears it,
-/// at the weights' own samples (dense enough on road previews), as near terrain lays it.
-/// The preview patch stands at the world's origin, `size` metres across.
-fn worn_ground(
-    mut ground: CompiledGround,
-    wear: Option<&world::TerrainWear>,
-    size: f64,
-) -> CompiledGround {
-    let Some(wear) = wear else {
-        return ground;
-    };
-    let Some(n) = ground
-        .weight_pages
-        .first()
-        .map(|p| usize::from(p.resolution))
-    else {
-        return ground;
-    };
-    let count = ground.surfaces.len();
+/// Samples per side of the preview's node, as the world's terrain nodes have.
+pub(super) const NODE_SAMPLES: u16 = 33;
 
-    for z in 0..n {
-        for x in 0..n {
-            let texel = (z * n + x) * 4;
-            let mut weights: Vec<f64> = (0..count)
-                .map(|i| f64::from(ground.weight_pages[i / 4].rgba[texel + i % 4]) / 255.0)
-                .collect();
-            let uv = [x, z].map(|v| v as f64 / (n - 1) as f64);
-            let w = wear.sample(uv).wear;
-            wear.lay(&mut weights, w, world::bare_share(w, uv.map(|v| v * size)));
-
-            for (i, w) in weights.into_iter().enumerate() {
-                ground.weight_pages[i / 4].rgba[texel + i % 4] = (w * 255.0).round() as u8;
-            }
-        }
+/// The relief at the node's samples at most, so grass stands on the heights the clipmap
+/// draws, as in the game.
+fn node_samples(field: &world::TerrainHeightfield) -> Result<world::TerrainHeightfield, String> {
+    if field.resolution <= NODE_SAMPLES {
+        return Ok(field.clone());
     }
 
-    ground
+    let n = usize::from(NODE_SAMPLES);
+    let samples: Vec<_> = (0..n * n)
+        .map(|i| {
+            let uv = [i % n, i / n].map(|v| v as f32 / (n - 1) as f32);
+            field.sample(uv, 1.0)
+        })
+        .collect();
+    let heights: Vec<f32> = samples.iter().map(|s| s.height).collect();
+    let normals: Vec<[f32; 3]> = samples.iter().map(|s| s.normal).collect();
+    let [low, high] = field.height_bounds();
+    world::TerrainHeightfield::from_heights_and_normals(NODE_SAMPLES, &heights, &normals, low, high)
+        .map_err(|e| e.to_string())
 }

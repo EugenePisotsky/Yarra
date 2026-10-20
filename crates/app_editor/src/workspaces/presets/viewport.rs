@@ -14,8 +14,8 @@ use engine::WorldSun;
 use std::time::{Duration, Instant};
 
 use terrain_render::{
-    PrepareTerrainMaterialContext, TerrainMacroVariation, TerrainMaterial, TerrainSurfaceLayer,
-    prepare_terrain_material,
+    TerrainSurfaceLayer,
+    clipmap::{ClipmapGround, ClipmapPatch, ClipmapTerrainMaterial, ClipmapUploads, PatchAssets},
 };
 
 use vegetation_render::{
@@ -55,9 +55,7 @@ struct Key {
 
 struct GroundAssets {
     entity: Entity,
-    mesh: Handle<Mesh>,
-    material: Handle<TerrainMaterial>,
-    weights: Handle<Image>,
+    patch: ClipmapPatch,
 }
 
 #[derive(Resource, Default)]
@@ -207,9 +205,8 @@ pub(super) fn leave(
     mut commands: Commands,
     mut preview: ResMut<PreviewState>,
     mut shared: SharedRender,
-    mut materials: ResMut<Assets<TerrainMaterial>>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut images: ResMut<Assets<Image>>,
+    mut materials: ResMut<Assets<ClipmapTerrainMaterial>>,
+    mut uploads: ResMut<ClipmapUploads>,
     mut state: ResMut<PresetAuthoringState>,
 ) {
     if let Some(saved) = preview.saved.take() {
@@ -230,13 +227,7 @@ pub(super) fn leave(
         }
     }
 
-    remove_ground(
-        &mut commands,
-        &mut preview,
-        &mut materials,
-        &mut meshes,
-        &mut images,
-    );
+    remove_ground(&mut commands, &mut preview, &mut materials, &mut uploads);
     preview.current = false;
     preview.pending_since = None;
     state.playing = false;
@@ -245,18 +236,16 @@ pub(super) fn leave(
 fn remove_ground(
     commands: &mut Commands,
     preview: &mut PreviewState,
-    materials: &mut Assets<TerrainMaterial>,
-    meshes: &mut Assets<Mesh>,
-    images: &mut Assets<Image>,
+    materials: &mut Assets<ClipmapTerrainMaterial>,
+    uploads: &mut ClipmapUploads,
 ) {
     for entity in preview.object_entities.drain(..) {
         commands.entity(entity).despawn();
     }
+
     if let Some(old) = preview.ground.take() {
         commands.entity(old.entity).despawn();
-        materials.remove(old.material.id());
-        meshes.remove(old.mesh.id());
-        images.remove(old.weights.id());
+        old.patch.remove(uploads, materials);
     }
 }
 
@@ -264,8 +253,10 @@ fn remove_ground(
 pub(super) struct PreviewAssets<'w> {
     server: Res<'w, AssetServer>,
     images: ResMut<'w, Assets<Image>>,
-    materials: ResMut<'w, Assets<TerrainMaterial>>,
+    buffers: ResMut<'w, Assets<bevy::render::storage::ShaderBuffer>>,
+    materials: ResMut<'w, Assets<ClipmapTerrainMaterial>>,
     meshes: ResMut<'w, Assets<Mesh>>,
+    uploads: ResMut<'w, ClipmapUploads>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -287,6 +278,12 @@ pub(super) fn update(
 
     for mut camera in &mut cameras {
         *camera = state.camera();
+    }
+
+    if let Some(ground) = &preview.ground {
+        ground
+            .patch
+            .follow(state.camera().translation, &mut assets.uploads);
     }
 
     if state.playing {
@@ -368,81 +365,37 @@ pub(super) fn update(
                 let resources = project
                     .terrain_resources(space)
                     .ok_or("Terrain resources are loading")?;
-                let layers = product
-                    .ground
-                    .surfaces
-                    .iter()
-                    .filter_map(|id| {
-                        resources
-                            .surfaces
-                            .iter()
-                            .find(|s| s.surface.id == *id)
-                            .map(|s| TerrainSurfaceLayer {
-                                surface: s.surface.clone(),
-                                layer: s.layer,
-                                // The drawn preview material shades no grass ground.
-                                grass: [0.0; 4],
-                            })
-                    })
-                    .collect::<Vec<_>>();
-                let plane = if let Some(heightfield) = &product.terrain {
-                    terrain_render::build_heightfield_mesh(heightfield, product.size)?
-                } else {
-                    let mut plane = Plane3d::default()
-                        .mesh()
-                        .size(product.size, product.size)
-                        .build();
-                    plane.generate_tangents().map_err(|e| e.to_string())?;
-                    plane
-                };
                 let PreviewAssets {
                     server,
                     images,
+                    buffers,
                     materials,
                     meshes,
+                    uploads,
                 } = &mut assets;
-                let prepared = prepare_terrain_material(PrepareTerrainMaterialContext {
-                    asset_server: server,
-                    images,
-                    materials,
-                    cell: world::CellCoord::ZERO,
-                    origin_cell: world::CellCoord::ZERO,
-                    cell_size: product.size,
-                    page_surfaces: &product.ground.surfaces,
-                    weight_pages: &product.ground.weight_pages,
-                    profile: &resources.profile,
-                    texture_set: &resources.texture_set,
-                    surfaces: &layers,
-                    macro_variation: TerrainMacroVariation::Enabled,
-                })?;
+                let patch = ground_patch(
+                    &product,
+                    space,
+                    resources,
+                    server,
+                    uploads,
+                    PatchAssets {
+                        images,
+                        buffers,
+                        materials,
+                    },
+                )?;
                 scene.replace(product.scene).map_err(|e| e.to_string())?;
-                remove_ground(&mut commands, &mut preview, materials, meshes, images);
-                let mesh = meshes.add(plane);
+                remove_ground(&mut commands, &mut preview, materials, uploads);
                 let entity = commands
                     .spawn((
-                        Mesh3d(mesh.clone()),
-                        MeshMaterial3d(prepared.material.clone()),
-                        // Material control coordinates and foliage both occupy [0, size].
-                        Transform::from_xyz(
-                            product.size / 2.0,
-                            if product.terrain.is_some() {
-                                0.0
-                            } else {
-                                -0.005
-                            },
-                            product.size / 2.0,
-                        ),
+                        patch.bundle(meshes),
                         RenderLayers::layer(LAYER),
                         PreviewGround,
                         Name::new("Compiled preset patch"),
                     ))
                     .id();
-                preview.ground = Some(GroundAssets {
-                    entity,
-                    mesh,
-                    material: prepared.material,
-                    weights: prepared.weight_image,
-                });
+                preview.ground = Some(GroundAssets { entity, patch });
                 let height = product
                     .objects
                     .iter()
@@ -532,6 +485,79 @@ pub(super) fn update(
         ));
         preview.submitted = Some(key);
     }
+}
+
+/// The previewed cell as a clipmap patch: its ground among the world's surfaces with the
+/// preview's grass, worn where its road wears it, as the game draws a cell.
+fn ground_patch(
+    product: &Product,
+    space: WorldSpaceId,
+    resources: &world_db::TerrainRenderResources,
+    server: &AssetServer,
+    uploads: &mut ClipmapUploads,
+    assets: PatchAssets,
+) -> Result<ClipmapPatch, String> {
+    let grass = &product.scene.catalog;
+    let layers: Vec<_> = resources
+        .surfaces
+        .iter()
+        .map(|s| TerrainSurfaceLayer {
+            surface: s.surface.clone(),
+            layer: s.layer,
+            grass: grass.cover(s.surface.id.0).rgba(),
+        })
+        .collect();
+    let ground = ClipmapGround::new(server, &resources.profile, &resources.texture_set, &layers);
+    let slot_layers = product
+        .ground
+        .surfaces
+        .iter()
+        .map(|id| {
+            let surface = resources.surfaces.iter().find(|s| s.surface.id == *id);
+            surface
+                .map(|s| s.layer)
+                .ok_or_else(|| format!("unknown terrain surface {id:?}"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let cell = world::CellCoord::ZERO;
+    let control = world::leaf_control(
+        &slot_layers,
+        &product.ground.weight_pages,
+        product.wear.as_ref(),
+        cell,
+        product.size,
+    )?;
+    let field = preview_relief(product)?;
+    let key = world::TerrainNodeKey::leaf(space, cell);
+    let node =
+        world::TerrainNode::leaf(key, &field, fixture::NODE_SAMPLES).map_err(|e| e.to_string())?;
+    ClipmapPatch::new(
+        &node,
+        product.size,
+        control,
+        product.wear.as_ref(),
+        ground,
+        uploads,
+        assets,
+    )
+}
+
+/// The previewed cell's relief; without one, flat just below the grass roots.
+fn preview_relief(product: &Product) -> Result<world::TerrainHeightfield, String> {
+    if let Some(field) = &product.terrain {
+        return Ok(field.clone());
+    }
+
+    let n = usize::from(fixture::NODE_SAMPLES);
+    let h = -0.005;
+    world::TerrainHeightfield::from_heights(
+        fixture::NODE_SAMPLES,
+        &vec![h; n * n],
+        h,
+        h,
+        product.size,
+    )
+    .map_err(|e| e.to_string())
 }
 
 fn set_object_layers(

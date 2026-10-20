@@ -422,7 +422,10 @@ impl ClipmapTerrain {
         }
 
         self.residency.set(layout, node.key, true);
-        uploads.push(node.block);
+
+        if let Some(gpu) = &self.gpu {
+            uploads.push(gpu, node.block);
+        }
     }
 
     fn clear(&mut self, commands: &mut Commands, uploads: &mut ClipmapUploads) {
@@ -430,7 +433,10 @@ impl ClipmapTerrain {
             commands.entity(entity).despawn();
         }
 
-        uploads.clear();
+        if let Some(gpu) = &self.gpu {
+            uploads.forget(gpu);
+        }
+
         *self = Self::default();
     }
 
@@ -521,25 +527,14 @@ fn decode(
 /// A node's block with its heights and normals, its height bounds and, at level 0, its
 /// samples for grounding.
 fn relief(node: &TerrainNode, intervals: u32) -> Result<Decoded, String> {
-    let field = node
-        .heightfield
-        .as_ref()
-        .ok_or_else(|| format!("terrain node {:?} holds no heights", node.key))?;
-
-    if u32::from(field.resolution) != intervals + 1 {
-        return Err(format!(
-            "terrain node {:?} is not {NODE_SAMPLES}²",
-            node.key
-        ));
-    }
-
-    let n = usize::from(field.resolution);
-    let normals: Vec<_> = (0..n * n).map(|i| field.normal_at(i % n, i / n)).collect();
+    let block = NodeBlock::relief_of(node, intervals)?;
     Ok(Decoded {
         key: node.key,
         bounds: node.height_bounds,
-        block: NodeBlock::new(node.key).with_relief(field.heights.clone(), &normals),
-        leaf: (node.key.level == 0).then(|| field.clone()),
+        block,
+        leaf: (node.key.level == 0)
+            .then(|| node.heightfield.clone())
+            .flatten(),
     })
 }
 
@@ -547,6 +542,7 @@ fn relief(node: &TerrainNode, intervals: u32) -> Result<Decoded, String> {
 /// it in its toroidal atlas slot, uploaded when the slot's page changes.
 fn follow_wear(
     wear_window: &mut WearWindow,
+    textures: &ClipmapTextures,
     uploads: &mut ClipmapUploads,
     sources: &Query<(Entity, Ref<super::StreamedTerrainWear>)>,
     space: WorldSpaceId,
@@ -598,7 +594,7 @@ fn follow_wear(
             match pages.get(&cell) {
                 Some(&(entity, changed, wear, source)) => {
                     if changed || wear_window.slots[slot] != Some((cell, entity)) {
-                        uploads.push_wear(slot, wear);
+                        uploads.push_wear(textures, slot, wear);
                         wear_window.slots[slot] = Some((cell, entity));
 
                         // The page's surfaces its roads wear bare to.
@@ -729,8 +725,12 @@ pub(super) fn update(
     terrain.request_nodes(&worker, &layout, &ranges, eye);
     terrain.draw_patches(&mut commands, &layout, &ranges, eye, origin.cell(), offset);
     terrain.stats.uploads = uploads.uploaded_blocks;
+    let Some(textures) = terrain.gpu.as_ref() else {
+        return;
+    };
     follow_wear(
         &mut terrain.wear,
+        textures,
         &mut uploads,
         &sources,
         space,
@@ -746,13 +746,16 @@ pub(super) fn update(
     let cells = origin.cell();
     let samples = |c: i32| i64::from(c) * i64::from(layout.intervals);
     let wear = terrain.wear.slots.map(|slot| slot.map(|(cell, _)| cell));
-    uploads.set_frame(&ClipmapFrame {
-        eye: render_eye,
-        origin_samples: [samples(cells.x), samples(cells.z)],
-        windows: &terrain.windows,
-        residency: &terrain.residency,
-        wear: &wear,
-    });
+    uploads.set_frame(
+        terrain.gpu.as_ref().unwrap(),
+        &ClipmapFrame {
+            eye: render_eye,
+            origin_samples: [samples(cells.x), samples(cells.z)],
+            windows: &terrain.windows,
+            residency: &terrain.residency,
+            wear: &wear,
+        },
+    );
 
     if !terrain.ready_logged && !terrain.pending() {
         terrain.ready_logged = true;
@@ -1055,6 +1058,29 @@ mod tests {
         );
     }
 
+    /// GPU textures for `layout`, as assets only: what uploads are queued for.
+    fn textures(layout: ClipmapLayout, uploads: &mut ClipmapUploads) -> ClipmapTextures {
+        let ground = clipmap::ClipmapGround {
+            surfaces: Vec::new(),
+            base_color: default(),
+            normal_material: default(),
+            macro_variation: default(),
+            macro_scales: [1.0; 3],
+            macro_contrast: 1.0,
+            macro_albedo_strength: 0.0,
+        };
+        let textures = ClipmapTextures::new(
+            layout,
+            LodRanges { leaf: LEAF_RANGE },
+            ground,
+            &mut Assets::default(),
+            &mut Assets::default(),
+            &mut Assets::default(),
+        );
+        uploads.target(&textures);
+        textures
+    }
+
     /// The editor's overlay rewrites resident blocks at once, nodes read later take its parts,
     /// and a node it stops replacing is read again. A new publication keeps the ground drawn.
     #[test]
@@ -1069,6 +1095,7 @@ mod tests {
         let layout = terrain.layout.unwrap();
         terrain.move_windows(&layout, [16.0, 16.0]);
         let mut uploads = ClipmapUploads::default();
+        terrain.gpu = Some(textures(layout, &mut uploads));
         let key = TerrainNodeKey::leaf(space, world::CellCoord::ZERO);
         let published = || relief(&flat(key, 1.0), layout.intervals).unwrap();
         let ground = |t: &ClipmapTerrain| {

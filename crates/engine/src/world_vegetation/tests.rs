@@ -40,7 +40,6 @@ fn app() -> App {
         .init_resource::<Time>()
         .init_resource::<WorldViewpoint>()
         .init_resource::<Assets<Image>>()
-        .init_resource::<Assets<terrain_render::TerrainMaterial>>()
         .add_plugins(WorldVegetationPlugin);
     app
 }

@@ -9,17 +9,25 @@
 //! stays unchanged from frame to frame. Uploads move to the render world during extraction, so
 //! the state a frame draws with is the one its patches were selected with.
 use super::{ClipmapLayout, LodRanges, MORPH_SHARE, NodeWindow};
-use crate::*;
+use crate::{TerrainSurfaceLayer, storage_bytes};
 
 use bevy::{
     asset::AssetId,
+    asset::RenderAssetUsages,
     image::ImageAddressMode,
+    image::{ImageFilterMode, ImageSampler, ImageSamplerDescriptor},
+    pbr::{Material, MaterialPlugin},
+    prelude::*,
+    reflect::TypePath,
+    render::storage::ShaderBuffer,
     render::{
         ExtractSchedule, MainWorld, Render, RenderApp, RenderSystems, render_asset::RenderAssets,
         render_resource::*, renderer::RenderQueue, texture::GpuImage,
     },
+    shader::ShaderRef,
 };
 
+use std::collections::HashMap;
 use world::TerrainNodeKey;
 
 pub(crate) const CLIPMAP_VERTEX_SHADER: &str = "shaders/terrain/clipmap_vertex.wesl";
@@ -122,13 +130,9 @@ impl ClipmapGround {
         let (base, normal, macro_uri) = texture_set.runtime_uris();
         Self {
             surfaces: table,
-            base_color: crate::page_material::load_repeat_image(asset_server, base, true),
-            normal_material: crate::page_material::load_repeat_image(asset_server, normal, false),
-            macro_variation: crate::page_material::load_repeat_image(
-                asset_server,
-                macro_uri,
-                false,
-            ),
+            base_color: crate::ground::load_repeat_image(asset_server, base, true),
+            normal_material: crate::ground::load_repeat_image(asset_server, normal, false),
+            macro_variation: crate::ground::load_repeat_image(asset_server, macro_uri, false),
             macro_scales: profile.macro_scales,
             macro_contrast: profile.macro_contrast,
             macro_albedo_strength: profile.macro_albedo_strength,
@@ -293,7 +297,7 @@ impl ClipmapTextures {
         );
         let leaf = layout.spacing(0) as f32;
         let surfaces = buffers.add(ShaderBuffer::new(
-            crate::storage_bytes(&ground.surfaces),
+            storage_bytes(&ground.surfaces),
             RenderAssetUsages::RENDER_WORLD,
         ));
         let material = materials.add(ClipmapTerrainMaterial {
@@ -374,7 +378,7 @@ impl ClipmapTextures {
 
         if changed && let Some(mut buffer) = buffers.get_mut(&self.surfaces) {
             *buffer = ShaderBuffer::new(
-                crate::storage_bytes(&self.surface_table),
+                storage_bytes(&self.surface_table),
                 RenderAssetUsages::RENDER_WORLD,
             );
         }
@@ -422,6 +426,26 @@ impl NodeBlock {
         self.control = Some(control);
         self
     }
+
+    /// A node's heights and normals, for a clipmap of `intervals` per node.
+    pub fn relief_of(node: &world::TerrainNode, intervals: u32) -> Result<Self, String> {
+        let field = node
+            .heightfield
+            .as_ref()
+            .ok_or_else(|| format!("terrain node {:?} holds no heights", node.key))?;
+
+        if u32::from(field.resolution) != intervals + 1 {
+            return Err(format!(
+                "terrain node {:?} is not {}² samples",
+                node.key,
+                intervals + 1
+            ));
+        }
+
+        let n = usize::from(field.resolution);
+        let normals: Vec<_> = (0..n * n).map(|i| field.normal_at(i % n, i / n)).collect();
+        Ok(Self::new(node.key).with_relief(field.heights.clone(), &normals))
+    }
 }
 
 /// Each level's resident nodes, as rows of bits by toroidal slot: the shaders' residency.
@@ -457,17 +481,34 @@ pub struct ClipmapFrame<'a> {
     pub wear: &'a [Option<world::CellCoord>; WEAR_SLOTS],
 }
 
-/// Main-world uploads for the next extraction.
+/// Main-world uploads for the next extraction, a queue per clipmap (by its heights texture),
+/// so the streamed terrain and an editor preview each fill their own textures.
 #[derive(Resource, Default)]
 pub struct ClipmapUploads {
-    target: Option<Target>,
-    blocks: Vec<NodeBlock>,
-    wear: Vec<(u32, Vec<u8>)>,
-    state: Option<Vec<u32>>,
+    queues: HashMap<AssetId<Image>, Queue>,
     pub uploaded_blocks: u64,
 }
 
-#[derive(Clone, Copy)]
+/// One clipmap's uploads.
+struct Queue {
+    target: Target,
+    blocks: Vec<NodeBlock>,
+    wear: Vec<(u32, Vec<u8>)>,
+    state: Option<Vec<u32>>,
+}
+
+impl Queue {
+    fn new(target: Target) -> Self {
+        Self {
+            target,
+            blocks: Vec::new(),
+            wear: Vec::new(),
+            state: None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
 struct Target {
     heights: AssetId<Image>,
     normals: AssetId<Image>,
@@ -478,41 +519,51 @@ struct Target {
 }
 
 impl ClipmapUploads {
-    /// Uploads go to these textures from now on; anything queued for others is dropped.
+    /// Uploads to these textures start; anything queued for them before is dropped.
     pub fn target(&mut self, textures: &ClipmapTextures) {
-        self.target = Some(Target {
+        let target = Target {
             heights: textures.heights.id(),
             normals: textures.normals.id(),
             control: textures.control.id(),
             wear: textures.wear.id(),
             state: textures.state.id(),
             layout: textures.layout,
-        });
-        self.blocks.clear();
-        self.wear.clear();
-        self.state = None;
+        };
+        self.queues.insert(target.heights, Queue::new(target));
     }
 
-    pub fn clear(&mut self) {
-        self.target = None;
-        self.blocks.clear();
-        self.wear.clear();
-        self.state = None;
+    /// Uploads to these textures stop.
+    pub fn forget(&mut self, textures: &ClipmapTextures) {
+        self.queues.remove(&textures.heights.id());
     }
 
-    pub fn push(&mut self, block: NodeBlock) {
-        self.uploaded_blocks += 1;
-        self.blocks.push(block);
+    fn queue(&mut self, textures: &ClipmapTextures) -> Option<&mut Queue> {
+        self.queues.get_mut(&textures.heights.id())
+    }
+
+    pub fn push(&mut self, textures: &ClipmapTextures, block: NodeBlock) {
+        if let Some(queue) = self.queue(textures) {
+            queue.blocks.push(block);
+            self.uploaded_blocks += 1;
+        }
     }
 
     /// A cell's wear field (`world::TerrainWear`, at full resolution) into atlas slot `slot`.
-    pub fn push_wear(&mut self, slot: usize, wear: &world::TerrainWear) {
+    pub fn push_wear(
+        &mut self,
+        textures: &ClipmapTextures,
+        slot: usize,
+        wear: &world::TerrainWear,
+    ) {
         debug_assert_eq!(u32::from(wear.resolution), WEAR_SIDE);
-        self.wear
-            .push((slot as u32, wear.texels.iter().flatten().copied().collect()));
+
+        if let Some(queue) = self.queue(textures) {
+            let texels = wear.texels.iter().flatten().copied().collect();
+            queue.wear.push((slot as u32, texels));
+        }
     }
 
-    pub fn set_frame(&mut self, frame: &ClipmapFrame) {
+    pub fn set_frame(&mut self, textures: &ClipmapTextures, frame: &ClipmapFrame) {
         let mut state = vec![0_u32; STATE_WIDTH as usize * 4];
         state[..3].copy_from_slice(&frame.eye.to_array().map(f32::to_bits));
         state[4] = frame.origin_samples[0] as i32 as u32;
@@ -537,17 +588,15 @@ impl ClipmapUploads {
             }
         }
 
-        self.state = Some(state);
+        if let Some(queue) = self.queue(textures) {
+            queue.state = Some(state);
+        }
     }
 }
 
+/// The render world's queues, kept until their textures exist.
 #[derive(Resource, Default)]
-struct RenderUploads {
-    target: Option<Target>,
-    blocks: Vec<NodeBlock>,
-    wear: Vec<(u32, Vec<u8>)>,
-    state: Option<Vec<u32>>,
-}
+struct RenderUploads(HashMap<AssetId<Image>, Queue>);
 
 pub(crate) fn install(app: &mut App) {
     app.init_resource::<ClipmapUploads>()
@@ -585,18 +634,24 @@ fn extract(mut main: ResMut<MainWorld>, mut render: ResMut<RenderUploads>) {
         return;
     };
 
-    if render.target.map(|t| t.heights) != uploads.target.map(|t| t.heights) {
-        *render = RenderUploads {
-            target: uploads.target,
-            ..default()
-        };
-    }
+    render.0.retain(|id, _| uploads.queues.contains_key(id));
 
-    render.blocks.append(&mut uploads.blocks);
-    render.wear.append(&mut uploads.wear);
+    for (id, queue) in &mut uploads.queues {
+        let pending = render
+            .0
+            .entry(*id)
+            .or_insert_with(|| Queue::new(queue.target));
 
-    if let Some(state) = uploads.state.take() {
-        render.state = Some(state);
+        if pending.target != queue.target {
+            *pending = Queue::new(queue.target);
+        }
+
+        pending.blocks.append(&mut queue.blocks);
+        pending.wear.append(&mut queue.wear);
+
+        if let Some(state) = queue.state.take() {
+            pending.state = Some(state);
+        }
     }
 }
 
@@ -605,9 +660,13 @@ fn upload(
     images: Res<RenderAssets<GpuImage>>,
     queue: Res<RenderQueue>,
 ) {
-    let Some(target) = uploads.target else {
-        return;
-    };
+    for pending in uploads.0.values_mut() {
+        upload_one(pending, &images, &queue);
+    }
+}
+
+fn upload_one(uploads: &mut Queue, images: &RenderAssets<GpuImage>, queue: &RenderQueue) {
+    let target = uploads.target;
 
     // Images appear a frame or more after they are added: keep everything until then.
     let (Some(heights), Some(normals), Some(control), Some(wear), Some(state)) = (
@@ -654,13 +713,13 @@ fn upload(
         let layer = u32::from(block.key.level);
 
         if let Some((h, n)) = &block.relief {
-            write_block(&queue, heights, &layout, origin, layer, bytemuck_f32(h));
-            write_block(&queue, normals, &layout, origin, layer, bytemuck_u16(n));
+            write_block(queue, heights, &layout, origin, layer, bytemuck_f32(h));
+            write_block(queue, normals, &layout, origin, layer, bytemuck_u16(n));
         }
 
         if let Some(samples) = &block.control {
             write_block(
-                &queue,
+                queue,
                 control,
                 &control_layout,
                 control_layout.block_origin(block.key),

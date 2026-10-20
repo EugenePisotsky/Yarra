@@ -83,7 +83,6 @@ impl Plugin for RuntimeSettingsPlugin {
             .add_systems(
                 PostUpdate,
                 (apply_meshes, apply_trees)
-                    .before(terrain_render::TerrainMaterialPreparation)
                     .before(bevy::camera::visibility::VisibilitySystems::VisibilityPropagate),
             );
     }

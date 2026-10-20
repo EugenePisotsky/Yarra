@@ -65,8 +65,7 @@ impl Plugin for EnvironmentPaintPlugin {
                     .after(update_editor_camera)
                     .before(handle_editor_shortcuts)
                     .before(drive_editor_save)
-                    .before(GrassPreviewSync)
-                    .before(terrain_render::TerrainMaterialPreparation),
+                    .before(GrassPreviewSync),
             )
             .add_systems(PostUpdate, (draw_brush, objects::sync));
     }

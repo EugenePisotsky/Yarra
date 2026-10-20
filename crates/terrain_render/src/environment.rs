@@ -1,4 +1,4 @@
-//! Terrain materials bind the environment's inputs at slots 120–125, as every lit material does
+//! The terrain material binds the environment's inputs at slots 120–125, as every lit material does
 //! (`shaders/lighting/surface.wesl`): they start on the fallback buffer and take the
 //! environment's own once it exists.
 use atmosphere::environment::EnvironmentAssets;
@@ -8,20 +8,6 @@ pub(crate) trait EnvironmentInputs: Asset {
     fn parameters(&self) -> &Handle<ShaderBuffer>;
 
     fn bind_environment(&mut self, environment: &EnvironmentAssets);
-}
-
-impl EnvironmentInputs for crate::TerrainMaterial {
-    fn parameters(&self) -> &Handle<ShaderBuffer> {
-        &self.environment
-    }
-
-    fn bind_environment(&mut self, environment: &EnvironmentAssets) {
-        self.environment = environment.parameters.clone();
-        self.cloud_shadows = Some(environment.shadows.clone());
-        self.rain_shelter = Some(environment.shelter.clone());
-        self.forest_shadow = Some(environment.forest_shadow.clone());
-        self.terrain_shadow = Some(environment.terrain_shadow.clone());
-    }
 }
 
 impl EnvironmentInputs for crate::clipmap::ClipmapTerrainMaterial {
