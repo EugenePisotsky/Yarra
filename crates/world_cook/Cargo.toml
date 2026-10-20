@@ -8,7 +8,6 @@ publish.workspace = true
 environment.workspace = true
 environment-compile.workspace = true
 anyhow.workspace = true
-bincode.workspace = true
 blake3.workspace = true
 glam.workspace = true
 ron.workspace = true

@@ -1,4 +1,3 @@
-use crate::catalog::VEGETATION_CATALOG_FORMAT_VERSION;
 use rusqlite::Connection;
 use world::{PROJECT_SCHEMA_VERSION, RUNTIME_SCHEMA_VERSION};
 
@@ -18,13 +17,12 @@ pub(crate) fn create_runtime_schema(connection: &Connection) -> rusqlite::Result
 }
 
 fn create_vegetation_catalog(connection: &Connection) -> rusqlite::Result<()> {
-    connection.execute_batch(&format!(
+    connection.execute_batch(
         "CREATE TABLE vegetation_catalog (
     singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
-    format_version INTEGER NOT NULL CHECK(format_version = {VEGETATION_CATALOG_FORMAT_VERSION}),
     payload BLOB NOT NULL
-) STRICT;"
-    ))
+) STRICT;",
+    )
 }
 
 const PROJECT_SCHEMA: &str = r#"
@@ -61,7 +59,8 @@ CREATE TABLE gameplay_areas (
     revision INTEGER NOT NULL CHECK(revision > 0),
     payload BLOB NOT NULL CHECK(length(payload) BETWEEN 1 AND 4194304)
 ) STRICT;
-INSERT INTO gameplay_areas VALUES (1, 1, x'00');
+-- No areas yet: an empty list as world::codec writes it, its length in eight bytes.
+INSERT INTO gameplay_areas VALUES (1, 1, x'0000000000000000');
 
 CREATE TABLE source_cells (
     world_space_id INTEGER NOT NULL REFERENCES world_spaces(id),
@@ -343,7 +342,6 @@ CREATE TABLE world_spaces (
 
 CREATE TABLE runtime_metadata (
     singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
-    schema_version INTEGER NOT NULL,
     generation_id TEXT NOT NULL,
     content_hash BLOB NOT NULL CHECK(length(content_hash) = 32),
     -- Content hash of the global catalogs and environment, shared by every cell.
@@ -421,15 +419,14 @@ CREATE TABLE cell_pages (
     world_space_id INTEGER NOT NULL,
     cell_x INTEGER NOT NULL,
     cell_z INTEGER NOT NULL,
-    domain INTEGER NOT NULL CHECK(domain IN (1, 2, 8, 9)),
-    lod INTEGER NOT NULL CHECK(lod BETWEEN 0 AND 255),
+    domain INTEGER NOT NULL CHECK(domain BETWEEN 1 AND 4),
     codec INTEGER NOT NULL CHECK(codec IN (0, 1)),
     encoded_bytes INTEGER NOT NULL CHECK(encoded_bytes >= 0),
     decoded_bytes INTEGER NOT NULL CHECK(decoded_bytes >= 0),
     gpu_bytes_estimate INTEGER NOT NULL CHECK(gpu_bytes_estimate >= 0),
     checksum BLOB NOT NULL CHECK(length(checksum) = 32),
     payload BLOB NOT NULL,
-    PRIMARY KEY(world_space_id, cell_x, cell_z, domain, lod),
+    PRIMARY KEY(world_space_id, cell_x, cell_z, domain),
     FOREIGN KEY(world_space_id, cell_x, cell_z)
         REFERENCES cells(world_space_id, cell_x, cell_z)
 ) STRICT, WITHOUT ROWID;
@@ -456,51 +453,40 @@ CREATE TABLE object_definitions (
     activation_policy INTEGER NOT NULL CHECK(activation_policy IN (0, 1))
 ) STRICT;
 
+-- The asset LODs a cell's static-object page draws.
 CREATE TABLE page_dependencies (
     world_space_id INTEGER NOT NULL,
     cell_x INTEGER NOT NULL,
     cell_z INTEGER NOT NULL,
-    domain INTEGER NOT NULL,
-    lod INTEGER NOT NULL,
     asset_id BLOB NOT NULL,
     asset_lod INTEGER NOT NULL,
-    PRIMARY KEY(
-        world_space_id,
-        cell_x,
-        cell_z,
-        domain,
-        lod,
-        asset_id,
-        asset_lod
-    ),
-    FOREIGN KEY(world_space_id, cell_x, cell_z, domain, lod)
-        REFERENCES cell_pages(world_space_id, cell_x, cell_z, domain, lod),
+    PRIMARY KEY(world_space_id, cell_x, cell_z, asset_id, asset_lod),
+    FOREIGN KEY(world_space_id, cell_x, cell_z)
+        REFERENCES cells(world_space_id, cell_x, cell_z),
     FOREIGN KEY(asset_id, asset_lod)
         REFERENCES asset_variants(asset_id, lod)
 ) STRICT, WITHOUT ROWID;
 
+-- The object definitions a cell's gameplay-object page names.
 CREATE TABLE page_object_definitions (
     world_space_id INTEGER NOT NULL,
     cell_x INTEGER NOT NULL,
     cell_z INTEGER NOT NULL,
-    domain INTEGER NOT NULL,
-    lod INTEGER NOT NULL,
     definition_id BLOB NOT NULL REFERENCES object_definitions(definition_id),
-    PRIMARY KEY(world_space_id, cell_x, cell_z, domain, lod, definition_id),
-    FOREIGN KEY(world_space_id, cell_x, cell_z, domain, lod)
-        REFERENCES cell_pages(world_space_id, cell_x, cell_z, domain, lod)
+    PRIMARY KEY(world_space_id, cell_x, cell_z, definition_id),
+    FOREIGN KEY(world_space_id, cell_x, cell_z)
+        REFERENCES cells(world_space_id, cell_x, cell_z)
 ) STRICT, WITHOUT ROWID;
 
+-- The ground surfaces a cell's terrain page names.
 CREATE TABLE page_terrain_surfaces (
     world_space_id INTEGER NOT NULL,
     cell_x INTEGER NOT NULL,
     cell_z INTEGER NOT NULL,
-    domain INTEGER NOT NULL,
-    lod INTEGER NOT NULL,
     surface_id BLOB NOT NULL REFERENCES terrain_surfaces(surface_id),
-    PRIMARY KEY(world_space_id, cell_x, cell_z, domain, lod, surface_id),
-    FOREIGN KEY(world_space_id, cell_x, cell_z, domain, lod)
-        REFERENCES cell_pages(world_space_id, cell_x, cell_z, domain, lod)
+    PRIMARY KEY(world_space_id, cell_x, cell_z, surface_id),
+    FOREIGN KEY(world_space_id, cell_x, cell_z)
+        REFERENCES cells(world_space_id, cell_x, cell_z)
 ) STRICT, WITHOUT ROWID;
 
 CREATE TABLE terrain_nodes (
@@ -510,11 +496,9 @@ CREATE TABLE terrain_nodes (
     parent_x INTEGER, parent_z INTEGER,
     child_mask INTEGER NOT NULL CHECK(child_mask BETWEEN 0 AND 15),
     minimum_y REAL NOT NULL, maximum_y REAL NOT NULL CHECK(maximum_y >= minimum_y),
-    geometric_error REAL NOT NULL CHECK(geometric_error >= 0),
     resolution INTEGER CHECK(resolution BETWEEN 2 AND 257),
     codec INTEGER NOT NULL CHECK(codec IN (0,1)),
     decoded_bytes INTEGER NOT NULL CHECK(decoded_bytes BETWEEN 1 AND 1048576),
-    gpu_bytes_estimate INTEGER NOT NULL CHECK(gpu_bytes_estimate >= 0),
     checksum BLOB NOT NULL CHECK(length(checksum)=32),
     payload BLOB NOT NULL CHECK(length(payload) BETWEEN 1 AND 1048576),
     PRIMARY KEY(world_space_id,level,node_x,node_z)
@@ -535,8 +519,6 @@ CREATE TABLE terrain_controls (
 ) STRICT, WITHOUT ROWID;
 CREATE TABLE terrain_hierarchy_spaces (
     world_space_id INTEGER PRIMARY KEY REFERENCES world_spaces(id),
-    node_count INTEGER NOT NULL CHECK(node_count >= 0),
-    leaf_count INTEGER NOT NULL CHECK(leaf_count >= 0),
     root_count INTEGER NOT NULL CHECK(root_count BETWEEN 0 AND 256)
 ) STRICT;
 

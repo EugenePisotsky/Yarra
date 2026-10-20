@@ -574,7 +574,7 @@ fn follow_wear(
         let changed = source.is_changed();
         let source = Ref::into_inner(source);
 
-        if source.key.space != space || source.key.lod != 0 || !window(source.key.cell) {
+        if source.key.space != space || !window(source.key.cell) {
             continue;
         }
 
@@ -1003,10 +1003,8 @@ mod tests {
             },
             child_mask: 0xf,
             height_bounds: [0.0, 10.0],
-            geometric_error: 0.0,
             resolution: Some(NODE_SAMPLES),
             decoded_bytes: 0,
-            gpu_bytes_estimate: 0,
             checksum: [0; 32],
         }
     }

@@ -1,9 +1,6 @@
-use crate::catalog::{
-    VEGETATION_CATALOG_FORMAT_VERSION, encode_vegetation_catalog, read_vegetation_catalog,
-};
+use crate::catalog::{read_vegetation_catalog, write_vegetation_catalog};
 
 use crate::project::query::source_object_from_row;
-use crate::storage::ensure_schema_version;
 
 use crate::{
     MAX_OBJECT_WRITES_PER_TRANSACTION, ObjectWriteTransactionResult, SourceObjectTransform,
@@ -11,11 +8,10 @@ use crate::{
     environment_store,
 };
 
-use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use std::collections::HashSet;
 use std::path::Path;
 use vegetation::VegetationCatalog;
-use world::PROJECT_SCHEMA_VERSION;
 
 /// Narrow transactional writer used by the editor's authoring worker.
 ///
@@ -27,9 +23,7 @@ pub struct ProjectWriter {
 
 impl ProjectWriter {
     pub fn open(path: &Path) -> Result<Self, WorldDbError> {
-        let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
-        connection.execute_batch("PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 1000;")?;
-        ensure_schema_version(&connection, PROJECT_SCHEMA_VERSION, "project")?;
+        let connection = crate::storage::open_project(path, true)?;
         Ok(Self { connection })
     }
 
@@ -41,18 +35,11 @@ impl ProjectWriter {
         &mut self,
         catalog: &VegetationCatalog,
     ) -> Result<(), WorldDbError> {
-        let payload = encode_vegetation_catalog(catalog)?;
         let transaction = self
             .connection
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         environment_store::validate_catalog_dependencies(&transaction, catalog)?;
-        transaction.execute(
-            "INSERT INTO vegetation_catalog(singleton, format_version, payload) \
-             VALUES (1, ?1, ?2) \
-             ON CONFLICT(singleton) DO UPDATE SET \
-                 format_version = excluded.format_version, payload = excluded.payload",
-            params![VEGETATION_CATALOG_FORMAT_VERSION, payload],
-        )?;
+        write_vegetation_catalog(&transaction, Some(catalog))?;
         transaction.commit()?;
         Ok(())
     }
@@ -77,14 +64,7 @@ impl ProjectWriter {
         }
 
         environment_store::validate_catalog_dependencies(&transaction, replacement)?;
-        let payload = encode_vegetation_catalog(replacement)?;
-        transaction.execute(
-            "INSERT INTO vegetation_catalog(singleton, format_version, payload) \
-             VALUES (1, ?1, ?2) \
-             ON CONFLICT(singleton) DO UPDATE SET \
-                 format_version = excluded.format_version, payload = excluded.payload",
-            params![VEGETATION_CATALOG_FORMAT_VERSION, payload],
-        )?;
+        write_vegetation_catalog(&transaction, Some(replacement))?;
         transaction.commit()?;
         Ok(VegetationCatalogWriteResult::Committed)
     }

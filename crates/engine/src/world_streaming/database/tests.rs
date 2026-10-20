@@ -14,7 +14,7 @@ impl EmptyRuntime {
         let path = folder.join("runtime.sqlite");
         world_db::write_runtime_database(
             &path,
-            &world_db::RuntimeBuild {
+            &world_db::RuntimeHeader {
                 manifest: world_db::RuntimeManifest {
                     schema_version: world::RUNTIME_SCHEMA_VERSION,
                     generation_id: "empty".into(),
@@ -34,18 +34,14 @@ impl EmptyRuntime {
                     start_view: None,
                     gameplay_areas: Default::default(),
                 },
-                cells: vec![],
-                pages: vec![],
                 terrain_surfaces: vec![],
                 terrain_texture_sets: vec![],
                 terrain_texture_layers: vec![],
                 terrain_profiles: vec![],
                 assets: vec![],
                 definitions: vec![],
-                dependencies: vec![],
-                definition_dependencies: vec![],
-                terrain_surface_dependencies: vec![],
             },
+            &[],
         )
         .unwrap();
         Self { folder, path }
@@ -234,7 +230,6 @@ fn worker_keeps_both_snapshots_until_commit_and_rejects_stale_source_work() {
                         space: WorldSpaceId(1),
                         cell: CellCoord::ZERO,
                         domain: PageDomain::Terrain,
-                        lod: 0,
                     },
                 },
             ))

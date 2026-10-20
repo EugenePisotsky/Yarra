@@ -111,7 +111,6 @@ mod tests {
                 space,
                 cell,
                 domain: PageDomain::Terrain,
-                lod: 0,
             },
             cell_size: 32.0,
             heightfield,

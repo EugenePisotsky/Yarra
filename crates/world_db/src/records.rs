@@ -3,9 +3,9 @@ use crate::{EncodedPage, RoadDocument, SourceEnvironmentCellRecord};
 use vegetation::VegetationCatalog;
 
 use world::{
-    AssetId, CellCoord, ObjectActivationPolicy, ObjectDefinitionId, PageDomain, PageKey,
-    StableObjectId, TerrainProfile, TerrainSurface, TerrainSurfaceId, TerrainTextureLayer,
-    TerrainTextureSet, WorldSpaceId,
+    AssetId, CellCoord, ObjectActivationPolicy, ObjectDefinitionId, PageDomain, StableObjectId,
+    TerrainProfile, TerrainSurface, TerrainSurfaceId, TerrainTextureLayer, TerrainTextureSet,
+    WorldSpaceId,
 };
 
 #[derive(Debug, Clone)]
@@ -241,20 +241,35 @@ pub enum ObjectWriteTransactionResult {
     },
 }
 
+/// Everything a runtime holds besides its cells: the manifest and the catalogs the cells'
+/// pages name.
 #[derive(Debug, Clone)]
-pub struct RuntimeBuild {
+pub struct RuntimeHeader {
     pub manifest: RuntimeManifest,
-    pub cells: Vec<RuntimeCellRecord>,
-    pub pages: Vec<EncodedPage>,
     pub terrain_surfaces: Vec<TerrainSurface>,
     pub terrain_texture_sets: Vec<TerrainTextureSet>,
     pub terrain_texture_layers: Vec<TerrainTextureLayer>,
     pub terrain_profiles: Vec<TerrainProfile>,
     pub assets: Vec<AssetVariantRecord>,
     pub definitions: Vec<RuntimeObjectDefinition>,
-    pub dependencies: Vec<PageDependencyRecord>,
-    pub definition_dependencies: Vec<PageObjectDefinitionRecord>,
-    pub terrain_surface_dependencies: Vec<PageTerrainSurfaceRecord>,
+}
+
+/// One cooked cell: its record, its pages and what they name.
+#[derive(Debug, Clone)]
+pub struct RuntimeCell {
+    pub record: RuntimeCellRecord,
+    /// At most one per domain, all of this cell.
+    pub pages: Vec<EncodedPage>,
+    /// The asset LODs its static-object page draws.
+    pub assets: Vec<(AssetId, u8)>,
+    /// The object definitions its gameplay-object page names.
+    pub definitions: Vec<ObjectDefinitionId>,
+    /// The ground surfaces its terrain page names.
+    pub surfaces: Vec<TerrainSurfaceId>,
+    /// Its terrain control tile (`world::terrain_control`), encoded.
+    pub control: Vec<u8>,
+    /// Hash of its pages and control tile, folded into the generation's content hash.
+    pub content_hash: [u8; 32],
 }
 
 #[derive(Debug, Clone)]
@@ -321,31 +336,12 @@ pub struct AssetVariantRecord {
 }
 
 #[derive(Debug, Clone)]
-pub struct PageDependencyRecord {
-    pub page: PageKey,
-    pub asset: AssetId,
-    pub asset_lod: u8,
-}
-
-#[derive(Debug, Clone)]
 pub struct RuntimeObjectDefinition {
     pub id: ObjectDefinitionId,
     pub key: String,
     pub display_name: String,
     pub visual_asset: Option<AssetId>,
     pub activation: ObjectActivationPolicy,
-}
-
-#[derive(Debug, Clone)]
-pub struct PageObjectDefinitionRecord {
-    pub page: PageKey,
-    pub definition: ObjectDefinitionId,
-}
-
-#[derive(Debug, Clone)]
-pub struct PageTerrainSurfaceRecord {
-    pub page: PageKey,
-    pub surface: TerrainSurfaceId,
 }
 
 #[derive(Debug, Clone, PartialEq)]

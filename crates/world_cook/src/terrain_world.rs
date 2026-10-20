@@ -1,4 +1,4 @@
-//! Worlds imported from a heightfield export: their catalog, cells, generated paint and start
+//! Worlds imported from a heightfield export: their catalog, cells, ground masks and start
 //! views.
 use super::*;
 use environment::CoverageTile;
@@ -17,28 +17,6 @@ pub(crate) type HeightFn<'a> = dyn Fn(Vec2) -> f32 + Sync + 'a;
 /// A terrain tool's mask at a world XZ position, from 0 to 1.
 pub(crate) type MaskFn<'a> = dyn Fn(Vec2) -> f32 + Sync + 'a;
 
-/// Masks every island world has, generated from height and slope by `paint`. An imported
-/// mask of the same name replaces one.
-const GENERATED_MASKS: [&str; 17] = [
-    "land",
-    "green",
-    "bare",
-    "coast",
-    "pine_forest",
-    "spruce_forest",
-    "broadleaf_forest",
-    "dune",
-    "beach",
-    "scree",
-    "rock",
-    "mountain_meadow",
-    "bedrock",
-    "wet_bank",
-    "mud",
-    "riverbed",
-    "snow",
-];
-
 /// The same ordered mask contract that Houdini reads for its material preview.
 #[derive(serde::Deserialize)]
 struct IslandGround {
@@ -50,6 +28,12 @@ struct IslandGround {
 #[derive(serde::Deserialize)]
 struct GroundLayers {
     layers: Vec<IslandGround>,
+}
+
+/// The masks an island world's layers read, in stack order.
+#[cfg(test)]
+pub(crate) fn ground_mask_names() -> Vec<String> {
+    ground_layers().into_iter().map(|g| g.mask).collect()
 }
 
 fn ground_layers() -> Vec<IslandGround> {
@@ -110,47 +94,28 @@ fn island_ground(project: &mut ProjectDocument) {
     }
 }
 
-/// Where an imported layer's coverage comes from.
-#[derive(Clone, Copy)]
-pub(crate) enum Mask<'a> {
-    /// `paint`'s output at this index of `GENERATED_MASKS`.
-    Generated(usize),
-    Imported(&'a MaskFn<'a>),
-}
-
-/// The layers of `definition` that read a mask, each with its source: an imported mask of that
-/// name, otherwise a generated one. Painted layers are left out; imports never touch them.
+/// The layers of `definition` that read a mask, each with the imported mask of that name.
+/// Painted layers are left out; imports never touch them. A layer whose mask the import lacks
+/// is an error.
 pub(crate) fn imported_layers<'a>(
     definition: &environment::EnvironmentDefinition,
     imported: &[(&str, &'a MaskFn<'a>)],
-) -> Result<Vec<(environment::LayerId, Mask<'a>)>> {
+) -> Result<Vec<(environment::LayerId, &'a MaskFn<'a>)>> {
     definition
         .layers
         .iter()
         .filter_map(|layer| Some((layer, layer.imported_mask.as_deref()?)))
         .map(|(layer, name)| {
-            let mask = match imported.iter().find(|(n, _)| *n == name) {
-                Some((_, sample)) => Mask::Imported(*sample),
-                None => Mask::Generated(
-                    GENERATED_MASKS
-                        .iter()
-                        .position(|n| *n == name)
-                        .with_context(|| {
-                            let available: Vec<_> = imported
-                                .iter()
-                                .map(|(n, _)| *n)
-                                .chain(GENERATED_MASKS)
-                                .collect();
-                            format!(
-                                "layer {:?} reads mask {name:?}, which the import does not \
-                                 provide; available: {}",
-                                layer.name,
-                                available.join(", ")
-                            )
-                        })?,
-                ),
-            };
-            Ok((layer.id, mask))
+            let (_, sample) = imported.iter().find(|(n, _)| *n == name).with_context(|| {
+                let available: Vec<_> = imported.iter().map(|(n, _)| *n).collect();
+                format!(
+                    "layer {:?} reads mask {name:?}, which the import does not provide; \
+                         available: {}",
+                    layer.name,
+                    available.join(", ")
+                )
+            })?;
+            Ok((layer.id, *sample))
         })
         .collect()
 }
@@ -212,26 +177,6 @@ pub(crate) fn base_document(name: &str, bounds: [f32; 2], sea_level: f32) -> Pro
     project
 }
 
-/// The generated masks in `GENERATED_MASKS` order: dry meadow on land, green meadow in the
-/// lowlands, bare ground on the shore, steep slopes and summits, sand along the shore (also
-/// under water), scree and rock on steep slopes. Coast, dune and forest floors come only from
-/// imported masks.
-fn paint(p: Vec2, height: f32, slope: f32) -> [f32; 17] {
-    let land = smoothstep(0.6, 2.0, height);
-    let moist = (0.5 + 0.9 * terrain_fbm(p / 450., 0x6b8e_2d17)).clamp(0., 1.);
-    let green = land * (1. - smoothstep(110., 320., height)) * moist;
-    let bare = land
-        * (1. - smoothstep(1.8, 4.5, height))
-            .max(smoothstep(0.62, 0.95, slope))
-            .max(smoothstep(520., 640., height));
-    let rock = smoothstep(0.75, 0.95, slope);
-    let scree = smoothstep(0.55, 0.75, slope) * (1. - rock);
-    let beach = (1. - smoothstep(1.8, 3.5, height)) * (1. - smoothstep(0.45, 0.7, slope));
-    [
-        land, green, bare, 0., 0., 0., 0., 0., beach, scree, rock, 0., 0., 0., 0., 0., 0.,
-    ]
-}
-
 /// Heights and the coverage of imported `layers` in one cell, sampled every metre on the
 /// world-wide grid, so neighbours share their edges. Heights sit on the cooked 1/1024 m grid,
 /// so an exactly flat cell (open sea) is detected and stores no heightfield. Coverage fades
@@ -240,27 +185,19 @@ fn paint(p: Vec2, height: f32, slope: f32) -> [f32; 17] {
 pub(crate) fn terrain_cell(
     cell: CellCoord,
     height: &HeightFn,
-    layers: &[(environment::LayerId, Mask)],
+    layers: &[(environment::LayerId, &MaskFn)],
     bounds: [Vec2; 2],
 ) -> ImportedTerrainCell {
-    let step = DEFAULT_CELL_SIZE / (HEIGHT_SIDE - 1) as f32;
-
-    // One sample of halo on each side gives central-difference slopes that agree across
-    // cell borders.
-    let side = HEIGHT_SIDE + 2;
-    let point = |i: usize, j: usize| {
+    let point = |i: usize, j: usize, side: usize| {
+        let step = DEFAULT_CELL_SIZE / (side - 1) as f32;
         Vec2::new(
-            cell.x as f32 * DEFAULT_CELL_SIZE + (i as f32 - 1.) * step,
-            cell.z as f32 * DEFAULT_CELL_SIZE + (j as f32 - 1.) * step,
+            cell.x as f32 * DEFAULT_CELL_SIZE + i as f32 * step,
+            cell.z as f32 * DEFAULT_CELL_SIZE + j as f32 * step,
         )
     };
-    let halo: Vec<f32> = (0..side)
-        .flat_map(|j| (0..side).map(move |i| (i, j)))
-        .map(|(i, j)| world::quantize_terrain_height(height(point(i, j))))
-        .collect();
-    let heights: Vec<f32> = (1..=HEIGHT_SIDE)
-        .flat_map(|j| (1..=HEIGHT_SIDE).map(move |i| (i, j)))
-        .map(|(i, j)| halo[j * side + i])
+    let heights: Vec<f32> = (0..HEIGHT_SIDE)
+        .flat_map(|j| (0..HEIGHT_SIDE).map(move |i| (i, j)))
+        .map(|(i, j)| world::quantize_terrain_height(height(point(i, j, HEIGHT_SIDE))))
         .collect();
     let mut tiles: Vec<_> = layers
         .iter()
@@ -270,19 +207,13 @@ pub(crate) fn terrain_cell(
         })
         .collect();
 
-    for j in 1..=MASK_SIDE {
-        for i in 1..=MASK_SIDE {
-            let dx = (halo[j * side + i + 1] - halo[j * side + i - 1]) / (2. * step);
-            let dz = (halo[(j + 1) * side + i] - halo[(j - 1) * side + i]) / (2. * step);
-            let p = point(i, j);
+    for j in 0..MASK_SIDE {
+        for i in 0..MASK_SIDE {
+            let p = point(i, j, MASK_SIDE);
             let fade = smoothstep(0., 48., (p - bounds[0]).min(bounds[1] - p).min_element());
-            let generated = paint(p, halo[j * side + i], dx.hypot(dz));
 
-            for (tile, (_, mask)) in tiles.iter_mut().zip(layers) {
-                let weight = match *mask {
-                    Mask::Generated(index) => generated[index],
-                    Mask::Imported(sample) => sample(p).clamp(0., 1.),
-                };
+            for (tile, (_, sample)) in tiles.iter_mut().zip(layers) {
+                let weight = sample(p).clamp(0., 1.);
                 tile.samples.push((weight * fade * 255.).round() as u8);
             }
         }
@@ -376,7 +307,7 @@ mod ground_tests {
     use super::*;
 
     #[test]
-    fn tracked_bindings_match_the_houdini_stack_and_legacy_masks_remain_optional() {
+    fn tracked_bindings_match_the_houdini_stack_and_every_mask_is_required() {
         let project = base_document("Ground", [-100., 1000.], 0.);
         let definition = &project.environments[0];
         let expected: Vec<_> = ground_layers().into_iter().map(|g| g.mask).collect();
@@ -389,27 +320,9 @@ mod ground_tests {
         assert_eq!(actual, expected);
         assert_eq!(actual.len(), 16);
         definition.validate(&project.presets).unwrap();
-        let fallback = imported_layers(definition, &[]).unwrap();
-        let values = paint(Vec2::new(20., 30.), 400., 0.2);
-
-        for (layer, source) in fallback {
-            let name = definition
-                .layers
-                .iter()
-                .find(|l| l.id == layer)
-                .unwrap()
-                .imported_mask
-                .as_deref()
-                .unwrap();
-            if matches!(
-                name,
-                "mountain_meadow" | "bedrock" | "wet_bank" | "mud" | "riverbed" | "snow"
-            ) {
-                let Mask::Generated(index) = source else {
-                    panic!("missing mask was not generated")
-                };
-                assert_eq!(values[index], 0., "legacy fallback for {name}");
-            }
-        }
+        let Err(error) = imported_layers(definition, &[]) else {
+            panic!("layers read masks the import lacks")
+        };
+        assert!(format!("{error:#}").contains("\"land\""), "{error:#}");
     }
 }

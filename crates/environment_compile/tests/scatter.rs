@@ -4,9 +4,10 @@ mod road_support;
 mod support;
 
 use environment::*;
+use environment::{TerrainSource, TerrainSourceCell};
 use support::*;
 use world::{AssetId, CellCoord, StaticObjectInstance};
-use yarra_environment_compile::{CompilePlan, TerrainSource, TerrainSourceCell};
+use yarra_environment_compile::CompilePlan;
 
 const COLLECTION: PresetId = PresetId([71; 16]);
 const TREES: LayerId = LayerId([72; 16]);

@@ -49,21 +49,7 @@ impl CompilePlan {
         cells: &[world::CellCoord],
         source: &environment::CoverageSnapshot,
     ) -> Result<(), CompileError> {
-        if cells.len() > self.profile.max_cells_per_batch {
-            return Err(CompileError::Budget("requested cells"));
-        }
-
-        let coverage = crate::coverage::Coverage::new(self, source)?;
-        let mut unique = std::collections::BTreeSet::new();
-
-        for &cell in cells {
-            if !unique.insert(cell) {
-                return Err(CompileError::DuplicateCell(cell));
-            }
-            coverage.check_halo(self, cell)?;
-        }
-
-        Ok(())
+        Ok(source.validate(&self.definition, cells, self.coverage_limits())?)
     }
 
     pub fn new(
@@ -198,10 +184,7 @@ impl CompilePlan {
             .iter()
             .map(|b| (b.grass, &b.amounts, b.on_paths, b.wear))
             .collect();
-        let bytes = bincode::serde::encode_to_vec(
-            (&definition, &compositions, &growth, &profile),
-            bincode::config::standard(),
-        )?;
+        let bytes = world::codec::encode(&(&definition, &compositions, &growth, &profile))?;
         let mut hash = blake3::Hasher::new();
 
         // v5: grass follows the ground that shows, not faint blend weights.

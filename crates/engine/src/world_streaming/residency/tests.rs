@@ -2,7 +2,7 @@ use super::*;
 use crate::world_streaming::StreamedTerrainSurface;
 use attachment::attach_terrain_source;
 use bevy::ecs::system::RunSystemOnce;
-use world::{CellCoord, PagePayload, TerrainHeightfield, WorldSpaceId};
+use world::{CellCoord, PageDomain, PagePayload, TerrainHeightfield, WorldSpaceId};
 use world_db::RuntimeManifest;
 
 fn space(size: f32) -> world_db::WorldSpaceRecord {
@@ -31,7 +31,6 @@ pub(in crate::world_streaming) fn height_page(key: PageKey) -> PreparedPage {
                 heightfield: TerrainHeightfield::from_heights(2, &[1., 2., 4., 8.], 1., 8., 8.)
                     .unwrap(),
                 surfaces: vec![],
-                weight_pages: vec![],
                 wear: None,
             }),
         },
@@ -47,7 +46,6 @@ fn terrain_sources_preserve_relief_without_render_assets() {
         space: WorldSpaceId(1),
         cell: CellCoord { x: -3, z: 2 },
         domain: PageDomain::Terrain,
-        lod: 0,
     };
     let PagePayload::TerrainHeightfield(terrain) = height_page(key).decoded.payload else {
         unreachable!()
@@ -98,7 +96,6 @@ fn queue_height(app: &mut App, order: i32, bytes: u64) -> PageKey {
         space: WorldSpaceId(1),
         cell: CellCoord { x: order, z: 0 },
         domain: PageDomain::Terrain,
-        lod: 0,
     };
     let mut page = height_page(key);
 
@@ -220,7 +217,6 @@ fn key(domain: PageDomain, x: i32) -> PageKey {
         space: WorldSpaceId(1),
         cell: CellCoord { x, z: 0 },
         domain,
-        lod: 0,
     }
 }
 

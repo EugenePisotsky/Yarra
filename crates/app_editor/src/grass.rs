@@ -120,7 +120,7 @@ fn sync_live_preview(
                 page.key.space.0,
                 page.key.cell.x,
                 page.key.cell.z,
-                page.key.lod,
+                0,
             )
         }));
         page_signature.extend(terrain_pages.iter().map(|(entity, page)| {
@@ -129,7 +129,7 @@ fn sync_live_preview(
                 page.key.space.0,
                 page.key.cell.x,
                 page.key.cell.z,
-                page.key.lod | 0x80,
+                1,
             )
         }));
         page_signature.sort();

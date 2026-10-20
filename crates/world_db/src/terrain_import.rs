@@ -4,12 +4,12 @@
 //! those cells. Paint rows are never deleted, only cleared, so a revision can never repeat with
 //! different contents.
 use crate::environment_store::{read_cell, read_definition, store_cell};
-use crate::storage::{decode_f32_blob, encode_f32_blob, ensure_schema_version};
+use crate::storage::{decode_f32_blob, encode_f32_blob};
 use crate::{SourceEnvironmentCellRecord, WorldDbError};
 use environment::{CoverageTile, EnvironmentDefinition};
-use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use std::path::Path;
-use world::{CellCoord, PROJECT_SCHEMA_VERSION, WorldSpaceId};
+use world::{CellCoord, WorldSpaceId};
 
 fn invalid(message: impl Into<String>) -> WorldDbError {
     WorldDbError::Environment(message.into())
@@ -53,10 +53,9 @@ impl TerrainImportWriter {
         bounds: [f32; 2],
         sea_level: Option<f32>,
     ) -> Result<Self, WorldDbError> {
-        let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
-        ensure_schema_version(&connection, PROJECT_SCHEMA_VERSION, "project")?;
+        let connection = crate::storage::open_project(path, true)?;
         connection.execute_batch(
-            "PRAGMA foreign_keys=ON; BEGIN IMMEDIATE;
+            "BEGIN IMMEDIATE;
              CREATE TEMP TABLE imported_cells(cell_x INTEGER, cell_z INTEGER,
                  PRIMARY KEY(cell_x, cell_z)) WITHOUT ROWID;",
         )?;

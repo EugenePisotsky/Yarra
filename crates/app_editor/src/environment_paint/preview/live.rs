@@ -12,7 +12,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use world::{TerrainHeightfieldPage, TerrainPreviewProducts};
+use world::TerrainPreviewProducts;
 use world_db::RuntimeReader;
 
 type SourceContext = (WorldSpaceId, u64, u64, u64, String);
@@ -443,6 +443,7 @@ fn compile_inner(
         .collect::<Vec<_>>();
     stamps.sort_by_key(|s| s.0);
     let roads = blake3::hash(ron::to_string(&job.roads)?.as_bytes());
+    let layers = world_cook::GroundLayers::read(&reader, space)?;
     let mut bytes = 0;
     let mut objects = 0;
 
@@ -508,20 +509,16 @@ fn compile_inner(
             )
         }
 
-        let page = TerrainHeightfieldPage {
-            heightfield: result
-                .terrain
-                .clone()
-                .unwrap_or_else(|| baseline.heightfield.clone()),
-            surfaces: result.ground.surfaces.clone(),
-            weight_pages: result.ground.weight_pages.clone(),
-            wear: result.wear.clone(),
-        };
+        let heightfield = result
+            .terrain
+            .clone()
+            .unwrap_or_else(|| baseline.page.heightfield.clone());
+        let leaf = layers.leaf(cell, heightfield, &result.ground, result.wear.clone())?;
 
-        if page == baseline {
+        if leaf == baseline {
             leaves.remove(&cell);
         } else {
-            leaves.insert(cell, Arc::new(page));
+            leaves.insert(cell, Arc::new(leaf));
         }
 
         compiled.insert((space, cell), (stamp, result));
@@ -595,7 +592,7 @@ pub(crate) fn apply_sources(
         let cell = preview.cell(surface.key.space, surface.key.cell);
         let height = cell
             .and_then(|c| c.terrain.as_ref())
-            .or_else(|| page.map(|p| &p.heightfield));
+            .or_else(|| page.map(|p| &p.page.heightfield));
 
         if let Some(height) = height
             && surface.heightfield != *height
@@ -608,7 +605,7 @@ pub(crate) fn apply_sources(
         };
         let surfaces = cell
             .map(|c| &c.ground.surfaces)
-            .or_else(|| page.map(|p| &p.surfaces));
+            .or_else(|| page.map(|p| &p.page.surfaces));
 
         if let (Some(surfaces), Some(r)) = (surfaces, project.terrain_resources(surface.key.space))
         {
@@ -626,7 +623,7 @@ pub(crate) fn apply_sources(
             }
         }
 
-        let field = cell.map(|c| &c.wear).or_else(|| page.map(|p| &p.wear));
+        let field = cell.map(|c| &c.wear).or_else(|| page.map(|p| &p.page.wear));
 
         if let Some(field) = field
             && wear.wear != *field

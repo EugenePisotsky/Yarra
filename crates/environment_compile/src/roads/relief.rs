@@ -1,107 +1,86 @@
 use super::*;
+use environment::{TerrainSource, TerrainSourceCell};
 
-/// A certified, bounded source-height halo. Absent cells in `loaded_cells` are world edges.
-/// Heights must be original authoring data, never previously graded/cooked pages.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct TerrainSource {
-    pub space: WorldSpaceId,
-    pub cell_size: f32,
-    pub minimum_height: f32,
-    pub maximum_height: f32,
-    pub loaded_cells: Vec<CellCoord>,
-    pub cells: Vec<TerrainSourceCell>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct TerrainSourceCell {
-    /// Original constant-height cells can retain a four-vertex mesh when relief is absent.
-    pub flat: bool,
-    pub cell: CellCoord,
-    pub revision: u64,
-    pub resolution: u16,
-    pub heights: Vec<f32>,
-}
-
-impl TerrainSource {
-    fn validate(&self, targets: &[CellCoord]) -> Result<(), CompileError> {
-        if self.loaded_cells.len() > 9
-            || self.cells.len() > 9
-            || !self.cell_size.is_finite()
-            || self.cell_size <= 0.0
-            || !self.minimum_height.is_finite()
-            || !self.maximum_height.is_finite()
-            || self.minimum_height > self.maximum_height
-        {
-            return Err(road_error("invalid source-height halo"));
-        }
-
-        let loaded = self
-            .loaded_cells
-            .iter()
-            .copied()
-            .collect::<std::collections::BTreeSet<_>>();
-
-        if loaded.len() != self.loaded_cells.len() {
-            return Err(road_error("duplicate height halo cell"));
-        }
-
-        let mut pages = BTreeMap::new();
-
-        for page in &self.cells {
-            if !loaded.contains(&page.cell)
-                || pages.insert(page.cell, page).is_some()
-                || !(2..=world::MAX_TERRAIN_HEIGHTFIELD_RESOLUTION).contains(&page.resolution)
-                || page.heights.len() != usize::from(page.resolution).pow(2)
-                || (page.flat && page.heights.windows(2).any(|v| v[0] != v[1]))
-                || page
-                    .heights
-                    .iter()
-                    .any(|h| !h.is_finite() || *h < self.minimum_height || *h > self.maximum_height)
-            {
-                return Err(road_error("invalid original terrain height samples"));
-            }
-        }
-
-        for &cell in targets {
-            if !pages.contains_key(&cell) {
-                return Err(road_error("missing original terrain cell"));
-            }
-            for dz in -1..=1 {
-                for dx in -1..=1 {
-                    let neighbour = offset(cell, dx, dz)?;
-                    if !loaded.contains(&neighbour) {
-                        return Err(road_error("incomplete original terrain halo"));
-                    }
-                }
-            }
-        }
-
-        for page in &self.cells {
-            let n = usize::from(page.resolution);
-            for (dx, dz) in [(1, 0), (0, 1)] {
-                let Some(other) = pages.get(&offset(page.cell, dx, dz)?) else {
-                    continue;
-                };
-
-                if other.resolution != page.resolution {
-                    return Err(road_error("adjacent heightfields need the same resolution"));
-                }
-
-                for i in 0..n {
-                    let (a, b) = if dx == 1 {
-                        (i * n + n - 1, i * n)
-                    } else {
-                        ((n - 1) * n + i, i)
-                    };
-                    if page.heights[a] != other.heights[b] {
-                        return Err(road_error("original heightfield borders disagree"));
-                    }
-                }
-            }
-        }
-
-        Ok(())
+/// Checks a source-height halo: bounded, every target's neighbours loaded, heights within
+/// the world's range and neighbouring cells agreeing along their borders.
+fn validate_source(source: &TerrainSource, targets: &[CellCoord]) -> Result<(), CompileError> {
+    if source.loaded_cells.len() > 9
+        || source.cells.len() > 9
+        || !source.cell_size.is_finite()
+        || source.cell_size <= 0.0
+        || !source.minimum_height.is_finite()
+        || !source.maximum_height.is_finite()
+        || source.minimum_height > source.maximum_height
+    {
+        return Err(road_error("invalid source-height halo"));
     }
+
+    let loaded = source
+        .loaded_cells
+        .iter()
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>();
+
+    if loaded.len() != source.loaded_cells.len() {
+        return Err(road_error("duplicate height halo cell"));
+    }
+
+    let mut pages = BTreeMap::new();
+
+    for page in &source.cells {
+        if !loaded.contains(&page.cell)
+            || pages.insert(page.cell, page).is_some()
+            || !(2..=world::MAX_TERRAIN_HEIGHTFIELD_RESOLUTION).contains(&page.resolution)
+            || page.heights.len() != usize::from(page.resolution).pow(2)
+            || (page.flat && page.heights.windows(2).any(|v| v[0] != v[1]))
+            || page
+                .heights
+                .iter()
+                .any(|h| !h.is_finite() || *h < source.minimum_height || *h > source.maximum_height)
+        {
+            return Err(road_error("invalid original terrain height samples"));
+        }
+    }
+
+    for &cell in targets {
+        if !pages.contains_key(&cell) {
+            return Err(road_error("missing original terrain cell"));
+        }
+        for dz in -1..=1 {
+            for dx in -1..=1 {
+                let neighbour = offset(cell, dx, dz)?;
+                if !loaded.contains(&neighbour) {
+                    return Err(road_error("incomplete original terrain halo"));
+                }
+            }
+        }
+    }
+
+    for page in &source.cells {
+        let n = usize::from(page.resolution);
+        for (dx, dz) in [(1, 0), (0, 1)] {
+            let Some(other) = pages.get(&offset(page.cell, dx, dz)?) else {
+                continue;
+            };
+
+            if other.resolution != page.resolution {
+                return Err(road_error("adjacent heightfields need the same resolution"));
+            }
+
+            for i in 0..n {
+                let (a, b) = if dx == 1 {
+                    (i * n + n - 1, i * n)
+                } else {
+                    ((n - 1) * n + i, i)
+                };
+                if page.heights[a] != other.heights[b] {
+                    return Err(road_error("original heightfield borders disagree"));
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
 
 fn offset(cell: CellCoord, dx: i32, dz: i32) -> Result<CellCoord, CompileError> {
@@ -146,7 +125,7 @@ impl RoadPlan {
                         / f64::from(relief.shoulder_falloff).min(closest.width * 0.5),
                 );
                 let signed_noise =
-                    |length, seed| world::road_patch(world, length, seed) * 2.0 - 1.0;
+                    |length, seed| world::road_noise::road_patch(world, length, seed) * 2.0 - 1.0;
                 let broad = signed_noise(relief.road_variation_length, road.source.seed ^ 0x906a);
                 let depth = f64::from(relief.road_depth)
                     * (1.0 + f64::from(relief.road_variation) * broad)
@@ -324,7 +303,7 @@ impl CompilePlan {
         terrain: &TerrainSource,
         profile: RoadCompileProfile,
     ) -> Result<CompiledCell, CompileError> {
-        terrain.validate(&[cell])?;
+        validate_source(terrain, &[cell])?;
 
         if terrain.space != self.definition.space || terrain.cell_size != self.definition.cell_size
         {
@@ -365,7 +344,7 @@ impl CompilePlan {
         compiled.terrain = Some(road_plan.terrain(cell, terrain)?);
         compiled.objects = self.scatter(
             cell,
-            &crate::coverage::Coverage::new(self, coverage)?,
+            &self.coverage(coverage)?,
             Some(&road_plan),
             compiled.terrain.as_ref(),
         )?;
@@ -375,10 +354,7 @@ impl CompilePlan {
         let mut canonical = terrain.clone();
         canonical.loaded_cells.sort();
         canonical.cells.sort_by_key(|c| c.cell);
-        hash.update(&bincode::serde::encode_to_vec(
-            &canonical,
-            bincode::config::standard(),
-        )?);
+        hash.update(&world::codec::encode(&canonical)?);
 
         for c in halo {
             hash.update(&road_plan.fingerprint(c, [0; 32])?);

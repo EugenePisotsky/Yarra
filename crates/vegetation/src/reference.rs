@@ -5,7 +5,7 @@
 
 use thiserror::Error;
 
-use vegetation::{
+use crate::{
     GrassTypeId, SceneValidationError, VegetationCatalog, VegetationFieldPage, accepted,
     candidate_domain, sample_candidate,
 };
@@ -23,7 +23,7 @@ pub struct DebugPlacement {
 }
 
 pub fn generate_scene_debug_placements(
-    scene: &vegetation::VegetationScene,
+    scene: &crate::VegetationScene,
 ) -> Result<Vec<DebugPlacement>, PlacementError> {
     scene.validate()?;
     let mut placements = Vec::new();
@@ -92,16 +92,16 @@ pub enum PlacementError {
     #[error(transparent)]
     Scene(#[from] SceneValidationError),
     #[error(transparent)]
-    Catalog(#[from] vegetation::CatalogValidationError),
+    Catalog(#[from] crate::CatalogValidationError),
     #[error(transparent)]
-    Page(#[from] vegetation::PageValidationError),
+    Page(#[from] crate::PageValidationError),
 }
 
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
 
-    use vegetation::fixtures;
+    use crate::fixtures;
 
     use super::*;
 

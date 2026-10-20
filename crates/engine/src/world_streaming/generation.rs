@@ -289,7 +289,6 @@ mod tests {
                         space: WorldSpaceId(1),
                         cell: CellCoord::ZERO,
                         domain: PageDomain::Terrain,
-                        lod: 0,
                     },
                     PageState::Resident(PageAttachment {
                         entities: vec![resident],

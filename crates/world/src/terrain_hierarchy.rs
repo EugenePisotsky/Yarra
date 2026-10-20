@@ -4,7 +4,6 @@ use serde::{Deserialize, Serialize};
 
 pub const MAX_TERRAIN_NODE_LEVEL: u8 = 30;
 pub const MAX_TERRAIN_NODE_BYTES: usize = 1024 * 1024;
-pub const TERRAIN_NODE_VERSION: u16 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct TerrainNodeKey {
@@ -82,7 +81,6 @@ pub struct TerrainNode {
     pub child_mask: u8,
     /// Includes every descendant, including peaks absent from the coarse samples.
     pub height_bounds: [f32; 2],
-    pub geometric_error: f32,
     /// Partial nodes contain traversal metadata only, never invented ground across missing cells.
     pub heightfield: Option<TerrainHeightfield>,
 }
@@ -148,7 +146,6 @@ impl TerrainNode {
             key,
             child_mask: 0,
             height_bounds: field.height_bounds(),
-            geometric_error: 0.0,
             heightfield: Some(field),
         };
         node.validate()?;
@@ -185,7 +182,6 @@ impl TerrainNode {
             key,
             child_mask: mask,
             height_bounds: bounds,
-            geometric_error: 0.0,
             heightfield: None,
         };
         let Some(fields) = children
@@ -230,7 +226,7 @@ impl TerrainNode {
             for x in 0..n {
                 let (field, sample) = fine(x * 2, z * 2);
 
-                // Heights are decimated exactly: stitching and the error bound use them.
+                // Heights are decimated exactly: stitching relies on it.
                 heights.push(field.heights[sample]);
 
                 // Normals are filtered like a mip level. One fine normal per coarse sample
@@ -270,33 +266,6 @@ impl TerrainNode {
             heights,
             normals_oct,
         };
-        let mut error = 0.0_f64;
-
-        for (i, child) in children.into_iter().enumerate() {
-            let child = child.unwrap();
-            let mut deviation = 0.0_f64;
-
-            for z in 0..n {
-                for x in 0..n {
-                    let parent_x = ((i % 2) * (n - 1) + x) as f64 * 0.5;
-                    let parent_z = ((i / 2) * (n - 1) + z) as f64 * 0.5;
-                    deviation = deviation.max(
-                        (f64::from(fields[i].height_at(x, z))
-                            - sample_height_f64(&field, parent_x, parent_z))
-                        .abs(),
-                    );
-                }
-            }
-
-            error = error.max(f64::from(child.geometric_error) + deviation);
-        }
-
-        let rounded = error as f32;
-        node.geometric_error = if f64::from(rounded) < error {
-            f32::from_bits(rounded.to_bits() + 1)
-        } else {
-            rounded
-        };
         node.heightfield = Some(field);
         node.validate()?;
         Ok(node)
@@ -307,8 +276,6 @@ impl TerrainNode {
 
         if !self.height_bounds.iter().all(|v| v.is_finite())
             || self.height_bounds[0] > self.height_bounds[1]
-            || !self.geometric_error.is_finite()
-            || self.geometric_error < 0.0
             || self.child_mask > 15
             || (self.key.level == 0) != (self.child_mask == 0)
         {
@@ -323,39 +290,15 @@ impl TerrainNode {
             if (self.key.level != 0 && self.child_mask != 15)
                 || bounds[0] < self.height_bounds[0]
                 || bounds[1] > self.height_bounds[1]
-                || (self.key.level == 0
-                    && (self.geometric_error != 0.0 || bounds != self.height_bounds))
+                || (self.key.level == 0 && bounds != self.height_bounds)
             {
                 return Err(invalid("heightfield disagrees with descriptor"));
             }
-        } else if self.key.level == 0 || self.geometric_error != 0.0 {
+        } else if self.key.level == 0 {
             return Err(invalid("invalid partial node"));
         }
 
         Ok(())
-    }
-
-    pub fn gpu_bytes_estimate(&self) -> u64 {
-        self.heightfield.as_ref().map_or(0, |field| {
-            let n = u64::from(field.resolution);
-            // position, normal, UV, tangent plus u32 indices; conservative private topology.
-            n * n * 48 + (n - 1) * (n - 1) * 6 * 4
-        })
-    }
-}
-
-fn sample_height_f64(field: &TerrainHeightfield, x: f64, z: f64) -> f64 {
-    let n = usize::from(field.resolution);
-    let x0 = (x.floor() as usize).min(n - 2);
-    let z0 = (z.floor() as usize).min(n - 2);
-    let x = x - x0 as f64;
-    let z = z - z0 as f64;
-    let h = |dx, dz| f64::from(field.height_at(x0 + dx, z0 + dz));
-
-    if z >= x {
-        h(0, 0) * (1.0 - z) + h(0, 1) * (z - x) + h(1, 1) * x
-    } else {
-        h(0, 0) * (1.0 - x) + h(1, 0) * (x - z) + h(1, 1) * z
     }
 }
 
@@ -380,36 +323,16 @@ fn invalid(message: &'static str) -> TerrainHierarchyError {
 
 pub fn encode_terrain_node(node: &TerrainNode) -> Result<Vec<u8>, TerrainHierarchyError> {
     node.validate()?;
-    bincode::serde::encode_to_vec(
-        (TERRAIN_NODE_VERSION, node),
-        bincode::config::standard()
-            .with_little_endian()
-            .with_fixed_int_encoding(),
-    )
-    .map_err(|e| TerrainHierarchyError::Codec(e.to_string()))
+    crate::codec::encode(node).map_err(|e| TerrainHierarchyError::Codec(e.to_string()))
 }
 
 pub fn decode_terrain_node(bytes: &[u8]) -> Result<TerrainNode, TerrainHierarchyError> {
-    if bytes.len() > MAX_TERRAIN_NODE_BYTES
-        || bytes.len() < 2
-        || u16::from_le_bytes([bytes[0], bytes[1]]) != TERRAIN_NODE_VERSION
-    {
-        return Err(invalid("node size or version"));
+    if bytes.len() > MAX_TERRAIN_NODE_BYTES {
+        return Err(invalid("node size"));
     }
 
-    let ((_, node), consumed): ((u16, TerrainNode), usize) = bincode::serde::decode_from_slice(
-        bytes,
-        bincode::config::standard()
-            .with_little_endian()
-            .with_fixed_int_encoding()
-            .with_limit::<MAX_TERRAIN_NODE_BYTES>(),
-    )
-    .map_err(|e| TerrainHierarchyError::Codec(e.to_string()))?;
-
-    if consumed != bytes.len() {
-        return Err(invalid("node trailing bytes"));
-    }
-
+    let node: TerrainNode = crate::codec::decode::<_, MAX_TERRAIN_NODE_BYTES>(bytes)
+        .map_err(|e| TerrainHierarchyError::Codec(e.to_string()))?;
     node.validate()?;
     Ok(node)
 }
@@ -593,7 +516,7 @@ mod tests {
     }
 
     #[test]
-    fn skipped_peak_stays_in_bounds_and_error() {
+    fn skipped_peak_stays_in_bounds() {
         let children = [
             leaf(0, 0, true),
             leaf(1, 0, false),
@@ -615,53 +538,6 @@ mod tests {
                 .all(|&h| h == 0.0)
         );
         assert_eq!(parent.height_bounds, [0.0, 50.0]);
-        assert_eq!(parent.geometric_error, 50.0);
-
-        for (i, child) in children.iter().enumerate() {
-            for z in 0..21 {
-                for x in 0..21 {
-                    let local = [x as f32 / 20.0, z as f32 / 20.0];
-                    let fine = child
-                        .heightfield
-                        .as_ref()
-                        .unwrap()
-                        .sample(local, 1.0)
-                        .height;
-                    let coarse = parent
-                        .heightfield
-                        .as_ref()
-                        .unwrap()
-                        .sample(
-                            [
-                                (local[0] + (i % 2) as f32) * 0.5,
-                                (local[1] + (i / 2) as f32) * 0.5,
-                            ],
-                            1.0,
-                        )
-                        .height;
-                    assert!((fine - coarse).abs() <= parent.geometric_error);
-                }
-            }
-        }
-
-        let mut grandchildren = [
-            parent.clone(),
-            parent.clone(),
-            parent.clone(),
-            parent.clone(),
-        ];
-
-        for (i, c) in grandchildren.iter_mut().enumerate() {
-            c.key.x = (i % 2) as i32;
-            c.key.z = (i / 2) as i32;
-        }
-
-        let grandparent = TerrainNode::parent(
-            parent.key.parent().unwrap().unwrap(),
-            grandchildren.each_ref().map(Some),
-        )
-        .unwrap();
-        assert_eq!(grandparent.geometric_error, 50.0);
     }
 
     #[test]
@@ -690,18 +566,15 @@ mod tests {
     }
 
     #[test]
-    fn codec_rejects_version_trailing_and_nonfinite_data() {
+    fn codec_rejects_trailing_and_nonfinite_data() {
         let node = leaf(0, 0, true);
         let bytes = encode_terrain_node(&node).unwrap();
         assert_eq!(decode_terrain_node(&bytes).unwrap(), node);
-        let mut bad = bytes.clone();
-        bad[0] = 0;
-        assert!(decode_terrain_node(&bad).is_err());
         let mut bad = bytes;
         bad.push(0);
         assert!(decode_terrain_node(&bad).is_err());
         let mut bad = node;
-        bad.geometric_error = f32::NAN;
+        bad.height_bounds[1] = f32::NAN;
         assert!(encode_terrain_node(&bad).is_err());
     }
 }

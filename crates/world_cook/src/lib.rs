@@ -1,24 +1,20 @@
-#[cfg(test)]
-use world_db::write_runtime_database;
-
+mod cell_cook;
 mod control_cook;
 mod environment_cook;
 mod parallel;
-mod runtime_build;
 mod streaming_cook;
 mod terrain_cook;
 mod terrain_preview;
 
 pub use terrain_preview::{
-    MAX_PREVIEW_LEAVES, preview_terrain, published_terrain_control, published_terrain_leaf,
+    GroundLayers, MAX_PREVIEW_LEAVES, preview_terrain, published_terrain_control,
+    published_terrain_leaf,
 };
 
 #[cfg(test)]
 mod terrain_fixture;
 
-use environment_cook::{
-    CookedEnvironment, TerrainSlot, TerrainWeights, compile_environment, demo_environment,
-};
+use environment_cook::demo_environment;
 
 pub use streaming_cook::{CookReport, CookStats, cook_project_fresh, cook_project_with_report};
 
@@ -26,7 +22,6 @@ mod heightfield_import;
 mod terrain_world;
 
 pub use heightfield_import::{HeightfieldImportReport, import_heightfield};
-use runtime_build::build_compiled_runtime;
 
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
@@ -40,19 +35,18 @@ use glam::Vec2;
 
 use world::{
     AssetId, CellCoord, DEFAULT_CELL_SIZE, GameplayObjectInstance, GameplayObjectsPage,
-    MAX_TERRAIN_HEIGHTFIELD_RESOLUTION, MAX_TERRAIN_SURFACES_PER_CELL, MAX_TERRAIN_WEIGHT_PAGES,
-    MAX_TERRAIN_WEIGHT_RESOLUTION, ObjectActivationPolicy, ObjectDefinitionId, PageCodec,
-    PageDomain, PageKey, PagePayload, RUNTIME_SCHEMA_VERSION, StableObjectId, StaticObjectInstance,
-    StaticObjectsPage, TerrainHeightfieldPage, TerrainProfile, TerrainSurface, TerrainSurfaceId,
-    TerrainTextureSet, TerrainTextureSetId, TerrainWeightPage, WorldSpaceId, encode_page_payload,
+    MAX_TERRAIN_SURFACES_PER_CELL, MAX_TERRAIN_WEIGHT_RESOLUTION, ObjectActivationPolicy,
+    ObjectDefinitionId, PageCodec, PageDomain, PageKey, PagePayload, RUNTIME_SCHEMA_VERSION,
+    StableObjectId, StaticObjectInstance, StaticObjectsPage, TerrainHeightfieldPage,
+    TerrainProfile, TerrainSurface, TerrainSurfaceId, TerrainTextureSet, TerrainTextureSetId,
+    WorldSpaceId, encode_page_payload,
 };
 
 use world_db::{
-    AssetVariantRecord, EncodedPage, PageDependencyRecord, PageObjectDefinitionRecord,
-    PageTerrainSurfaceRecord, ProjectDocument, RuntimeBuild, RuntimeCellRecord, RuntimeManifest,
-    RuntimeObjectDefinition, SourceAssetRecord, SourceAssetVariantRecord, SourceCellRecord,
-    SourceObjectDefinitionRecord, SourceObjectRecord, SourceTerrainCellHeightfieldRecord,
-    WorldSpaceRecord, domain_bit, write_project_database,
+    AssetVariantRecord, EncodedPage, ProjectDocument, RuntimeCell, RuntimeCellRecord,
+    RuntimeHeader, RuntimeManifest, RuntimeObjectDefinition, SourceAssetRecord,
+    SourceAssetVariantRecord, SourceCellRecord, SourceObjectDefinitionRecord, SourceObjectRecord,
+    SourceTerrainCellHeightfieldRecord, WorldSpaceRecord, domain_bit, write_project_database,
 };
 
 /// The demo world's tree, from its tracked pack catalog: the smallest leafy tree of the current
@@ -76,9 +70,9 @@ mod terrain_pack;
 pub use road_demo::create_road_demo_project;
 use terrain_pack::TerrainPack;
 
-/// The catalog of grass pack `text` for the terrain pack worlds are created with.
 pub use road_import::{RoadImportReport, import_roads};
 
+/// The catalog of grass pack `text` for the terrain pack worlds are created with.
 pub fn grass_catalog(text: &str) -> Result<vegetation::VegetationCatalog> {
     grass_pack::catalog(text, &TerrainPack::baltic()).map_err(anyhow::Error::msg)
 }
@@ -93,11 +87,74 @@ pub fn cook_project(project_path: &Path, runtime_path: &Path) -> Result<RuntimeM
     Ok(cook_project_with_report(project_path, runtime_path)?.manifest)
 }
 
-/// Whole-document reference path for small fixtures and parity tests. Production cooking
-/// uses the snapshot/staged writer in streaming_cook.
-pub fn build_runtime(project: ProjectDocument) -> Result<RuntimeBuild> {
-    let environment = compile_environment(&project)?;
-    build_compiled_runtime(project, environment)
+/// Cooks a project held in memory as its database would be cooked: written to `directory`
+/// as `project.sqlite` and cooked afresh to `runtime.sqlite` beside it, whose path returns.
+#[cfg(test)]
+fn cook_document(document: &ProjectDocument, directory: &Path) -> Result<std::path::PathBuf> {
+    fs::create_dir_all(directory)?;
+    let project = directory.join("project.sqlite");
+    let runtime = directory.join("runtime.sqlite");
+    write_project_database(&project, document)?;
+    cook_project_fresh(&project, &runtime)?;
+    Ok(runtime)
+}
+
+/// A directory under the system's temporary one, removed with this value.
+#[cfg(test)]
+struct TestDirectory(std::path::PathBuf);
+
+#[cfg(test)]
+impl TestDirectory {
+    fn new(name: &str) -> Self {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let path = std::env::temp_dir().join(format!(
+            "yarra-{name}-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&path).unwrap();
+        Self(path)
+    }
+
+    /// `document` cooked in a directory of its own here, opened.
+    fn cook(&self, document: &ProjectDocument) -> world_db::RuntimeReader {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let directory = self.0.join(
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                .to_string(),
+        );
+        let runtime = cook_document(document, &directory).unwrap();
+        world_db::RuntimeReader::open_immutable(&runtime).unwrap()
+    }
+}
+
+#[cfg(test)]
+impl Drop for TestDirectory {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+/// Every page of a runtime's world, decoded, in cell order; for tests.
+#[cfg(test)]
+fn decoded_pages(
+    reader: &world_db::RuntimeReader,
+    space: WorldSpaceId,
+) -> Vec<world_db::DecodedPage> {
+    reader
+        .terrain_cells(space)
+        .unwrap()
+        .into_iter()
+        .flat_map(|cell| {
+            PageDomain::ALL.map(|domain| PageKey {
+                space,
+                cell,
+                domain,
+            })
+        })
+        .filter_map(|key| reader.read_page(key).unwrap())
+        .map(|page| page.decode().unwrap())
+        .collect()
 }
 
 struct RuntimeStaging {
@@ -133,35 +190,27 @@ impl Drop for RuntimeStaging {
     }
 }
 
-#[cfg(test)]
-fn publish_runtime_database(runtime_path: &Path, build: &RuntimeBuild) -> Result<RuntimeManifest> {
-    let staging = RuntimeStaging::new(runtime_path)?;
-    let temporary_path = &staging.path;
-    write_runtime_database(temporary_path, build)?;
-    finish_runtime_publication(runtime_path, temporary_path, &build.manifest.world_spaces)
+/// What an incremental cook changed: the cells it cooked again, and those of them whose ground
+/// page changed.
+struct Changes {
+    cells: terrain_cook::ChangedCells,
+    ground: terrain_cook::ChangedCells,
 }
 
-#[cfg(test)]
-fn finish_runtime_publication(
-    runtime_path: &Path,
-    temporary_path: &Path,
-    spaces: &[WorldSpaceRecord],
-) -> Result<RuntimeManifest> {
-    publish_staged_runtime(runtime_path, temporary_path, spaces, None).map(|(manifest, _)| manifest)
-}
-
-/// Builds the staged runtime's terrain hierarchy (only above `changed` cells when given) and
-/// control tiles, validates its roots and publishes it; also returns the hierarchy's seconds.
+/// Builds the staged runtime's terrain hierarchy and the control tiles above its cells (only
+/// above changed cells when given), validates its roots and publishes it; also returns the
+/// hierarchy's seconds.
 fn publish_staged_runtime(
     runtime_path: &Path,
     temporary_path: &Path,
     spaces: &[WorldSpaceRecord],
-    changed: Option<&terrain_cook::ChangedCells>,
+    changes: Option<&Changes>,
 ) -> Result<(RuntimeManifest, f64)> {
     let start = std::time::Instant::now();
-    let (manifest, _) = terrain_cook::cook_hierarchy(temporary_path, spaces, changed)?;
+    let manifest =
+        terrain_cook::cook_hierarchy(temporary_path, spaces, changes.map(|c| &c.ground))?;
     let hierarchy_seconds = start.elapsed().as_secs_f64();
-    control_cook::cook(temporary_path, spaces)?;
+    control_cook::cook(temporary_path, spaces, changes.map(|c| &c.cells))?;
     let reader = world_db::RuntimeReader::open_immutable(temporary_path)
         .context("cooked runtime database did not pass validation")?;
 
@@ -625,52 +674,55 @@ mod tests {
         let project = demo_project_document();
         assert_eq!(project.environments.len(), 2);
         assert_eq!(project.terrain_cell_heightfields.len(), 16 * 16);
-        let build = build_runtime(project).unwrap();
-        assert_eq!(build.manifest.world_spaces.len(), 2);
-        assert_eq!(build.manifest.default_world_space, WorldSpaceId(1));
-        assert_eq!(build.cells.len(), 16 * 16 + 9 * 9);
-        assert!(build.pages.len() > build.cells.len());
-        assert_eq!(build.assets.len(), 4);
-        assert_eq!(
-            build
-                .assets
-                .iter()
-                .map(|asset| asset.lod)
-                .collect::<Vec<_>>(),
-            vec![0, 1, 2, 3]
-        );
-        let static_pages = build
-            .pages
+        let directory = TestDirectory::new("demo-cook");
+        let reader = directory.cook(&project);
+        assert_eq!(reader.manifest().world_spaces.len(), 2);
+        assert_eq!(reader.manifest().default_world_space, WorldSpaceId(1));
+        let cells = |space| reader.terrain_cells(space).unwrap().len();
+        assert_eq!(cells(WorldSpaceId(1)), 16 * 16);
+        assert_eq!(cells(WorldSpaceId(2)), 9 * 9);
+        let overworld = decoded_pages(&reader, WorldSpaceId(1));
+        let interior = decoded_pages(&reader, WorldSpaceId(2));
+        let pages: Vec<_> = overworld.iter().chain(&interior).collect();
+        assert!(pages.len() > 16 * 16 + 9 * 9);
+
+        // Every static-object page names each of the tree's LODs.
+        for page in pages
             .iter()
             .filter(|page| page.key.domain == PageDomain::StaticObjects)
-            .count();
-        assert_eq!(build.dependencies.len(), static_pages * 4);
+        {
+            let lods: Vec<_> = reader
+                .read_dependencies(page.key)
+                .unwrap()
+                .iter()
+                .map(|d| d.asset_lod)
+                .collect();
+            assert_eq!(lods, [0, 1, 2, 3]);
+        }
+
+        let bounds = reader
+            .read_cell_descriptors(
+                WorldSpaceId(1),
+                CellCoord { x: -8, z: -8 },
+                CellCoord { x: 7, z: 7 },
+            )
+            .unwrap();
         assert!(
-            build.cells.iter().any(|cell| cell.maximum_y > 8.0),
+            bounds.iter().any(|cell| cell.maximum_y > 8.0),
             "static model bounds did not expand cell visibility bounds"
         );
         let terrain_page = |cell| {
-            build
-                .pages
+            let page = overworld
                 .iter()
-                .find(|page| {
-                    page.key.space == WorldSpaceId(1)
-                        && page.key.cell == cell
-                        && page.key.domain == PageDomain::Terrain
-                })
-                .unwrap()
-                .clone()
-                .decode()
-                .unwrap()
+                .find(|page| page.key.cell == cell && page.key.domain == PageDomain::Terrain)
+                .unwrap();
+            let PagePayload::TerrainHeightfield(page) = &page.payload else {
+                panic!("demo overworld terrain must cook to heightfields");
+            };
+            page.clone()
         };
         let left = terrain_page(CellCoord::ZERO);
         let right = terrain_page(CellCoord { x: 1, z: 0 });
-        let PagePayload::TerrainHeightfield(left) = left.payload else {
-            panic!("demo overworld terrain must cook to heightfields");
-        };
-        let PagePayload::TerrainHeightfield(right) = right.payload else {
-            panic!("demo overworld terrain must cook to heightfields");
-        };
         let resolution = usize::from(left.heightfield.resolution);
 
         for z in 0..resolution {
@@ -686,39 +738,34 @@ mod tests {
             );
         }
 
-        assert_eq!(build.definitions.len(), 2);
-        let vegetation_pages = build
-            .pages
+        // Grass grows on every cell's ground: the overworld's 16×16 and the interior's 9×9.
+        let vegetation: Vec<_> = pages
             .iter()
             .filter(|page| page.key.domain == PageDomain::Vegetation)
-            .collect::<Vec<_>>();
-        assert!(!vegetation_pages.is_empty());
-
-        // Grass grows on every cell's ground: the overworld's 16×16 and the interior's 9×9.
-        assert!(vegetation_pages.len() <= 16 * 16 + 9 * 9);
-        assert_eq!(vegetation_pages[0].key.cell, CellCoord { x: -8, z: -8 });
-        let decoded = vegetation_pages[0].clone().decode().unwrap();
-        let PagePayload::Vegetation(page) = decoded.payload else {
+            .collect();
+        assert!(!vegetation.is_empty());
+        assert!(vegetation.len() <= 16 * 16 + 9 * 9);
+        assert_eq!(vegetation[0].key.cell, CellCoord { x: -8, z: -8 });
+        let PagePayload::Vegetation(page) = &vegetation[0].payload else {
             panic!("vegetation page decoded to the wrong domain");
         };
-        let catalog = build.manifest.vegetation_catalog.as_ref().unwrap();
+        let catalog = reader.manifest().vegetation_catalog.as_ref().unwrap();
         page.validate(catalog).unwrap();
         assert!(!page.fields.is_empty());
         assert!(page.fields.len() <= catalog.grass.len() + catalog.details.len());
+        let gameplay: Vec<_> = pages
+            .iter()
+            .filter(|page| page.key.domain == PageDomain::GameplayObjects)
+            .collect();
+        assert_eq!(gameplay.len(), 1);
         assert_eq!(
-            build
-                .pages
-                .iter()
-                .filter(|page| page.key.domain == PageDomain::GameplayObjects)
-                .count(),
+            reader
+                .read_object_definitions(gameplay[0].key)
+                .unwrap()
+                .len(),
             1
         );
-        assert!(
-            build
-                .pages
-                .iter()
-                .all(|page| page.decoded_bytes > 0 && !page.payload.is_empty())
-        );
+        assert!(pages.iter().all(|page| page.decoded_bytes > 0));
     }
 
     #[test]

@@ -34,15 +34,8 @@ pub(crate) fn read_page_connection(
         .query_row(
             "SELECT codec, decoded_bytes, gpu_bytes_estimate, checksum, payload \
                  FROM cell_pages \
-                 WHERE world_space_id = ?1 AND cell_x = ?2 AND cell_z = ?3 \
-                   AND domain = ?4 AND lod = ?5",
-            params![
-                key.space.0,
-                key.cell.x,
-                key.cell.z,
-                key.domain as i64,
-                i64::from(key.lod)
-            ],
+                 WHERE world_space_id = ?1 AND cell_x = ?2 AND cell_z = ?3 AND domain = ?4",
+            params![key.space.0, key.cell.x, key.cell.z, key.domain as i64],
             |row| {
                 let decoded_bytes: i64 = row.get(1)?;
                 let gpu_bytes_estimate: i64 = row.get(2)?;
@@ -81,15 +74,6 @@ impl RuntimeReader {
         connection.execute_batch("PRAGMA query_only = ON; PRAGMA foreign_keys = ON;")?;
         ensure_schema_version(&connection, RUNTIME_SCHEMA_VERSION, "runtime")?;
         let manifest = read_runtime_manifest(&connection)?;
-
-        if manifest.schema_version != RUNTIME_SCHEMA_VERSION {
-            return Err(WorldDbError::SchemaVersion {
-                database: "runtime",
-                expected: RUNTIME_SCHEMA_VERSION,
-                actual: manifest.schema_version,
-            });
-        }
-
         Ok(Self {
             connection,
             manifest,
@@ -170,32 +154,22 @@ impl RuntimeReader {
              FROM page_dependencies d \
              JOIN asset_variants a ON a.asset_id = d.asset_id AND a.lod = d.asset_lod \
              WHERE d.world_space_id = ?1 AND d.cell_x = ?2 AND d.cell_z = ?3 \
-               AND d.domain = ?4 AND d.lod = ?5 \
              ORDER BY d.asset_id, d.asset_lod",
         )?;
         statement
-            .query_map(
-                params![
-                    key.space.0,
-                    key.cell.x,
-                    key.cell.z,
-                    key.domain as i64,
-                    i64::from(key.lod)
-                ],
-                |row| {
-                    let gpu_bytes_estimate: i64 = row.get(7)?;
-                    Ok(PageDependency {
-                        asset: AssetId(blob_array(row.get_ref(0)?.as_blob()?, "asset_id")?),
-                        asset_lod: row.get::<_, i64>(1)? as u8,
-                        kind: row.get(2)?,
-                        uri: row.get(3)?,
-                        bounds: [row.get(4)?, row.get(5)?, row.get(6)?],
-                        gpu_bytes_estimate: gpu_bytes_estimate as u64,
-                        shadow_policy: row.get(8)?,
-                        minimum_screen_height: row.get(9)?,
-                    })
-                },
-            )?
+            .query_map(params![key.space.0, key.cell.x, key.cell.z], |row| {
+                let gpu_bytes_estimate: i64 = row.get(7)?;
+                Ok(PageDependency {
+                    asset: AssetId(blob_array(row.get_ref(0)?.as_blob()?, "asset_id")?),
+                    asset_lod: row.get::<_, i64>(1)? as u8,
+                    kind: row.get(2)?,
+                    uri: row.get(3)?,
+                    bounds: [row.get(4)?, row.get(5)?, row.get(6)?],
+                    gpu_bytes_estimate: gpu_bytes_estimate as u64,
+                    shadow_policy: row.get(8)?,
+                    minimum_screen_height: row.get(9)?,
+                })
+            })?
             .collect::<Result<Vec<_>, _>>()
             .map_err(Into::into)
     }
@@ -210,41 +184,32 @@ impl RuntimeReader {
              FROM page_object_definitions p \
              JOIN object_definitions d ON d.definition_id = p.definition_id \
              WHERE p.world_space_id = ?1 AND p.cell_x = ?2 AND p.cell_z = ?3 \
-               AND p.domain = ?4 AND p.lod = ?5 \
              ORDER BY d.definition_id",
         )?;
         statement
-            .query_map(
-                params![
-                    key.space.0,
-                    key.cell.x,
-                    key.cell.z,
-                    key.domain as i64,
-                    i64::from(key.lod),
-                ],
-                |row| {
-                    Ok(RuntimeObjectDefinition {
-                        id: ObjectDefinitionId(blob_array(
-                            row.get_ref(0)?.as_blob()?,
-                            "definition_id",
-                        )?),
-                        key: row.get(1)?,
-                        display_name: row.get(2)?,
-                        visual_asset: row
-                            .get::<_, Option<Vec<u8>>>(3)?
-                            .map(|bytes| blob_array(&bytes, "visual_asset_id").map(AssetId))
-                            .transpose()?,
-                        activation: ObjectActivationPolicy::try_from(row.get::<_, i64>(4)?)
-                            .map_err(|error| {
-                                rusqlite::Error::FromSqlConversionFailure(
-                                    4,
-                                    rusqlite::types::Type::Integer,
-                                    Box::new(error),
-                                )
-                            })?,
-                    })
-                },
-            )?
+            .query_map(params![key.space.0, key.cell.x, key.cell.z], |row| {
+                Ok(RuntimeObjectDefinition {
+                    id: ObjectDefinitionId(blob_array(
+                        row.get_ref(0)?.as_blob()?,
+                        "definition_id",
+                    )?),
+                    key: row.get(1)?,
+                    display_name: row.get(2)?,
+                    visual_asset: row
+                        .get::<_, Option<Vec<u8>>>(3)?
+                        .map(|bytes| blob_array(&bytes, "visual_asset_id").map(AssetId))
+                        .transpose()?,
+                    activation: ObjectActivationPolicy::try_from(row.get::<_, i64>(4)?).map_err(
+                        |error| {
+                            rusqlite::Error::FromSqlConversionFailure(
+                                4,
+                                rusqlite::types::Type::Integer,
+                                Box::new(error),
+                            )
+                        },
+                    )?,
+                })
+            })?
             .collect::<Result<Vec<_>, _>>()
             .map_err(Into::into)
     }
@@ -275,9 +240,8 @@ impl RuntimeReader {
              FROM page_terrain_surfaces p \
              JOIN terrain_surfaces s ON s.surface_id = p.surface_id \
              JOIN terrain_texture_set_layers l \
-               ON l.surface_id = s.surface_id AND l.texture_set_id = ?6 \
+               ON l.surface_id = s.surface_id AND l.texture_set_id = ?4 \
              WHERE p.world_space_id = ?1 AND p.cell_x = ?2 AND p.cell_z = ?3 \
-               AND p.domain = ?4 AND p.lod = ?5 \
              ORDER BY l.layer",
         )?;
         let surfaces = statement
@@ -286,8 +250,6 @@ impl RuntimeReader {
                     key.space.0,
                     key.cell.x,
                     key.cell.z,
-                    key.domain as i64,
-                    i64::from(key.lod),
                     profile.texture_set.0.as_slice(),
                 ],
                 |row| {
@@ -312,24 +274,24 @@ pub(crate) fn read_runtime_manifest(
     let world_spaces = query_world_spaces(connection)?;
     let vegetation_catalog = read_vegetation_catalog(connection)?;
     let (mut manifest, start_view, gameplay_areas) = connection.query_row(
-        "SELECT schema_version, generation_id, content_hash, default_world_space_id, start_view, \
-                gameplay_areas \
+        "SELECT generation_id, content_hash, default_world_space_id, start_view, gameplay_areas \
          FROM runtime_metadata WHERE singleton = 1",
         [],
         |row| {
             Ok((
                 RuntimeManifest {
-                    schema_version: row.get(0)?,
-                    generation_id: row.get(1)?,
-                    content_hash: blob_array(row.get_ref(2)?.as_blob()?, "content_hash")?,
-                    default_world_space: WorldSpaceId(row.get(3)?),
+                    schema_version: connection
+                        .query_row("PRAGMA user_version", [], |row| row.get(0))?,
+                    generation_id: row.get(0)?,
+                    content_hash: blob_array(row.get_ref(1)?.as_blob()?, "content_hash")?,
+                    default_world_space: WorldSpaceId(row.get(2)?),
                     world_spaces,
                     vegetation_catalog,
                     start_view: None,
                     gameplay_areas: Default::default(),
                 },
-                row.get::<_, Option<Vec<u8>>>(4)?,
-                row.get::<_, Vec<u8>>(5)?,
+                row.get::<_, Option<Vec<u8>>>(3)?,
+                row.get::<_, Vec<u8>>(4)?,
             ))
         },
     )?;

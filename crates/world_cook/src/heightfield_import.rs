@@ -3,9 +3,9 @@
 //! samples on a regular XZ grid, plus optional named masks of one byte per sample on the same
 //! grid; `tools/houdini_export_heightfield.py` writes it from Houdini. The heightfield's
 //! footprint defines the world. Layers with an imported mask take their coverage from the mask
-//! of that name, or from a mask generated from height and slope; painted layers are kept. A
-//! re-import rewrites only cells whose heights or imported coverage changed, so the following
-//! cook is incremental.
+//! of that name, which the export must provide; painted layers are kept. A re-import rewrites
+//! only cells whose heights or imported coverage changed, so the following cook is
+//! incremental.
 use super::*;
 use serde::Deserialize;
 use std::path::PathBuf;
@@ -391,15 +391,44 @@ mod tests {
         }
     }
 
-    /// A 2 m grid over 256 m: a round island in flat sea, with an optional bump.
+    type MaskRule = fn(Vec2) -> u8;
+
+    /// Every mask an island world's layers read: land on the island, nothing else.
+    fn island_masks() -> Vec<(String, MaskRule)> {
+        terrain_world::ground_mask_names()
+            .into_iter()
+            .map(|name| {
+                let rule: MaskRule = if name == "land" {
+                    |p| if p.length() < 70. { 255 } else { 0 }
+                } else {
+                    |_| 0
+                };
+                (name, rule)
+            })
+            .collect()
+    }
+
+    /// A 2 m grid over 256 m: a round island in flat sea, with an optional bump, and every
+    /// mask its layers read.
     fn write_field(dir: &Path, bump: f32) -> PathBuf {
         write_field_with_masks(dir, bump, &[])
     }
 
-    type MaskRule = fn(Vec2) -> u8;
+    /// `write_field` with masks, each a name and its value at a sample, in place of the
+    /// island's of the same name or beside them.
+    fn write_field_with_masks(dir: &Path, bump: f32, extra: &[(&str, MaskRule)]) -> PathBuf {
+        let mut masks = island_masks();
 
-    /// `write_field` with masks, each a name and its value at a sample.
-    fn write_field_with_masks(dir: &Path, bump: f32, masks: &[(&str, MaskRule)]) -> PathBuf {
+        for &(name, rule) in extra {
+            masks.retain(|(n, _)| n != name);
+            masks.push((name.into(), rule));
+        }
+
+        write_field_with_exactly(dir, bump, &masks)
+    }
+
+    /// `write_field` with just these masks.
+    fn write_field_with_exactly(dir: &Path, bump: f32, masks: &[(String, MaskRule)]) -> PathBuf {
         let n = 129;
         let origin = [-127.0_f32, -129.0];
         let points: Vec<_> = (0..n)
@@ -597,8 +626,8 @@ mod tests {
         let project = output.0.join("island.project.sqlite");
         world_db::write_project_database(&project, &document).unwrap();
 
-        // An imported `green` replaces the generated one.
-        let manifest = write_field_with_masks(&output.0, 0., &[("sand", sand), ("green", |_| 0)]);
+        // The sand layer now reads its mask.
+        let manifest = write_field_with_masks(&output.0, 0., &[("sand", sand)]);
         let report = import_heightfield(&manifest, &project).unwrap();
         assert!(report.unused_masks.is_empty(), "{:?}", report.unused_masks);
         assert!(report.stats.changed > 0);
@@ -636,7 +665,7 @@ mod tests {
         assert_eq!(tiles(&project, cell), east);
 
         // A layer whose mask the import lacks is an error.
-        let manifest = write_field_with_masks(&output.0, 0., &[("green", |_| 0)]);
+        let manifest = write_field(&output.0, 0.);
         let error = import_heightfield(&manifest, &project).unwrap_err();
         assert!(format!("{error:#}").contains("\"sand\""), "{error:#}");
     }
@@ -647,7 +676,11 @@ mod tests {
         let project = output.0.join("island.project.sqlite");
 
         for name in ["Sand", "sand", "wet ness"] {
-            let manifest = write_field_with_masks(&output.0, 0., &[(name, |_| 0), ("sand", |_| 0)]);
+            let masks = [
+                (name.to_string(), (|_| 0) as MaskRule),
+                ("sand".into(), |_| 0),
+            ];
+            let manifest = write_field_with_exactly(&output.0, 0., &masks);
             assert!(import_heightfield(&manifest, &project).is_err(), "{name}");
         }
 

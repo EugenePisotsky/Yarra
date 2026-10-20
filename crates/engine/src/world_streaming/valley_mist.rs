@@ -291,10 +291,8 @@ mod tests {
             },
             child_mask: 15,
             height_bounds: [0., 1.],
-            geometric_error: 0.,
             resolution: Some(33),
             decoded_bytes: 0,
-            gpu_bytes_estimate: 0,
             checksum: [0; 32],
         }
     }

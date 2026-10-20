@@ -8,7 +8,6 @@ use environment::{
     CoverageCell, CoverageSnapshot, CoverageTile, EnvironmentDefinition, PresetLibrary,
 };
 
-use environment_compile::{CompilePlan, CompileProfile};
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use vegetation::VegetationCatalog;
@@ -128,8 +127,10 @@ fn checked_definition(
     plants: &VegetationCatalog,
     presets: &PresetLibrary,
 ) -> Result<(), WorldDbError> {
-    CompilePlan::new(definition, plants, presets, CompileProfile::default())?;
-    Ok(())
+    plants.validate()?;
+    definition
+        .validate(presets)
+        .map_err(|e| invalid(e.to_string()))
 }
 
 pub(crate) fn read_definition(
@@ -152,20 +153,10 @@ pub(crate) fn read_definition(
         )
         .optional()?;
     raw.map(|(revision, bytes)| {
-        let (definition, consumed): (EnvironmentDefinition, usize) =
-            bincode::serde::decode_from_slice(
-                &bytes,
-                bincode::config::standard()
-                    .with_little_endian()
-                    .with_fixed_int_encoding()
-                    .with_limit::<MAX_DEFINITION_BYTES>(),
-            )?;
+        let definition: EnvironmentDefinition =
+            world::codec::decode::<_, MAX_DEFINITION_BYTES>(&bytes)?;
 
-        if consumed != bytes.len()
-            || definition.space != space
-            || revision <= 0
-            || definition.revision != revision as u64
-        {
+        if definition.space != space || revision <= 0 || definition.revision != revision as u64 {
             return Err(invalid(
                 "definition payload does not match its database header",
             ));
@@ -242,12 +233,7 @@ fn store_definition(
     definition: &EnvironmentDefinition,
 ) -> Result<(), WorldDbError> {
     let revision = i64::try_from(definition.revision).map_err(|_| WorldDbError::IntegerOverflow)?;
-    let bytes = bincode::serde::encode_to_vec(
-        definition,
-        bincode::config::standard()
-            .with_little_endian()
-            .with_fixed_int_encoding(),
-    )?;
+    let bytes = world::codec::encode(definition)?;
 
     if bytes.len() > MAX_DEFINITION_BYTES || revision <= 0 {
         return Err(invalid("definition size or revision is invalid"));
@@ -665,7 +651,9 @@ pub(crate) fn write_environment_document(
     }
 
     for (&space, definition) in &definitions {
-        let plan = CompilePlan::new(definition, &plants, presets, CompileProfile::default())?;
+        definition
+            .validate(presets)
+            .map_err(|e| invalid(e.to_string()))?;
         let cells = document
             .environment_cells
             .iter()
@@ -680,7 +668,7 @@ pub(crate) fn write_environment_document(
                 definition,
                 &environment_dependency_cells(batch)?,
             )?;
-            plan.validate_coverage(batch, &coverage)?;
+            coverage.validate(definition, batch, environment::CoverageLimits::default())?;
         }
     }
 

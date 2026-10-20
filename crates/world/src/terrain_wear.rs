@@ -35,7 +35,7 @@ pub struct TerrainWear {
 /// flattened grass), at `world` (XZ): light wear tramples, heavy wear bares, the line between
 /// broken up in patches about two metres across.
 pub fn bare_share(wear: f64, world: [f64; 2]) -> f64 {
-    let t = (wear + 0.3 * (crate::road_patch(world, 1.8, 0x7a1) - 0.5) - 0.3) / 0.45;
+    let t = (wear + 0.3 * (crate::road_noise::road_patch(world, 1.8, 0x7a1) - 0.5) - 0.3) / 0.45;
     let t = t.clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
 }

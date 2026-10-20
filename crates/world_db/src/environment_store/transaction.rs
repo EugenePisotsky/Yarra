@@ -199,9 +199,7 @@ impl ProjectWriter {
 
             checked_definition(&write.definition, &plants, presets)?;
             validate_definition_references(&tx, &write.definition)?;
-            definition_bytes +=
-                bincode::serde::encode_to_vec(&write.definition, bincode::config::standard())?
-                    .len();
+            definition_bytes += world::codec::encode(&write.definition)?.len();
 
             if definition_bytes > 4 * MAX_DEFINITION_BYTES {
                 return Err(invalid("definition transaction exceeds the byte budget"));
@@ -289,8 +287,7 @@ impl ProjectWriter {
                 .map(|r| r.cell)
                 .collect::<Vec<_>>();
             let coverage = read_coverage(&tx, &definition, &environment_dependency_cells(&cells)?)?;
-            CompilePlan::new(&definition, &plants, presets, CompileProfile::default())?
-                .validate_coverage(&cells, &coverage)?;
+            coverage.validate(&definition, &cells, environment::CoverageLimits::default())?;
         }
 
         let roads = if roads.is_empty() {

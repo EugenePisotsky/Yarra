@@ -7,7 +7,6 @@ fn key(space: i64, x: i32) -> PageKey {
         space: WorldSpaceId(space),
         cell: CellCoord { x, z: 0 },
         domain: world::PageDomain::StaticObjects,
-        lod: 0,
     }
 }
 

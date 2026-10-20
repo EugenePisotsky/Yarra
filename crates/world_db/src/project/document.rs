@@ -7,18 +7,16 @@ use crate::catalog::{
 
 use crate::project::query::query_source_catalog;
 
-use crate::storage::{
-    blob_array, decode_f32_blob, encode_f32_blob, ensure_new_database_path, ensure_schema_version,
-};
+use crate::storage::{blob_array, decode_f32_blob, encode_f32_blob, ensure_new_database_path};
 
 use crate::{
     ProjectDocument, SourceCellRecord, SourceObjectRecord, SourceTerrainCellHeightfieldRecord,
     WorldDbError, atmosphere, environment_store, road_store, schema,
 };
 
-use rusqlite::{Connection, OpenFlags, Transaction, params};
+use rusqlite::{Connection, Transaction, params};
 use std::path::Path;
-use world::{CellCoord, ObjectDefinitionId, PROJECT_SCHEMA_VERSION, StableObjectId, WorldSpaceId};
+use world::{CellCoord, ObjectDefinitionId, StableObjectId, WorldSpaceId};
 
 pub fn write_project_database(path: &Path, document: &ProjectDocument) -> Result<(), WorldDbError> {
     ensure_new_database_path(path)?;
@@ -185,9 +183,8 @@ fn write_project_document(
 }
 
 pub fn read_project_database(path: &Path) -> Result<ProjectDocument, WorldDbError> {
-    let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    let connection = crate::storage::open_project(path, false)?;
     connection.execute_batch("BEGIN DEFERRED;")?;
-    ensure_schema_version(&connection, PROJECT_SCHEMA_VERSION, "project")?;
 
     let world_spaces = query_world_spaces(&connection)?;
     let (default_world_space, start_view) = connection.query_row(

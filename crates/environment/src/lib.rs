@@ -5,6 +5,7 @@
 //! ground surfaces as the world's grass catalog says, less where exclusions and roads clear it.
 
 pub mod brush;
+mod coverage;
 pub mod fixtures;
 mod presets;
 mod scatter;
@@ -12,8 +13,11 @@ mod scatter;
 pub use scatter::*;
 
 pub mod roads;
+mod terrain_source;
 
+pub use coverage::*;
 pub use presets::*;
+pub use terrain_source::*;
 
 use std::collections::BTreeSet;
 
@@ -141,6 +145,18 @@ pub struct CoverageTile {
 pub struct CoverageSnapshot {
     pub space: WorldSpaceId,
     pub cells: Vec<CoverageCell>,
+}
+
+impl CoverageSnapshot {
+    /// Checks the snapshot can be compiled for `cells`: see [`CoverageIndex::check`].
+    pub fn validate(
+        &self,
+        definition: &EnvironmentDefinition,
+        cells: &[CellCoord],
+        limits: CoverageLimits,
+    ) -> Result<(), CoverageError> {
+        CoverageIndex::new(definition, self, limits)?.check(cells, limits)
+    }
 }
 
 impl EnvironmentDefinition {

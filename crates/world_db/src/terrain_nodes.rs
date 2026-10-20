@@ -1,28 +1,29 @@
 //! Bounded terrain-node IO. A cook store only mutates an unpublished staging generation.
 use crate::runtime::{read_page_connection, read_runtime_manifest};
-use crate::storage::{blob_array, ensure_schema_version};
+use crate::storage::blob_array;
 use crate::{EncodedPage, RuntimeManifest, RuntimeReader, WorldDbError, WorldSpaceRecord};
-use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use std::io::{Cursor, Read};
 use std::path::Path;
 
 use world::{
-    CellCoord, MAX_TERRAIN_NODE_BYTES, PageCodec, PageDomain, PageKey, RUNTIME_SCHEMA_VERSION,
-    TerrainNode, TerrainNodeKey, WorldSpaceId, decode_terrain_node, encode_terrain_node,
+    CellCoord, MAX_TERRAIN_NODE_BYTES, PageCodec, PageDomain, PageKey, TerrainNode, TerrainNodeKey,
+    WorldSpaceId, decode_terrain_node, encode_terrain_node,
 };
 
 pub const MAX_TERRAIN_NODE_QUERY: usize = 128;
 pub const MAX_TERRAIN_COARSE_ROOTS: usize = 256;
+
+/// Encoded bytes all of a world's roots may take together.
+const MAX_ROOT_BYTES: u64 = 32 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TerrainNodeDescriptor {
     pub key: TerrainNodeKey,
     pub child_mask: u8,
     pub height_bounds: [f32; 2],
-    pub geometric_error: f32,
     pub resolution: Option<u16>,
     pub decoded_bytes: u64,
-    pub gpu_bytes_estimate: u64,
     pub checksum: [u8; 32],
 }
 
@@ -63,25 +64,13 @@ impl EncodedTerrainNode {
         if node.key != self.descriptor.key
             || node.child_mask != self.descriptor.child_mask
             || node.height_bounds != self.descriptor.height_bounds
-            || node.geometric_error != self.descriptor.geometric_error
             || node.heightfield.as_ref().map(|h| h.resolution) != self.descriptor.resolution
-            || node.gpu_bytes_estimate() != self.descriptor.gpu_bytes_estimate
         {
             return Err(invalid("terrain descriptor disagrees with payload"));
         }
 
         Ok(node)
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct TerrainHierarchySummary {
-    pub space: WorldSpaceId,
-    pub nodes: u64,
-    pub leaves: u64,
-    pub roots: u64,
-    pub root_decoded_bytes: u64,
-    pub root_gpu_bytes: u64,
 }
 
 /// A node encoded for storage. Preparing is pure, so a cook can do it on every core and
@@ -92,11 +81,9 @@ pub struct PreparedTerrainNode {
     parent: Option<TerrainNodeKey>,
     child_mask: u8,
     height_bounds: [f32; 2],
-    geometric_error: f32,
     resolution: Option<u16>,
     codec: PageCodec,
     decoded_bytes: u64,
-    gpu_bytes_estimate: u64,
     checksum: [u8; 32],
     payload: Vec<u8>,
 }
@@ -115,11 +102,9 @@ impl PreparedTerrainNode {
             parent: node.key.parent().map_err(|e| invalid(e.to_string()))?,
             child_mask: node.child_mask,
             height_bounds: node.height_bounds,
-            geometric_error: node.geometric_error,
             resolution: node.heightfield.as_ref().map(|h| h.resolution),
             codec,
             decoded_bytes: bytes.len() as u64,
-            gpu_bytes_estimate: node.gpu_bytes_estimate(),
             checksum: *blake3::hash(&bytes).as_bytes(),
             payload,
         })
@@ -144,10 +129,8 @@ pub struct TerrainCookStore {
 
 impl TerrainCookStore {
     fn open(path: &Path) -> Result<Connection, WorldDbError> {
-        let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
-        ensure_schema_version(&connection, RUNTIME_SCHEMA_VERSION, "runtime")?;
-        connection
-            .execute_batch("PRAGMA foreign_keys=ON; PRAGMA cache_size=-8192; BEGIN IMMEDIATE;")?;
+        let connection = crate::storage::open_staging_runtime(path)?;
+        connection.execute_batch("BEGIN IMMEDIATE;")?;
         Ok(connection)
     }
 
@@ -189,11 +172,9 @@ impl TerrainCookStore {
             node.child_mask,
             node.height_bounds[0],
             node.height_bounds[1],
-            node.geometric_error,
             node.resolution,
             node.codec as i64,
             node.decoded_bytes as i64,
-            node.gpu_bytes_estimate as i64,
             node.checksum.as_slice(),
             node.payload,
         ];
@@ -201,8 +182,8 @@ impl TerrainCookStore {
         if replace {
             let changed = self.connection.execute(
                 "UPDATE terrain_nodes SET parent_x=?5, parent_z=?6, child_mask=?7, minimum_y=?8, \
-                     maximum_y=?9, geometric_error=?10, resolution=?11, codec=?12, \
-                     decoded_bytes=?13, gpu_bytes_estimate=?14, checksum=?15, payload=?16 \
+                     maximum_y=?9, resolution=?10, codec=?11, decoded_bytes=?12, checksum=?13, \
+                     payload=?14 \
                  WHERE world_space_id=?1 AND level=?2 AND node_x=?3 AND node_z=?4",
                 values,
             )?;
@@ -213,9 +194,8 @@ impl TerrainCookStore {
             self.connection.execute(
                 "INSERT INTO terrain_nodes( \
                      world_space_id, level, node_x, node_z, parent_x, parent_z, child_mask, \
-                     minimum_y, maximum_y, geometric_error, resolution, codec, decoded_bytes, \
-                     gpu_bytes_estimate, checksum, payload \
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+                     minimum_y, maximum_y, resolution, codec, decoded_bytes, checksum, payload \
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
                 values,
             )?;
         }
@@ -307,7 +287,6 @@ impl TerrainCookStore {
                 space,
                 cell,
                 domain: PageDomain::Terrain,
-                lod: 0,
             },
         )
     }
@@ -366,12 +345,15 @@ impl TerrainCookStore {
         after: Option<CellCoord>,
         limit: usize,
     ) -> Result<Vec<EncodedPage>, WorldDbError> {
-        let mut query = self.connection.prepare_cached("SELECT cell_x, cell_z FROM cell_pages WHERE world_space_id=?1 AND domain=1 AND lod=0 AND \
-             (cell_x, cell_z)>(?2, ?3) ORDER BY cell_x, cell_z LIMIT ?4")?;
+        let mut query = self.connection.prepare_cached(
+            "SELECT cell_x, cell_z FROM cell_pages WHERE world_space_id=?1 AND domain=?2 AND \
+             (cell_x, cell_z)>(?3, ?4) ORDER BY cell_x, cell_z LIMIT ?5",
+        )?;
         let keys = query
             .query_map(
                 params![
                     space.0,
+                    PageDomain::Terrain as i64,
                     after.map_or(i64::MIN, |c| i64::from(c.x)),
                     after.map_or(i64::MIN, |c| i64::from(c.z)),
                     limit.min(MAX_TERRAIN_NODE_QUERY) as i64
@@ -384,7 +366,6 @@ impl TerrainCookStore {
                             z: r.get(1)?,
                         },
                         domain: PageDomain::Terrain,
-                        lod: 0,
                     })
                 },
             )?
@@ -397,10 +378,7 @@ impl TerrainCookStore {
     }
 
     /// Seal a bounded coarse cover and fold all products into the generation's identity.
-    pub fn finish(
-        self,
-        spaces: &[WorldSpaceRecord],
-    ) -> Result<(RuntimeManifest, Vec<TerrainHierarchySummary>), WorldDbError> {
+    pub fn finish(self, spaces: &[WorldSpaceRecord]) -> Result<RuntimeManifest, WorldDbError> {
         let manifest = read_runtime_manifest(&self.connection)?;
         let supplied: std::collections::BTreeSet<_> = spaces.iter().map(|s| s.id).collect();
         let expected: std::collections::BTreeSet<_> =
@@ -412,8 +390,6 @@ impl TerrainCookStore {
             ));
         }
 
-        let mut summaries = Vec::new();
-
         for space in spaces {
             self.connection.execute(
                 "INSERT INTO terrain_roots(world_space_id, level, node_x, node_z) SELECT \
@@ -423,34 +399,29 @@ impl TerrainCookStore {
              p.node_x=n.parent_x AND p.node_z=n.parent_z AND p.resolution IS NOT NULL)",
                 [space.id.0],
             )?;
-            let (roots, decoded, gpu): (i64, i64, i64) = self.connection.query_row(
-                "SELECT count(*), coalesce(sum(n.decoded_bytes), 0), \
-                     coalesce(sum(n.gpu_bytes_estimate), 0) \
+            let (roots, decoded): (i64, i64) = self.connection.query_row(
+                "SELECT count(*), coalesce(sum(n.decoded_bytes), 0) \
                  FROM terrain_roots r JOIN terrain_nodes n \
                      USING(world_space_id, level, node_x, node_z) \
                  WHERE r.world_space_id=?1",
                 [space.id.0],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                |r| Ok((r.get(0)?, r.get(1)?)),
             )?;
 
-            if roots > MAX_TERRAIN_COARSE_ROOTS as i64
-                || decoded > 32 * 1024 * 1024
-                || gpu > 128 * 1024 * 1024
-            {
+            if roots > MAX_TERRAIN_COARSE_ROOTS as i64 || decoded > MAX_ROOT_BYTES as i64 {
                 return Err(invalid(
                     "coarse terrain cover exceeds count or memory budget",
                 ));
             }
 
-            let (nodes, leaves): (i64, i64) = self.connection.query_row(
-                "SELECT count(*), coalesce(sum(level=0), 0) FROM terrain_nodes \
-                 WHERE world_space_id=?1",
+            let leaves: i64 = self.connection.query_row(
+                "SELECT count(*) FROM terrain_nodes WHERE world_space_id=?1 AND level=0",
                 [space.id.0],
-                |r| Ok((r.get(0)?, r.get(1)?)),
+                |r| r.get(0),
             )?;
             let expected: i64 = self.connection.query_row(
-                "SELECT count(*) FROM cell_pages WHERE world_space_id=?1 AND domain=1 AND lod=0",
-                [space.id.0],
+                "SELECT count(*) FROM cell_pages WHERE world_space_id=?1 AND domain=?2",
+                params![space.id.0, PageDomain::Terrain as i64],
                 |r| r.get(0),
             )?;
             let covered: i64 = self.connection.query_row(
@@ -464,19 +435,9 @@ impl TerrainCookStore {
             }
 
             self.connection.execute(
-                "INSERT INTO terrain_hierarchy_spaces( \
-                     world_space_id, node_count, leaf_count, root_count \
-                 ) VALUES (?1, ?2, ?3, ?4)",
-                params![space.id.0, nodes, leaves, roots],
+                "INSERT INTO terrain_hierarchy_spaces(world_space_id, root_count) VALUES (?1, ?2)",
+                params![space.id.0, roots],
             )?;
-            summaries.push(TerrainHierarchySummary {
-                space: space.id,
-                nodes: nodes as u64,
-                leaves: leaves as u64,
-                roots: roots as u64,
-                root_decoded_bytes: decoded as u64,
-                root_gpu_bytes: gpu as u64,
-            });
         }
 
         let mut hasher = blake3::Hasher::new();
@@ -501,8 +462,7 @@ impl TerrainCookStore {
             params![generation, hash.as_bytes().as_slice()],
         )?;
         self.connection.execute_batch("COMMIT;")?;
-        let manifest = read_runtime_manifest(&self.connection)?;
-        Ok((manifest, summaries))
+        read_runtime_manifest(&self.connection)
     }
 }
 
@@ -550,25 +510,12 @@ impl RuntimeReader {
             .collect::<Result<_, _>>()?;
 
         if roots.iter().any(|r| r.resolution.is_none())
-            || roots.iter().map(|r| r.decoded_bytes).sum::<u64>() > 32 * 1024 * 1024
-            || roots.iter().map(|r| r.gpu_bytes_estimate).sum::<u64>() > 128 * 1024 * 1024
+            || roots.iter().map(|r| r.decoded_bytes).sum::<u64>() > MAX_ROOT_BYTES
         {
             return Err(invalid("terrain root memory/coverage limit"));
         }
 
         Ok(roots)
-    }
-
-    pub fn read_terrain_node_descriptors(
-        &self,
-        keys: &[TerrainNodeKey],
-    ) -> Result<Vec<Option<TerrainNodeDescriptor>>, WorldDbError> {
-        if keys.len() > MAX_TERRAIN_NODE_QUERY {
-            return Err(invalid("terrain metadata query limit"));
-        }
-        keys.iter()
-            .map(|&key| read_descriptor(&self.connection, key))
-            .collect()
     }
 
     pub fn read_terrain_node(
@@ -586,49 +533,37 @@ fn read_descriptor(
     key.cell_bounds().map_err(|e| invalid(e.to_string()))?;
     let descriptor: Option<TerrainNodeDescriptor> = c
         .query_row(
-            "SELECT child_mask, minimum_y, maximum_y, geometric_error, resolution, decoded_bytes, \
-             gpu_bytes_estimate, checksum FROM terrain_nodes \
-         WHERE world_space_id=?1 AND level=?2 AND node_x=?3 AND node_z=?4",
+            "SELECT child_mask, minimum_y, maximum_y, resolution, decoded_bytes, checksum \
+             FROM terrain_nodes WHERE world_space_id=?1 AND level=?2 AND node_x=?3 AND node_z=?4",
             params![key.space.0, key.level, key.x, key.z],
             |r| {
                 Ok(TerrainNodeDescriptor {
                     key,
                     child_mask: r.get(0)?,
                     height_bounds: [r.get(1)?, r.get(2)?],
-                    geometric_error: r.get(3)?,
-                    resolution: r.get(4)?,
-                    decoded_bytes: r.get::<_, i64>(5)? as u64,
-                    gpu_bytes_estimate: r.get::<_, i64>(6)? as u64,
-                    checksum: blob_array(r.get_ref(7)?.as_blob()?, "terrain checksum")?,
+                    resolution: r.get(3)?,
+                    decoded_bytes: r.get::<_, i64>(4)? as u64,
+                    checksum: blob_array(r.get_ref(5)?.as_blob()?, "terrain checksum")?,
                 })
             },
         )
         .optional()?;
 
     if let Some(d) = &descriptor {
-        let expected_gpu = if let Some(n) = d.resolution {
-            if !(2..=world::MAX_TERRAIN_HEIGHTFIELD_RESOLUTION).contains(&n)
+        if d.resolution.is_some_and(|n| {
+            !(2..=world::MAX_TERRAIN_HEIGHTFIELD_RESOLUTION).contains(&n)
                 || !(n - 1).is_power_of_two()
-            {
-                return Err(invalid("terrain descriptor resolution"));
-            }
+        }) {
+            return Err(invalid("terrain descriptor resolution"));
+        }
 
-            let n = u64::from(n);
-            n * n * 48 + (n - 1) * (n - 1) * 6 * 4
-        } else {
-            0
-        };
         if d.child_mask > 15
             || (key.level == 0) != (d.child_mask == 0)
-            || (key.level == 0 && (d.resolution.is_none() || d.geometric_error != 0.0))
+            || (key.level == 0 && d.resolution.is_none())
             || (key.level > 0 && d.resolution.is_some() && d.child_mask != 15)
-            || (d.resolution.is_none() && d.geometric_error != 0.0)
-            || d.gpu_bytes_estimate != expected_gpu
             || d.decoded_bytes == 0
             || !d.height_bounds.iter().all(|v| v.is_finite())
             || d.height_bounds[0] > d.height_bounds[1]
-            || !d.geometric_error.is_finite()
-            || d.geometric_error < 0.0
             || d.decoded_bytes > MAX_TERRAIN_NODE_BYTES as u64
         {
             return Err(invalid("terrain descriptor bounds/size"));
@@ -675,14 +610,19 @@ fn invalid(message: impl Into<String>) -> WorldDbError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{RuntimeBuild, RuntimeCellRecord, domain_bit, write_runtime_database};
+
+    use crate::{
+        RuntimeCell, RuntimeCellRecord, RuntimeHeader, domain_bit, encode_terrain_control,
+        write_runtime_database,
+    };
+
     use std::{fs, path::PathBuf};
     use world::PagePayload;
     use world::{TerrainHeightfield, TerrainHeightfieldPage, encode_page_payload};
 
     struct Fixture {
         path: PathBuf,
-        build: RuntimeBuild,
+        header: RuntimeHeader,
         field: TerrainHeightfield,
     }
 
@@ -699,14 +639,13 @@ mod tests {
                 encode_page_payload(&PagePayload::TerrainHeightfield(TerrainHeightfieldPage {
                     heightfield: field.clone(),
                     surfaces: vec![],
-                    weight_pages: vec![],
                     wear: None,
                 }))
                 .unwrap();
             let space = WorldSpaceId(1);
-            let build = RuntimeBuild {
+            let header = RuntimeHeader {
                 manifest: RuntimeManifest {
-                    schema_version: RUNTIME_SCHEMA_VERSION,
+                    schema_version: world::RUNTIME_SCHEMA_VERSION,
                     generation_id: "before".into(),
                     content_hash: [7; 32],
                     default_world_space: space,
@@ -724,44 +663,53 @@ mod tests {
                     start_view: None,
                     gameplay_areas: Default::default(),
                 },
-                cells: (0..count)
-                    .map(|x| RuntimeCellRecord {
-                        space,
-                        cell: CellCoord { x, z: 0 },
-                        minimum_y: 0.0,
-                        maximum_y: 0.0,
-                        source_revision: 1,
-                        domain_mask: domain_bit(PageDomain::Terrain),
-                        terrain_resolution: 2,
-                    })
-                    .collect(),
-                pages: (0..count)
-                    .map(|x| EncodedPage {
-                        key: PageKey {
-                            space,
-                            cell: CellCoord { x, z: 0 },
-                            domain: PageDomain::Terrain,
-                            lod: 0,
-                        },
-                        codec: PageCodec::Raw,
-                        decoded_bytes: payload.len() as u64,
-                        gpu_bytes_estimate: 0,
-                        checksum: *blake3::hash(&payload).as_bytes(),
-                        payload: payload.clone(),
-                    })
-                    .collect(),
                 terrain_surfaces: vec![],
                 terrain_texture_sets: vec![],
                 terrain_texture_layers: vec![],
                 terrain_profiles: vec![],
                 assets: vec![],
                 definitions: vec![],
-                dependencies: vec![],
-                definition_dependencies: vec![],
-                terrain_surface_dependencies: vec![],
             };
-            write_runtime_database(&path, &build).unwrap();
-            Self { path, build, field }
+            let control = encode_terrain_control(&[0; world::CONTROL_SAMPLES.pow(2)]).unwrap();
+            let cells: Vec<_> = (0..count)
+                .map(|x| {
+                    let cell = CellCoord { x, z: 0 };
+                    RuntimeCell {
+                        record: RuntimeCellRecord {
+                            space,
+                            cell,
+                            minimum_y: 0.0,
+                            maximum_y: 0.0,
+                            source_revision: 1,
+                            domain_mask: domain_bit(PageDomain::Terrain),
+                            terrain_resolution: 2,
+                        },
+                        pages: vec![EncodedPage {
+                            key: PageKey {
+                                space,
+                                cell,
+                                domain: PageDomain::Terrain,
+                            },
+                            codec: PageCodec::Raw,
+                            decoded_bytes: payload.len() as u64,
+                            gpu_bytes_estimate: 0,
+                            checksum: *blake3::hash(&payload).as_bytes(),
+                            payload: payload.clone(),
+                        }],
+                        assets: vec![],
+                        definitions: vec![],
+                        surfaces: vec![],
+                        control: control.clone(),
+                        content_hash: [0; 32],
+                    }
+                })
+                .collect();
+            write_runtime_database(&path, &header, &cells).unwrap();
+            Self {
+                path,
+                header,
+                field,
+            }
         }
 
         fn key(x: i32) -> TerrainNodeKey {
@@ -789,19 +737,10 @@ mod tests {
         let parent = Fixture::key(0).parent().unwrap().unwrap();
         store.build_parent(parent).unwrap();
         assert!(store.read(parent).unwrap().unwrap().heightfield.is_none());
-        let (manifest, summary) = store.finish(&fixture.build.manifest.world_spaces).unwrap();
-        assert_ne!(manifest.content_hash, fixture.build.manifest.content_hash);
-        assert_eq!(
-            (summary[0].nodes, summary[0].leaves, summary[0].roots),
-            (3, 2, 2)
-        );
+        let manifest = store.finish(&fixture.header.manifest.world_spaces).unwrap();
+        assert_ne!(manifest.content_hash, fixture.header.manifest.content_hash);
         let reader = RuntimeReader::open_immutable(&fixture.path).unwrap();
         assert_eq!(reader.read_terrain_roots(WorldSpaceId(1)).unwrap().len(), 2);
-        assert!(
-            reader
-                .read_terrain_node_descriptors(&[Fixture::key(0); 129])
-                .is_err()
-        );
         assert!(reader.read_terrain_node(Fixture::key(3)).unwrap().is_none());
         let encoded = reader.read_terrain_node(Fixture::key(0)).unwrap().unwrap();
         assert_eq!(
@@ -846,7 +785,7 @@ mod tests {
         store
             .insert_leaf(Fixture::key(0), &fixture.field, 2)
             .unwrap();
-        assert!(store.finish(&fixture.build.manifest.world_spaces).is_err());
+        assert!(store.finish(&fixture.header.manifest.world_spaces).is_err());
         let reader = RuntimeReader::open_immutable(&fixture.path).unwrap();
         assert_eq!(reader.manifest().generation_id, "before");
         assert!(reader.read_terrain_roots(WorldSpaceId(1)).is_err());
@@ -882,7 +821,7 @@ mod tests {
         assert_eq!(count, 257);
         assert!(
             store
-                .finish(&fixture.build.manifest.world_spaces)
+                .finish(&fixture.header.manifest.world_spaces)
                 .unwrap_err()
                 .to_string()
                 .contains("coarse terrain cover")

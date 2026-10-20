@@ -143,7 +143,6 @@ mod tests {
             space,
             cell: CellCoord { x: 19, z: -10 },
             domain: PageDomain::StaticObjects,
-            lod: 0,
         };
         let object = app
             .world_mut()

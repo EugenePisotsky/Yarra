@@ -20,14 +20,17 @@ pub enum AtmosphereWriteResult {
     },
 }
 
+/// The atmosphere column's size limit.
+const MAX_ATMOSPHERE_BYTES: usize = 4096;
+
 /// The whole profile; any change to it moves the project and runtime schema versions.
 pub(super) fn encode(profile: &AtmosphereProfile) -> Result<Vec<u8>, WorldDbError> {
     profile
         .validate()
         .map_err(|e| WorldDbError::Cook(e.into()))?;
-    let bytes = bincode::serde::encode_to_vec(profile, bincode::config::standard())?;
+    let bytes = world::codec::encode(profile)?;
 
-    if bytes.len() > 4096 {
+    if bytes.len() > MAX_ATMOSPHERE_BYTES {
         return Err(WorldDbError::Cook("atmosphere exceeds 4096 bytes".into()));
     }
 
@@ -35,17 +38,11 @@ pub(super) fn encode(profile: &AtmosphereProfile) -> Result<Vec<u8>, WorldDbErro
 }
 
 pub(super) fn decode(bytes: &[u8]) -> Result<AtmosphereProfile, WorldDbError> {
-    if bytes.len() > 4096 {
+    if bytes.len() > MAX_ATMOSPHERE_BYTES {
         return Err(WorldDbError::Cook("atmosphere exceeds 4096 bytes".into()));
     }
 
-    let (p, consumed): (AtmosphereProfile, _) =
-        bincode::serde::decode_from_slice(bytes, bincode::config::standard().with_limit::<4096>())?;
-
-    if consumed != bytes.len() {
-        return Err(WorldDbError::Cook("trailing atmosphere bytes".into()));
-    }
-
+    let p: AtmosphereProfile = world::codec::decode::<_, MAX_ATMOSPHERE_BYTES>(bytes)?;
     p.validate().map_err(|e| WorldDbError::Cook(e.into()))?;
     Ok(p)
 }

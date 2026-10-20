@@ -3,6 +3,13 @@
 use crate::{CellCoord, TerrainHeightfieldPage, TerrainNode, TerrainNodeKey};
 use std::{collections::BTreeMap, sync::Arc};
 
+/// An edited cell as a cook would publish it: its ground page and its control tile.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TerrainPreviewLeaf {
+    pub page: TerrainHeightfieldPage,
+    pub control: Vec<u32>,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct TerrainPreviewProducts {
     pub nodes: BTreeMap<TerrainNodeKey, Arc<TerrainNode>>,
@@ -10,7 +17,7 @@ pub struct TerrainPreviewProducts {
     /// `CONTROL_TOP_LEVEL`, packed samples.
     pub controls: BTreeMap<TerrainNodeKey, Arc<Vec<u32>>>,
     /// Only leaves that differ from the publication; retained after source eviction.
-    pub leaves: BTreeMap<CellCoord, Arc<TerrainHeightfieldPage>>,
+    pub leaves: BTreeMap<CellCoord, Arc<TerrainPreviewLeaf>>,
 }
 
 impl TerrainPreviewProducts {
@@ -31,10 +38,11 @@ impl TerrainPreviewProducts {
             + self
                 .leaves
                 .values()
-                .map(|p| {
-                    128 + p.heightfield.heights.len() * 4
-                        + p.heightfield.normals_oct.len() * 4
-                        + p.weight_pages.iter().map(|w| w.rgba.len()).sum::<usize>()
+                .map(|leaf| {
+                    let field = &leaf.page.heightfield;
+                    128 + field.heights.len() * 4
+                        + field.normals_oct.len() * 4
+                        + leaf.control.len() * 4
                 })
                 .sum::<usize>()
     }

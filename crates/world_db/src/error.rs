@@ -10,24 +10,18 @@ pub enum WorldDbError {
     Cook(String),
     #[error("environment source: {0}")]
     Environment(String),
-    #[error(transparent)]
-    EnvironmentCompile(#[from] environment_compile::CompileError),
+    #[error("environment coverage: {0}")]
+    Coverage(#[from] environment::CoverageError),
     #[error("SQLite operation failed: {0}")]
     Sqlite(#[from] rusqlite::Error),
     #[error("filesystem operation failed: {0}")]
     Io(#[from] std::io::Error),
-    #[error("page payload is invalid: {0}")]
-    Payload(#[from] world::PagePayloadDecodeError),
+    #[error("stored data does not decode: {0}")]
+    Decode(#[from] world::DecodeError),
+    #[error("encoding failed: {0}")]
+    Encode(#[from] bincode::error::EncodeError),
     #[error("vegetation catalog is invalid: {0}")]
     VegetationCatalog(#[from] vegetation::CatalogValidationError),
-    #[error("vegetation data encoding failed: {0}")]
-    VegetationEncode(#[from] bincode::error::EncodeError),
-    #[error("vegetation data decoding failed: {0}")]
-    VegetationDecode(#[from] bincode::error::DecodeError),
-    #[error("vegetation catalog contains trailing bytes: decoded {consumed} of {total}")]
-    VegetationCatalogTrailingBytes { consumed: usize, total: usize },
-    #[error("vegetation catalog format version is {actual}, expected {expected}")]
-    VegetationCatalogFormatVersion { expected: i64, actual: i64 },
     #[error("database already exists: {0}")]
     AlreadyExists(PathBuf),
     #[error("{database} schema version is {actual}, expected {expected}")]

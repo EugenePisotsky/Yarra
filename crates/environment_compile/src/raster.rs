@@ -39,11 +39,11 @@ impl CompilePlan {
         }
 
         self.check_raster_budget(cells.len())?;
-        let coverage = Coverage::new(self, source)?;
+        let coverage = self.coverage(source)?;
 
         // Check the entire halo before any allocation/rasterization, including each target itself.
         for cell in &cells {
-            coverage.check_halo(self, *cell)?;
+            coverage.check_halo(*cell)?;
         }
 
         cells
@@ -72,7 +72,7 @@ impl CompilePlan {
                     roads: page_roads,
                     wear,
                     input_fingerprint: {
-                        let base = coverage.fingerprint(self, cell)?;
+                        let base = crate::coverage::fingerprint(&coverage, self, cell)?;
                         if let Some(roads) = roads {
                             let base = roads.fingerprint(cell, base)?;
                             if self.has_collections() {
@@ -143,7 +143,7 @@ impl CompilePlan {
         &self,
         cell: CellCoord,
         coverage: &Coverage<'_>,
-        roads: &world::TerrainRoads,
+        roads: &crate::roads::TerrainRoads,
     ) -> Result<(CompiledGround, Option<world::TerrainWear>), CompileError> {
         let resolution = usize::from(self.profile.terrain_resolution);
         let base = self.base_surface();
@@ -371,7 +371,7 @@ impl CompilePlan {
         cell: CellCoord,
         coverage: &Coverage<'_>,
         roads: Option<&crate::roads::RoadPlan>,
-        page_roads: &world::TerrainRoads,
+        page_roads: &crate::roads::TerrainRoads,
         wear: Option<&world::TerrainWear>,
     ) -> Result<VegetationFieldPageData, CompileError> {
         let resolution = usize::from(self.profile.vegetation_resolution);
@@ -466,7 +466,7 @@ fn band_share(wear: &world::TerrainWear, band: [f32; 3], at: [usize; 2], resolut
 
 /// The wear field's texels over a cell whose origin is `origin` and side `size`
 /// (`world::TerrainWear`), at texel centres.
-fn wear_texels(roads: &world::TerrainRoads, origin: [f64; 2], size: f64) -> Vec<[u8; 4]> {
+fn wear_texels(roads: &crate::roads::TerrainRoads, origin: [f64; 2], size: f64) -> Vec<[u8; 4]> {
     let n = usize::from(world::WEAR_RESOLUTION);
     (0..n * n)
         .map(|i| {

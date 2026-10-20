@@ -4,10 +4,11 @@ mod road_support;
 mod support;
 
 use environment::roads::*;
+use environment::{TerrainSource, TerrainSourceCell};
 use road_support::*;
 use support::*;
 use world::CellCoord;
-use yarra_environment_compile::{CompilePlan, TerrainSource, TerrainSourceCell};
+use yarra_environment_compile::CompilePlan;
 
 fn setup() -> (CompilePlan, environment::CoverageSnapshot, RoadSnapshot) {
     let (d, l, p, c, mut r) = cart_tracks();

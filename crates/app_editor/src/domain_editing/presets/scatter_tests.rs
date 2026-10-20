@@ -136,21 +136,17 @@ fn collection_preview_save_recovery_undo_and_cook_preserve_manual_objects() {
         assert_eq!(a.objects, b.objects);
     }
 
-    let build = world_cook::build_runtime(saved.clone()).unwrap();
+    let runtime = path.with_extension("runtime.sqlite");
+    world_cook::cook_project_fresh(&path, &runtime).unwrap();
+    let cooked = world_db::RuntimeReader::open_immutable(&runtime).unwrap();
 
     for cell in &after {
-        let page = build
-            .pages
-            .iter()
-            .find(|p| {
-                p.key.space == space
-                    && p.key.cell == cell.cell
-                    && p.key.domain == PageDomain::StaticObjects
-            })
-            .unwrap()
-            .clone()
-            .decode()
-            .unwrap();
+        let key = world::PageKey {
+            space,
+            cell: cell.cell,
+            domain: PageDomain::StaticObjects,
+        };
+        let page = cooked.read_page(key).unwrap().unwrap().decode().unwrap();
         let PagePayload::StaticObjects(page) = page.payload else {
             panic!()
         };
@@ -167,14 +163,16 @@ fn collection_preview_save_recovery_undo_and_cook_preserve_manual_objects() {
             assert!(project.objects.iter().any(|m| m.id == o.id));
         }
 
-        assert!(build.dependencies.iter().any(|d| d.page.space == space
-            && d.page.cell == cell.cell
-            && d.asset == project.assets[0].id));
-        let cell_bounds = build
-            .cells
-            .iter()
-            .find(|c| c.space == space && c.cell == cell.cell)
-            .unwrap();
+        assert!(
+            cooked
+                .read_dependencies(key)
+                .unwrap()
+                .iter()
+                .any(|d| d.asset == project.assets[0].id)
+        );
+        let cell_bounds = &cooked
+            .read_cell_descriptors(space, cell.cell, cell.cell)
+            .unwrap()[0];
 
         for o in &cell.objects {
             assert!(
@@ -226,5 +224,6 @@ fn collection_preview_save_recovery_undo_and_cook_preserve_manual_objects() {
     );
     drop(writer);
     drop(reader);
+    let _ = std::fs::remove_file(&runtime);
     let _ = std::fs::remove_file(path);
 }

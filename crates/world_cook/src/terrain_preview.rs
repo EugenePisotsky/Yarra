@@ -14,24 +14,87 @@ use world_db::RuntimeReader;
 
 pub const MAX_PREVIEW_LEAVES: usize = 256;
 
+/// A published cell's ground page and control tile; `None` outside the published world.
 pub fn published_terrain_leaf(
     reader: &RuntimeReader,
     space: WorldSpaceId,
     cell: CellCoord,
-) -> Result<Option<TerrainHeightfieldPage>> {
+) -> Result<Option<TerrainPreviewLeaf>> {
     let key = PageKey {
         space,
         cell,
         domain: PageDomain::Terrain,
-        lod: 0,
     };
     let Some(page) = reader.read_page(key)? else {
         return Ok(None);
     };
+    let PagePayload::TerrainHeightfield(page) = page.decode()?.payload else {
+        bail!("unexpected terrain leaf payload");
+    };
+    let control = published_terrain_control(reader, TerrainNodeKey::leaf(space, cell))?
+        .context("a published cell has no control tile")?;
+    Ok(Some(TerrainPreviewLeaf { page, control }))
+}
 
-    match page.decode()?.payload {
-        PagePayload::TerrainHeightfield(page) => Ok(Some(page)),
-        _ => bail!("unexpected terrain leaf payload"),
+/// The texture layer of each of a world's ground surfaces, to lay out edited cells' control
+/// tiles as the cook does.
+pub struct GroundLayers {
+    layers: HashMap<TerrainSurfaceId, u16>,
+    cell_size: f32,
+}
+
+impl GroundLayers {
+    pub fn read(reader: &RuntimeReader, space: WorldSpaceId) -> Result<Self> {
+        let resources = reader.read_space_terrain_resources(space)?;
+        let cell_size = reader
+            .manifest()
+            .world_space(space)
+            .context("missing terrain space")?
+            .cell_size;
+        Ok(Self {
+            layers: resources
+                .surfaces
+                .iter()
+                .map(|s| (s.surface.id, s.layer))
+                .collect(),
+            cell_size,
+        })
+    }
+
+    /// An edited cell as a cook would publish it.
+    pub fn leaf(
+        &self,
+        cell: CellCoord,
+        heightfield: TerrainHeightfield,
+        ground: &environment_compile::CompiledGround,
+        wear: Option<TerrainWear>,
+    ) -> Result<TerrainPreviewLeaf> {
+        let slots: Vec<u16> = ground
+            .surfaces
+            .iter()
+            .map(|id| {
+                self.layers
+                    .get(id)
+                    .copied()
+                    .context("unknown terrain surface")
+            })
+            .collect::<Result<_>>()?;
+        let control = leaf_control(
+            &slots,
+            &ground.weight_pages,
+            wear.as_ref(),
+            cell,
+            self.cell_size,
+        )
+        .map_err(anyhow::Error::msg)?;
+        Ok(TerrainPreviewLeaf {
+            page: TerrainHeightfieldPage {
+                heightfield,
+                surfaces: ground.surfaces.clone(),
+                wear,
+            },
+            control,
+        })
     }
 }
 
@@ -41,7 +104,7 @@ pub fn published_terrain_leaf(
 pub fn preview_terrain(
     reader: &RuntimeReader,
     space: WorldSpaceId,
-    leaves: BTreeMap<CellCoord, Arc<TerrainHeightfieldPage>>,
+    leaves: BTreeMap<CellCoord, Arc<TerrainPreviewLeaf>>,
     cancelled: impl Fn() -> bool,
 ) -> Result<TerrainPreviewProducts> {
     if leaves.len() > MAX_PREVIEW_LEAVES {
@@ -63,7 +126,7 @@ pub fn preview_terrain(
 fn preview_nodes(
     reader: &RuntimeReader,
     space: WorldSpaceId,
-    leaves: &BTreeMap<CellCoord, Arc<TerrainHeightfieldPage>>,
+    leaves: &BTreeMap<CellCoord, Arc<TerrainPreviewLeaf>>,
     cancelled: &impl Fn() -> bool,
 ) -> Result<BTreeMap<TerrainNodeKey, Arc<TerrainNode>>> {
     let roots: BTreeSet<_> = reader
@@ -74,7 +137,7 @@ fn preview_nodes(
     let mut nodes = BTreeMap::new();
     let mut changed = BTreeSet::new();
 
-    for (&cell, page) in leaves {
+    for (&cell, leaf) in leaves {
         if cancelled() {
             bail!("superseded terrain preview")
         }
@@ -86,7 +149,7 @@ fn preview_nodes(
             .decode()?;
         let node = TerrainNode::leaf(
             key,
-            &page.heightfield,
+            &leaf.page.heightfield,
             old.heightfield
                 .as_ref()
                 .context("missing leaf samples")?
@@ -186,38 +249,15 @@ fn preview_nodes(
 fn preview_controls(
     reader: &RuntimeReader,
     space: WorldSpaceId,
-    leaves: &BTreeMap<CellCoord, Arc<TerrainHeightfieldPage>>,
+    leaves: &BTreeMap<CellCoord, Arc<TerrainPreviewLeaf>>,
     cancelled: &impl Fn() -> bool,
 ) -> Result<BTreeMap<TerrainNodeKey, Arc<Vec<u32>>>> {
-    let resources = reader.read_space_terrain_resources(space)?;
-    let layers: HashMap<TerrainSurfaceId, u16> = resources
-        .surfaces
-        .iter()
-        .map(|s| (s.surface.id, s.layer))
-        .collect();
-    let size = reader
-        .manifest()
-        .world_spaces
-        .iter()
-        .find(|s| s.id == space)
-        .context("missing terrain space")?
-        .cell_size;
     let mut controls = BTreeMap::new();
     let mut changed = BTreeSet::new();
 
-    for (&cell, page) in leaves {
-        if cancelled() {
-            bail!("superseded terrain preview")
-        }
-
-        let slots: Vec<u16> = page
-            .surfaces
-            .iter()
-            .map(|id| layers.get(id).copied().context("unknown terrain surface"))
-            .collect::<Result<_>>()?;
+    for (&cell, leaf) in leaves {
         let key = TerrainNodeKey::leaf(space, cell);
-        let samples = leaf_control(page, &slots, cell, size).map_err(anyhow::Error::msg)?;
-        controls.insert(key, Arc::new(samples));
+        controls.insert(key, Arc::new(leaf.control.clone()));
         changed.insert(key);
     }
 

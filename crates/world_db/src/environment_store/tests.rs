@@ -255,7 +255,7 @@ fn bounded_snapshot_distinguishes_loaded_empty_from_unrequested_cells() {
             .iter()
             .all(|c| c.revision == 0 && c.tiles.is_empty())
     );
-    let plan = CompilePlan::new(
+    let plan = environment_compile::CompilePlan::new(
         &snapshot.definition,
         &snapshot.vegetation_catalog,
         &snapshot.presets,

@@ -1,15 +1,13 @@
 //! Terrain control tiles (`world::terrain_control`): cooked into their own table, one per node
-//! and level, zstd-compressed little-endian samples.
+//! and level, zstd-compressed little-endian samples. A cell's leaf tile is written with the
+//! cell; the levels above are built from the leaves when a cook publishes.
 use crate::runtime::RuntimeReader;
-use crate::storage::ensure_schema_version;
 use crate::{TerrainRenderResources, WorldDbError};
-use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use std::io::Read;
 use std::path::Path;
 
-use world::{
-    CONTROL_SAMPLES, CellCoord, PageDomain, RUNTIME_SCHEMA_VERSION, TerrainNodeKey, WorldSpaceId,
-};
+use world::{CONTROL_SAMPLES, CellCoord, TerrainNodeKey, WorldSpaceId};
 
 const TILE_BYTES: usize = CONTROL_SAMPLES * CONTROL_SAMPLES * 4;
 
@@ -40,22 +38,32 @@ pub fn decode_terrain_control(payload: &[u8]) -> Result<Vec<u32>, WorldDbError> 
         .collect())
 }
 
-/// Writes a staging generation's control tiles, replacing any it had.
+/// Writes the control tiles above a staging generation's leaves.
 pub struct TerrainControlStore {
     connection: Connection,
 }
 
 impl TerrainControlStore {
     pub fn open_staging(path: &Path) -> Result<Self, WorldDbError> {
-        let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
-        ensure_schema_version(&connection, RUNTIME_SCHEMA_VERSION, "runtime")?;
-        connection.execute_batch("BEGIN IMMEDIATE; DELETE FROM terrain_controls;")?;
+        let connection = crate::storage::open_staging_runtime(path)?;
+        connection.execute_batch("BEGIN IMMEDIATE;")?;
         Ok(Self { connection })
     }
 
+    /// Decoded tiles of `keys`, in order; `None` where a node has none. Sees this store's own
+    /// writes.
+    pub fn read(&self, keys: &[TerrainNodeKey]) -> Result<Vec<Option<Vec<u32>>>, WorldDbError> {
+        read_controls(&self.connection, keys)?
+            .into_iter()
+            .map(|payload| payload.map(|p| decode_terrain_control(&p)).transpose())
+            .collect()
+    }
+
+    /// Writes an encoded tile (`encode_terrain_control`), replacing any.
     pub fn write(&self, key: TerrainNodeKey, payload: &[u8]) -> Result<(), WorldDbError> {
         self.connection.execute(
-            "INSERT INTO terrain_controls(world_space_id, level, node_x, node_z, payload) \
+            "INSERT OR REPLACE INTO terrain_controls(world_space_id, level, node_x, node_z, \
+                 payload) \
              VALUES (?1, ?2, ?3, ?4, ?5)",
             params![key.space.0, key.level, key.x, key.z, payload],
         )?;
@@ -68,34 +76,40 @@ impl TerrainControlStore {
     }
 }
 
+fn read_controls(
+    connection: &Connection,
+    keys: &[TerrainNodeKey],
+) -> Result<Vec<Option<Vec<u8>>>, WorldDbError> {
+    let mut statement = connection.prepare_cached(
+        "SELECT payload FROM terrain_controls \
+         WHERE world_space_id=?1 AND level=?2 AND node_x=?3 AND node_z=?4",
+    )?;
+    keys.iter()
+        .map(|k| {
+            statement
+                .query_row(params![k.space.0, k.level, k.x, k.z], |r| r.get(0))
+                .optional()
+                .map_err(WorldDbError::from)
+        })
+        .collect()
+}
+
 impl RuntimeReader {
     /// Compressed control tiles of `keys`, in order; `None` where a node has none.
     pub fn read_terrain_controls(
         &self,
         keys: &[TerrainNodeKey],
     ) -> Result<Vec<Option<Vec<u8>>>, WorldDbError> {
-        let mut statement = self.connection.prepare_cached(
-            "SELECT payload FROM terrain_controls \
-             WHERE world_space_id=?1 AND level=?2 AND node_x=?3 AND node_z=?4",
-        )?;
-        keys.iter()
-            .map(|k| {
-                statement
-                    .query_row(params![k.space.0, k.level, k.x, k.z], |r| r.get(0))
-                    .optional()
-                    .map_err(WorldDbError::from)
-            })
-            .collect()
+        read_controls(&self.connection, keys)
     }
 
-    /// Every cell of a space with terrain.
+    /// Every cell of a space; each has ground.
     pub fn terrain_cells(&self, space: WorldSpaceId) -> Result<Vec<CellCoord>, WorldDbError> {
         let mut statement = self.connection.prepare(
-            "SELECT cell_x, cell_z FROM cell_pages \
-             WHERE world_space_id=?1 AND domain=?2 AND lod=0 ORDER BY cell_z, cell_x",
+            "SELECT cell_x, cell_z FROM cells WHERE world_space_id=?1 ORDER BY cell_z, cell_x",
         )?;
         statement
-            .query_map(params![space.0, PageDomain::Terrain as i64], |r| {
+            .query_map(params![space.0], |r| {
                 Ok(CellCoord {
                     x: r.get(0)?,
                     z: r.get(1)?,

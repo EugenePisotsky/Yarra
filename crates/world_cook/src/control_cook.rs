@@ -1,164 +1,126 @@
-//! Terrain v2's control tiles (`world::terrain_control`): every cell's ground weights, worn where
-//! roads wear them as near detail wears them, as control samples by texture layer, and every
-//! node above them up to [`CONTROL_TOP`] filtered from its children. Each group of cells under
-//! one top-level node is read and computed on its own core with its own reader, then all tiles
-//! are written; every cook rebuilds them in full.
+//! Terrain v2's control tiles (`world::terrain_control`) above the cells: every node up to
+//! [`CONTROL_TOP_LEVEL`] filtered from its children. Each cell's leaf tile was written with the
+//! cell. A full build reads and filters each group of cells under one top-level node on its own
+//! core with its own reader, then writes every tile; an incremental cook rebuilds only the
+//! ancestors of the cells it cooked again.
 use crate::parallel;
-use anyhow::{Context, Result, bail};
-use std::collections::HashMap;
+use crate::terrain_cook::ChangedCells;
+use anyhow::{Context, Result};
+use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 use world::*;
-use world_db::{RuntimeReader, TerrainControlStore, WorldSpaceRecord};
+use world_db::{RuntimeReader, TerrainControlStore, WorldSpaceRecord, encode_terrain_control};
 
-const CONTROL_TOP: u8 = CONTROL_TOP_LEVEL;
+pub(crate) fn cook(
+    path: &Path,
+    spaces: &[WorldSpaceRecord],
+    changed: Option<&ChangedCells>,
+) -> Result<()> {
+    match changed {
+        Some(changed) => update(path, changed),
+        None => build(path, spaces),
+    }
+}
 
-pub(crate) fn cook(path: &Path, spaces: &[WorldSpaceRecord]) -> Result<()> {
-    let start = std::time::Instant::now();
+fn build(path: &Path, spaces: &[WorldSpaceRecord]) -> Result<()> {
     let mut written: Vec<(TerrainNodeKey, Vec<u8>)> = Vec::new();
 
     for space in spaces {
-        let reader = RuntimeReader::open_immutable(path)?;
-        let cells = reader.terrain_cells(space.id)?;
-
-        if cells.is_empty() {
-            continue;
-        }
-
-        let resources = reader.read_space_terrain_resources(space.id)?;
-        let layers: HashMap<TerrainSurfaceId, u16> = resources
-            .surfaces
-            .iter()
-            .map(|s| (s.surface.id, s.layer))
-            .collect();
-
-        if layers.values().any(|&l| l >= MAX_CONTROL_LAYERS) {
-            bail!("terrain controls name at most {MAX_CONTROL_LAYERS} texture layers");
-        }
-
-        drop(reader);
+        let cells = RuntimeReader::open_immutable(path)?.terrain_cells(space.id)?;
         let mut groups: HashMap<(i32, i32), Vec<CellCoord>> = HashMap::new();
 
         for cell in cells {
             groups
-                .entry((cell.x >> CONTROL_TOP, cell.z >> CONTROL_TOP))
+                .entry((cell.x >> CONTROL_TOP_LEVEL, cell.z >> CONTROL_TOP_LEVEL))
                 .or_default()
                 .push(cell);
         }
 
         let mut groups: Vec<_> = groups.into_values().collect();
         groups.sort_by_key(|g| (g[0].z, g[0].x));
-        let size = space.cell_size;
-        let tiles = parallel::map(&groups, |cells| group(path, space.id, size, &layers, cells));
 
-        for tiles in tiles {
+        for tiles in parallel::map(&groups, |cells| ancestors(path, space.id, cells)) {
             written.extend(tiles?);
         }
     }
 
     let store = TerrainControlStore::open_staging(path)?;
-    let bytes: usize = written.iter().map(|(_, p)| p.len()).sum();
 
     for (key, payload) in &written {
         store.write(*key, payload)?;
     }
 
-    store.finish()?;
-    eprintln!(
-        "terrain controls: {} tiles, {:.1} MB, {:.1} s",
-        written.len(),
-        bytes as f64 / 1e6,
-        start.elapsed().as_secs_f64()
-    );
-    Ok(())
+    Ok(store.finish()?)
 }
 
-/// The tiles of one top-level node: its cells' and every level's above them.
-fn group(
+/// Every tile above one group's cells, encoded.
+fn ancestors(
     path: &Path,
     space: WorldSpaceId,
-    size: f32,
-    layers: &HashMap<TerrainSurfaceId, u16>,
     cells: &[CellCoord],
 ) -> Result<Vec<(TerrainNodeKey, Vec<u8>)>> {
     let reader = RuntimeReader::open_immutable(path)?;
-    let mut level: HashMap<TerrainNodeKey, Vec<u32>> = HashMap::new();
+    let keys: Vec<_> = cells
+        .iter()
+        .map(|&cell| TerrainNodeKey::leaf(space, cell))
+        .collect();
+    let mut level = HashMap::new();
 
-    for &cell in cells {
-        let key = PageKey {
-            space,
-            cell,
-            domain: PageDomain::Terrain,
-            lod: 0,
-        };
-        let PagePayload::TerrainHeightfield(page) = reader
-            .read_page(key)?
-            .context("missing terrain page")?
-            .decode()?
-            .payload
-        else {
-            bail!("terrain controls need heightfield pages");
-        };
-        let node = TerrainNodeKey {
-            space,
-            level: 0,
-            x: cell.x,
-            z: cell.z,
-        };
-        level.insert(node, leaf(&page, layers, cell, size)?);
+    for (key, payload) in keys.iter().zip(reader.read_terrain_controls(&keys)?) {
+        let payload = payload.context("a cell has no control tile")?;
+        level.insert(*key, world_db::decode_terrain_control(&payload)?);
     }
 
     let mut out = Vec::new();
 
-    for depth in 0..CONTROL_TOP {
-        let mut parents: HashMap<TerrainNodeKey, Vec<u32>> = HashMap::new();
-        let keys: Vec<_> = level.keys().map(|k| parent(*k)).collect();
+    for _ in 0..CONTROL_TOP_LEVEL {
+        let mut parents = HashMap::new();
 
-        for key in keys {
-            if parents.contains_key(&key) {
+        for key in level.keys() {
+            let parent = key.parent()?.context("a node below the top has a parent")?;
+
+            if parents.contains_key(&parent) {
                 continue;
             }
 
-            let children = key.children()?.context("a parent has children")?;
+            let children = parent.children()?.context("a parent has children")?;
             let samples = filter_control_parent(children.map(|c| level.get(&c).map(Vec::as_slice)));
-            parents.insert(key, samples);
-        }
-
-        debug_assert!(parents.keys().all(|k| k.level == depth + 1));
-
-        for (key, samples) in level.drain() {
-            out.push((key, world_db::encode_terrain_control(&samples)?));
+            out.push((parent, encode_terrain_control(&samples)?));
+            parents.insert(parent, samples);
         }
 
         level = parents;
     }
 
-    for (key, samples) in level {
-        out.push((key, world_db::encode_terrain_control(&samples)?));
-    }
-
     Ok(out)
 }
 
-fn parent(key: TerrainNodeKey) -> TerrainNodeKey {
-    TerrainNodeKey {
-        level: key.level + 1,
-        x: key.x >> 1,
-        z: key.z >> 1,
-        ..key
-    }
-}
+/// Rebuilds the ancestors of `changed`, level by level, from their stored children.
+fn update(path: &Path, changed: &ChangedCells) -> Result<()> {
+    let store = TerrainControlStore::open_staging(path)?;
 
-/// A cell's samples from its ground weights, worn where roads wear it.
-fn leaf(
-    page: &TerrainHeightfieldPage,
-    layers: &HashMap<TerrainSurfaceId, u16>,
-    cell: CellCoord,
-    size: f32,
-) -> Result<Vec<u32>> {
-    let slots: Vec<u16> = page
-        .surfaces
-        .iter()
-        .map(|id| layers.get(id).copied().context("unknown terrain surface"))
-        .collect::<Result<_>>()?;
-    leaf_control(page, &slots, cell, size).map_err(anyhow::Error::msg)
+    for (&space, cells) in changed {
+        let mut level: BTreeSet<_> = cells
+            .iter()
+            .map(|&cell| TerrainNodeKey::leaf(space, cell))
+            .collect();
+
+        for _ in 0..CONTROL_TOP_LEVEL {
+            let parents = level
+                .iter()
+                .map(|key| key.parent()?.context("a node below the top has a parent"))
+                .collect::<Result<BTreeSet<_>>>()?;
+
+            for &parent in &parents {
+                let children = parent.children()?.context("a parent has children")?;
+                let tiles = store.read(&children)?;
+                let samples = filter_control_parent(std::array::from_fn(|i| tiles[i].as_deref()));
+                store.write(parent, &encode_terrain_control(&samples)?)?;
+            }
+
+            level = parents;
+        }
+    }
+
+    Ok(store.finish()?)
 }
