@@ -1,8 +1,9 @@
 //! The layout's bands, and the compute pass (`shaders/tree/lod.wesl`) run on a native GPU
-//! against the CPU's timed LOD (`object_lod::timed`), which it replaces.
+//! against the CPU's timed LOD (`trees::timed`).
+use super::super::timed::TimedLod;
 use super::layout::bands;
 use super::*;
-use crate::object_lod::{ForcedLod, LodProjection, TimedLod};
+use crate::object_lod::{ForcedLod, LodProjection};
 
 use bevy::render::{
     render_resource::{
@@ -455,7 +456,7 @@ fn gpu_fades_match_the_cpu_timed_lod() {
     let harness = Harness::new(&[spruce, behind, forced], form, &buckets);
     let projection = LodProjection::perspective(PIXELS_PER_METRE, 2.0);
     let mut cpu = TimedLod::default();
-    cpu.set_bands(&projection, &SPRUCE, SPRUCE_HEIGHT, f32::INFINITY);
+    cpu.set_bands(&projection, &SPRUCE, SPRUCE_HEIGHT);
 
     // Distances from the spruce over time: inside LOD0, across to LOD1 (dissolving over
     // 0.6 s), turning back mid-dissolve, out to the impostor. No dissolve ends exactly on a
@@ -469,12 +470,7 @@ fn gpu_fades_match_the_cpu_timed_lod() {
     for (step, &(distance, dt)) in path.iter().enumerate() {
         let eye = Vec3::new(0.0, 7.0, distance);
         let drawn = harness.frame(&camera(eye, dt, 0, 3, &form, 3));
-        cpu.step(
-            ForcedLod::Auto,
-            Vec3::ZERO.distance(eye),
-            SPRUCE.len() - 1,
-            dt,
-        );
+        cpu.step(ForcedLod::Auto, Vec3::ZERO.distance(eye), dt);
         let expected: Vec<(usize, i32)> = (0..4)
             .filter_map(|r| cpu.level(r).map(|level| (r, level)))
             .filter(|(_, level)| level.abs() < 16)

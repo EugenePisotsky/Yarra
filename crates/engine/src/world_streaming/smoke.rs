@@ -59,11 +59,8 @@ fn report_streaming_smoke(
 
         for lod_object in &lod_objects {
             for variant in lod_object.variants() {
-                let Some(scene) = &variant.scene else {
-                    continue; // impostors load with their page batch
-                };
                 assert!(
-                    asset_server.is_loaded_with_dependencies(scene),
+                    asset_server.is_loaded_with_dependencies(&variant.scene),
                     "LOD{} and its dependencies did not finish loading",
                     variant.lod
                 );

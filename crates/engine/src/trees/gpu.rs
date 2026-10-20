@@ -5,15 +5,15 @@
 //! 2 km. Their batches go into one instance pool ([`pool`]); each form's mesh LODs come from
 //! one hidden template scene per LOD, converted to tree materials as any tree scene is
 //! ([`forms`]). Every frame a compute pass (`shaders/tree/lod.wesl`) picks each instance's
-//! representation from its projected height, dissolves changes over time as the CPU used to
-//! (`object_lod::timed`), culls it against the main view and each shadow cascade, and appends
-//! it to its form and representation's bucket; one indirect draw per form, representation and
+//! representation from its projected height, dissolves changes over time (followed on the CPU
+//! by `trees::timed`), culls it against the main view and each shadow cascade, and appends it
+//! to its form and representation's bucket; one indirect draw per form, representation and
 //! primitive then draws each bucket through the tree or impostor material's own pipelines,
-//! specialized with `TREE_INSTANCED` or `IMPOSTOR_INSTANCED` ([`render`]). Since nothing
-//! limits the meshes to the cells' residency, they reach as far as their thresholds say.
+//! the tree's specialized with `TREE_INSTANCED` ([`render`]). Since nothing limits the meshes
+//! to the cells' residency, they reach as far as their thresholds say.
 //!
-//! Cells still spawn an entity per object for gameplay (rain shelter), but no LOD scenes. The
-//! editor keeps drawing tree entities and impostor batch meshes.
+//! Cells still spawn an entity per object for gameplay (rain shelter) and the editor, but no
+//! LOD scenes: hiding one hides its instance ([`DrawnOnGpu`]).
 use bevy::{
     prelude::*,
     render::{
@@ -37,6 +37,19 @@ mod tests;
 pub(crate) use forms::TreeForms;
 pub(crate) use pool::TreeOverride;
 
+/// A placed object whose every representation the GPU trees draw from its far-object block,
+/// by its world position in 5 cm steps ([`object_key`]). The entity stays for gameplay and
+/// the editor; hiding it hides its instance (the editor hides objects it is replacing).
+#[derive(Component, Clone, Copy, Debug)]
+pub(crate) struct DrawnOnGpu(pub(crate) IVec2);
+
+/// An object's horizontal world position in 5 cm steps: a cell and a far-object block place
+/// the same object a few micrometres apart at most.
+pub(crate) fn object_key(world_xz: bevy::math::DVec2) -> IVec2 {
+    let k = (world_xz * 20.0).round();
+    IVec2::new(k.x as i32, k.y as i32)
+}
+
 /// Shadow views (cascades of every light that casts) the compute pass culls for.
 const MAX_SHADOW_VIEWS: usize = 8;
 
@@ -53,12 +66,10 @@ const DRAWS: usize = 2048;
 /// Instances the pool can address: records hold the index in 24 bits.
 const MAX_INSTANCES: u32 = 1 << 24;
 
-/// How the game draws trees, fixed at startup except `hidden`.
-#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq, ExtractResource)]
+/// How trees draw, fixed at startup except `hidden`.
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq, ExtractResource)]
 #[extract_app(bevy::render::RenderApp)]
 pub struct TreeInstancing {
-    /// From the GPU instance pool (the game), or as entities (the editor opts out).
-    pub enabled: bool,
     /// How many LODs coarser than the drawn one a tree casts its shadow from (at most its last
     /// mesh LOD). 0 matches the entities' shadows; 1 saves about a third of the cascades' time
     /// but the coarser crowns let more light through, and the forest reads lighter.
@@ -66,16 +77,6 @@ pub struct TreeInstancing {
     /// Draws no tree at all (F1 Objects off, the Ground and Grass scenes), as hiding their
     /// entities did.
     pub hidden: bool,
-}
-
-impl Default for TreeInstancing {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            shadow_lod: 0,
-            hidden: false,
-        }
-    }
 }
 
 /// One tree in the pool (`Instance` in `shaders/tree/lod.wesl`), relative to its batch's
@@ -162,17 +163,15 @@ pub(super) fn instance_layout() -> BindGroupLayoutDescriptor {
 }
 
 /// The GPU trees draw what object LOD streams (`crate::object_lod`), with its projection.
-fn drawing(
-    settings: Res<TreeInstancing>,
-    lod: Option<Res<crate::object_lod::LodProjection>>,
-) -> bool {
-    settings.enabled && lod.is_some()
+fn drawing(lod: Option<Res<crate::object_lod::LodProjection>>) -> bool {
+    lod.is_some()
 }
 
 pub(super) fn plugin(app: &mut App) {
     app.init_resource::<TreeInstancing>()
         .init_resource::<forms::TreeForms>()
         .init_resource::<pool::TreePool>()
+        .init_resource::<pool::HiddenTrees>()
         .init_resource::<layout::TreeDrawLayout>()
         .init_resource::<frame::TreeGpuFrame>()
         .add_observer(pool::release)
@@ -181,8 +180,10 @@ pub(super) fn plugin(app: &mut App) {
             (
                 forms::register,
                 forms::harvest,
+                pool::collect_hidden,
                 pool::attach,
                 pool::follow,
+                pool::hide,
                 layout::update,
             )
                 .chain()

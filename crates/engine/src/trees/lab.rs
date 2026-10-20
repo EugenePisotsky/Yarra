@@ -11,8 +11,10 @@ use super::forest_shadow::NoForestShadow;
 use super::gpu::{TreeForms, TreeOverride};
 use super::impostor::{ImpostorBatch, ImpostorDescriptor, ImpostorInstance, TreeFormSpec};
 
+use super::timed::TimedLod;
+
 use crate::object_lod::{
-    ForcedLod, LodProjection, ScreenSpaceLod, ScreenSpaceLodVariant, TimedLod, crossfade,
+    ForcedLod, LodProjection, ScreenSpaceLod, ScreenSpaceLodVariant, crossfade,
 };
 
 use crate::{ActiveWorldView, WorldRenderRoot};
@@ -142,13 +144,6 @@ impl LabAsset {
         let threshold = self.variants[self.meshes() - 1].minimum_screen_height;
         (threshold > 0.0).then_some(threshold)
     }
-
-    /// Object height over the hand-off threshold at unit scale, as far-object pages record it:
-    /// times scale and pixels per metre, the impostor's hand-off distance.
-    fn impostor_switch(&self) -> Option<f32> {
-        self.handoff_threshold()
-            .map(|threshold| self.bounds[1] / threshold)
-    }
 }
 
 /// What a lab tree draws.
@@ -186,13 +181,13 @@ pub struct LabTree {
     pub pixels_per_metre: f32,
     /// The impostor's views (pixels square) and its framing radius (object space).
     pub impostor_view: Option<(u32, f32)>,
-    /// Dissolving from one representation to another ([`crate::object_lod`]).
+    /// Dissolving from one representation to another ([`super::timed`]).
     pub fading: bool,
     batch: Option<Entity>,
 }
 
 /// The fades of a lab tree drawn by the GPU trees, followed on the CPU with the same rules
-/// (`object_lod::timed`), so the lab knows when a dissolve has ended.
+/// (`trees::timed`), so the lab knows when a dissolve has ended.
 #[derive(Component, Default)]
 struct LabFades(TimedLod);
 
@@ -211,7 +206,10 @@ pub fn spawn_lab_tree(
         LabRepresentation::Auto,
         Name::new(format!("Lab tree {}", asset.key)),
     ));
-    let Some((impostor, switch)) = asset.impostor().zip(asset.impostor_switch()) else {
+    let Some(impostor) = asset
+        .impostor()
+        .filter(|_| asset.handoff_threshold().is_some())
+    else {
         // No impostor: its mesh scenes draw as entities, ranged by distance.
         let variants = asset
             .variants
@@ -254,8 +252,8 @@ pub fn spawn_lab_tree(
                     translation: Vec3::ZERO,
                     yaw,
                     scale: scale.y,
-                    switch: switch * scale.y,
                 }],
+                world: None,
                 form: Arc::new(TreeFormSpec {
                     impostor: impostor.uri.clone(),
                     height: asset.bounds[1],
@@ -349,8 +347,7 @@ fn report(
         let descriptor = batch.and_then(|batch| descriptors.get(&batch.descriptor));
 
         // The GPU trees hand off where the impostor has a texel per output pixel and keep
-        // meshes as far as that says; entities follow the catalog to their own farthest
-        // switch.
+        // meshes as far as that says; entities follow the catalog.
         let thresholds: Vec<f32> = match batch.zip(descriptor) {
             Some((batch, descriptor)) => batch.form.thresholds(
                 projection.impostor_threshold(tree.asset.bounds[1], descriptor.texels_per_metre),
@@ -362,12 +359,11 @@ fn report(
                 .map(|v| v.minimum_screen_height)
                 .collect(),
         };
-        let farthest = lod.map_or(f32::INFINITY, ScreenSpaceLod::farthest_switch);
         let mut bands = Vec::new();
 
         if projection.pixels_per_metre() > 0.0 && !projection.orthographic() {
             for index in 0..tree.asset.meshes() {
-                let range = projection.range(&thresholds, height, index, farthest);
+                let range = projection.range(&thresholds, height, index);
 
                 if range.end_margin.end <= 0.0 {
                     continue; // skipped: the LOD before it extends to its switch
@@ -383,21 +379,21 @@ fn report(
                 let threshold = thresholds[tree.asset.meshes() - 1];
                 bands.push(LabBand {
                     representation: LabRepresentation::Impostor,
-                    fade_in: crossfade(projection.switch_distance(height, threshold, farthest)),
+                    fade_in: crossfade(projection.switch_distance(height, threshold)),
                     fade_out: f32::MAX..f32::MAX,
                 });
             }
         }
 
         let (ready, fading) = match (lod, fades) {
-            (Some(lod), _) => {
+            (Some(_), _) => {
                 let scenes = children.map_or(0, |c| c.len());
                 let ready = scenes == tree.asset.meshes()
                     && children
                         .into_iter()
                         .flatten()
                         .all(|&scene| scene_children.contains(scene));
-                (ready, lod.fading())
+                (ready, false)
             }
             (None, Some(mut fades)) => {
                 // Its bands need the impostor's texel density.
@@ -405,12 +401,12 @@ fn report(
                     let fades = &mut fades.0;
 
                     if projection.is_changed() || !fades.has_bands() {
-                        fades.set_bands(&projection, &thresholds, height, f32::INFINITY);
+                        fades.set_bands(&projection, &thresholds, height);
                     }
 
                     let distance =
                         eye.map_or(f32::MAX, |eye| eye.distance(transform.translation()));
-                    fades.step(*forced, distance, thresholds.len() - 1, time.delta_secs());
+                    fades.step(*forced, distance, time.delta_secs());
                 }
 
                 let ready = forms

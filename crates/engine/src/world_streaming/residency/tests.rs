@@ -153,26 +153,32 @@ fn attachment_limit_still_bounds_successful_work_per_frame() {
 }
 
 #[test]
-fn pages_sharing_an_asset_count_it_once_and_never_count_impostors() {
+fn pages_sharing_an_asset_count_it_once_and_never_count_gpu_trees() {
     let mut app = attachment_app(0);
     let mesh = PageDependency {
         asset: world::AssetId([1; 32]),
         asset_lod: 0,
         kind: "gltf-scene".into(),
-        uri: "tree.gltf".into(),
+        uri: "rock.gltf".into(),
         bounds: [1.; 3],
         // Two of these would not fit the residency together.
         gpu_bytes_estimate: MAX_RESIDENT_GPU_BYTES_ESTIMATE * 3 / 4,
         shadow_policy: 0,
         minimum_screen_height: 100.,
     };
+
+    // Alone larger than the residency: the GPU trees own every representation of a tree.
+    let tree = PageDependency {
+        asset: world::AssetId([2; 32]),
+        uri: "tree.gltf".into(),
+        gpu_bytes_estimate: MAX_RESIDENT_GPU_BYTES_ESTIMATE * 2,
+        ..mesh.clone()
+    };
     let impostor = PageDependency {
         asset_lod: 1,
         uri: "tree.impostor.json".into(),
-        // Alone larger than the residency: far-object blocks own impostor textures.
-        gpu_bytes_estimate: MAX_RESIDENT_GPU_BYTES_ESTIMATE * 2,
         minimum_screen_height: 0.,
-        ..mesh.clone()
+        ..tree.clone()
     };
     let keys = [
         key(PageDomain::StaticObjects, 0),
@@ -181,16 +187,17 @@ fn pages_sharing_an_asset_count_it_once_and_never_count_impostors() {
 
     for key in keys {
         let mut page = height_page(key);
-        page.dependencies = vec![mesh.clone(), impostor.clone()];
+        page.dependencies = vec![mesh.clone(), tree.clone(), impostor.clone()];
+        let instance = |n: u8, asset| world::StaticObjectInstance {
+            id: world::StableObjectId([key.cell.x as u8 * 2 + n; 16]),
+            asset,
+            generated: false,
+            translation: [0.; 3],
+            yaw: 0.,
+            scale: 1.,
+        };
         page.decoded.payload = PagePayload::StaticObjects(world::StaticObjectsPage {
-            instances: vec![world::StaticObjectInstance {
-                id: world::StableObjectId([key.cell.x as u8; 16]),
-                asset: mesh.asset,
-                generated: false,
-                translation: [0.; 3],
-                yaw: 0.,
-                scale: 1.,
-            }],
+            instances: vec![instance(0, mesh.asset), instance(1, tree.asset)],
         });
         queue_page(&mut app, page);
     }

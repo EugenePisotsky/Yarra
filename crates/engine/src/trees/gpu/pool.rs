@@ -4,11 +4,11 @@
 //! what changed ([`PoolData::take_uploads`]).
 use super::super::impostor::ImpostorBatch;
 use super::forms::TreeForms;
-use super::{ALIVE, FORCED_MASK, FORCED_NOTHING, GpuInstance, MAX_INSTANCES};
-use bevy::prelude::*;
+use super::{ALIVE, DrawnOnGpu, FORCED_NOTHING, GpuInstance, MAX_INSTANCES, object_key};
+use bevy::{math::DVec2, prelude::*};
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     ops::Range,
     sync::{Arc, Mutex},
 };
@@ -130,6 +130,11 @@ fn merge(mut ranges: Vec<Range<u32>>) -> Vec<Range<u32>> {
     merged
 }
 
+/// The objects whose instances draw nothing because their entity is hidden, by
+/// [`object_key`].
+#[derive(Resource, Default, PartialEq)]
+pub(crate) struct HiddenTrees(HashSet<IVec2>);
+
 /// A batch's place in the pool.
 #[derive(Clone, Debug)]
 pub(super) struct Batch {
@@ -137,6 +142,8 @@ pub(super) struct Batch {
     origin: u32,
     pub(super) form: u32,
     pub(super) flags: u32,
+    /// Each instance's [`object_key`], when the batch's world position is known.
+    keys: Vec<IVec2>,
     /// Its origin (render space) and 1 while visible.
     pub(super) position: [f32; 4],
     /// Its instances' roots relative to the origin, and the range of their scales.
@@ -227,11 +234,77 @@ fn origin_of(transform: &GlobalTransform, visible: bool) -> [f32; 4] {
         .to_array()
 }
 
+/// An instance's flags: its batch's, unless its object is hidden.
+fn instance_flags(batch_flags: u32, key: Option<&IVec2>, hidden: &HiddenTrees) -> u32 {
+    if key.is_some_and(|key| hidden.0.contains(key)) {
+        ALIVE | FORCED_NOTHING
+    } else {
+        batch_flags
+    }
+}
+
+/// Rewrites a batch's instance flags where they differ from what its flags and the hidden
+/// objects say.
+fn write_flags(data: &mut PoolData, batch: &Batch, hidden: &HiddenTrees) {
+    let range = batch.range.start as usize..batch.range.end as usize;
+    let mut instances = data.instances[range].to_vec();
+    let mut changed = false;
+
+    for (index, instance) in instances.iter_mut().enumerate() {
+        let flags = instance_flags(batch.flags, batch.keys.get(index), hidden);
+
+        if instance.flags != flags {
+            instance.flags = flags;
+            changed = true;
+        }
+    }
+
+    if changed {
+        data.write(batch.range.start, &instances, false);
+    }
+}
+
+/// Follows which GPU-drawn objects are hidden.
+pub(super) fn collect_hidden(
+    objects: Query<(&DrawnOnGpu, &Visibility)>,
+    changed: Query<(), (With<DrawnOnGpu>, Changed<Visibility>)>,
+    mut removed: RemovedComponents<DrawnOnGpu>,
+    mut hidden: ResMut<HiddenTrees>,
+) {
+    if changed.is_empty() && removed.read().count() == 0 {
+        return;
+    }
+
+    let next = HiddenTrees(
+        objects
+            .iter()
+            .filter(|(_, visibility)| **visibility == Visibility::Hidden)
+            .map(|(drawn, _)| drawn.0)
+            .collect(),
+    );
+    hidden.set_if_neq(next);
+}
+
+/// Instances of hidden objects draw nothing; shown again, their batch's flags return.
+pub(super) fn hide(mut pool: ResMut<TreePool>, hidden: Res<HiddenTrees>) {
+    if !hidden.is_changed() {
+        return;
+    }
+
+    let pool = pool.as_mut();
+    let mut data = pool.data.lock().unwrap();
+
+    for batch in pool.batches.values().filter(|b| !b.keys.is_empty()) {
+        write_flags(&mut data, batch, &hidden);
+    }
+}
+
 /// Gives every new batch whose form is known its range of the pool.
 #[allow(clippy::type_complexity)]
 pub(super) fn attach(
     mut pool: ResMut<TreePool>,
     forms: Res<TreeForms>,
+    hidden: Res<HiddenTrees>,
     batches: Query<
         (
             Entity,
@@ -255,15 +328,25 @@ pub(super) fn attach(
         };
         let origin = pool.origin_slot();
         let flags = ALIVE | forced.map_or(0, |f| f.flags());
+        let keys: Vec<IVec2> = batch.world.map_or_else(Vec::new, |world| {
+            batch
+                .instances
+                .iter()
+                .map(|i| {
+                    object_key(world + DVec2::new(i.translation.x.into(), i.translation.z.into()))
+                })
+                .collect()
+        });
         let instances: Vec<GpuInstance> = batch
             .instances
             .iter()
-            .map(|instance| GpuInstance {
+            .enumerate()
+            .map(|(index, instance)| GpuInstance {
                 position_yaw: instance.translation.extend(instance.yaw).to_array(),
                 scale: instance.scale,
                 form,
                 origin,
-                flags,
+                flags: instance_flags(flags, keys.get(index), &hidden),
             })
             .collect();
 
@@ -297,6 +380,7 @@ pub(super) fn attach(
                 origin,
                 form,
                 flags,
+                keys,
                 position: origin_of(transform, visible.get()),
                 roots,
                 scales,
@@ -329,23 +413,26 @@ pub(super) fn release(removed: On<Remove<ImpostorBatch>>, mut pool: Option<ResMu
 #[allow(clippy::type_complexity)]
 pub(super) fn follow(
     mut pool: ResMut<TreePool>,
+    hidden: Res<HiddenTrees>,
     batches: Query<
         (
             Entity,
-            &ImpostorBatch,
             &GlobalTransform,
             &InheritedVisibility,
             Option<&TreeOverride>,
         ),
-        Or<(
-            Changed<GlobalTransform>,
-            Changed<InheritedVisibility>,
-            Changed<TreeOverride>,
-        )>,
+        (
+            With<ImpostorBatch>,
+            Or<(
+                Changed<GlobalTransform>,
+                Changed<InheritedVisibility>,
+                Changed<TreeOverride>,
+            )>,
+        ),
     >,
 ) {
     let pool = pool.as_mut();
-    for (entity, batch, transform, visible, forced) in &batches {
+    for (entity, transform, visible, forced) in &batches {
         let Some(placed) = pool.batches.get_mut(&entity) else {
             continue;
         };
@@ -360,15 +447,7 @@ pub(super) fn follow(
 
         if placed.flags != flags {
             placed.flags = flags;
-            let mut instances =
-                data.instances[placed.range.start as usize..placed.range.end as usize].to_vec();
-
-            for (instance, source) in instances.iter_mut().zip(&batch.instances) {
-                instance.flags = (instance.flags & !FORCED_MASK) | (flags & FORCED_MASK);
-                debug_assert_eq!(instance.scale, source.scale);
-            }
-
-            data.write(placed.range.start, &instances, false);
+            write_flags(&mut data, placed, &hidden);
         }
     }
 }
@@ -415,6 +494,52 @@ mod tests {
         assert!(again.instances.is_empty() && again.restart.is_empty());
         assert!(again.origins.is_none());
         assert_eq!(data.take_uploads(true).instances[0].1.len(), 6);
+    }
+
+    #[test]
+    fn hidden_objects_draw_nothing_until_shown_again() {
+        let mut data = PoolData::default();
+        let alive = GpuInstance {
+            flags: ALIVE,
+            ..default()
+        };
+        data.write(0, &[alive; 3], true);
+        let batch = Batch {
+            range: 0..3,
+            origin: 0,
+            form: 0,
+            flags: ALIVE,
+            keys: (1..=3).map(|x| IVec2::new(x, 0)).collect(),
+            position: [0.0; 4],
+            roots: (Vec3::ZERO, Vec3::ZERO),
+            scales: (1.0, 1.0),
+        };
+        let flags = |data: &PoolData| data.instances.iter().map(|i| i.flags).collect::<Vec<_>>();
+
+        let hidden = HiddenTrees([IVec2::new(2, 0)].into());
+        write_flags(&mut data, &batch, &hidden);
+        assert_eq!(flags(&data), [ALIVE, ALIVE | FORCED_NOTHING, ALIVE]);
+        write_flags(&mut data, &batch, &HiddenTrees::default());
+        assert_eq!(flags(&data), [ALIVE; 3]);
+    }
+
+    #[test]
+    fn hiding_a_drawn_object_entity_hides_its_key() {
+        let mut app = App::new();
+        app.init_resource::<HiddenTrees>()
+            .add_systems(Update, collect_hidden);
+        let key = IVec2::new(7, -3);
+        let object = app
+            .world_mut()
+            .spawn((DrawnOnGpu(key), Visibility::Hidden))
+            .id();
+        app.world_mut()
+            .spawn((DrawnOnGpu(IVec2::ONE), Visibility::Inherited));
+        app.update();
+        assert_eq!(app.world().resource::<HiddenTrees>().0, [key].into());
+        app.world_mut().despawn(object);
+        app.update();
+        assert!(app.world().resource::<HiddenTrees>().0.is_empty());
     }
 
     #[test]

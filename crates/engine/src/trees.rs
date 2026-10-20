@@ -1,9 +1,10 @@
 //! Trees and shrubs: authored foliage weights deform on the GPU using the shared vegetation
 //! wind field ([`wind`]), composed with the environment-lit PBR material and identical colour,
 //! depth and shadow geometry, with two-layer bark ([`bark`]) and camera-facing cards
-//! ([`cards`]). The game draws every representation of them on the GPU, LOD choice and
-//! fades included ([`gpu`]); far away, impostors draw them ([`impostor`]) and give the forest
-//! shadows ([`forest_shadow`]). The LOD lab ([`lab`]) compares one tree's representations.
+//! ([`cards`]). Every representation of them is drawn on the GPU, LOD choice and fades
+//! included ([`gpu`], followed on the CPU by [`timed`]); far away, impostors draw them
+//! ([`impostor`]) and give the forest shadows ([`forest_shadow`]). The LOD lab ([`lab`])
+//! compares one tree's representations.
 mod bark;
 mod cards;
 
@@ -19,11 +20,13 @@ mod material;
 #[cfg(test)]
 mod scene_tests;
 
+mod timed;
 mod tuning;
 mod wind;
 
 pub use cards::tree_gltf_plugin;
 pub use gpu::TreeInstancing;
+pub(crate) use gpu::{DrawnOnGpu, object_key};
 
 pub use lab::{
     LabAsset, LabBand, LabRepresentation, LabTree, LabVariant, LodLabPlugin, spawn_lab_tree,

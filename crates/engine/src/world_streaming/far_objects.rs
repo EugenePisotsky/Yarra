@@ -158,6 +158,7 @@ pub(super) fn update(
                 block,
                 page,
                 place(block),
+                DVec2::new(f64::from(block.x), f64::from(block.z)) * size,
             )),
             Some(Err(error)) => {
                 warn!("far objects of block {block:?} are invalid: {error}");
@@ -251,6 +252,7 @@ fn spawn_block(
     block: CellCoord,
     page: FarObjectsPage,
     translation: Vec3,
+    world: DVec2,
 ) -> Entity {
     let mut by_form = vec![Vec::new(); page.forms.len()];
 
@@ -260,7 +262,6 @@ fn spawn_block(
             translation: Vec3::from(instance.translation),
             yaw: instance.yaw,
             scale: instance.scale,
-            switch: page.forms[form].switch * instance.scale,
         });
     }
 
@@ -280,6 +281,7 @@ fn spawn_block(
                         ImpostorBatch {
                             descriptor: server.load(form.uri.clone()),
                             instances,
+                            world: Some(world),
                             form: Arc::new(TreeFormSpec {
                                 impostor: form.uri.clone(),
                                 height: form.height,

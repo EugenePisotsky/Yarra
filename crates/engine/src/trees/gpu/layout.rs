@@ -108,7 +108,7 @@ pub(super) fn update(
 }
 
 /// Each representation's distance band at unit scale, between the midpoints of the
-/// crossfades distance LOD would use (as `object_lod::timed` sets its bands): mesh LODs
+/// crossfades distance LOD would use (as `trees::timed` sets its bands): mesh LODs
 /// too close together for a band of their own get none and are skipped.
 pub(super) fn bands(
     projection: &LodProjection,
@@ -119,7 +119,7 @@ pub(super) fn bands(
     let mut end = [-1.0; MAX_REPRESENTATIONS];
 
     for index in 0..thresholds.len().min(MAX_REPRESENTATIONS) {
-        let range = projection.range(thresholds, height, index, f32::INFINITY);
+        let range = projection.range(thresholds, height, index);
 
         if range.end_margin.end <= 0.0 {
             continue;

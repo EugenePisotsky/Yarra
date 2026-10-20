@@ -1,13 +1,14 @@
 //! Translate source payloads into ECS entities.
 use super::PreparedPage;
 use crate::object_lod::{ObjectFootprint, ScreenSpaceLod, ScreenSpaceLodVariant};
+use crate::trees::{DrawnOnGpu, object_key};
 
 use crate::world_streaming::{
     GameplayObject, GeneratedEnvironmentObject, StreamedPageEntity, StreamedTerrainSurface,
     StreamedTerrainWear, StreamedVegetationFieldPage, StreamedVisualObject,
 };
 
-use bevy::prelude::*;
+use bevy::{math::DVec2, prelude::*};
 use std::collections::HashMap;
 use vegetation::VegetationCatalog;
 use world::{AssetId, CellCoord, ObjectActivationPolicy, PageKey, PagePayload};
@@ -29,17 +30,14 @@ pub(in crate::world_streaming) struct PageAttachment {
 
 pub(in crate::world_streaming) type AssetVariantKey = (world::AssetId, u8);
 
-/// The asset variants a page's attachment loads. Impostors are not among them: far-object
-/// blocks draw those, and their textures are not part of a page's residency. With
-/// `gpu_trees`, neither are the mesh LODs of objects that end in one: the GPU trees load and
-/// draw them (`crate::trees`).
+/// The asset variants a page's attachment loads. Objects ending in an impostor are not
+/// among them: the GPU trees load and draw every representation of those (`crate::trees`).
 pub(in crate::world_streaming) fn page_asset_variants(
     dependencies: &[PageDependency],
-    gpu_trees: bool,
 ) -> Vec<(AssetVariantKey, u64)> {
     let with_impostor: Vec<AssetId> = dependencies
         .iter()
-        .filter(|d| gpu_trees && world::is_impostor_uri(&d.uri))
+        .filter(|d| world::is_impostor_uri(&d.uri))
         .map(|d| d.asset)
         .collect();
     dependencies
@@ -56,14 +54,13 @@ pub(super) fn attach_page(
     vegetation_catalog: Option<&VegetationCatalog>,
     origin_cell: CellCoord,
     cell_size: f32,
-    gpu_trees: bool,
     prepared: PreparedPage,
 ) -> Result<PageAttachment, String> {
     let key = prepared.decoded.key;
     let mut attachment = PageAttachment {
         decoded_bytes: prepared.decoded.decoded_bytes,
         gpu_bytes_estimate: prepared.decoded.gpu_bytes_estimate,
-        asset_variants: page_asset_variants(&prepared.dependencies, gpu_trees),
+        asset_variants: page_asset_variants(&prepared.dependencies),
         ..default()
     };
 
@@ -81,10 +78,10 @@ pub(super) fn attach_page(
             commands,
             asset_server,
             key.cell.offset_from(origin_cell, cell_size),
+            key.cell.origin(cell_size),
             key,
             objects,
             &prepared.dependencies,
-            gpu_trees,
         )?,
         PagePayload::Vegetation(data) => {
             let catalog = vegetation_catalog
@@ -117,19 +114,19 @@ pub(super) fn attach_page(
     Ok(attachment)
 }
 
-/// Placed objects, each a screen-space LOD whose mesh scenes load as it nears. With
-/// `gpu_trees`, objects ending in an impostor get no LOD: the GPU trees draw them from their
-/// far-object block, and the entity stays for gameplay (rain shelter).
+/// Placed objects, each a screen-space LOD whose mesh scenes load as it nears. Objects
+/// ending in an impostor get no LOD: the GPU trees draw them from their far-object block,
+/// and the entity stays for gameplay (rain shelter) and the editor.
 #[allow(clippy::too_many_arguments)]
 fn attach_static_objects(
     attachment: &mut PageAttachment,
     commands: &mut Commands,
     asset_server: &AssetServer,
     cell_origin: [f64; 2],
+    cell_world: [f64; 2],
     key: PageKey,
     objects: world::StaticObjectsPage,
     dependencies_of_page: &[PageDependency],
-    gpu_trees: bool,
 ) -> Result<(), String> {
     let mut dependencies: HashMap<AssetId, Vec<&PageDependency>> = HashMap::new();
 
@@ -197,10 +194,9 @@ fn attach_static_objects(
             std::array::from_fn(|i| b[i].max(dependency.bounds[i]))
         });
         let bounds_height = bounds[1];
-        let drawn_on_gpu = gpu_trees
-            && dependencies
-                .last()
-                .is_some_and(|last| world::is_impostor_uri(&last.uri));
+        let drawn_on_gpu = dependencies
+            .last()
+            .is_some_and(|last| world::is_impostor_uri(&last.uri));
         let mut object = commands.spawn((
             Transform::from_translation(translation)
                 .with_rotation(Quat::from_rotation_y(instance.yaw))
@@ -215,7 +211,13 @@ fn attach_static_objects(
             Name::new(format!("Streamed object {:?}", instance.id)),
         ));
 
-        if !drawn_on_gpu {
+        if drawn_on_gpu {
+            let world = DVec2::new(
+                cell_world[0] + f64::from(instance.translation[0]),
+                cell_world[1] + f64::from(instance.translation[2]),
+            );
+            object.insert(DrawnOnGpu(object_key(world)));
+        } else {
             let variants: Vec<_> = dependencies
                 .iter()
                 .map(|dependency| {

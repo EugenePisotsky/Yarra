@@ -250,9 +250,7 @@ pub(super) fn attach_prepared_pages(
     origin: Res<WorldOrigin>,
     world: Res<WorldStream>,
     mut stream: ResMut<SourceResidency>,
-    trees: Option<Res<crate::TreeInstancing>>,
 ) {
-    let gpu_trees = trees.is_some_and(|trees| trees.enabled);
     stream.admission_blocked = 0;
     let vegetation_catalog = world
         .manifest
@@ -303,7 +301,7 @@ pub(super) fn attach_prepared_pages(
         }
 
         let page_decoded_bytes = prepared.decoded.decoded_bytes;
-        let page_asset_variants = page_asset_variants(&prepared.dependencies, gpu_trees);
+        let page_asset_variants = page_asset_variants(&prepared.dependencies);
         let page_gpu_bytes = prepared.decoded.gpu_bytes_estimate
             + page_asset_variants
                 .iter()
@@ -340,7 +338,6 @@ pub(super) fn attach_prepared_pages(
             vegetation_catalog.as_ref(),
             origin.cell,
             cell_size,
-            gpu_trees,
             prepared,
         ) {
             Ok(attachment) => {

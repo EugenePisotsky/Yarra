@@ -3,8 +3,8 @@
 //! (`super::super::material`) make the same tree materials it makes for every tree scene; the
 //! templates stay for as long as the game runs, so their meshes and materials stay loaded.
 use super::super::impostor::{
-    ImpostorBatch, ImpostorDescriptor, ImpostorFades, ImpostorMaterial, ImpostorMaterialInputs,
-    ImpostorMaterials, TreeFormSpec, instanced_quad, quad_reach,
+    ImpostorBatch, ImpostorDescriptor, ImpostorMaterial, ImpostorMaterialInputs, ImpostorMaterials,
+    TreeFormSpec, instanced_quad, quad_reach,
 };
 
 use super::super::material::{TreeWindMaterial, WindBoundsPending, WindChecked};
@@ -13,8 +13,7 @@ use super::MAX_REPRESENTATIONS;
 use atmosphere::environment::EnvironmentAssets;
 
 use bevy::{
-    asset::RecursiveDependencyLoadState, camera::primitives::Aabb, gltf::GltfAssetLabel,
-    prelude::*, render::renderer::RenderDevice,
+    asset::RecursiveDependencyLoadState, camera::primitives::Aabb, gltf::GltfAssetLabel, prelude::*,
 };
 
 use std::{collections::HashMap, sync::Arc};
@@ -150,11 +149,9 @@ pub(super) fn harvest(
         Option<&Aabb>,
         Has<WindBoundsPending>,
     )>,
-    (environment, wind, mut fades, device, mut cache, mut materials): (
+    (environment, wind, mut cache, mut materials): (
         Option<Res<EnvironmentAssets>>,
         Option<Res<WindBuffer>>,
-        Option<ResMut<ImpostorFades>>,
-        Option<Res<RenderDevice>>,
         Option<ResMut<ImpostorMaterials>>,
         Option<ResMut<Assets<ImpostorMaterial>>>,
     ),
@@ -226,22 +223,12 @@ pub(super) fn harvest(
             continue;
         }
 
-        let (
-            Some(environment),
-            Some(wind),
-            Some(fades),
-            Some(device),
-            Some(cache),
-            Some(materials),
-        ) = (
+        let (Some(environment), Some(wind), Some(cache), Some(materials)) = (
             environment.as_deref(),
             wind.as_deref(),
-            fades.as_deref_mut(),
-            device.as_deref(),
             cache.as_deref_mut(),
             materials.as_deref_mut(),
-        )
-        else {
+        ) else {
             continue;
         };
 
@@ -262,12 +249,7 @@ pub(super) fn harvest(
             materials,
             &form.descriptor,
             descriptor,
-            &ImpostorMaterialInputs {
-                environment,
-                wind,
-                fades: fades.buffer(device),
-                handoff: f32::MAX,
-            },
+            &ImpostorMaterialInputs { environment, wind },
         ));
         form.ready = true;
         readied = true;

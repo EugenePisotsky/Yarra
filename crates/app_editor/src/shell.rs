@@ -94,11 +94,6 @@ pub(crate) fn run() -> std::result::Result<(), String> {
             RuntimePublicationPlugin::new(project_database, runtime_database),
         ))
         .add_plugins(PresetWorkspacePlugin)
-        // The editor draws trees as entities.
-        .insert_resource(engine::TreeInstancing {
-            enabled: false,
-            ..default()
-        })
         .add_plugins((engine::TreeWindPlugin, engine::OceanPlugin))
         .configure_sets(
             EguiPrimaryContextPass,

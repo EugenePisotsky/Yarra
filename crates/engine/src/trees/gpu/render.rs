@@ -863,9 +863,7 @@ fn instanced_key(
             }
         }
         Drawn::Impostor { .. } => {
-            let mut data: <ImpostorMaterial as AsBindGroup>::Data =
-                properties.material_key.to_key();
-            data.extension.instanced = true;
+            let data: <ImpostorMaterial as AsBindGroup>::Data = properties.material_key.to_key();
             ErasedMaterialPipelineKey {
                 type_id: TypeId::of::<ImpostorMaterial>(),
                 mesh_key: ErasedMeshPipelineKey::new(mesh_key),
