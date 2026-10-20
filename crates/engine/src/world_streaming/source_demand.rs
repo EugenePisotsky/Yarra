@@ -1,4 +1,5 @@
-//! Detailed source demand stays independent of the distant terrain cover.
+//! Which cells are resident: source pages (terrain relief, objects, grass) around the view,
+//! independent of how far the clipmap draws the ground.
 use super::*;
 use bevy::math::DVec3;
 use std::collections::BTreeMap;

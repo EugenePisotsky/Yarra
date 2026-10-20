@@ -1,6 +1,7 @@
 //! Bevy startup and bounded transport for immutable runtime database IO.
 mod protocol;
 mod reader;
+mod terrain_requests;
 
 use bevy::prelude::*;
 use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, bounded};
@@ -9,6 +10,8 @@ pub(super) use protocol::{
     DatabaseRequest, DatabaseResult, FarObjectPayloads, FetchedPage, RequestId, TerrainQuery,
     TerrainReply,
 };
+
+pub(super) use terrain_requests::{TerrainRequests, nodes_at};
 
 use std::{
     path::PathBuf,

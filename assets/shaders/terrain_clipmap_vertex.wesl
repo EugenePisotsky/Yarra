@@ -19,7 +19,7 @@ struct Vertex {
 }
 
 // Mesh tag: level in bits 28-31, node x and z as 14-bit signed values in bits 14-27 and 0-13
-// (crates/engine/src/world_streaming/terrain_clipmap.rs).
+// (crates/terrain_render/src/clipmap/gpu.rs `patch_tag`).
 fn tag_level(tag: u32) -> u32 { return tag >> 28u; }
 fn tag_node(tag: u32) -> vec2<i32> {
     return vec2(bitcast<i32>(tag << 4u) >> 18u, bitcast<i32>(tag << 18u) >> 18u);

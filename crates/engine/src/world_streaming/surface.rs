@@ -3,9 +3,8 @@ use super::*;
 
 /// CPU-readable relief carried by a resident streamed terrain entity.
 ///
-/// This is the bridge for vegetation, character grounding, interactions, and later shadow proxies:
-/// every consumer samples the canonical cooked surface. With the terrain hierarchy
-/// this entity owns only CPU data; it does not also create a ground mesh.
+/// Grass pages are built on it and CPU queries (raycasts, interactions) sample it; it carries no
+/// mesh. Actors stand on the clipmap's resident leaves instead (`ClipmapTerrain::ground_height`).
 #[derive(Component, Debug, Clone)]
 pub struct StreamedTerrainSurface {
     pub key: PageKey,

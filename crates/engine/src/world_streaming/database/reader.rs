@@ -191,11 +191,16 @@ fn read_terrain(reader: &RuntimeReader, query: TerrainQuery) -> Result<TerrainRe
             .read_terrain_roots(space)
             .map(TerrainReply::Metadata)
             .map_err(|e| e.to_string()),
-        TerrainQuery::Node(key) => reader
-            .read_terrain_node(key)
-            .map_err(|e| e.to_string())?
-            .map(TerrainReply::Node)
-            .ok_or("missing required terrain node".into()),
+        TerrainQuery::Heights(keys) => keys
+            .into_iter()
+            .map(|key| {
+                reader
+                    .read_terrain_node(key)
+                    .map_err(|e| e.to_string())?
+                    .ok_or_else(|| format!("missing required terrain node {key:?}"))
+            })
+            .collect::<Result<_, _>>()
+            .map(TerrainReply::Heights),
         TerrainQuery::Nodes(keys) => {
             let nodes = keys
                 .into_iter()
@@ -212,7 +217,7 @@ fn read_terrain(reader: &RuntimeReader, query: TerrainQuery) -> Result<TerrainRe
         }
         TerrainQuery::Surfaces(space) => reader
             .read_space_terrain_resources(space)
-            .map(TerrainReply::Surfaces)
+            .map(|resources| TerrainReply::Surfaces(Box::new(resources)))
             .map_err(|e| e.to_string()),
     }
 }

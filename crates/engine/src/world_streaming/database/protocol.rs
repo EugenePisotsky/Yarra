@@ -76,7 +76,8 @@ pub(in crate::world_streaming) struct FetchedPage {
 #[derive(Clone, Debug)]
 pub(in crate::world_streaming) enum TerrainQuery {
     Roots(WorldSpaceId),
-    Node(TerrainNodeKey),
+    /// Nodes that must all exist, without their control tiles.
+    Heights(Vec<TerrainNodeKey>),
     /// Several nodes at once with their control tiles; absent nodes are left out of the reply.
     Nodes(Vec<TerrainNodeKey>),
     /// A space's terrain profile, texture set and every surface of the set.
@@ -86,8 +87,9 @@ pub(in crate::world_streaming) enum TerrainQuery {
 #[derive(Debug)]
 pub(in crate::world_streaming) enum TerrainReply {
     Metadata(Vec<TerrainNodeDescriptor>),
-    Node(EncodedTerrainNode),
+    Heights(Vec<EncodedTerrainNode>),
     /// Nodes and their compressed control tiles (`world_db::decode_terrain_control`).
     Nodes(Vec<(EncodedTerrainNode, Option<Vec<u8>>)>),
-    Surfaces(world_db::TerrainRenderResources),
+    /// Once per space and publication; boxed so node replies stay small.
+    Surfaces(Box<world_db::TerrainRenderResources>),
 }

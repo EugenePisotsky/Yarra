@@ -191,7 +191,7 @@ impl Material for ClipmapTerrainMaterial {
         CLIPMAP_SHADER.into()
     }
 
-    // As the composite terrain: MetalFX motion comes from the main pass's depth and the camera.
+    // No prepass: MetalFX motion comes from the main pass's depth and the camera.
     fn enable_prepass() -> bool {
         false
     }
@@ -755,6 +755,32 @@ fn write_block(
     }
 }
 
+/// Mesh tag of a patch: its level and node, as `terrain_clipmap_vertex.wesl` unpacks them.
+pub fn patch_tag(key: TerrainNodeKey) -> u32 {
+    debug_assert!((-8192..8192).contains(&key.x) && (-8192..8192).contains(&key.z));
+    (u32::from(key.level) << 28) | ((key.x as u32 & 0x3fff) << 14) | (key.z as u32 & 0x3fff)
+}
+
+/// Where a node's patch stands for a render origin at `origin` metres: its mesh's sample
+/// indices scaled to the level's spacing.
+pub fn patch_transform(layout: &ClipmapLayout, key: TerrainNodeKey, origin: [f64; 2]) -> Transform {
+    let size = layout.node_metres(key.level);
+    let spacing = layout.spacing(key.level) as f32;
+    Transform::from_xyz(
+        (f64::from(key.x) * size - origin[0]) as f32,
+        0.0,
+        (f64::from(key.z) * size - origin[1]) as f32,
+    )
+    .with_scale(Vec3::new(spacing, 1.0, spacing))
+}
+
+/// The wear atlas slot of a cell in the window around the camera, as
+/// `terrain_clipmap_common.wesl` finds it.
+pub fn wear_slot(cell: world::CellCoord) -> usize {
+    let n = WEAR_WINDOW;
+    (cell.x.rem_euclid(n) + n * cell.z.rem_euclid(n)) as usize
+}
+
 /// The patch every node draws: `intervals + 1` vertices per side at their sample indices, and
 /// the diagonal from each quad's (x, z) to (x + 1, z + 1), as the coarser grid has it.
 pub fn patch_mesh(layout: &ClipmapLayout) -> Mesh {
@@ -796,6 +822,46 @@ pub fn patch_mesh(layout: &ClipmapLayout) -> Mesh {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn patch_tags_carry_negative_nodes() {
+        let key = TerrainNodeKey {
+            space: world::WorldSpaceId(1),
+            level: 5,
+            x: -5,
+            z: 4,
+        };
+        let tag = patch_tag(key);
+        assert_eq!(tag >> 28, 5);
+        assert_eq!(((tag << 4) as i32) >> 18, -5);
+        assert_eq!(((tag << 18) as i32) >> 18, 4);
+    }
+
+    /// The shaders keep their own copies of the state texture's layout.
+    #[test]
+    fn shader_constants_match_the_state_layout() {
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../assets/shaders/terrain_clipmap_common.wesl"
+        ));
+        let value = |name: &str| -> i64 {
+            let line = source
+                .lines()
+                .find(|l| l.starts_with(&format!("const {name}: i32 = ")))
+                .unwrap_or_else(|| panic!("{name} is not declared"));
+            line.rsplit(' ')
+                .next()
+                .unwrap()
+                .trim_end_matches(';')
+                .parse()
+                .unwrap()
+        };
+        assert_eq!(value("STATE_WINDOWS"), i64::from(STATE_WINDOWS));
+        assert_eq!(value("STATE_RESIDENCY"), i64::from(STATE_RESIDENCY));
+        assert_eq!(value("RESIDENCY_TEXELS"), i64::from(RESIDENCY_TEXELS));
+        assert_eq!(value("STATE_WEAR"), i64::from(STATE_WEAR));
+        assert_eq!(value("WEAR_WINDOW"), i64::from(WEAR_WINDOW));
+    }
 
     #[test]
     fn wrapped_blocks_split_into_spans_that_cover_them_once() {

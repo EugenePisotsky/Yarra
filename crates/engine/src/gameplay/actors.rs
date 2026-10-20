@@ -176,7 +176,7 @@ pub(super) fn move_player_to_adopted_start(
 
 /// Actors stand on terrain v2's resident leaf surface, the triangles drawn near the camera,
 /// never on ground not yet resident.
-pub(crate) fn ground_characters_to_streamed_terrain(
+pub(crate) fn ground_characters(
     origin: Res<WorldOrigin>,
     mut actors: Query<&mut Transform, With<TerrainGrounded>>,
     terrain: Res<world_streaming::ClipmapTerrain>,

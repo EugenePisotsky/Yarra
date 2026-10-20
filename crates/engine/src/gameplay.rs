@@ -108,8 +108,7 @@ impl Plugin for GameplayPlugin {
                     actors::hold_suspended_player
                         .after(actors::steer_player_along_route)
                         .before(GameplaySystems::Movement),
-                    actors::ground_characters_to_streamed_terrain
-                        .in_set(GameplaySystems::Grounding),
+                    actors::ground_characters.in_set(GameplaySystems::Grounding),
                 ),
             );
     }

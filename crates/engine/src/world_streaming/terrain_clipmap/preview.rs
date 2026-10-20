@@ -46,7 +46,11 @@ pub(crate) fn apply(
         return;
     }
 
-    terrain.set_overlay(request.products, &mut uploads);
+    // An overlay the clipmap cannot draw is the editor's to report; the ground stays as it was.
+    if let Err(e) = terrain.set_overlay(request.products, &mut uploads) {
+        live.error = Some(e);
+    }
+
     live.applied = Some(request.revision);
     live.commit = None;
 }
@@ -54,15 +58,22 @@ pub(crate) fn apply(
 impl ClipmapTerrain {
     /// Replaces the editor's overlay. Resident nodes it changes are rewritten from it now;
     /// those the previous overlay changed and this one leaves to the publication are read
-    /// again. Nodes read later take the overlay's parts in `accept`.
+    /// again. Nodes read later take the overlay's parts in `accept`. An overlay with a node
+    /// the clipmap cannot draw is refused whole.
     pub(super) fn set_overlay(
         &mut self,
         products: Arc<TerrainPreviewProducts>,
         uploads: &mut ClipmapUploads,
-    ) {
+    ) -> Result<(), String> {
+        if let Some(layout) = self.layout {
+            for node in products.nodes.values() {
+                relief(node, layout.intervals)?;
+            }
+        }
+
         let old = self.overlay.replace(products.clone());
         let Some(layout) = self.layout else {
-            return;
+            return Ok(());
         };
 
         if let Some(old) = &old {
@@ -101,10 +112,7 @@ impl ClipmapTerrain {
             }
 
             let mut node = match products.nodes.get(&key) {
-                Some(n) => match relief(n, layout.intervals) {
-                    Ok(node) => node,
-                    Err(e) => return self.fail(e),
-                },
+                Some(n) => relief(n, layout.intervals)?,
                 None => Decoded {
                     key,
                     bounds: self.resident.bounds[&key],
@@ -119,5 +127,7 @@ impl ClipmapTerrain {
 
             self.place(&layout, uploads, node);
         }
+
+        Ok(())
     }
 }

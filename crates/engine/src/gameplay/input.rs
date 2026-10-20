@@ -7,7 +7,6 @@ use super::{
 use crate::{
     CameraInputDiagnostics, StreamedTerrainSurface, WorldOrigin,
     actor::{CharacterGait, MoveIntent, PlayerControlled},
-    sample_resident_terrain_surface,
 };
 
 use bevy::{
@@ -69,7 +68,7 @@ fn set_target_from_pointer(
     window: Single<&Window, With<PrimaryWindow>>,
     camera: Single<(&Camera, &GlobalTransform), With<MainCamera>>,
     origin: Res<WorldOrigin>,
-    terrain_pages: Query<&StreamedTerrainSurface>,
+    terrain_pages: Query<(Entity, &StreamedTerrainSurface)>,
     mut player: Single<(&Transform, &mut MoveIntent), With<PlayerControlled>>,
 ) {
     if !enabled.0 || pointer_blocked.0 {
@@ -89,8 +88,9 @@ fn set_target_from_pointer(
         return;
     };
     let direction = *ray.direction;
-    let point =
-        raycast_streamed_terrain(ray.origin, direction, &origin, &terrain_pages).or_else(|| {
+    let point = crate::raycast_resident_terrain(&origin, terrain_pages.iter(), ray)
+        .map(|(_, hit)| hit)
+        .or_else(|| {
             if direction.y.abs() < 1.0e-5 {
                 return None;
             }
@@ -102,68 +102,6 @@ fn set_target_from_pointer(
     if let Some(point) = point {
         player.1.set_destination(point, CharacterGait::Walk);
     }
-}
-
-fn raycast_streamed_terrain(
-    ray_origin: Vec3,
-    ray_direction: Vec3,
-    origin: &WorldOrigin,
-    terrain_pages: &Query<&StreamedTerrainSurface>,
-) -> Option<Vec3> {
-    const STEP_METERS: f32 = 0.75;
-    const MAXIMUM_DISTANCE: f32 = 256.0;
-    const REFINEMENT_STEPS: usize = 12;
-
-    let mut previous: Option<(f32, f32)> = None;
-    let step_count = (MAXIMUM_DISTANCE / STEP_METERS) as usize;
-
-    for step in 0..=step_count {
-        let distance = step as f32 * STEP_METERS;
-        let point = ray_origin + ray_direction * distance;
-        let Some(surface) =
-            sample_resident_terrain_surface(origin, terrain_pages.iter(), [point.x, point.z])
-        else {
-            previous = None;
-            continue;
-        };
-        let clearance = point.y - surface.height;
-        let Some((previous_distance, previous_clearance)) = previous else {
-            previous = Some((distance, clearance));
-            continue;
-        };
-
-        if previous_clearance >= 0.0 && clearance <= 0.0 {
-            let mut above = previous_distance;
-            let mut below = distance;
-
-            for _ in 0..REFINEMENT_STEPS {
-                let middle = (above + below) * 0.5;
-                let middle_point = ray_origin + ray_direction * middle;
-                let Some(middle_surface) = sample_resident_terrain_surface(
-                    origin,
-                    terrain_pages.iter(),
-                    [middle_point.x, middle_point.z],
-                ) else {
-                    break;
-                };
-
-                if middle_point.y >= middle_surface.height {
-                    above = middle;
-                } else {
-                    below = middle;
-                }
-            }
-
-            let hit = ray_origin + ray_direction * ((above + below) * 0.5);
-            let surface =
-                sample_resident_terrain_surface(origin, terrain_pages.iter(), [hit.x, hit.z])?;
-            return Some(Vec3::new(hit.x, surface.height, hit.z));
-        }
-
-        previous = Some((distance, clearance));
-    }
-
-    None
 }
 
 fn touch_tap_position(touches: &Touches, state: &mut TouchTapState) -> Option<Vec2> {

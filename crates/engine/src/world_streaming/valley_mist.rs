@@ -1,14 +1,14 @@
 //! The valley mist map (`atmosphere::valley_mist`), shore map (`atmosphere::shore`) and terrain
 //! relief for distant terrain shadows (`atmosphere::terrain_shadow`) of the active world space,
 //! from its terrain at one coarse level. Every node of that level is read once per runtime
-//! generation through the database worker, a few at a time beside the terrain LOD's own
-//! requests, and the maps are built off the main thread. Reteya's 10 km takes 1,600 nodes: an 8 m
-//! relief, and every other sample of it, 16 m, for the mist and shore maps (coarser levels
-//! decimate finer ones exactly, so they are the level-4 maps they always were).
+//! generation through the database worker, in batches beside the clipmap's own requests, and
+//! the maps are built off the main thread. Reteya's 10 km takes 1,600 nodes: an 8 m relief, and
+//! every other sample of it, 16 m, for the mist and shore maps (coarser levels decimate finer
+//! ones exactly).
 use super::{
     ActiveWorldSpace, WorldCatalog,
     database::{
-        DatabaseRequest, NotSent, RequestId, TerrainQuery, TerrainReply, WorldDatabaseWorker,
+        RequestId, TerrainQuery, TerrainReply, TerrainRequests, WorldDatabaseWorker, nodes_at,
     },
 };
 
@@ -23,16 +23,18 @@ use bevy::{
     tasks::{AsyncComputeTaskPool, Task, block_on, poll_once},
 };
 
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 use world::{TerrainNodeKey, WorldSpaceId};
-use world_db::{EncodedTerrainNode, TerrainNodeDescriptor};
+use world_db::EncodedTerrainNode;
 
 /// Terrain level the maps sample: 8 m apart with 32 m cells and 33-sample nodes. The mist and
 /// shore maps take every other sample.
 const LEVEL: u8 = 3;
 
-/// Node requests in flight at once; the terrain LOD keeps up to 12.
-const IN_FLIGHT: usize = 4;
+/// Nodes per request, and requests in flight at once.
+const BATCH: usize = 64;
+
+const IN_FLIGHT: usize = 2;
 
 /// The mist map, the shore map of a world with a sea, and the relief.
 type Maps = (MistMap, Option<ShoreMap>, TerrainRelief);
@@ -42,9 +44,9 @@ pub(super) struct MistTerrain {
     /// Runtime generation and world space the map is for, and that space's cell size.
     identity: Option<(String, WorldSpaceId)>,
     cell_size: f32,
-    /// Nodes still to request, and requests in flight by id.
+    /// Nodes still to request, and requests in flight.
     queue: Vec<TerrainNodeKey>,
-    pending: HashMap<RequestId, TerrainQuery>,
+    requests: TerrainRequests,
     expected: usize,
     received: Vec<EncodedTerrainNode>,
     build: Option<Task<Result<Maps, String>>>,
@@ -53,26 +55,26 @@ pub(super) struct MistTerrain {
 
 impl MistTerrain {
     pub(super) fn owns_request(&self, request_id: RequestId) -> bool {
-        self.pending.contains_key(&request_id)
+        self.requests.owns(request_id)
     }
 
     pub(super) fn receive(&mut self, request_id: RequestId, reply: Result<TerrainReply, String>) {
-        let Some(query) = self.pending.remove(&request_id) else {
+        let Some(query) = self.requests.answer(request_id) else {
             return;
         };
         match (query, reply) {
             (TerrainQuery::Roots(_), Ok(TerrainReply::Metadata(roots))) => {
-                self.queue = level_keys(&roots);
+                self.queue = nodes_at(&roots, LEVEL);
                 self.expected = self.queue.len();
 
                 if self.expected == 0 {
                     self.done = true;
                 }
             }
-            (TerrainQuery::Node(key), Ok(TerrainReply::Node(node)))
-                if node.descriptor.key == key =>
+            (TerrainQuery::Heights(keys), Ok(TerrainReply::Heights(nodes)))
+                if nodes.len() == keys.len() =>
             {
-                self.received.push(node);
+                self.received.extend(nodes);
             }
             (_, Err(e)) => self.fail(&e),
             _ => self.fail("terrain reply does not match its request"),
@@ -82,7 +84,7 @@ impl MistTerrain {
     fn fail(&mut self, reason: &str) {
         warn!("valley mist: no map for this world: {reason}");
         self.queue.clear();
-        self.pending.clear();
+        self.requests.drop_all();
         self.received.clear();
         self.done = true;
     }
@@ -91,45 +93,12 @@ impl MistTerrain {
         let Some((generation, _)) = &self.identity else {
             return false;
         };
-        match worker.send(DatabaseRequest::Terrain {
-            generation: generation.clone(),
-            query: query.clone(),
-        }) {
-            Ok(request_id) => {
-                self.pending.insert(request_id, query);
-                true
-            }
-            Err(NotSent::Full) => false,
-            Err(NotSent::Stopped) => {
-                self.fail("the world database worker stopped");
-                false
-            }
-        }
-    }
-}
-
-/// Every node of [`LEVEL`] under the roots (or of a lower level, for roots below it). Roots
-/// are complete, so all of their descendants exist.
-fn level_keys(roots: &[TerrainNodeDescriptor]) -> Vec<TerrainNodeKey> {
-    let level = roots
-        .iter()
-        .map(|r| r.key.level)
-        .min()
-        .unwrap_or(LEVEL)
-        .min(LEVEL);
-    roots
-        .iter()
-        .flat_map(|root| {
-            let span = 1_i32 << (root.key.level - level);
-            let key = root.key;
-            (0..span * span).map(move |i| TerrainNodeKey {
-                level,
-                x: key.x * span + i % span,
-                z: key.z * span + i / span,
-                ..key
-            })
+        let sent = self.requests.send(worker, generation, query);
+        sent.unwrap_or_else(|e| {
+            self.fail(&e);
+            false
         })
-        .collect()
+    }
 }
 
 pub(super) fn update(
@@ -173,12 +142,12 @@ pub(super) fn update(
         return;
     }
 
-    while mist.pending.len() < IN_FLIGHT {
-        let Some(key) = mist.queue.pop() else {
-            break;
-        };
-        if !mist.request(&worker, TerrainQuery::Node(key)) {
-            mist.queue.push(key);
+    while mist.requests.len() < IN_FLIGHT && !mist.queue.is_empty() {
+        let at = mist.queue.len().saturating_sub(BATCH);
+        let batch = mist.queue.split_off(at);
+
+        if !mist.request(&worker, TerrainQuery::Heights(batch.clone())) {
+            mist.queue.extend(batch);
             break;
         }
     }
@@ -310,6 +279,7 @@ fn build(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use world_db::TerrainNodeDescriptor;
 
     fn root(level: u8, x: i32, z: i32) -> TerrainNodeDescriptor {
         TerrainNodeDescriptor {
@@ -331,7 +301,7 @@ mod tests {
 
     #[test]
     fn every_node_of_the_level_under_the_roots_once() {
-        let keys = level_keys(&[root(7, -1, 0), root(5, 2, -3)]);
+        let keys = nodes_at(&[root(7, -1, 0), root(5, 2, -3)], LEVEL);
         assert_eq!(keys.len(), 256 + 16);
         assert!(keys.iter().all(|k| k.level == LEVEL));
         let unique: std::collections::HashSet<_> = keys.iter().collect();
@@ -350,7 +320,7 @@ mod tests {
         }));
 
         // A root below the level sets it.
-        let keys = level_keys(&[root(2, 0, 0), root(3, 1, 1)]);
+        let keys = nodes_at(&[root(2, 0, 0), root(3, 1, 1)], LEVEL);
         assert_eq!(keys.len(), 1 + 4);
         assert!(keys.iter().all(|k| k.level == 2));
     }

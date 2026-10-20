@@ -19,8 +19,8 @@ struct ClipmapSettings {
 @group(constants::MATERIAL_BIND_GROUP) @binding(3) var normal_sampler: sampler;
 @group(constants::MATERIAL_BIND_GROUP) @binding(4) var state: texture_2d<u32>;
 
-// State texels (gpu.rs): eye, origin, a window per level, each level's residency rows, then the
-// cell each wear atlas slot holds.
+// State texels (gpu.rs, whose tests check these copies): eye, origin, a window per level, each
+// level's residency rows, then the cell each wear atlas slot holds.
 const STATE_WINDOWS: i32 = 2;
 const STATE_RESIDENCY: i32 = 10;
 const RESIDENCY_TEXELS: i32 = 8;

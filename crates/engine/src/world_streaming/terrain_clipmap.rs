@@ -18,7 +18,7 @@ pub use preview::{LiveTerrainPreview, TerrainPreviewRequest};
 use super::{
     ActiveWorldSpace, WorldCatalog, WorldOrigin, WorldViewCamera,
     database::{
-        DatabaseRequest, NotSent, RequestId, TerrainQuery, TerrainReply, WorldDatabaseWorker,
+        RequestId, TerrainQuery, TerrainReply, TerrainRequests, WorldDatabaseWorker, nodes_at,
     },
 };
 
@@ -64,10 +64,14 @@ const PREFETCH: f64 = 2.0;
 /// A window follows the camera once it is more than this many nodes off its centre.
 const HYSTERESIS: i32 = 2;
 
-/// Nodes per database request, and requests in flight.
+/// Nodes per database request.
 const BATCH: usize = 48;
 
+/// Database requests in flight.
 const IN_FLIGHT: usize = 2;
+
+/// A failed load starts over after this many seconds.
+const RETRY_SECONDS: f64 = 5.0;
 
 /// Samples per node side the clipmap is laid out for.
 const NODE_SAMPLES: u16 = 33;
@@ -92,7 +96,7 @@ struct Decoded {
     leaf: Option<TerrainHeightfield>,
 }
 
-/// Counts for the log and for comparing against the terrain LOD.
+/// Counts for the log and the F1 panel.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ClipmapStats {
     pub resident: usize,
@@ -120,9 +124,7 @@ pub struct ClipmapTerrain {
     /// Resident but to be read again: from a new publication, or where the editor's overlay
     /// no longer replaces them.
     stale: HashSet<TerrainNodeKey>,
-    pending: HashMap<RequestId, TerrainQuery>,
-    /// Requests of a previous publication, whose replies are dropped.
-    dropped: HashSet<RequestId>,
+    requests: TerrainRequests,
     /// The space's roots and surfaces still to be requested.
     wanted_roots: bool,
     wanted_surfaces: bool,
@@ -135,41 +137,52 @@ pub struct ClipmapTerrain {
     received: Vec<Vec<(EncodedTerrainNode, Option<Vec<u8>>)>>,
     decoding: Vec<Task<Result<Vec<Decoded>, String>>>,
     gpu: Option<ClipmapTextures>,
-    mesh: Option<Handle<Mesh>>,
-    /// Each drawn patch and the height bounds its box was made from.
-    patches: HashMap<TerrainNodeKey, (Entity, [f32; 2])>,
-    /// The cell and page whose road wear each wear atlas slot holds.
-    wear: [Option<(world::CellCoord, Entity)>; clipmap::WEAR_SLOTS],
-    /// Layers newly found worn bare to, for the surface table.
-    bare: Vec<u16>,
-    placed: Option<world::CellCoord>,
+    patches: Patches,
+    wear: WearWindow,
     failure: Option<String>,
+    /// When the failure was seen, for the retry.
+    failed_at: Option<f64>,
     started: Option<f64>,
     ready_logged: bool,
     pub stats: ClipmapStats,
 }
 
+/// The drawn patches: one entity per selected node, all sharing one grid mesh.
+#[derive(Default)]
+struct Patches {
+    mesh: Option<Handle<Mesh>>,
+    /// Each drawn patch and the height bounds its box was made from.
+    drawn: HashMap<TerrainNodeKey, (Entity, [f32; 2])>,
+    /// The render origin cell the patches are placed for.
+    placed: Option<world::CellCoord>,
+}
+
+/// Road wear around the camera ([`follow_wear`]).
+#[derive(Default)]
+struct WearWindow {
+    /// The cell and page whose road wear each wear atlas slot holds.
+    slots: [Option<(world::CellCoord, Entity)>; clipmap::WEAR_SLOTS],
+    /// Layers newly found worn bare to, for the surface table.
+    bare: Vec<u16>,
+}
+
 impl ClipmapTerrain {
     pub(super) fn owns_request(&self, id: RequestId) -> bool {
-        self.pending.contains_key(&id) || self.dropped.contains(&id)
+        self.requests.owns(id)
     }
 
     pub(super) fn receive(&mut self, id: RequestId, reply: Result<TerrainReply, String>) {
-        if self.dropped.remove(&id) {
-            return;
-        }
-
-        let Some(query) = self.pending.remove(&id) else {
+        let Some(query) = self.requests.answer(id) else {
             return;
         };
 
         match (query, reply) {
             (TerrainQuery::Roots(_), Ok(TerrainReply::Metadata(roots))) => self.adopt_roots(&roots),
             (TerrainQuery::Surfaces(_), Ok(TerrainReply::Surfaces(resources))) => {
-                if self.gpu.is_some() && self.surfaces.as_ref() != Some(&resources) {
+                if self.gpu.is_some() && self.surfaces.as_ref() != Some(&*resources) {
                     self.rebuild = true;
                 }
-                self.surfaces = Some(resources);
+                self.surfaces = Some(*resources);
             }
             (TerrainQuery::Nodes(keys), Ok(TerrainReply::Nodes(nodes))) => {
                 let found: HashSet<_> = nodes.iter().map(|(n, _)| n.descriptor.key).collect();
@@ -218,19 +231,7 @@ impl ClipmapTerrain {
             f64::from(self.cell_size),
             u32::from(NODE_SAMPLES - 1),
         );
-        let starts: Vec<_> = roots
-            .iter()
-            .flat_map(|root| {
-                let span = 1_i32 << (root.key.level - top);
-                let key = root.key;
-                (0..span * span).map(move |i| TerrainNodeKey {
-                    level: top,
-                    x: key.x * span + i % span,
-                    z: key.z * span + i / span,
-                    ..key
-                })
-            })
-            .collect();
+        let starts = nodes_at(roots, top);
 
         if self.layout.is_some() {
             // A new publication: kept as it is, unless its extent changed.
@@ -249,20 +250,11 @@ impl ClipmapTerrain {
         let Some((generation, _)) = &self.identity else {
             return false;
         };
-        match worker.send(DatabaseRequest::Terrain {
-            generation: generation.clone(),
-            query: query.clone(),
-        }) {
-            Ok(id) => {
-                self.pending.insert(id, query);
-                true
-            }
-            Err(NotSent::Full) => false,
-            Err(NotSent::Stopped) => {
-                self.fail("the world database worker stopped".into());
-                false
-            }
-        }
+        let sent = self.requests.send(worker, generation, query);
+        sent.unwrap_or_else(|e| {
+            self.fail(e);
+            false
+        })
     }
 
     fn window(&self, level: u8) -> Option<&NodeWindow> {
@@ -434,7 +426,7 @@ impl ClipmapTerrain {
     }
 
     fn clear(&mut self, commands: &mut Commands, uploads: &mut ClipmapUploads) {
-        for (_, (entity, _)) in self.patches.drain() {
+        for (_, (entity, _)) in self.patches.drawn.drain() {
             commands.entity(entity).despawn();
         }
 
@@ -445,7 +437,7 @@ impl ClipmapTerrain {
     /// A new publication of the drawn space: what is resident stays drawn until its node is
     /// read again from it. The editor's overlay belonged to the previous one.
     fn republish(&mut self) {
-        self.dropped.extend(self.pending.drain().map(|(id, _)| id));
+        self.requests.drop_all();
         self.stale.extend(self.resident.bounds.keys().copied());
         self.requested.clear();
         self.absent.clear();
@@ -554,7 +546,7 @@ fn relief(node: &TerrainNode, intervals: u32) -> Result<Decoded, String> {
 /// Road wear around the camera: each cell of the wear window whose page has a wear field holds
 /// it in its toroidal atlas slot, uploaded when the slot's page changes.
 fn follow_wear(
-    terrain: &mut ClipmapTerrain,
+    wear_window: &mut WearWindow,
     uploads: &mut ClipmapUploads,
     sources: &Query<(Entity, Ref<super::StreamedTerrainWear>)>,
     space: WorldSpaceId,
@@ -595,33 +587,31 @@ fn follow_wear(
         }
     }
 
-    let n = clipmap::WEAR_WINDOW;
-
     for dz in -half..=half {
         for dx in -half..=half {
             let cell = world::CellCoord {
                 x: at.x + dx,
                 z: at.z + dz,
             };
-            let slot = (cell.x.rem_euclid(n) + n * cell.z.rem_euclid(n)) as usize;
+            let slot = clipmap::wear_slot(cell);
 
             match pages.get(&cell) {
                 Some(&(entity, changed, wear, source)) => {
-                    if changed || terrain.wear[slot] != Some((cell, entity)) {
+                    if changed || wear_window.slots[slot] != Some((cell, entity)) {
                         uploads.push_wear(slot, wear);
-                        terrain.wear[slot] = Some((cell, entity));
+                        wear_window.slots[slot] = Some((cell, entity));
 
                         // The page's surfaces its roads wear bare to.
-                        terrain.bare.extend(wear.worn.iter().flatten().filter_map(
-                            |&(to, share)| {
+                        wear_window
+                            .bare
+                            .extend(wear.worn.iter().flatten().filter_map(|&(to, share)| {
                                 (to != world::NO_WORN_SLOT && share > 0)
                                     .then(|| source.layers.get(usize::from(to)).copied())
                                     .flatten()
-                            },
-                        ));
+                            }));
                     }
                 }
-                None => terrain.wear[slot] = None,
+                None => wear_window.slots[slot] = None,
             }
         }
     }
@@ -665,23 +655,6 @@ fn ground(
     )
 }
 
-/// Mesh tag of a patch: its level and node, as `terrain_clipmap_vertex.wesl` unpacks them.
-fn patch_tag(key: TerrainNodeKey) -> u32 {
-    debug_assert!((-8192..8192).contains(&key.x) && (-8192..8192).contains(&key.z));
-    (u32::from(key.level) << 28) | ((key.x as u32 & 0x3fff) << 14) | (key.z as u32 & 0x3fff)
-}
-
-fn patch_transform(layout: &ClipmapLayout, key: TerrainNodeKey, origin: [f64; 2]) -> Transform {
-    let size = layout.node_metres(key.level);
-    let spacing = layout.spacing(key.level) as f32;
-    Transform::from_xyz(
-        (f64::from(key.x) * size - origin[0]) as f32,
-        0.0,
-        (f64::from(key.z) * size - origin[1]) as f32,
-    )
-    .with_scale(Vec3::new(spacing, 1.0, spacing))
-}
-
 #[allow(clippy::too_many_arguments)]
 pub(super) fn update(
     mut commands: Commands,
@@ -708,42 +681,14 @@ pub(super) fn update(
     let Some(info) = catalog.world_space(space) else {
         return;
     };
+    let terrain = terrain.as_mut();
+    let now = time.elapsed_secs_f64();
     let identity = (catalog.generation_id().to_owned(), space);
-    let changed = terrain.identity.as_ref() != Some(&identity);
-
-    // Another space or cell size, a failed load or a new layout start over; a new publication
-    // of the same space is read again in place.
-    if terrain.rebuild
-        || changed
-            && (terrain.identity.as_ref().is_some_and(|(_, s)| *s != space)
-                || terrain.cell_size != info.cell_size
-                || terrain.failure.is_some()
-                || terrain.gpu.is_none())
-    {
-        terrain.clear(&mut commands, &mut uploads);
-    }
-
-    if terrain.identity.as_ref() != Some(&identity) {
-        if terrain.identity.is_some() {
-            terrain.republish();
-        }
-
-        terrain.identity = Some(identity);
-        terrain.cell_size = info.cell_size;
-        terrain.started = Some(time.elapsed_secs_f64());
-        terrain.wanted_roots = true;
-        terrain.wanted_surfaces = true;
-    }
-
-    if terrain.wanted_roots && terrain.request(&worker, TerrainQuery::Roots(space)) {
-        terrain.wanted_roots = false;
-    }
-
-    if terrain.wanted_surfaces && terrain.request(&worker, TerrainQuery::Surfaces(space)) {
-        terrain.wanted_surfaces = false;
-    }
+    terrain.follow_publication(identity, info.cell_size, now, &mut commands, &mut uploads);
+    terrain.request_metadata(&worker, space);
 
     if terrain.failure.is_some() {
+        terrain.failed_at.get_or_insert(now);
         return;
     }
 
@@ -766,7 +711,7 @@ pub(super) fn update(
         );
         uploads.target(&textures);
         terrain.gpu = Some(textures);
-        terrain.mesh = Some(meshes.add(clipmap::patch_mesh(&layout)));
+        terrain.patches.mesh = Some(meshes.add(clipmap::patch_mesh(&layout)));
     }
 
     let Some((_, camera)) = camera.iter().find(|(c, _)| c.is_active) else {
@@ -780,151 +725,19 @@ pub(super) fn update(
         f64::from(render_eye.z) + offset[1],
     );
     terrain.move_windows(&layout, [eye.x, eye.z]);
-
-    // Decoded nodes join the clipmap; received batches start decoding.
-    let mut finished = Vec::new();
-    terrain
-        .decoding
-        .retain_mut(|task| match block_on(poll_once(task)) {
-            Some(result) => {
-                finished.push(result);
-                false
-            }
-            None => true,
-        });
-
-    for result in finished {
-        match result {
-            Ok(nodes) => {
-                for node in nodes {
-                    terrain.accept(&layout, &mut uploads, node);
-                }
-            }
-            Err(e) => terrain.fail(e),
-        }
-    }
-
-    let intervals = layout.intervals;
-
-    for batch in std::mem::take(&mut terrain.received) {
-        terrain
-            .decoding
-            .push(AsyncComputeTaskPool::get().spawn(async move { decode(batch, intervals) }));
-    }
-
-    // Request what the view needs, nearest (relative to node size) first, then stale nodes it
-    // does not need but may still draw or sample.
-    let demand = terrain.demand(&layout, &ranges, eye);
-    let mut missing: Vec<_> = demand
-        .iter()
-        .copied()
-        .filter(|k| !terrain.resident.bounds.contains_key(k) || terrain.stale.contains(k))
-        .collect();
-
-    if !terrain.stale.is_empty() {
-        let demanded: HashSet<_> = demand.iter().collect();
-        missing.extend(terrain.stale.iter().filter(|k| !demanded.contains(k)));
-    }
-
-    terrain.stats.demand = demand.len();
-    terrain.stats.missing = missing.len();
-    let wanted: Vec<_> = missing
-        .into_iter()
-        .filter(|k| !terrain.requested.contains(k))
-        .collect();
-
-    for batch in wanted.chunks(BATCH) {
-        if terrain.pending.len() >= IN_FLIGHT
-            || !terrain.request(&worker, TerrainQuery::Nodes(batch.to_vec()))
-        {
-            break;
-        }
-        terrain.requested.extend(batch.iter().copied());
-    }
-
-    // Patches: one entity per selected node.
-    let patches = clipmap::select(
-        &layout,
-        &ranges,
-        &terrain.windows,
-        &terrain.starts,
-        &terrain.resident,
-        eye,
-    );
-    let selected: HashMap<_, _> = patches.iter().map(|p| (p.key, p.bounds)).collect();
-    let mut unselected = Vec::new();
-
-    for (key, (entity, _)) in &terrain.patches {
-        if !selected.contains_key(key) {
-            unselected.push(*key);
-            commands.entity(*entity).despawn();
-        }
-    }
-
-    for key in unselected {
-        terrain.patches.remove(&key);
-    }
-
-    let replace = terrain.placed != Some(origin.cell());
-
-    if replace {
-        terrain.placed = Some(origin.cell());
-        for (&key, &(entity, _)) in &terrain.patches {
-            let transform = patch_transform(&layout, key, offset);
-            commands
-                .entity(entity)
-                .insert((transform, GlobalTransform::from(transform)));
-        }
-    }
-
-    let (mesh, material) = (
-        terrain.mesh.clone().unwrap(),
-        terrain.gpu.as_ref().unwrap().material.clone(),
-    );
-    let n = layout.intervals as f32;
-    let aabb = |bounds: [f32; 2]| {
-        Aabb::from_min_max(Vec3::new(0.0, bounds[0], 0.0), Vec3::new(n, bounds[1], n))
-    };
-
-    for patch in &patches {
-        // An edit or a new publication may have moved a drawn patch's bounds.
-        if let Some((entity, bounds)) = terrain.patches.get_mut(&patch.key) {
-            if *bounds != patch.bounds {
-                *bounds = patch.bounds;
-                commands.entity(*entity).insert(aabb(patch.bounds));
-            }
-            continue;
-        }
-
-        let transform = patch_transform(&layout, patch.key, offset);
-        let entity = commands
-            .spawn((
-                Mesh3d(mesh.clone()),
-                MeshMaterial3d(material.clone()),
-                MeshTag::new(patch_tag(patch.key)),
-                transform,
-                GlobalTransform::from(transform),
-                aabb(patch.bounds),
-                NoAutoAabb,
-            ))
-            .id();
-        terrain.patches.insert(patch.key, (entity, patch.bounds));
-    }
-
-    let resident = terrain.resident.bounds.len();
-    terrain.stats.resident = resident;
-    terrain.stats.patches = patches.len();
-    terrain.stats.triangles = patches.len() * (layout.intervals * layout.intervals * 2) as usize;
+    terrain.take_decoded(&layout, &mut uploads);
+    terrain.request_nodes(&worker, &layout, &ranges, eye);
+    terrain.draw_patches(&mut commands, &layout, &ranges, eye, origin.cell(), offset);
     terrain.stats.uploads = uploads.uploaded_blocks;
     follow_wear(
-        &mut terrain,
+        &mut terrain.wear,
         &mut uploads,
         &sources,
         space,
         eye,
         info.cell_size,
     );
-    let bare = std::mem::take(&mut terrain.bare);
+    let bare = std::mem::take(&mut terrain.wear.bare);
 
     if let Some(gpu) = terrain.gpu.as_mut() {
         gpu.mark_bare_ground(bare, &mut buffers);
@@ -932,7 +745,7 @@ pub(super) fn update(
 
     let cells = origin.cell();
     let samples = |c: i32| i64::from(c) * i64::from(layout.intervals);
-    let wear = terrain.wear.map(|slot| slot.map(|(cell, _)| cell));
+    let wear = terrain.wear.slots.map(|slot| slot.map(|(cell, _)| cell));
     uploads.set_frame(&ClipmapFrame {
         eye: render_eye,
         origin_samples: [samples(cells.x), samples(cells.z)],
@@ -941,13 +754,215 @@ pub(super) fn update(
         wear: &wear,
     });
 
-    if !terrain.ready_logged && terrain.stats.missing == 0 && terrain.decoding.is_empty() {
+    if !terrain.ready_logged && !terrain.pending() {
         terrain.ready_logged = true;
-        let seconds = terrain.started.map_or(0.0, |s| time.elapsed_secs_f64() - s);
+        let seconds = terrain.started.map_or(0.0, |s| now - s);
         info!(
             "TERRAIN_V2_READY {seconds:.2} s: {} nodes resident, {} patches, {} triangles",
-            resident, terrain.stats.patches, terrain.stats.triangles
+            terrain.stats.resident, terrain.stats.patches, terrain.stats.triangles
         );
+    }
+}
+
+impl ClipmapTerrain {
+    /// Another space or cell size, a new layout or a failure some seconds old start over; a
+    /// new publication of the same space is read again in place.
+    fn follow_publication(
+        &mut self,
+        identity: (String, WorldSpaceId),
+        cell_size: f32,
+        now: f64,
+        commands: &mut Commands,
+        uploads: &mut ClipmapUploads,
+    ) {
+        let changed = self.identity.as_ref() != Some(&identity);
+        let retry = self.failed_at.is_some_and(|t| now - t >= RETRY_SECONDS);
+
+        if self.rebuild
+            || retry
+            || changed
+                && (self
+                    .identity
+                    .as_ref()
+                    .is_some_and(|(_, s)| *s != identity.1)
+                    || self.cell_size != cell_size
+                    || self.failure.is_some()
+                    || self.gpu.is_none())
+        {
+            self.clear(commands, uploads);
+        }
+
+        if self.identity.as_ref() != Some(&identity) {
+            if self.identity.is_some() {
+                self.republish();
+            }
+
+            self.identity = Some(identity);
+            self.cell_size = cell_size;
+            self.started = Some(now);
+            self.wanted_roots = true;
+            self.wanted_surfaces = true;
+        }
+    }
+
+    fn request_metadata(&mut self, worker: &WorldDatabaseWorker, space: WorldSpaceId) {
+        if self.wanted_roots && self.request(worker, TerrainQuery::Roots(space)) {
+            self.wanted_roots = false;
+        }
+
+        if self.wanted_surfaces && self.request(worker, TerrainQuery::Surfaces(space)) {
+            self.wanted_surfaces = false;
+        }
+    }
+
+    /// Decoded nodes join the clipmap; received batches start decoding.
+    fn take_decoded(&mut self, layout: &ClipmapLayout, uploads: &mut ClipmapUploads) {
+        let mut finished = Vec::new();
+        self.decoding
+            .retain_mut(|task| match block_on(poll_once(task)) {
+                Some(result) => {
+                    finished.push(result);
+                    false
+                }
+                None => true,
+            });
+
+        for result in finished {
+            match result {
+                Ok(nodes) => {
+                    for node in nodes {
+                        self.accept(layout, uploads, node);
+                    }
+                }
+                Err(e) => self.fail(e),
+            }
+        }
+
+        let intervals = layout.intervals;
+
+        for batch in std::mem::take(&mut self.received) {
+            self.decoding
+                .push(AsyncComputeTaskPool::get().spawn(async move { decode(batch, intervals) }));
+        }
+    }
+
+    /// Requests what the view needs, nearest (relative to node size) first, then stale nodes
+    /// it does not need but may still draw or sample.
+    fn request_nodes(
+        &mut self,
+        worker: &WorldDatabaseWorker,
+        layout: &ClipmapLayout,
+        ranges: &LodRanges,
+        eye: DVec3,
+    ) {
+        let demand = self.demand(layout, ranges, eye);
+        let mut missing: Vec<_> = demand
+            .iter()
+            .copied()
+            .filter(|k| !self.resident.bounds.contains_key(k) || self.stale.contains(k))
+            .collect();
+
+        if !self.stale.is_empty() {
+            let demanded: HashSet<_> = demand.iter().collect();
+            missing.extend(self.stale.iter().filter(|k| !demanded.contains(k)));
+        }
+
+        self.stats.demand = demand.len();
+        self.stats.missing = missing.len();
+        let wanted: Vec<_> = missing
+            .into_iter()
+            .filter(|k| !self.requested.contains(k))
+            .collect();
+
+        for batch in wanted.chunks(BATCH) {
+            if self.requests.len() >= IN_FLIGHT
+                || !self.request(worker, TerrainQuery::Nodes(batch.to_vec()))
+            {
+                break;
+            }
+            self.requested.extend(batch.iter().copied());
+        }
+    }
+
+    /// One patch entity per selected node, placed for the render origin.
+    fn draw_patches(
+        &mut self,
+        commands: &mut Commands,
+        layout: &ClipmapLayout,
+        ranges: &LodRanges,
+        eye: DVec3,
+        origin: world::CellCoord,
+        offset: [f64; 2],
+    ) {
+        let patches = clipmap::select(
+            layout,
+            ranges,
+            &self.windows,
+            &self.starts,
+            &self.resident,
+            eye,
+        );
+        let selected: HashSet<_> = patches.iter().map(|p| p.key).collect();
+        let drawn = &mut self.patches.drawn;
+
+        drawn.retain(|key, (entity, _)| {
+            let keep = selected.contains(key);
+
+            if !keep {
+                commands.entity(*entity).despawn();
+            }
+
+            keep
+        });
+
+        if self.patches.placed != Some(origin) {
+            self.patches.placed = Some(origin);
+
+            for (&key, &(entity, _)) in drawn.iter() {
+                let transform = clipmap::patch_transform(layout, key, offset);
+                commands
+                    .entity(entity)
+                    .insert((transform, GlobalTransform::from(transform)));
+            }
+        }
+
+        let (mesh, material) = (
+            self.patches.mesh.clone().unwrap(),
+            self.gpu.as_ref().unwrap().material.clone(),
+        );
+        let n = layout.intervals as f32;
+        let aabb = |bounds: [f32; 2]| {
+            Aabb::from_min_max(Vec3::new(0.0, bounds[0], 0.0), Vec3::new(n, bounds[1], n))
+        };
+
+        for patch in &patches {
+            // An edit or a new publication may have moved a drawn patch's bounds.
+            if let Some((entity, bounds)) = drawn.get_mut(&patch.key) {
+                if *bounds != patch.bounds {
+                    *bounds = patch.bounds;
+                    commands.entity(*entity).insert(aabb(patch.bounds));
+                }
+                continue;
+            }
+
+            let transform = clipmap::patch_transform(layout, patch.key, offset);
+            let entity = commands
+                .spawn((
+                    Mesh3d(mesh.clone()),
+                    MeshMaterial3d(material.clone()),
+                    MeshTag::new(clipmap::patch_tag(patch.key)),
+                    transform,
+                    GlobalTransform::from(transform),
+                    aabb(patch.bounds),
+                    NoAutoAabb,
+                ))
+                .id();
+            drawn.insert(patch.key, (entity, patch.bounds));
+        }
+
+        self.stats.resident = self.resident.bounds.len();
+        self.stats.patches = patches.len();
+        self.stats.triangles = patches.len() * (layout.intervals * layout.intervals * 2) as usize;
     }
 }
 
@@ -978,20 +993,6 @@ impl ClipmapTerrain {
 mod tests {
     use super::*;
 
-    #[test]
-    fn patch_tags_carry_negative_nodes() {
-        let key = TerrainNodeKey {
-            space: WorldSpaceId(1),
-            level: 5,
-            x: -5,
-            z: 4,
-        };
-        let tag = patch_tag(key);
-        assert_eq!(tag >> 28, 5);
-        assert_eq!(((tag << 4) as i32) >> 18, -5);
-        assert_eq!(((tag << 18) as i32) >> 18, 4);
-    }
-
     fn root(space: WorldSpaceId, x: i32) -> TerrainNodeDescriptor {
         TerrainNodeDescriptor {
             key: TerrainNodeKey {
@@ -1021,6 +1022,39 @@ mod tests {
         )
         .unwrap();
         TerrainNode::leaf(key, &field, NODE_SAMPLES).unwrap()
+    }
+
+    /// An overlay node the clipmap cannot draw refuses the overlay and leaves the ground and
+    /// the stream as they were.
+    #[test]
+    fn an_undrawable_overlay_is_refused_whole() {
+        let space = WorldSpaceId(1);
+        let mut terrain = ClipmapTerrain {
+            cell_size: 32.0,
+            identity: Some(("a".into(), space)),
+            ..default()
+        };
+        terrain.adopt_roots(&[root(space, 0)]);
+        let layout = terrain.layout.unwrap();
+        terrain.move_windows(&layout, [16.0, 16.0]);
+        let mut uploads = ClipmapUploads::default();
+        let key = TerrainNodeKey::leaf(space, world::CellCoord::ZERO);
+        terrain.accept(
+            &layout,
+            &mut uploads,
+            relief(&flat(key, 1.0), layout.intervals).unwrap(),
+        );
+        let coarse = TerrainHeightfield::from_heights(17, &[3.0; 17 * 17], 2.0, 4.0, 32.0).unwrap();
+        let products = Arc::new(TerrainPreviewProducts {
+            nodes: [(key, Arc::new(TerrainNode::leaf(key, &coarse, 17).unwrap()))].into(),
+            ..default()
+        });
+        assert!(terrain.set_overlay(products, &mut uploads).is_err());
+        assert!(terrain.overlay.is_none() && terrain.failure.is_none());
+        assert_eq!(
+            terrain.ground_height(Vec3::new(16.0, 0.0, 16.0), &WorldOrigin::default()),
+            Some(1.0)
+        );
     }
 
     /// The editor's overlay rewrites resident blocks at once, nodes read later take its parts,
@@ -1055,14 +1089,14 @@ mod tests {
             ..default()
         });
         let before = uploads.uploaded_blocks;
-        terrain.set_overlay(raised.clone(), &mut uploads);
+        terrain.set_overlay(raised.clone(), &mut uploads).unwrap();
         assert_eq!(uploads.uploaded_blocks, before + 1);
         assert_eq!(ground(&terrain), Some(3.0));
         assert_eq!(
             terrain.resident.bounds[&key],
             raised.nodes[&key].height_bounds
         );
-        terrain.set_overlay(raised.clone(), &mut uploads);
+        terrain.set_overlay(raised.clone(), &mut uploads).unwrap();
         assert_eq!(uploads.uploaded_blocks, before + 1, "unchanged overlay");
         terrain.accept(&layout, &mut uploads, published());
         assert_eq!(
@@ -1072,14 +1106,14 @@ mod tests {
         );
 
         // Left to the publication without an explicit baseline: read again.
-        terrain.set_overlay(Arc::default(), &mut uploads);
+        terrain.set_overlay(Arc::default(), &mut uploads).unwrap();
         assert!(terrain.stale.contains(&key));
         terrain.accept(&layout, &mut uploads, published());
         assert!(terrain.stale.is_empty());
         assert_eq!(ground(&terrain), Some(1.0));
 
         // A new publication: drawn until read again, the old one's replies dropped quietly.
-        terrain.pending.insert(9, TerrainQuery::Roots(space));
+        terrain.requests.insert(9, TerrainQuery::Roots(space));
         terrain.overlay = Some(raised);
         terrain.republish();
         assert!(terrain.stale.contains(&key) && terrain.overlay.is_none());
@@ -1094,7 +1128,7 @@ mod tests {
         assert!(!terrain.rebuild, "the same extent keeps the clipmap");
 
         // A node the new publication lacks leaves the clipmap.
-        terrain.pending.insert(10, TerrainQuery::Nodes(vec![key]));
+        terrain.requests.insert(10, TerrainQuery::Nodes(vec![key]));
         terrain.receive(10, Ok(TerrainReply::Nodes(vec![])));
         assert_eq!(ground(&terrain), None);
         terrain.adopt_roots(&[root(space, 0), root(space, 1)]);
