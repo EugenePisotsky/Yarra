@@ -9,9 +9,9 @@ use crate::rules::{
 };
 
 use crate::{
-    ActScope, Action, Condition, ContentManifest, GameContent, GameDefinitions, KeyedMap,
-    ReadScope, ScriptEngine, ScriptModule, ScriptName, Scripts, SessionState, Test, Value,
-    VariableDefinition, keyed_map,
+    ActScope, Action, AuthoredContent, Condition, ContentManifest, GameContent, GameDefinitions,
+    KeyedMap, ReadScope, ScriptEngine, ScriptModule, ScriptName, Scripts, SessionState, Test,
+    Value, VariableDefinition, keyed_map,
 };
 
 use game_types::*;
@@ -146,7 +146,7 @@ impl ScriptEngine for FixtureFormulas {
     }
 }
 
-pub fn content() -> GameContent {
+pub fn content() -> AuthoredContent {
     let mut items = example_catalog();
 
     for category in items.categories.values_mut() {
@@ -381,8 +381,7 @@ pub fn content() -> GameContent {
             },
         ],
     };
-    let mut content = GameContent {
-        text: Default::default(),
+    let core = GameContent {
         manifest: ContentManifest {
             id: ContentId([1; 16]),
             revision: 1,
@@ -406,7 +405,6 @@ pub fn content() -> GameContent {
                     name: None,
                 }
             })),
-            dialogues: keyed_map([graph]),
             variables: keyed_map([VariableDefinition {
                 id: REWARDED,
                 initial: Value::Bool(false),
@@ -421,19 +419,25 @@ pub fn content() -> GameContent {
             loot: Default::default(),
         },
     };
+    let mut content = AuthoredContent {
+        core,
+        dialogues: keyed_map([graph]),
+        text: Default::default(),
+    };
+    let messages = content
+        .text_keys()
+        .iter()
+        .map(|m| (m.key.clone(), MessageContract::default()))
+        .collect();
     content.text.add(TextContract {
         id: TextResourceId::named("core/text"),
-        messages: content
-            .text_keys()
-            .iter()
-            .map(|m| (m.key.clone(), MessageContract::default()))
-            .collect(),
+        messages,
     });
     content
 }
 
 pub fn state() -> SessionState {
-    let content = content();
+    let content = content().core;
     let mut state = SessionState::empty(42);
 
     for (id, bag) in [
@@ -494,18 +498,18 @@ pub fn state() -> SessionState {
 }
 
 /// The persuasion check behind the gate conversation's only choice.
-pub fn persuade(content: &mut GameContent) -> &mut Action {
+pub fn persuade(content: &mut AuthoredContent) -> &mut Action {
     &mut gate(content).nodes[1].actions[1]
 }
 
 /// The gate conversation's graph, to change for a test. Its contract follows on its own
 /// only through `refresh_contracts`.
-pub fn gate(content: &mut GameContent) -> &mut Dialogue {
-    content.game.dialogues.get_mut(&GATE_DIALOGUE).unwrap()
+pub fn gate(content: &mut AuthoredContent) -> &mut Dialogue {
+    content.dialogues.get_mut(&GATE_DIALOGUE).unwrap()
 }
 
 /// Contracts made again from the graphs, after a test changed one.
-pub fn refresh_contracts(content: &mut GameContent) {
-    content.game.dialogue_contracts =
-        keyed_map(content.game.dialogues.values().map(Dialogue::contract));
+pub fn refresh_contracts(content: &mut AuthoredContent) {
+    content.core.game.dialogue_contracts =
+        keyed_map(content.dialogues.values().map(Dialogue::contract));
 }

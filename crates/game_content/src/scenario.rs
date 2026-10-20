@@ -3,7 +3,7 @@ use game_types::*;
 use gameplay::actors::Position;
 use gameplay::inventory;
 use gameplay::inventory::{Inventory, Money, Wallet};
-use gameplay::{GameContent, GameSession, SessionState, ToolContent};
+use gameplay::{GameSession, SessionState, ToolContent};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
@@ -107,8 +107,9 @@ impl Scenario {
         })
     }
 
-    pub fn instantiate(&self, content: &GameContent) -> Result<gameplay::GameSession> {
-        content.validate()?;
+    /// A fresh playthrough from these starting conditions, against content checked already.
+    pub fn instantiate(&self, source: &ToolContent) -> Result<gameplay::GameSession> {
+        let content = source.content();
         let mut state = SessionState::empty(self.seed);
         state.owners = self.owners.iter().cloned().collect();
         state.variables = self
@@ -138,14 +139,13 @@ impl Scenario {
             actor.name_override = spawn.name.clone();
 
             for (resource, amount) in &spawn.resources {
-                require(
-                    actor.resources.contains_key(resource),
-                    &format!(
+                require_with(actor.resources.contains_key(resource), || {
+                    format!(
                         "actor {}: {} is not a resource",
                         spawn.id,
                         resource.as_str()
-                    ),
-                )?;
+                    )
+                })?;
                 actor.resources.insert(resource.clone(), *amount);
             }
         }
@@ -192,12 +192,12 @@ impl Scenario {
 
         contextual(
             "scenario starting state",
-            GameSession::new(ToolContent::new(content.clone())?, state),
+            GameSession::new(source.clone(), state),
         )
     }
 
     /// Run in a new isolated session. Failure never mutates an existing playthrough.
-    pub fn run(&self, content: &GameContent) -> Result<gameplay::GameSession> {
+    pub fn run(&self, content: &ToolContent) -> Result<gameplay::GameSession> {
         let mut session = self.instantiate(content)?;
 
         for (index, step) in self.steps.iter().enumerate() {

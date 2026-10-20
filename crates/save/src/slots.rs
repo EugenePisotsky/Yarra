@@ -11,7 +11,7 @@ use std::{
 };
 
 /// Bumped whenever saved state changes shape. Older saves are rejected, not migrated.
-pub const SAVE_FORMAT: u32 = 16;
+pub const SAVE_FORMAT: u32 = 17;
 
 const MAX_HEADER_BYTES: u64 = 64 * 1024;
 

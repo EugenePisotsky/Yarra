@@ -21,7 +21,7 @@ impl LoadedProject {
     /// Type errors fail; lints are returned as warnings. Locations refer to the script as
     /// authored.
     pub fn analyze_scripts(&self) -> Result<ScriptAnalysis> {
-        let modules = &self.content.game.scripts;
+        let modules = &self.content().game.scripts;
         let analyzer = std::env::var_os(ANALYZER_VARIABLE).unwrap_or_else(|| "luau-analyze".into());
         let directory = std::env::temp_dir().join(format!(
             "yarra-script-check-{}",

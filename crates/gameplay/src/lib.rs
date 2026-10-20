@@ -1,54 +1,64 @@
 //! Bevy/SQLite-free gameplay: domain rules, the in-memory playthrough and its commands.
 pub mod actors;
-mod character;
-
-pub use character::teachable;
-
-mod combat;
-mod content;
 pub mod dialogue;
 pub mod inventory;
 pub mod quests;
 pub mod rules;
-mod world;
-mod world_runtime;
-
-pub use world::*;
-
-mod conversation;
-
-pub use conversation::{ChoiceView, ConversationView, LineView};
-
-mod narrative;
-
-pub use narrative::*;
 
 #[cfg(any(test, feature = "fixtures"))]
 pub mod fixtures;
 
-mod runtime;
-mod script;
-
-pub use script::*;
-
-mod session;
-mod state;
-mod tool_content;
-mod tx;
-
-pub use tool_content::ToolContent;
-
+mod actions;
+mod authored;
+mod character;
+mod combat;
+mod commands;
+mod conditions;
+mod content;
+mod conversation;
 mod driver;
 mod graphs;
 mod keyed;
+mod narrative;
+mod runtime;
+mod script;
+mod session;
+mod state;
+mod tx;
+mod world;
+mod world_runtime;
 
-pub use content::*;
-pub use driver::*;
+pub use actions::Action;
+pub use authored::{AuthoredContent, ToolContent};
+pub use character::teachable;
+pub use commands::{Command, CommandOutcome, GameEvent};
+pub use conditions::{Condition, NamedPredicate, Participant, Test};
+
+pub use content::{
+    ContentManifest, GameContent, GameDefinitions, Value, VariableDefinition, VariableKey,
+    VariableScope,
+};
+
+pub use conversation::{ChoiceView, ConversationView, LineView};
+pub use driver::Driver;
 pub use graphs::{Graphs, MAX_LOADED_DIALOGUES};
 pub use keyed::{Keyed, KeyedMap, keyed_map};
-pub use runtime::*;
-pub use session::*;
-pub use state::*;
+
+pub use narrative::{
+    DialogueVariant, EntryPreview, EntryRule, InteractionPreview, InteractionProfile,
+};
+
+pub use runtime::{ContentIdentity, ContentSource, ConversationKey, SessionHeader};
+pub use script::{ActScope, ReadScope, ScriptEngine, ScriptModule, ScriptName, Scripts};
+pub use session::GameSession;
+pub use state::{Floor, ModifierSource, Party, SessionState};
+
+pub use world::{
+    LocationState, Movement, ObjectDefinition, ObjectKind, ObjectState, Pending, TriggerDefinition,
+    TriggerIndex, TriggerRepeat, TriggerState, WorldCommand, WorldDefinitions, WorldEvent,
+    WorldSignal, WorldState,
+};
+
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -172,8 +182,9 @@ impl GameplayError {
 }
 
 impl Rejection {
-    pub(crate) fn unless(self, holds: bool) -> Result<()> {
-        if holds { Ok(()) } else { Err(self.into()) }
+    /// Refuses with this reason when `refused` holds.
+    pub(crate) fn when(self, refused: bool) -> Result<()> {
+        if refused { Err(self.into()) } else { Ok(()) }
     }
 }
 

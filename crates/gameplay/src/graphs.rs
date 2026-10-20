@@ -1,6 +1,5 @@
-//! Dialogue graphs, read when a conversation first needs one. Content assembled by a tool
-//! holds every graph in `game.dialogues`; a session's content reads them from its source and
-//! keeps the most recently used.
+//! Dialogue graphs, read when a conversation first needs one: a session's content reads them
+//! from its source and keeps the most recently used.
 use crate::Result;
 use crate::dialogue::Dialogue;
 use game_types::DialogueId;
@@ -13,8 +12,8 @@ pub const MAX_LOADED_DIALOGUES: usize = 32;
 
 type Read = dyn FnMut(DialogueId) -> Result<Dialogue>;
 
-/// Where a content's graphs are read from, and those read lately. Not part of the content's
-/// value: a clone reads from the same place but keeps its own graphs.
+/// Where a content's graphs are read from, and those read lately. A clone reads from the
+/// same place but keeps its own graphs.
 #[derive(Default)]
 pub struct Graphs {
     read: Option<Rc<RefCell<Read>>>,
@@ -73,14 +72,6 @@ impl Clone for Graphs {
     }
 }
 
-impl PartialEq for Graphs {
-    fn eq(&self, _: &Self) -> bool {
-        true
-    }
-}
-
-impl Eq for Graphs {}
-
 impl std::fmt::Debug for Graphs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Graphs({} loaded)", self.loaded())
@@ -94,7 +85,7 @@ mod tests {
     #[test]
     fn the_graph_used_least_recently_goes_first() {
         let template =
-            crate::fixtures::content().game.dialogues[&crate::fixtures::GATE_DIALOGUE].clone();
+            crate::fixtures::content().dialogues[&crate::fixtures::GATE_DIALOGUE].clone();
         let graph = |n: usize| Dialogue {
             id: DialogueId::named(&format!("graph/{n}")),
             ..template.clone()

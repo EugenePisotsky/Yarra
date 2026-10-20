@@ -1,10 +1,14 @@
-use crate::{Asset, ContentError, Result, Scenario, contextual};
+use crate::{ContentError, Result, Scenario, contextual};
 use game_types::*;
-use gameplay::actors::{ActorTemplate, CharacterDefinition};
 use gameplay::dialogue::Dialogue;
-use gameplay::inventory::{ItemCatalog, LootTable};
+use gameplay::inventory::ItemCatalog;
 use gameplay::rules::Rules;
-use gameplay::{ContentManifest, GameContent, GameDefinitions, KeyedMap, keyed_map};
+
+use gameplay::{
+    AuthoredContent, ContentManifest, ContentSource, GameContent, GameDefinitions, Keyed, KeyedMap,
+    ToolContent, keyed_map,
+};
+
 use localization::{LanguageResource, Localization, contract_hash};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
@@ -16,7 +20,7 @@ use std::{
 };
 
 pub const SOURCE_FORMAT_VERSION: u32 = 11;
-pub(crate) const MAX_DOCUMENT_BYTES: usize = 16 * 1024 * 1024;
+const MAX_DOCUMENT_BYTES: usize = 16 * 1024 * 1024;
 const MAX_TRANSLATION_BYTES: usize = 2 * 1024 * 1024;
 const MAX_SCRIPT_BYTES: usize = 1024 * 1024;
 
@@ -95,7 +99,7 @@ fn kind(path: &str) -> Result<Option<Kind>> {
     } else if name.ends_with(".luau") {
         Kind::Script
     } else if let Some(locale) = name.strip_suffix(".ftl") {
-        crate::asset::validate_locale(locale)?;
+        localization::validate_locale(locale)?;
         Kind::Text(locale.into())
     } else if name.ends_with(".ron") {
         return Err(Invalid(format!(
@@ -107,10 +111,29 @@ fn kind(path: &str) -> Result<Option<Kind>> {
     }))
 }
 
-/// Eager authoring snapshot. Runtime uses indexed content and language repositories.
+/// Files each record under its identity, naming both files when one is defined twice.
+fn add<V: Keyed>(
+    into: &mut BTreeMap<V::Key, V>,
+    records: Vec<V>,
+    what: &str,
+    define: &mut impl FnMut(String) -> Result<()>,
+) -> Result<()>
+where
+    V::Key: std::fmt::Display,
+{
+    for record in records {
+        define(format!("{what} {}", record.key()))?;
+        into.add(record);
+    }
+
+    Ok(())
+}
+
+/// An authored project, loaded whole and checked once. Sessions play it through
+/// `ToolContent`; a published bundle is what the game reads.
 pub struct LoadedProject {
-    pub(crate) content: GameContent,
-    pub(crate) scenario: Scenario,
+    content: ToolContent,
+    scenario: Scenario,
     pub(crate) source_locale: String,
     pub(crate) translations: Vec<LanguageResource>,
     localization: Localization,
@@ -144,7 +167,7 @@ impl LoadedProject {
         let project: ProjectFile =
             ron::from_str(&text).map_err(|e| source_error(&root.join("project.ron"), e))?;
         require(!project.packages.is_empty(), "a project has packages")?;
-        crate::asset::validate_locale(&project.source_locale)?;
+        localization::validate_locale(&project.source_locale)?;
         let mut items: Option<ItemCatalog> = None;
         let mut rules: Option<Rules> = None;
         let mut actors = BTreeMap::new();
@@ -173,7 +196,7 @@ impl LoadedProject {
                 directory.as_str(),
                 TextResourceId::try_from(name.to_owned()),
             )?;
-            require(packages.insert(text_id), &format!("package {name} twice"))?;
+            require_with(packages.insert(text_id), || format!("package {name} twice"))?;
             let mut wording: BTreeMap<String, String> = BTreeMap::new();
             let files = source.files(directory)?;
 
@@ -184,7 +207,8 @@ impl LoadedProject {
                         |identity: String| match defined.insert(identity.clone(), path.clone()) {
                             Some(first) => Err(Invalid(format!(
                                 "{identity} is defined in both {first} and {path}"
-                            ))),
+                            ))
+                            .into()),
                             None => Ok(()),
                         };
                     let Some(kind) = kind(path)? else {
@@ -203,10 +227,7 @@ impl LoadedProject {
                                 world.areas.insert(area);
                             }
 
-                            for variable in package.variables {
-                                define(format!("variable {}", variable.id))?;
-                                variables.add(variable);
-                            }
+                            add(&mut variables, package.variables, "variable", &mut define)?;
                         }
                         Kind::Rules => {
                             define("the rules".into())?;
@@ -234,54 +255,49 @@ impl LoadedProject {
                                 items = Some(catalog);
                             }
                         }
-                        Kind::Actors => {
-                            for template in source.ron::<Vec<ActorTemplate>>(path)? {
-                                define(format!("actor template {}", template.id))?;
-                                actors.add(template);
-                            }
-                        }
+                        Kind::Actors => add(
+                            &mut actors,
+                            source.ron(path)?,
+                            "actor template",
+                            &mut define,
+                        )?,
                         Kind::Characters => {
-                            for character in source.ron::<Vec<CharacterDefinition>>(path)? {
-                                define(format!("character {}", character.id))?;
-                                characters.add(character);
-                            }
+                            add(&mut characters, source.ron(path)?, "character", &mut define)?
                         }
-                        Kind::Loot => {
-                            for table in source.ron::<Vec<LootTable>>(path)? {
-                                define(format!("loot table {}", table.id))?;
-                                loot.add(table);
-                            }
-                        }
+                        Kind::Loot => add(&mut loot, source.ron(path)?, "loot table", &mut define)?,
                         Kind::Quest => {
-                            let quest: gameplay::quests::Quest = source.ron(path)?;
-                            define(format!("quest {}", quest.id))?;
-                            quests.add(quest);
+                            add(&mut quests, vec![source.ron(path)?], "quest", &mut define)?
                         }
-                        Kind::Profile => {
-                            let profile: gameplay::InteractionProfile = source.ron(path)?;
-                            define(format!("interaction profile {}", profile.id))?;
-                            profiles.add(profile);
-                        }
-                        Kind::Predicate => {
-                            let predicate: gameplay::NamedPredicate = source.ron(path)?;
-                            define(format!("predicate {}", predicate.id))?;
-                            predicates.add(predicate);
-                        }
-                        Kind::Object => {
-                            let object: gameplay::ObjectDefinition = source.ron(path)?;
-                            define(format!("object {}", object.id))?;
-                            world.objects.add(object);
-                        }
-                        Kind::Trigger => {
-                            let trigger: gameplay::TriggerDefinition = source.ron(path)?;
-                            define(format!("trigger {}", trigger.id))?;
-                            world.triggers.add(trigger);
-                        }
-                        Kind::Dialogue => {
-                            let graph: Dialogue = source.ron(path)?;
-                            define(format!("dialogue {}", graph.id))?;
-                            dialogues.add(graph);
-                        }
+                        Kind::Profile => add(
+                            &mut profiles,
+                            vec![source.ron(path)?],
+                            "interaction profile",
+                            &mut define,
+                        )?,
+                        Kind::Predicate => add(
+                            &mut predicates,
+                            vec![source.ron(path)?],
+                            "predicate",
+                            &mut define,
+                        )?,
+                        Kind::Object => add(
+                            &mut world.objects,
+                            vec![source.ron(path)?],
+                            "object",
+                            &mut define,
+                        )?,
+                        Kind::Trigger => add(
+                            &mut world.triggers,
+                            vec![source.ron(path)?],
+                            "trigger",
+                            &mut define,
+                        )?,
+                        Kind::Dialogue => add(
+                            &mut dialogues,
+                            vec![source.ron::<Dialogue>(path)?],
+                            "dialogue",
+                            &mut define,
+                        )?,
                         Kind::Script => {
                             let stem = Path::new(path).file_stem().and_then(|s| s.to_str());
                             let name =
@@ -309,13 +325,12 @@ impl LoadedProject {
 
             // The source language says what messages the package has and what they take.
             let Some(source_text) = wording.get(&project.source_locale) else {
-                require(
-                    wording.is_empty(),
-                    &format!(
+                require_with(wording.is_empty(), || {
+                    format!(
                         "package {name} has translations but no {}.ftl",
                         project.source_locale
-                    ),
-                )?;
+                    )
+                })?;
                 continue;
             };
             let contract = contextual(
@@ -337,9 +352,8 @@ impl LoadedProject {
         }
 
         // Kept by identity, so neither the order of packages nor of files in them matters.
-        let content = GameContent {
+        let core = GameContent {
             manifest: project.manifest,
-            text: keyed_map(contracts),
             items: items.ok_or_else(|| Invalid("missing item catalog".into()))?,
             game: GameDefinitions {
                 world,
@@ -350,13 +364,17 @@ impl LoadedProject {
                 rules: rules.ok_or_else(|| Invalid("missing rules".into()))?,
                 actors,
                 characters,
-                dialogues,
                 variables,
                 scripts,
                 loot,
             },
             scripts: Default::default(),
             graphs: Default::default(),
+        };
+        let content = AuthoredContent {
+            core,
+            dialogues,
+            text: keyed_map(contracts),
         };
         let mut scenario: Scenario = source.ron(exercise.unwrap_or(&project.scenario))?;
 
@@ -370,8 +388,24 @@ impl LoadedProject {
         Self::from_parts(content, scenario, project.source_locale, translations)
     }
 
+    /// The definitions a playthrough reads up front.
     pub fn content(&self) -> &GameContent {
+        self.content.content()
+    }
+
+    /// The whole content: definitions, dialogue graphs and text contracts.
+    pub fn authored(&self) -> &AuthoredContent {
+        self.content.authored()
+    }
+
+    /// The content as a session's source, as a published bundle would serve it.
+    pub fn tool_content(&self) -> &ToolContent {
         &self.content
+    }
+
+    /// The mechanics' identity, which saves record.
+    pub fn fingerprint(&self) -> [u8; 32] {
+        self.content.identity().fingerprint
     }
 
     pub fn scenario(&self) -> &Scenario {
@@ -398,117 +432,42 @@ impl LoadedProject {
         self.scenario.run(&self.content)
     }
 
-    pub(crate) fn from_parts(
-        mut content: GameContent,
+    /// Checks the project once, in full: content, wording in every locale, and the scenario,
+    /// which it plays.
+    fn from_parts(
+        mut content: AuthoredContent,
         scenario: Scenario,
         source_locale: String,
         translations: Vec<LanguageResource>,
     ) -> Result<Self> {
-        content.scripts = contextual(
+        content.core.scripts = contextual(
             "scripts",
-            scripting::LuauScripts::install(content.game.scripts.values()),
+            scripting::LuauScripts::install(content.core.game.scripts.values()),
         )?;
-        contextual("game content", content.validate())?;
-        content.validate_selection_links()?;
-        crate::asset::validate_locale(&source_locale)?;
-        let mut locales = BTreeSet::new();
+        let content = contextual("game content", ToolContent::new(content))?;
+        let authored = content.authored();
 
-        for translation in &translations {
-            crate::asset::validate_locale(&translation.locale)?;
-            locales.insert(translation.locale.clone());
-            require(
-                content.text.contains_key(&translation.id),
-                "translation resource has no contract",
-            )?;
-        }
-
-        let contracts = content.text.values().cloned().collect();
-        let localization = Localization::new(&source_locale, contracts, translations.clone())?;
-        let mut warnings = Vec::new();
-
-        for reference in content.text_keys().into_iter().chain(scenario.text_keys()) {
-            require(
-                content
-                    .text
-                    .get(&reference.resource)
-                    .is_some_and(|c| c.messages.contains_key(&reference.key)),
-                &format!(
-                    "undeclared message {}/{}",
+        // A starting name is shown on its own, like the names the content defines.
+        for reference in scenario.text_keys() {
+            let message = authored
+                .text
+                .get(&reference.resource)
+                .and_then(|c| c.messages.get(&reference.key));
+            require_with(message.is_some_and(|m| m.arguments.is_empty()), || {
+                format!(
+                    "starting name {}/{} is not a message that takes no arguments",
                     reference.resource,
                     reference.key.as_str()
-                ),
-            )?;
+                )
+            })?;
         }
 
-        // Mechanical-only materialization is useful for validation/automation without packs.
-        if !translations.is_empty() {
-            localization
-                .validate_keys(content.text_keys().into_iter().chain(scenario.text_keys()))?;
-            for contract in content.text.values() {
-                let context = |locale: &str| format!("Fluent {locale}/{}", contract.id);
-                let source = contextual(
-                    context(&source_locale),
-                    localization.scope(contract.id, &source_locale),
-                )?;
-                contextual(context(&source_locale), source.validate_definitions(None))?;
-
-                for locale in locales.iter().filter(|l| **l != source_locale) {
-                    let scope =
-                        contextual(context(locale), localization.scope(contract.id, locale))?;
-                    contextual(context(locale), scope.validate_definitions(Some(&source)))?;
-
-                    for key in contract.messages.keys() {
-                        if scope.validate(key).is_err() {
-                            warnings.push(format!(
-                                "{locale}: {}/{} falls back to {source_locale}",
-                                contract.id,
-                                key.as_str()
-                            ));
-                        }
-                    }
-                }
-            }
-        }
-
-        for asset in content
-            .items
-            .categories
-            .values()
-            .cloned()
-            .map(Asset::Category)
-            .chain(content.items.items.values().cloned().map(Asset::Item))
-            .chain(content.game.actors.values().cloned().map(Asset::Actor))
-            .chain(
-                content
-                    .game
-                    .characters
-                    .values()
-                    .cloned()
-                    .map(Asset::Character),
-            )
-            .chain(std::iter::once(Asset::Rules(content.game.rules.clone())))
-            .chain(content.game.quests.values().cloned().map(Asset::Quest))
-            .chain(content.game.profiles.values().cloned().map(Asset::Profile))
-        {
-            for reference in asset.text_references() {
-                require(
-                    content.text[&reference.resource].messages[&reference.key]
-                        .arguments
-                        .is_empty(),
-                    "static display name/description cannot require arguments",
-                )?;
-            }
-        }
-
-        for reference in scenario.text_keys() {
-            require(
-                content.text[&reference.resource].messages[&reference.key]
-                    .arguments
-                    .is_empty(),
-                "starting name cannot require arguments",
-            )?;
-        }
-
+        let contracts = authored.text.values().cloned().collect();
+        let localization = Localization::new(&source_locale, contracts, translations.clone())?;
+        let referenced = authored.text_keys().into_iter().chain(scenario.text_keys());
+        localization.validate_keys(referenced)?;
+        let locales = translations.iter().map(|t| t.locale.clone()).collect();
+        let warnings = localization.check(authored.text.values(), &locales)?;
         contextual("scenario", scenario.run(&content))?;
         Ok(Self {
             content,
@@ -584,14 +543,13 @@ impl SourceReader {
     /// A path relative to the root that stays inside it.
     fn check_path(&self, path: &str) -> Result<()> {
         let relative = Path::new(path);
-        require(
+        Ok(require(
             !path.is_empty()
                 && relative
                     .components()
                     .all(|c| matches!(c, Component::Normal(_))),
             "source paths must be relative without . or ..",
-        )
-        .map_err(Into::into)
+        )?)
     }
 
     fn text(&mut self, path: &str, limit: usize) -> Result<String> {

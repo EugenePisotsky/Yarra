@@ -18,6 +18,7 @@ fn resolved_depth_is_checked_before_a_valid_local_tree_reaches_runtime() {
 
         let id = PredicateId([i; 16]);
         content
+            .core
             .game
             .predicates
             .add(NamedPredicate { id, condition });
@@ -26,6 +27,7 @@ fn resolved_depth_is_checked_before_a_valid_local_tree_reaches_runtime() {
 
     assert!(
         content
+            .core
             .validate_condition(&condition)
             .unwrap_err()
             .to_string()
@@ -34,28 +36,28 @@ fn resolved_depth_is_checked_before_a_valid_local_tree_reaches_runtime() {
 }
 
 #[test]
-fn composite_diagnostics_include_all_branches_without_changing_state() {
+fn a_group_stops_at_the_child_that_decides_it_and_changes_nothing() {
     let content = content();
     let state = state();
     let before = state.clone();
-    let condition = Condition::Any(vec![
-        Condition::HasItem {
-            definition: inventory::fixtures::KEY,
-            quantity: 2,
-        },
-        Condition::Not(Box::new(Condition::Variable {
-            variable: REWARDED,
-            of: None,
-            test: yarra_gameplay::Test::Is(yarra_gameplay::Value::Bool(true)),
-        })),
-    ]);
-    content.validate_condition(&condition).unwrap();
-    let result = content
-        .evaluate(&condition, &state, HERO, MERCHANT)
-        .unwrap();
-    assert!(result.matched);
-    assert_eq!(result.checks.len(), 2);
-    assert!(result.checks.iter().all(|c| !c.matched));
+    let holds = Condition::Variable {
+        variable: REWARDED,
+        of: None,
+        test: yarra_gameplay::Test::Is(yarra_gameplay::Value::Bool(false)),
+    };
+
+    // A child after the deciding one is not evaluated: here it would be an error.
+    let unknown = Condition::Named(PredicateId([9; 16]));
+    let evaluate = |condition: &Condition| content.core.evaluate(condition, &state, HERO, MERCHANT);
+    assert!(evaluate(&Condition::Any(vec![holds.clone(), unknown.clone()])).unwrap());
+    let fails = Condition::Not(Box::new(holds.clone()));
+    assert!(!evaluate(&Condition::All(vec![fails, unknown.clone()])).unwrap());
+    assert!(evaluate(&Condition::All(vec![holds, unknown])).is_err());
     assert_eq!(state, before);
-    assert!(content.validate_condition(&Condition::Any(vec![])).is_err());
+    assert!(
+        content
+            .core
+            .validate_condition(&Condition::Any(vec![]))
+            .is_err()
+    );
 }

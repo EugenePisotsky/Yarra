@@ -16,6 +16,16 @@ pub fn require(condition: bool, message: &str) -> Result<()> {
     }
 }
 
+/// As `require`, with a message made only when the check fails: checks on every command and
+/// stat refresh format identities, which can mean reading the shared names.
+pub fn require_with(condition: bool, message: impl FnOnce() -> String) -> Result<()> {
+    if condition {
+        Ok(())
+    } else {
+        Err(Invalid(message()))
+    }
+}
+
 /// Identities are 16 bytes. Authored content names things (`guard/gate`) and the name is
 /// hashed into those bytes; things created at runtime get random bytes. A name therefore
 /// *is* the identity: renaming something makes it a different thing.

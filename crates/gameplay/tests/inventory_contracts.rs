@@ -27,47 +27,6 @@ fn wallet(balance: u64) -> Wallet {
 }
 
 #[test]
-fn catalog_edits_validate_identity_categories_and_limits_atomically() {
-    let mut catalog = example_catalog();
-    let before = catalog.clone();
-    assert_eq!(
-        catalog.remove_category(POTIONS),
-        Err(InventoryError::CategoryInUse(POTIONS))
-    );
-    let mut invalid = catalog.item(POTION).unwrap().clone();
-    invalid.stack_limit = 0;
-    assert!(catalog.put_item(invalid).is_err());
-    assert_eq!(catalog, before);
-    let mut updated = catalog.item(POTION).unwrap().clone();
-    updated.merchant_buy_price = Some(money(12));
-    catalog.put_item(updated).unwrap();
-    assert_eq!(catalog.revision, before.revision + 1);
-    catalog.remove_item(POTION).unwrap();
-    catalog.remove_category(POTIONS).unwrap();
-    catalog.validate().unwrap();
-}
-
-#[test]
-fn category_identity_survives_title_edits() {
-    let mut catalog = example_catalog();
-    let item_before = catalog.item(POTION).unwrap().clone();
-    catalog
-        .put_category(Category {
-            id: POTIONS,
-            name: "Alchemical supplies".into(),
-        })
-        .unwrap();
-    assert_eq!(catalog.item(POTION).unwrap(), &item_before);
-    assert_eq!(catalog.categories.len(), 4);
-    let before = catalog.clone();
-    assert_eq!(
-        catalog.remove_category(POTIONS),
-        Err(InventoryError::CategoryInUse(POTIONS))
-    );
-    assert_eq!(catalog, before);
-}
-
-#[test]
 fn partial_transfers_conserve_quantity_and_stack_limits_for_every_split() {
     let catalog = example_catalog();
     for quantity in 1..=10 {
@@ -109,7 +68,7 @@ fn split_merge_filter_and_weight_agree() {
     let catalog = example_catalog();
     let mut inventory = bag();
     let first = inventory.grant(&catalog, POTION, 10).unwrap()[0];
-    let split = inventory.split_stack(&catalog, first, 3).unwrap();
+    let split = inventory.split_stack(first, 3).unwrap();
     assert_ne!(first, split);
     assert_eq!(inventory.entry(first).unwrap().quantity, 7);
     inventory.merge_stacks(&catalog, split, first).unwrap();
@@ -164,10 +123,7 @@ fn failed_transfers_and_grants_do_not_lose_items() {
     assert_eq!(source, before.0);
 
     for bad in [0, 11] {
-        assert_eq!(
-            source.remove(&catalog, id, bad),
-            Err(InventoryError::InvalidQuantity)
-        );
+        assert_eq!(source.remove(id, bad), Err(InventoryError::InvalidQuantity));
         assert_eq!(source, before.0);
     }
 }
@@ -203,7 +159,7 @@ fn quest_items_can_be_transferred_but_not_discarded_or_sold() {
     );
 
     // Quest completion can explicitly consume it.
-    destination.remove(&catalog, key, 1).unwrap();
+    destination.remove(key, 1).unwrap();
 }
 
 #[test]
@@ -334,13 +290,7 @@ fn stale_inventory_wallet_or_catalog_rejects_quote_without_mutation() {
                 fixture.merchant.grant(&fixture.catalog, KEY, 1).unwrap();
             }
             1 => fixture.customer_wallet.credit(money(1)).unwrap(),
-            _ => fixture
-                .catalog
-                .put_category(Category {
-                    id: CategoryId::random(),
-                    name: "Food".into(),
-                })
-                .unwrap(),
+            _ => fixture.catalog.revision += 1,
         }
 
         let before = (

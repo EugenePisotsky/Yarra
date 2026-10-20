@@ -159,6 +159,16 @@ fn locale(value: &str) -> Result<LanguageIdentifier> {
         .map_err(|_| LocalizationError::Locale(value.into()))
 }
 
+/// A locale written as its canonical identifier, as file names and manifests name one:
+/// `en`, `uk`, `pt-BR`.
+pub fn validate_locale(value: &str) -> Result<()> {
+    if value.len() > 64 || locale(value)? != value {
+        return Err(LocalizationError::Locale(value.into()));
+    }
+
+    Ok(())
+}
+
 impl Localization {
     /// Over contracts and wording already in memory, as tools have them.
     pub fn new(
@@ -264,6 +274,50 @@ impl Localization {
             .add_resource(parsed)
             .map_err(|e| resource_error(format!("{e:?}")))?;
         Ok(scope)
+    }
+
+    /// Checks every resource's wording: the source language's resolves and fits each
+    /// message's contract, and each translation fits the source's. Returns the messages a
+    /// translation leaves to another locale.
+    pub fn check<'a>(
+        &self,
+        contracts: impl IntoIterator<Item = &'a TextContract>,
+        locales: &BTreeSet<String>,
+    ) -> Result<Vec<String>> {
+        let mut fallbacks = Vec::new();
+
+        for contract in contracts {
+            let in_context = |locale: &str| {
+                let context = format!("{locale}/{}", contract.id);
+                move |error: LocalizationError| resource_error(format!("{context}: {error}"))
+            };
+            let source_locale = self.source_locale.as_str();
+            let source = self
+                .scope(contract.id, source_locale)
+                .and_then(|source| source.validate_definitions(None).map(|()| source))
+                .map_err(in_context(source_locale))?;
+
+            for locale in locales.iter().filter(|l| *l != source_locale) {
+                let scope = self
+                    .scope(contract.id, locale)
+                    .map_err(in_context(locale))?;
+                scope
+                    .validate_definitions(Some(&source))
+                    .map_err(in_context(locale))?;
+
+                for key in contract.messages.keys() {
+                    if scope.validate(key).is_err() {
+                        fallbacks.push(format!(
+                            "{locale}: {}/{} falls back to {source_locale}",
+                            contract.id,
+                            key.as_str()
+                        ));
+                    }
+                }
+            }
+        }
+
+        Ok(fallbacks)
     }
 
     /// Every message exists in the source language and can be said in full there.

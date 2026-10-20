@@ -118,7 +118,7 @@ impl Story {
 
         let saves = SaveDirectory::new(work.join("saves"), 3).map_err(|e| text(&e))?;
         let locale = project.source_locale().to_owned();
-        let driver = Driver::new(session, TIME_STEP_MS, 0).map_err(|e| text(&e))?;
+        let driver = Driver::new(session, TIME_STEP_MS).map_err(|e| text(&e))?;
         let mut story = Self {
             project,
             driver,

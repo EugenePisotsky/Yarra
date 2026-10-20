@@ -3,7 +3,7 @@ use gameplay::dialogue::HistoryEvent;
 use gameplay::inventory::fixtures::{KEY, SWORD};
 
 use gameplay::{
-    Action, Command, Condition, ConversationKey, GameContent, GameEvent, GameSession, KeyedMap,
+    Action, AuthoredContent, Command, Condition, ConversationKey, GameEvent, GameSession, KeyedMap,
     ScriptModule, ScriptName, ToolContent, Value, VariableDefinition, fixtures::*,
 };
 
@@ -44,8 +44,8 @@ end
 return gate
 "#;
 
-fn module<'a>(content: &'a mut GameContent, name: &str) -> &'a mut ScriptModule {
-    content.game.scripts.get_mut(&key(name)).unwrap()
+fn module<'a>(content: &'a mut AuthoredContent, name: &str) -> &'a mut ScriptModule {
+    content.core.game.scripts.get_mut(&key(name)).unwrap()
 }
 
 fn script(name: &str) -> ScriptName {
@@ -53,14 +53,14 @@ fn script(name: &str) -> ScriptName {
 }
 
 /// The fixture conversation, with its choice decided and carried out by scripts.
-fn content(source: &str, action: &str) -> GameContent {
+fn content(source: &str, action: &str) -> AuthoredContent {
     let mut content = gameplay::fixtures::content();
 
     for (name, initial) in [
         ("old_gate/visits", Value::Int(0)),
         ("old_gate/password", Value::Text(String::new())),
     ] {
-        content.game.variables.add(VariableDefinition {
+        content.core.game.variables.add(VariableDefinition {
             id: VariableId::try_from(name.to_owned()).unwrap(),
             initial,
             scope: Default::default(),
@@ -71,7 +71,7 @@ fn content(source: &str, action: &str) -> GameContent {
         ("old_gate/thanked", Value::Bool(false)),
         ("old_gate/favours", Value::Int(0)),
     ] {
-        content.game.variables.add(VariableDefinition {
+        content.core.game.variables.add(VariableDefinition {
             id: VariableId::try_from(name.to_owned()).unwrap(),
             initial,
             scope: gameplay::VariableScope::Actor,
@@ -79,11 +79,11 @@ fn content(source: &str, action: &str) -> GameContent {
     }
 
     // Beside the rules module the fixture already carries.
-    content.game.scripts.add(ScriptModule {
+    content.core.game.scripts.add(ScriptModule {
         name: key("gate"),
         source: source.into(),
     });
-    content.scripts = LuauScripts::install(content.game.scripts.values()).unwrap();
+    content.core.scripts = LuauScripts::install(content.core.game.scripts.values()).unwrap();
     let choice = &mut gate(&mut content).nodes[1];
     choice.condition = Some(Condition::Script(script("gate.has_key")));
     choice.actions = vec![Action::Script(script(action))];
@@ -97,7 +97,7 @@ const TALK: ConversationKey = ConversationKey {
     speaker: MERCHANT,
 };
 
-fn at_choice(content: GameContent) -> GameSession {
+fn at_choice(content: AuthoredContent) -> GameSession {
     let mut session = GameSession::new(ToolContent::new(content).unwrap(), state()).unwrap();
     session
         .apply(Command::StartDialogue {
@@ -262,7 +262,7 @@ fn conditions_are_read_only_strict_and_bounded() {
         let content = content(&source, "gate.hand_over");
         let state = state();
         let before = state.clone();
-        let result = content.evaluate(
+        let result = content.core.evaluate(
             &Condition::Script(script("gate.has_key")),
             &state,
             HERO,
@@ -271,7 +271,7 @@ fn conditions_are_read_only_strict_and_bounded() {
 
         match result {
             // The first case is a plain false: effect functions do not exist for conditions.
-            Ok(evaluation) => assert!(!evaluation.matched && body.contains("~= nil"), "{body}"),
+            Ok(holds) => assert!(!holds && body.contains("~= nil"), "{body}"),
             Err(error) => {
                 let error = error.to_string();
                 assert!(error.contains(expected), "{body}: {error}");
@@ -322,9 +322,9 @@ fn nothing_a_script_keeps_survives_to_the_next_call() {
     for _ in 0..3 {
         assert!(
             content
+                .core
                 .evaluate(&condition, &state, HERO, MERCHANT)
                 .unwrap()
-                .matched
         );
     }
 
@@ -336,7 +336,6 @@ fn nothing_a_script_keeps_survives_to_the_next_call() {
             .content()
             .evaluate(&condition, session.state(), HERO, MERCHANT)
             .unwrap()
-            .matched
     );
 }
 
@@ -393,7 +392,7 @@ fn publication_rejects_broken_modules_and_missing_functions() {
             source: source.into(),
         }]
     };
-    let error = |source: &str| LuauScripts::new(&module(source)).err().unwrap();
+    let error = |source: &str| LuauScripts::new(&module(source)).err().unwrap().0;
     assert!(error("local gate = {").contains("script gate"));
     assert!(error("return 5").contains("table of functions"));
     assert!(error("return { ready = true }").contains("not a function"));
@@ -406,7 +405,7 @@ fn publication_rejects_broken_modules_and_missing_functions() {
             .to_string()
             .contains("unknown script gate.missing")
     );
-    content.scripts = Default::default();
+    content.core.scripts = Default::default();
     assert!(
         content
             .validate()
@@ -441,6 +440,7 @@ fn the_type_definitions_list_exactly_the_functions_scripts_are_given() {
     };
     let reads = listed(
         content
+            .core
             .evaluate(
                 &Condition::Script(script("gate.read_names")),
                 &state(),
@@ -513,7 +513,7 @@ end
 return gate
 "#;
     let mut content = content(source, "gate.hand_over");
-    content.game.world.areas.insert(POST);
+    content.core.game.world.areas.insert(POST);
     content.validate().unwrap();
     let mut session = at_choice(content);
     let outcome = choose(&mut session).unwrap();
@@ -566,8 +566,8 @@ fn the_luau_rules_compute_what_the_fixture_formulas_do() {
     hero.level = 3;
     hero.base.insert(key("vitality"), 17);
     hero.skills.insert(key("swordsmanship"), 2);
-    let luau = LuauScripts::new(content.game.scripts.values()).unwrap();
-    let rules = &content.game.rules;
+    let luau = LuauScripts::new(content.core.game.scripts.values()).unwrap();
+    let rules = &content.core.game.rules;
     let hero = state.actors[&HERO].clone();
     let sheet = Sheet {
         level: hero.level,
@@ -695,7 +695,7 @@ fn a_playthrough_opened_with_changed_formulas_takes_them_up() {
     let before = "40 + c.stats.vitality * 5";
     assert!(rules.source.contains(before));
     rules.source = rules.source.replace(before, "10 + c.stats.vitality * 2");
-    content.scripts = LuauScripts::install(content.game.scripts.values()).unwrap();
+    content.core.scripts = LuauScripts::install(content.core.game.scripts.values()).unwrap();
 
     // The fixture state was worked out with the old formula, as a save made before the
     // change would have been.
@@ -710,10 +710,10 @@ fn formulas_that_do_not_answer_properly_are_errors() {
     let broken = |rules: &str| {
         let mut content = gameplay::fixtures::content();
         module(&mut content, "rules").source = rules.into();
-        content.scripts = LuauScripts::install(content.game.scripts.values()).unwrap();
+        content.core.scripts = LuauScripts::install(content.core.game.scripts.values()).unwrap();
         let mut state = gameplay::SessionState::empty(1);
         state
-            .spawn(&content, TRAVELLER, HERO)
+            .spawn(&content.core, TRAVELLER, HERO)
             .map(|_| ())
             .unwrap_err()
             .to_string()
@@ -747,7 +747,7 @@ fn formulas_that_do_not_answer_properly_are_errors() {
     let mut content = gameplay::fixtures::content();
     module(&mut content, "rules").source =
         "local rules = {}\nfunction rules.derive(c) return {} end\nreturn rules".into();
-    content.scripts = LuauScripts::install(content.game.scripts.values()).unwrap();
+    content.core.scripts = LuauScripts::install(content.core.game.scripts.values()).unwrap();
     let error = content.validate().unwrap_err().to_string();
     assert!(error.contains("unknown script rules.check"), "{error}");
 }
@@ -762,13 +762,13 @@ fn working_out_a_whole_population_in_luau_stays_cheap() {
         let mut id = [9u8; 16];
         id[..4].copy_from_slice(&n.to_le_bytes());
         state
-            .spawn(&content, TRAVELLER, game_types::ActorId(id))
+            .spawn(&content.core, TRAVELLER, game_types::ActorId(id))
             .unwrap();
     }
 
     let spawned = started.elapsed();
     let started = std::time::Instant::now();
-    state.validate(&content).unwrap();
+    state.validate(&content.core).unwrap();
     let checked = started.elapsed();
     println!(
         "{POPULATION} characters: spawn {spawned:?}, full check {checked:?} ({:?} per derive)",
@@ -794,7 +794,7 @@ fn strike(actor: game_types::ActorId, target: game_types::ActorId) -> Command {
 #[test]
 fn abilities_written_in_luau_fight_the_same_fight_as_the_fixture_ones() {
     let start = state();
-    let fight = |content: GameContent| {
+    let fight = |content: AuthoredContent| {
         let mut session =
             GameSession::new(ToolContent::new(content).unwrap(), start.clone()).unwrap();
         session.apply(strike(HERO, MERCHANT)).unwrap();
@@ -842,7 +842,7 @@ function abilities.second_wind(game: Game, scene: Scene) end
 return abilities
 "#
     .into();
-    content.scripts = LuauScripts::install(content.game.scripts.values()).unwrap();
+    content.core.scripts = LuauScripts::install(content.core.game.scripts.values()).unwrap();
     let mut session = GameSession::new(ToolContent::new(content).unwrap(), state()).unwrap();
     session.apply(strike(HERO, MERCHANT)).unwrap();
     session
@@ -899,9 +899,9 @@ return gate
 "#;
     let stranger = game_types::ActorId::named("stranger");
     let content = content(BEFRIEND, "gate.befriend");
-    assert!(!content.game.characters.contains_key(&stranger));
+    assert!(!content.core.game.characters.contains_key(&stranger));
     let mut state = state();
-    state.spawn(&content, TRAVELLER, stranger).unwrap();
+    state.spawn(&content.core, TRAVELLER, stranger).unwrap();
     let mut session = GameSession::new(ToolContent::new(content).unwrap(), state).unwrap();
     session
         .apply(Command::StartDialogue {

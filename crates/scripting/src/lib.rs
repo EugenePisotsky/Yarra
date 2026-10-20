@@ -310,9 +310,9 @@ fn add_effects<'s>(
             let amount = i32::try_from(amount)
                 .map_err(|_| mlua::Error::runtime("amount is out of range"))?;
             apply(
-                id(actor)?,
+                player(),
                 Action::ChangeResource {
-                    of: Participant::Player,
+                    of: Participant::Actor(id(actor)?),
                     resource: key(resource)?,
                     amount,
                 },
@@ -328,9 +328,9 @@ fn add_effects<'s>(
                     .transpose()
                     .map_err(|_| mlua::Error::runtime("duration is out of range"))?;
                 apply(
-                    id(actor)?,
+                    player(),
                     Action::ApplyEffect {
-                        of: Participant::Player,
+                        of: Participant::Actor(id(actor)?),
                         effect: key(effect)?,
                         duration_ms,
                     },
@@ -342,9 +342,9 @@ fn add_effects<'s>(
         "remove_effect",
         scope.create_function(move |_, (actor, effect): (String, String)| {
             apply(
-                id(actor)?,
+                player(),
                 Action::RemoveEffect {
-                    of: Participant::Player,
+                    of: Participant::Actor(id(actor)?),
                     effect: key(effect)?,
                 },
             )
@@ -461,7 +461,11 @@ fn add_effects<'s>(
 impl LuauScripts {
     /// Compiles every module and records what each exports. A module is a chunk returning
     /// a table of functions; anything else is an authoring error reported here.
-    pub fn new<'a>(modules: impl IntoIterator<Item = &'a ScriptModule>) -> Result<Self, String> {
+    pub fn new<'a>(modules: impl IntoIterator<Item = &'a ScriptModule>) -> Result<Self, Invalid> {
+        Self::compile(modules).map_err(Invalid)
+    }
+
+    fn compile<'a>(modules: impl IntoIterator<Item = &'a ScriptModule>) -> Result<Self, String> {
         let lua = Lua::new();
 
         // Chance and time come from the host, so a replay after loading behaves the same.
@@ -547,7 +551,7 @@ impl LuauScripts {
     /// The engine as content carries it.
     pub fn install<'a>(
         modules: impl IntoIterator<Item = &'a ScriptModule>,
-    ) -> Result<Scripts, String> {
+    ) -> Result<Scripts, Invalid> {
         Ok(Scripts::new(Rc::new(Self::new(modules)?)))
     }
 

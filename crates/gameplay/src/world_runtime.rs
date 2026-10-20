@@ -1,8 +1,10 @@
 //! What happens in the world as commands are accepted: occupancy reports, movement, object
 //! commands, and running the triggers that listen for the resulting signals.
-use crate::Result;
-use crate::tx::Tx;
-use crate::*;
+use crate::{
+    ConversationKey, GameContent, GameEvent, Movement, Pending, Rejection, Result, SessionState,
+    TriggerIndex, WorldCommand, WorldEvent, WorldSignal, inventory, quests, tx::Tx,
+};
+
 use game_types::*;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -164,9 +166,7 @@ fn fail_move(tx: &mut Tx, actor: ActorId, events: &mut Vec<GameEvent>) {
 /// Runs one trigger if it may fire. Its actions take effect together or not at all; a
 /// failure is reported and leaves the trigger free to fire another time.
 fn run_trigger(content: &GameContent, tx: &mut Tx, id: TriggerId, events: &mut Vec<GameEvent>) {
-    let savepoint = tx.savepoint();
-    let mark = events.len();
-    let result = (|| -> Result<bool> {
+    let result = tx.attempt(events, |tx, events| {
         let d = content.trigger(id)?;
         let mut progress = tx.trigger(id);
 
@@ -175,16 +175,14 @@ fn run_trigger(content: &GameContent, tx: &mut Tx, id: TriggerId, events: &mut V
         }
 
         if let Some(condition) = &d.condition
-            && !content
-                .evaluate(condition, tx, d.player, d.speaker())?
-                .matched
+            && !content.evaluate(condition, tx, d.player, d.speaker())?
         {
             return Ok(false);
         }
 
         for action in &d.actions {
             let (player, speaker, nobody) = (d.player, d.speaker(), &crate::script::NOBODY);
-            crate::session::run_action(content, tx, player, speaker, nobody, action, events)?;
+            crate::actions::run_action(content, tx, player, speaker, nobody, action, events)?;
         }
 
         progress.fired = progress
@@ -194,18 +192,12 @@ fn run_trigger(content: &GameContent, tx: &mut Tx, id: TriggerId, events: &mut V
         progress.last_fired = Some(tx.time);
         tx.put_trigger(progress);
         Ok(true)
-    })();
+    });
 
     match result {
-        Ok(fired) => {
-            tx.release(savepoint);
-            if fired {
-                events.push(GameEvent::World(WorldEvent::TriggerFired(id)));
-            }
-        }
+        Ok(true) => events.push(GameEvent::World(WorldEvent::TriggerFired(id))),
+        Ok(false) => {}
         Err(error) => {
-            tx.rollback_to(savepoint);
-            events.truncate(mark);
             events.push(GameEvent::World(WorldEvent::TriggerFailed {
                 trigger: id,
                 reason: error.to_string(),
@@ -243,8 +235,6 @@ pub(crate) fn process_next(
             participant,
             speaker,
         } => {
-            let savepoint = tx.savepoint();
-            let mark = events.len();
             let key = ConversationKey {
                 dialogue,
                 participant,
@@ -252,16 +242,15 @@ pub(crate) fn process_next(
             };
 
             // A graph that cannot be read refuses the conversation like any other reason.
-            match crate::conversation::start(content, tx, key, &Default::default(), events) {
-                Ok(()) => tx.release(savepoint),
-                Err(error) => {
-                    tx.rollback_to(savepoint);
-                    events.truncate(mark);
-                    events.push(GameEvent::World(WorldEvent::DialogueRefused {
-                        dialogue,
-                        reason: error.to_string(),
-                    }));
-                }
+            let started = tx.attempt(events, |tx, events| {
+                crate::conversation::start(content, tx, key, &Default::default(), events)
+            });
+
+            if let Err(error) = started {
+                events.push(GameEvent::World(WorldEvent::DialogueRefused {
+                    dialogue,
+                    reason: error.to_string(),
+                }));
             }
         }
     }
@@ -341,21 +330,16 @@ pub(crate) fn apply(
         | WorldCommand::SetLocked { object, .. }
         | WorldCommand::Destroy { object } => {
             let o = tx.object_mut(content, object)?;
-            Rejection::Destroyed(object).unless(!o.destroyed)?;
+            Rejection::Destroyed(object).when(o.destroyed)?;
 
             match command {
                 WorldCommand::Open { .. } => {
-                    Rejection::Locked(object).unless(!o.locked)?;
+                    Rejection::Locked(object).when(o.locked)?;
                     o.open = true;
                     crate::character::fill_container(content, tx, object)?;
                 }
                 WorldCommand::Close { .. } => o.open = false,
-                WorldCommand::SetLocked { locked, .. } => {
-                    o.locked = locked;
-                    if locked {
-                        o.open = false;
-                    }
-                }
+                WorldCommand::SetLocked { locked, .. } => o.set_locked(locked),
                 WorldCommand::Destroy { .. } => {
                     o.destroyed = true;
                     o.open = false;

@@ -1,9 +1,8 @@
-//! Standalone item catalogs, inventories and fixed-price trading.
+//! Item catalogs, inventories, wallets and fixed-price trading.
 //!
-//! No ECS, database, UI or combat dependencies. Gameplay authorizes access before
-//! invoking commands. Public records are import/export DTOs; validate imported
-//! data before use. All commands validate their inputs and leave them unchanged
-//! on error. Persistence must commit all affected records together.
+//! Operations check what they are given and change nothing when they fail. The session
+//! authorizes access, and runs them inside a command, which undoes them with everything else
+//! when the command fails. An inventory is checked in full when a playthrough is loaded.
 mod catalog;
 
 #[cfg(any(test, feature = "fixtures"))]

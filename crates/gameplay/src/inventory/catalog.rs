@@ -141,44 +141,4 @@ impl ItemCatalog {
         let category = self.categories.get(&id);
         category.ok_or(InventoryError::UnknownCategory(id))
     }
-
-    /// Add or replace by identity. Changing the title preserves item references.
-    pub fn put_category(&mut self, category: Category) -> Result<()> {
-        let mut next = self.clone();
-        next.categories.insert(category.id, category);
-        self.replace(next)
-    }
-
-    /// Add or update by identity.
-    pub fn put_item(&mut self, item: ItemDefinition) -> Result<()> {
-        let mut next = self.clone();
-        next.items.insert(item.id, item);
-        self.replace(next)
-    }
-
-    pub fn remove_item(&mut self, id: ItemDefinitionId) -> Result<()> {
-        self.item(id)?;
-        let mut next = self.clone();
-        next.items.remove(&id);
-        self.replace(next)
-    }
-
-    pub fn remove_category(&mut self, id: CategoryId) -> Result<()> {
-        self.category(id)?;
-
-        if self.items.values().any(|item| item.category == id) {
-            return Err(InventoryError::CategoryInUse(id));
-        }
-
-        let mut next = self.clone();
-        next.categories.remove(&id);
-        self.replace(next)
-    }
-
-    fn replace(&mut self, mut next: Self) -> Result<()> {
-        next.revision = next_revision(self.revision)?;
-        next.validate()?;
-        *self = next;
-        Ok(())
-    }
 }

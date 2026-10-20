@@ -73,7 +73,7 @@ pub fn quote_trade(
     customer_wallet: &Wallet,
     offer: &TradeOffer,
 ) -> Result<TradeQuote> {
-    validate_pair(catalog, merchant, customer)?;
+    validate_pair(merchant, customer)?;
     merchant_wallet.validate()?;
     customer_wallet.validate()?;
 

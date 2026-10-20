@@ -8,16 +8,13 @@ mod support;
 use support::Temp;
 
 #[test]
-fn retained_generation_restores_without_sources_and_missing_generation_fails() {
+fn a_bundle_restores_a_save_without_sources_and_a_missing_bundle_fails() {
     let temp = Temp::new();
     let project = LoadedProject::load_directory(temp.source()).unwrap();
     let bundle = temp.0.join("bundle.sqlite");
     project.build(&bundle).unwrap();
-    let library = ContentLibrary::new(temp.0.join("retained")).unwrap();
-    let identity = library.retain(&bundle).unwrap();
-    assert_eq!(library.retain(&bundle).unwrap(), identity);
     let mut session = GameSession::new(
-        library.open(&identity).unwrap(),
+        ContentRepository::open(&bundle).unwrap(),
         project.start().unwrap().into_state(),
     )
     .unwrap();
@@ -32,14 +29,14 @@ fn retained_generation_restores_without_sources_and_missing_generation_fails() {
         .save(SaveSlot::Manual(1), &session, "Original generation")
         .unwrap();
     std::fs::remove_dir_all(temp.0.join("source")).unwrap();
-    std::fs::remove_file(bundle).unwrap();
     drop(session);
     drop(project);
-    let loaded = library.load(&saves, SaveSlot::Manual(1)).unwrap();
+    let repository = ContentRepository::open(&bundle).unwrap();
+    let loaded = saves.load(SaveSlot::Manual(1), repository).unwrap();
     assert_eq!(loaded.state(), &expected);
     drop(loaded);
-    std::fs::remove_dir_all(temp.0.join("retained")).unwrap();
-    assert!(library.load(&saves, SaveSlot::Manual(1)).is_err());
+    std::fs::remove_file(&bundle).unwrap();
+    assert!(ContentRepository::open(&bundle).is_err());
 }
 
 #[test]
@@ -53,17 +50,15 @@ fn authored_operations_run_through_published_content_and_the_shared_driver() {
     }
 
     let time = session.header().time;
-    let mut driver = Driver::new(session, 20, 3).unwrap();
+    let mut driver = Driver::new(session, 20).unwrap();
     assert_eq!(
         driver
             .advance_until(10, |s| s.time.0 >= time.0 + 100)
             .unwrap(),
         5
     );
-    assert_eq!(driver.trace().len(), 3);
     assert!(driver.advance_until(2, |_| false).is_err());
     let previous = driver.session().header();
-    let trace = driver.trace().len();
     assert!(
         driver
             .submit(Command::UseItem {
@@ -73,5 +68,4 @@ fn authored_operations_run_through_published_content_and_the_shared_driver() {
             .is_err()
     );
     assert_eq!(driver.session().header(), previous);
-    assert_eq!(driver.trace().len(), trace);
 }

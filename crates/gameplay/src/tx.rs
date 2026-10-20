@@ -1,11 +1,16 @@
 //! One command's view of the state. Every write first remembers the record it replaces, so a
 //! rejected command restores the state exactly, and an accepted one knows precisely what it
 //! changed. Cost follows the records a command touches, not the size of the playthrough.
-use crate::actors::{Actor, Relationship, RelationshipKey};
-use crate::dialogue::{Conversation, History, HistoryKey, Interaction, InteractionKey};
-use crate::inventory::{Inventory, Wallet};
-use crate::rules::RandomState;
-use crate::{Result, *};
+use crate::{
+    ConversationKey, Floor, GameContent, GameEvent, LocationState, Movement, ObjectState, Party,
+    Pending, Result, SessionState, TriggerState, Value, VariableKey, WorldSignal,
+    actors::{Actor, Relationship, RelationshipKey},
+    dialogue::{Conversation, History, HistoryKey, Interaction, InteractionKey},
+    inventory::{Inventory, Wallet},
+    quests,
+    rules::RandomState,
+};
+
 use game_types::*;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -150,18 +155,40 @@ impl<'a> Tx<'a> {
         self.before.restore(self.state);
     }
 
-    /// Start a nested scope that can be undone on its own, keeping earlier work of the command.
-    pub fn savepoint(&mut self) -> Savepoint {
+    /// Runs `work` as a nested scope: it takes effect whole, or on an error what it changed
+    /// and the events it reported are undone, the command's earlier work kept, and the error
+    /// returned.
+    pub fn attempt<T>(
+        &mut self,
+        events: &mut Vec<GameEvent>,
+        work: impl FnOnce(&mut Self, &mut Vec<GameEvent>) -> Result<T>,
+    ) -> Result<T> {
+        let savepoint = self.savepoint();
+        let mark = events.len();
+        let result = work(self, events);
+
+        match result {
+            Ok(_) => self.release(savepoint),
+            Err(_) => {
+                self.rollback_to(savepoint);
+                events.truncate(mark);
+            }
+        }
+
+        result
+    }
+
+    fn savepoint(&mut self) -> Savepoint {
         let fresh = Before::new(self.state);
         Savepoint(std::mem::replace(&mut self.before, fresh))
     }
 
-    pub fn release(&mut self, savepoint: Savepoint) {
+    fn release(&mut self, savepoint: Savepoint) {
         let nested = std::mem::replace(&mut self.before, savepoint.0);
         nested.merge_into(&mut self.before);
     }
 
-    pub fn rollback_to(&mut self, savepoint: Savepoint) {
+    fn rollback_to(&mut self, savepoint: Savepoint) {
         let nested = std::mem::replace(&mut self.before, savepoint.0);
         nested.restore(self.state);
     }
@@ -202,6 +229,30 @@ impl<'a> Tx<'a> {
             .inventories
             .get_mut(&id)
             .expect("checked inventory"))
+    }
+
+    /// Two inventories changed together, as a transfer between them changes both.
+    pub fn inventory_pair_mut<T>(
+        &mut self,
+        first: InventoryId,
+        second: InventoryId,
+        work: impl FnOnce(&mut Inventory, &mut Inventory) -> Result<T>,
+    ) -> Result<T> {
+        if first == second {
+            return Err(crate::inventory::InventoryError::SameParticipant.into());
+        }
+
+        self.inventory_mut(first)?;
+        self.inventory_mut(second)?;
+
+        // The second is set aside for the borrow; it goes back whatever `work` does.
+        let mut other = self.state.inventories.remove(&second).expect("checked");
+        let result = work(
+            self.state.inventories.get_mut(&first).expect("checked"),
+            &mut other,
+        );
+        self.state.inventories.insert(second, other);
+        result
     }
 
     /// Adds an inventory that did not exist: one opened for the first time.

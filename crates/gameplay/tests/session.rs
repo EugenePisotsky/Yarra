@@ -6,7 +6,7 @@ use yarra_gameplay::{fixtures::*, *};
 
 type Result<T> = yarra_gameplay::Result<T>;
 
-fn new(content: GameContent, state: SessionState) -> Result<GameSession> {
+fn new(content: AuthoredContent, state: SessionState) -> Result<GameSession> {
     GameSession::new(ToolContent::new(content)?, state)
 }
 
@@ -285,6 +285,7 @@ fn timed_effects_derive_from_explicit_time() {
     let source = session();
     let mut content = content();
     content
+        .core
         .items
         .items
         .get_mut(&POTION)
@@ -339,7 +340,7 @@ fn the_fingerprint_does_not_depend_on_which_names_were_parsed() {
     // Named in code only, so nothing has told the process this name yet.
     const NAMED: &str = "fingerprint/named_in_code";
     let mut content = content();
-    content.game.variables.add(VariableDefinition {
+    content.core.game.variables.add(VariableDefinition {
         id: VariableId::named(NAMED),
         initial: Value::Bool(false),
         scope: Default::default(),
@@ -420,7 +421,7 @@ fn an_actor_can_stand_in_any_number_of_areas_at_once() {
     let areas: std::collections::BTreeSet<AreaId> = (0..40)
         .map(|n| AreaId::try_from(format!("overlap/{n}")).unwrap())
         .collect();
-    content.game.world.areas.extend(areas.iter().copied());
+    content.core.game.world.areas.extend(areas.iter().copied());
     let mut session = new(content.clone(), state()).unwrap();
     session
         .apply(Command::World(WorldCommand::Observe {
@@ -463,7 +464,7 @@ fn dialogue_graphs_load_on_first_use_and_stay_cached() {
         graphs: graphs.clone(),
     };
     let mut session = GameSession::new(source, state()).unwrap();
-    assert!(session.content().game.dialogues.is_empty());
+    assert_eq!(session.content().graphs.loaded(), 0);
     let potion = session.state().carried(HERO).unwrap().entries[0].id;
     session
         .apply(Command::UseItem {
@@ -488,13 +489,13 @@ fn dialogue_graphs_load_on_first_use_and_stay_cached() {
     // A restored playthrough reloads the graph of its active conversation only.
     let saved = serde_json::to_vec(session.state()).unwrap();
     let restored: SessionState = serde_json::from_slice(&saved).unwrap();
-    assert_eq!(&restored, session.state());
     let again = std::rc::Rc::new(std::cell::Cell::new(0));
     let source = Counting {
         inner: ToolContent::new(content()).unwrap(),
         graphs: again.clone(),
     };
-    GameSession::new(source, restored).unwrap();
+    let restored = GameSession::new(source, restored).unwrap();
+    assert_eq!(restored.state(), session.state());
     assert_eq!(again.get(), 1);
 }
 
@@ -536,9 +537,9 @@ fn command_cost_does_not_grow_with_the_population() {
         let mut id = [7u8; 16];
         id[..4].copy_from_slice(&n.to_le_bytes());
         let id = ActorId(id);
-        state.spawn(&content, TRAVELLER, id).unwrap();
+        state.spawn(&content.core, TRAVELLER, id).unwrap();
         let mut bag = Inventory::new(OwnerRef::actor(id), InventoryRole::Carried);
-        bag.grant(&content.items, POTION, 5).unwrap();
+        bag.grant(&content.core.items, POTION, 5).unwrap();
         state.add_inventory(bag);
     }
 
@@ -641,11 +642,11 @@ mod party {
     fn session(party: &[ActorId], stranger: bool) -> GameSession {
         let mut content = content();
         let graph = banter();
-        content.game.dialogue_contracts.add(graph.contract());
-        content.game.dialogues.add(graph);
-        let mut character = content.character(COMPANION).unwrap().clone();
+        content.core.game.dialogue_contracts.add(graph.contract());
+        content.dialogues.add(graph);
+        let mut character = content.core.character(COMPANION).unwrap().clone();
         character.id = STRANGER;
-        content.game.characters.add(character);
+        content.core.game.characters.add(character);
         let mut state = state();
 
         if stranger {
@@ -856,9 +857,9 @@ mod variables {
 
     const VISITS: VariableId = VariableId::named("old_gate/visits");
 
-    fn with_counter(actions: Vec<Action>) -> GameContent {
+    fn with_counter(actions: Vec<Action>) -> AuthoredContent {
         let mut content = content();
-        content.game.variables.add(VariableDefinition {
+        content.core.game.variables.add(VariableDefinition {
             id: VISITS,
             initial: Value::Int(0),
             scope: Default::default(),
@@ -886,7 +887,6 @@ mod variables {
             .content()
             .evaluate(&condition, session.state(), HERO, MERCHANT)
             .unwrap()
-            .matched
     }
 
     #[test]
@@ -943,7 +943,7 @@ mod variables {
             of: None,
             test: Test::AtLeast(1),
         };
-        assert!(content.validate_condition(&at_least).is_err());
+        assert!(content.core.validate_condition(&at_least).is_err());
 
         // Saved state with a value of the wrong type is rejected when loaded.
         let mut state = state();
@@ -955,13 +955,13 @@ mod variables {
 
     /// The gate choice insults whoever is spoken to, and is only offered to those not yet
     /// insulted.
-    fn insulting() -> GameContent {
+    fn insulting() -> AuthoredContent {
         let mut content = with_counter(vec![Action::Set {
             variable: INSULTED,
             of: Some(Participant::Speaker),
             value: Value::Bool(true),
         }]);
-        content.game.variables.add(VariableDefinition {
+        content.core.game.variables.add(VariableDefinition {
             id: INSULTED,
             initial: Value::Bool(false),
             scope: VariableScope::Actor,
@@ -1032,10 +1032,8 @@ mod variables {
 
         // The values survive a save.
         let saved = serde_json::to_vec(state).unwrap();
-        assert_eq!(
-            &serde_json::from_slice::<SessionState>(&saved).unwrap(),
-            state
-        );
+        let loaded = serde_json::from_slice::<SessionState>(&saved).unwrap();
+        assert_eq!(loaded.variables, state.variables);
 
         // A per-actor variable cannot be read without saying whose.
         assert!(state.variable(session.content(), INSULTED).is_err());

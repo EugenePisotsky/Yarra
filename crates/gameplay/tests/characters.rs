@@ -11,7 +11,7 @@ const TALK: ConversationKey = ConversationKey {
     speaker: MERCHANT,
 };
 
-fn new(content: GameContent) -> GameSession {
+fn new(content: AuthoredContent) -> GameSession {
     GameSession::new(ToolContent::new(content).unwrap(), state()).unwrap()
 }
 
@@ -20,7 +20,7 @@ fn session() -> GameSession {
 }
 
 /// The fixture conversation with its one choice doing `actions`, always on offer.
-fn offering(actions: Vec<Action>) -> GameContent {
+fn offering(actions: Vec<Action>) -> AuthoredContent {
     let mut content = content();
     let graph = gate(&mut content);
     graph.repeat = dialogue::RepeatPolicy::Always;
@@ -212,7 +212,7 @@ fn effects_tick_and_end_in_order_of_time_and_only_their_bearers_are_looked_at() 
 fn a_step_of_time_carries_out_everything_due_in_it_however_much() {
     // A salve that heals every millisecond: twenty seconds are 20,000 ticks in one step.
     let mut healing = offering(vec![effect("poisoned", None)]);
-    let effects = &mut healing.game.rules.effects;
+    let effects = &mut healing.core.game.rules.effects;
     let salve = effects
         .iter_mut()
         .find(|e| e.id == key("poisoned"))
@@ -234,7 +234,7 @@ fn a_step_of_time_carries_out_everything_due_in_it_however_much() {
     // Only something that takes no time at all could keep a step from ending, and the
     // rules refuse it.
     let mut content = content();
-    content.game.rules.abilities[0].duration_ms = 0;
+    content.core.game.rules.abilities[0].duration_ms = 0;
     let error = ToolContent::new(content).err().unwrap().to_string();
     assert!(error.contains("takes 1 ms"), "{error}");
 }
@@ -266,7 +266,7 @@ fn losing_the_last_of_the_life_resource_is_death() {
     let mut content = content();
 
     // A trigger hears of the death like any other event.
-    content.game.world.triggers.add(TriggerDefinition {
+    content.core.game.world.triggers.add(TriggerDefinition {
         id: TriggerId::named("old_gate/mourn"),
         player: HERO,
         speaker: None,
@@ -287,7 +287,7 @@ fn losing_the_last_of_the_life_resource_is_death() {
     };
     let state = session.state().clone();
     let mut tuned = offering(vec![drain, effect("poisoned", None)]);
-    tuned.game.world = session.content().game.world.clone();
+    tuned.core.game.world = session.content().game.world.clone();
     session = GameSession::new(ToolContent::new(tuned).unwrap(), state).unwrap();
     pick(&mut session).unwrap();
     assert_eq!(stat(&session, HERO, "health"), 2);
@@ -400,7 +400,6 @@ fn a_trainer_teaches_what_the_class_allows_for_learning_points() {
                 MERCHANT,
             )
             .unwrap()
-            .matched
     };
     let mut session = session();
     assert!(!can_learn(&session, "persuasion"));
@@ -446,11 +445,11 @@ fn a_trainer_teaches_what_the_class_allows_for_learning_points() {
 
     // A scholar cannot learn it at all, whatever points there are.
     let mut content = offering(vec![award(100), teach("swordsmanship")]);
-    content.game.actors.get_mut(&TRAVELLER).unwrap().class = key("scholar");
+    content.core.game.actors.get_mut(&TRAVELLER).unwrap().class = key("scholar");
     let mut state = SessionState::empty(1);
 
     for id in [HERO, MERCHANT] {
-        state.spawn(&content, TRAVELLER, id).unwrap();
+        state.spawn(&content.core, TRAVELLER, id).unwrap();
     }
 
     state.party.members.insert(HERO);
@@ -475,7 +474,6 @@ fn gold_is_paid_from_the_party_purse() {
                 MERCHANT,
             )
             .unwrap()
-            .matched
     };
     assert!(gold(&session, 100) && !gold(&session, 101));
     run(&mut session, vec![Action::Pay { amount: 30 }]).unwrap();
@@ -504,7 +502,7 @@ fn the_party_holds_four_and_one_of_them_is_steered() {
     let extras: Vec<ActorId> = (1..=3u8).map(|n| ActorId([n; 16])).collect();
 
     for id in &extras {
-        state.spawn(&content, TRAVELLER, *id).unwrap();
+        state.spawn(&content.core, TRAVELLER, *id).unwrap();
     }
 
     let mut session = GameSession::new(ToolContent::new(content).unwrap(), state).unwrap();
@@ -639,16 +637,22 @@ fn a_saved_character_is_brought_in_line_with_the_rules_or_refused_on_load() {
         })
         .is_err()
     );
-    assert!(
-        open(|a| a.effects.push(rules::ActiveEffect {
+
+    // Indexes are not saved: a session works them out again from what they index.
+    let effect = open(|a| {
+        a.effects.push(rules::ActiveEffect {
             effect: key("fortified"),
             expires_at: Some(GameTime(5)),
             next_tick: None,
-        }))
-        .is_err()
-    );
+        })
+    })
+    .unwrap();
+    assert!(effect.state().timed.contains(&HERO));
     let saved = serde_json::to_string(&good).unwrap();
-    assert_eq!(serde_json::from_str::<SessionState>(&saved).unwrap(), good);
+    let loaded = serde_json::from_str::<SessionState>(&saved).unwrap();
+    assert!(loaded.carried.is_empty());
+    let loaded = GameSession::new(ToolContent::new(content.clone()).unwrap(), loaded).unwrap();
+    assert_eq!(loaded.state(), &good);
 }
 
 #[test]
@@ -747,9 +751,9 @@ mod unopened {
     const TRUNK: ObjectId = ObjectId::named("old_gate/trunk");
     const TRUNK_BAG: InventoryId = InventoryId::named("old_gate/trunk");
 
-    fn armed() -> GameContent {
+    fn armed() -> AuthoredContent {
         let mut content = content();
-        content.game.loot.add(LootTable {
+        content.core.game.loot.add(LootTable {
             id: STOCK,
             entries: vec![
                 LootEntry {
@@ -764,12 +768,12 @@ mod unopened {
                 },
             ],
         });
-        let mut guard = content.game.actors[&TRAVELLER].clone();
+        let mut guard = content.core.game.actors[&TRAVELLER].clone();
         guard.id = GUARD;
         guard.equipment = vec![SWORD];
         guard.loot = Some(STOCK);
-        content.game.actors.add(guard);
-        content.game.world.objects.add(ObjectDefinition {
+        content.core.game.actors.add(guard);
+        content.core.game.world.objects.add(ObjectDefinition {
             id: TRUNK,
             name: "Trunk".into(),
             kind: ObjectKind::Container {
@@ -787,7 +791,7 @@ mod unopened {
         let ids: Vec<ActorId> = (1..=count).map(|n| ActorId([n; 16])).collect();
 
         for id in &ids {
-            state.spawn(&content, GUARD, *id).unwrap();
+            state.spawn(&content.core, GUARD, *id).unwrap();
         }
 
         (state, ids)
@@ -1000,7 +1004,7 @@ mod unopened {
 #[test]
 fn item_commands_cost_the_same_in_a_large_catalog() {
     let mut content = content();
-    let template = content.items.items.values().next().unwrap().clone();
+    let template = content.core.items.items.values().next().unwrap().clone();
 
     // As many as a catalog may hold.
     for n in 0..9_997u32 {
@@ -1008,7 +1012,7 @@ fn item_commands_cost_the_same_in_a_large_catalog() {
         let mut id = [3u8; 16];
         id[..4].copy_from_slice(&n.to_le_bytes());
         item.id = ItemDefinitionId(id);
-        content.items.items.add(item);
+        content.core.items.items.add(item);
     }
 
     let mut session = GameSession::new(ToolContent::new(content).unwrap(), state()).unwrap();
