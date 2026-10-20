@@ -28,6 +28,9 @@ struct Surface {
     /// What light wear tramples it to: a surface key.
     #[serde(default)]
     trampled: Option<String>,
+    /// How far feet press into it, in metres; most ground is firm.
+    #[serde(default)]
+    soft_depth: f32,
 }
 
 pub(crate) struct TerrainPack {
@@ -76,6 +79,7 @@ impl TerrainPack {
                 normal_strength: s.normal_strength,
                 roughness_min: s.roughness[0],
                 roughness_max: s.roughness[1],
+                soft_depth: s.soft_depth,
             })
             .collect();
         let layers = surfaces

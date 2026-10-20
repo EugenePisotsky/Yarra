@@ -52,9 +52,9 @@ pub const MAX_DECODED_PAGE_BYTES: u64 = 64 * 1024 * 1024;
 
 /// Versions of everything a project or runtime database stores, its blobs included
 /// ([`codec`]): any change to a stored type bumps one.
-pub const PROJECT_SCHEMA_VERSION: i64 = 33;
+pub const PROJECT_SCHEMA_VERSION: i64 = 34;
 
-pub const RUNTIME_SCHEMA_VERSION: i64 = 34;
+pub const RUNTIME_SCHEMA_VERSION: i64 = 35;
 
 #[cfg(test)]
 mod tests;

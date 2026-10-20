@@ -56,8 +56,8 @@ pub(crate) fn write_terrain_catalog(
         transaction.execute(
             "INSERT INTO terrain_surfaces( \
                 surface_id, surface_key, display_name, tile_size, anti_tiling, normal_y_sign, \
-                normal_strength, roughness_min, roughness_max \
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                normal_strength, roughness_min, roughness_max, soft_depth \
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 surface.id.0.as_slice(),
                 surface.key,
@@ -68,6 +68,7 @@ pub(crate) fn write_terrain_catalog(
                 surface.normal_strength,
                 surface.roughness_min,
                 surface.roughness_max,
+                surface.soft_depth,
             ],
         )?;
     }
@@ -136,7 +137,7 @@ pub(crate) fn query_all_terrain_surfaces(
 ) -> Result<Vec<TerrainSurface>, WorldDbError> {
     let mut statement = connection.prepare(
         "SELECT surface_id, surface_key, display_name, tile_size, anti_tiling, normal_y_sign, \
-                normal_strength, roughness_min, roughness_max \
+                normal_strength, roughness_min, roughness_max, soft_depth \
          FROM terrain_surfaces ORDER BY surface_id",
     )?;
     Ok(statement
@@ -157,6 +158,7 @@ pub(crate) fn terrain_surface_from_row(
         normal_strength: row.get(6)?,
         roughness_min: row.get(7)?,
         roughness_max: row.get(8)?,
+        soft_depth: row.get(9)?,
     })
 }
 

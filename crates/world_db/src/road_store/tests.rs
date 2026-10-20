@@ -165,6 +165,7 @@ fn project() -> ProjectDocument {
                 normal_strength: 1.0,
                 roughness_min: 0.0,
                 roughness_max: 1.0,
+                soft_depth: 0.0,
             })
             .collect(),
         terrain_texture_sets: vec![],

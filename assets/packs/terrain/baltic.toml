@@ -311,3 +311,4 @@ normal_strength = 0.4
 roughness = [0.65, 0.95]
 blend_height = 0.3
 anti_tiling = true
+soft_depth = 0.25

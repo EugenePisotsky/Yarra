@@ -40,6 +40,8 @@ pub struct TerrainSurface {
     pub normal_strength: f32,
     pub roughness_min: f32,
     pub roughness_max: f32,
+    /// How far feet press into the ground, in metres: deep for snow, 0 for firm ground.
+    pub soft_depth: f32,
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -85,6 +85,7 @@ impl Fixture {
                 normal_strength: 1.0,
                 roughness_min: 0.0,
                 roughness_max: 1.0,
+                soft_depth: 0.0,
             }],
             terrain_texture_sets: Vec::new(),
             terrain_texture_layers: Vec::new(),

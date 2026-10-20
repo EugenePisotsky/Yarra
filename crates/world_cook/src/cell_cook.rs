@@ -658,6 +658,7 @@ fn hash_terrain_catalog(hasher: &mut blake3::Hasher, header: &RuntimeHeader) {
             surface.normal_strength,
             surface.roughness_min,
             surface.roughness_max,
+            surface.soft_depth,
         ] {
             hasher.update(&value.to_bits().to_le_bytes());
         }
@@ -719,6 +720,7 @@ fn validate_terrain_surface(surface: &TerrainSurface) -> Result<()> {
         || !surface.roughness_max.is_finite()
         || !(0.0..=1.0).contains(&surface.roughness_min)
         || !(surface.roughness_min..=1.0).contains(&surface.roughness_max)
+        || !(0.0..=2.0).contains(&surface.soft_depth)
     {
         bail!("terrain surface {:?} is invalid", surface.id);
     }
