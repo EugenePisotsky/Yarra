@@ -4,6 +4,17 @@ Open work only, by area. What was decided and why is in [Decisions](DECISIONS.md
 is laid out is in [Architecture](ARCHITECTURE.md). Remove an item when it is done; record a
 decision when one is made.
 
+## Bugs
+
+- **Distant terrain shadows usually do not show.** The GPU horizon search runs once per relief and
+  light direction and completes, but the map it wrote is then overwritten in place (most likely
+  the image's CPU data, all "open", uploaded again into the same texture), and since the texture
+  keeps its identity the search counts as done and never runs again. Runs where the overwrite
+  lands before the search ends (seen under heavy CPU load) do show the ridges' shadows; keeping
+  the search running shows them every time (`central-far` at phase 0.34). Present before the
+  October 20 cleanup. Fix: keep the map's results out of the CPU image (e.g. a GPU-only texture
+  the search owns, bound in its place), or rerun the search when the image is uploaded again.
+
 ## Look and content
 
 - **Trees.** Pines in the vegetation kit, in small steps from the longleaf forms towards Scots pine
