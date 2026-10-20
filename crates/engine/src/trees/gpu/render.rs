@@ -325,6 +325,12 @@ fn log_counts(gpu: &mut TreeGpu, layout: &super::layout::Layout) {
     }
 }
 
+/// Bytes per instance of the fade states (one u32) and of the transforms the compute pass
+/// writes for the draws (three vec4 rows, `shaders/tree/lod.wesl`).
+const STATE_BYTES: u64 = std::mem::size_of::<u32>() as u64;
+
+const TRANSFORM_BYTES: u64 = 3 * std::mem::size_of::<[f32; 4]>() as u64;
+
 #[allow(clippy::too_many_arguments)] // The pool, layout, frame and GPU resources it writes.
 fn prepare(
     frame: Res<TreeGpuFrame>,
@@ -338,39 +344,61 @@ fn prepare(
     (meshes, allocator): (Res<RenderAssets<RenderMesh>>, Res<MeshAllocator>),
 ) {
     let gpu = gpu.as_mut();
-    let mut regroup = false;
+    let next = layout.layout.clone();
+    let mut regroup = gpu.upload_pool(&shared, &device, &queue);
+    regroup |= gpu.upload_layout(&next, &device, &queue);
 
-    // The pool: a new buffer takes everything, and every fade restarts.
-    {
+    if bevy::log::tracing::enabled!(bevy::log::Level::DEBUG) {
+        log_counts(gpu, &next);
+    }
+
+    gpu.write_args(&next, &queue, &meshes, &allocator);
+    gpu.write_camera(&frame, &next, &device, &queue);
+
+    if regroup || gpu.compute_group.is_none() {
+        gpu.rebind(&device, &cache, &pipelines);
+    }
+
+    gpu.active = frame.view.is_some()
+        && gpu.entries_len > 0
+        && cache.get_compute_pipeline(pipelines.lod).is_some()
+        && cache.get_compute_pipeline(pipelines.finalize).is_some();
+}
+
+impl TreeGpu {
+    /// The pool's changes: a new buffer takes everything, and every fade restarts. True when
+    /// a buffer the bind groups hold was replaced.
+    fn upload_pool(
+        &mut self,
+        shared: &SharedPool,
+        device: &RenderDevice,
+        queue: &RenderQueue,
+    ) -> bool {
         let mut data = shared.0.lock().unwrap();
-        let bytes = data.instances.len() as u64 * std::mem::size_of::<GpuInstance>() as u64;
-        let grown = gpu
+        let count = data.instances.len() as u64;
+        let instance_bytes = std::mem::size_of::<GpuInstance>() as u64;
+        let usage = BufferUsages::STORAGE;
+        let grown = self
             .instances
-            .reserve(&device, "tree pool", BufferUsages::STORAGE, bytes);
-        let states_grown = gpu.states.reserve(
-            &device,
-            "tree fade states",
-            BufferUsages::STORAGE,
-            data.instances.len() as u64 * 4,
-        );
-        regroup |= gpu.transforms.reserve(
-            &device,
-            "tree transforms",
-            BufferUsages::STORAGE,
-            data.instances.len() as u64 * 48,
-        );
-        let origin_bytes = data.origins.len() as u64 * 16;
-        let origins_grown =
-            gpu.origins
-                .reserve(&device, "tree origins", BufferUsages::STORAGE, origin_bytes);
-        regroup |= grown || states_grown || origins_grown;
-        let uploads = data.take_uploads(grown || states_grown || origins_grown);
+            .reserve(device, "tree pool", usage, count * instance_bytes);
+        let states_grown =
+            self.states
+                .reserve(device, "tree fade states", usage, count * STATE_BYTES);
+        let transforms_grown =
+            self.transforms
+                .reserve(device, "tree transforms", usage, count * TRANSFORM_BYTES);
+        let origin_bytes = std::mem::size_of_val(data.origins.as_slice()) as u64;
+        let origins_grown = self
+            .origins
+            .reserve(device, "tree origins", usage, origin_bytes);
+        let everything = grown || states_grown || origins_grown;
+        let uploads = data.take_uploads(everything);
         drop(data);
 
         for (start, instances) in &uploads.instances {
             queue.write_buffer(
-                gpu.instances.get(),
-                u64::from(*start) * std::mem::size_of::<GpuInstance>() as u64,
+                self.instances.get(),
+                u64::from(*start) * instance_bytes,
                 bytemuck::cast_slice(instances),
             );
         }
@@ -378,180 +406,206 @@ fn prepare(
         for range in &uploads.restart {
             let zeros = vec![0u32; range.len()];
             queue.write_buffer(
-                gpu.states.get(),
-                u64::from(range.start) * 4,
+                self.states.get(),
+                u64::from(range.start) * STATE_BYTES,
                 bytemuck::cast_slice(&zeros),
             );
         }
 
         if let Some(origins) = &uploads.origins {
-            queue.write_buffer(gpu.origins.get(), 0, bytemuck::cast_slice(origins));
+            queue.write_buffer(self.origins.get(), 0, bytemuck::cast_slice(origins));
         }
 
-        gpu.instances_len = uploads.len;
+        self.instances_len = uploads.len;
+        everything || transforms_grown
     }
 
-    // The layout: forms, entries and room for every view's records and counters.
-    let next = layout.layout.clone();
+    /// A new layout's forms and buckets, and room for every view's records, counters and
+    /// draws. True when a buffer the bind groups hold was replaced.
+    fn upload_layout(
+        &mut self,
+        next: &Arc<super::layout::Layout>,
+        device: &RenderDevice,
+        queue: &RenderQueue,
+    ) -> bool {
+        if self.layout.as_ref().is_some_and(|l| Arc::ptr_eq(l, next)) {
+            return false;
+        }
 
-    if gpu.layout.as_ref().is_none_or(|l| !Arc::ptr_eq(l, &next)) {
-        let forms: Vec<GpuForm> = next.forms.clone();
-        regroup |= gpu.forms.reserve(
-            &device,
+        let mut regroup = false;
+        let forms: &[GpuForm] = &next.forms;
+        regroup |= self.forms.reserve(
+            device,
             "tree forms",
             BufferUsages::STORAGE,
-            std::mem::size_of_val(forms.as_slice()) as u64,
+            std::mem::size_of_val(forms) as u64,
         );
 
         if !forms.is_empty() {
-            queue.write_buffer(gpu.forms.get(), 0, bytemuck::cast_slice(&forms));
+            queue.write_buffer(self.forms.get(), 0, bytemuck::cast_slice(forms));
         }
 
         let buckets: &[GpuBucket] = &next.buckets;
-        regroup |= gpu.buckets.reserve(
-            &device,
+        regroup |= self.buckets.reserve(
+            device,
             "tree buckets",
             BufferUsages::STORAGE,
             std::mem::size_of_val(buckets) as u64,
         );
 
         if !buckets.is_empty() {
-            queue.write_buffer(gpu.buckets.get(), 0, bytemuck::cast_slice(buckets));
+            queue.write_buffer(self.buckets.get(), 0, bytemuck::cast_slice(buckets));
         }
 
         let views = VIEWS as u64;
-        regroup |= gpu.counters.reserve(
-            &device,
+        let word = std::mem::size_of::<u32>() as u64;
+        regroup |= self.counters.reserve(
+            device,
             "tree bucket counters",
             BufferUsages::STORAGE | BufferUsages::COPY_SRC,
-            views * next.buckets.len() as u64 * 4,
+            views * next.buckets.len() as u64 * word,
         );
-        regroup |= gpu.records.reserve(
-            &device,
+        regroup |= self.records.reserve(
+            device,
             "tree records",
             BufferUsages::STORAGE,
-            views * u64::from(next.records_per_view) * 4,
+            views * u64::from(next.records_per_view) * word,
         );
-        regroup |= gpu.args.reserve(
-            &device,
+        regroup |= self.args.reserve(
+            device,
             "tree draws",
             BufferUsages::STORAGE | BufferUsages::INDIRECT,
             views * next.entries.len() as u64 * ARGS_BYTES,
         );
-        gpu.entries_len = next.entries.len() as u32;
-        gpu.layout = Some(next.clone());
-        gpu.args_written.clear();
+        self.entries_len = next.entries.len() as u32;
+        self.layout = Some(next.clone());
+        self.args_written.clear();
 
-        if gpu.readback.mapped.is_none() {
-            gpu.readback.buffer = Some(device.create_buffer(&BufferDescriptor {
+        if self.readback.mapped.is_none() {
+            self.readback.buffer = Some(device.create_buffer(&BufferDescriptor {
                 label: Some("tree bucket counts readback"),
-                size: gpu.counters.bytes,
+                size: self.counters.bytes,
                 usage: BufferUsages::MAP_READ | BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             }));
-            gpu.readback.copied = false;
+            self.readback.copied = false;
+        }
+
+        regroup
+    }
+
+    /// The draws' fixed arguments, rewritten whenever a mesh moves or arrives.
+    fn write_args(
+        &mut self,
+        next: &super::layout::Layout,
+        queue: &RenderQueue,
+        meshes: &RenderAssets<RenderMesh>,
+        allocator: &MeshAllocator,
+    ) {
+        let mut args = Vec::with_capacity(VIEWS * next.entries.len());
+
+        for view in 0..VIEWS as u32 {
+            for (entry, bucket) in next.entries.iter().zip(&next.buckets) {
+                let (count, first, base) =
+                    mesh_args(entry_mesh(entry), meshes, allocator).unwrap_or((0, 0, 0));
+                args.push([
+                    count,
+                    0,
+                    first,
+                    base as u32,
+                    view * next.records_per_view + bucket.records,
+                ]);
+            }
+        }
+
+        if args != self.args_written && !args.is_empty() {
+            queue.write_buffer(self.args.get(), 0, bytemuck::cast_slice(&args));
+            self.args_written = args;
         }
     }
 
-    if bevy::log::tracing::enabled!(bevy::log::Level::DEBUG) {
-        log_counts(gpu, &next);
-    }
+    /// This frame's view and shadow views, as the compute pass reads them.
+    fn write_camera(
+        &mut self,
+        frame: &TreeGpuFrame,
+        next: &super::layout::Layout,
+        device: &RenderDevice,
+        queue: &RenderQueue,
+    ) {
+        self.camera.reserve(
+            device,
+            "tree LOD camera",
+            BufferUsages::UNIFORM,
+            std::mem::size_of::<GpuCamera>() as u64,
+        );
+        let mut camera = GpuCamera {
+            eye_dt: [0.0; 4],
+            planes: [[0.0; 4]; 6],
+            shadow_planes: [[0.0; 4]; 6 * MAX_SHADOW_VIEWS],
+            shadow_receivers: [[0.0; 4]; 3 * MAX_SHADOW_VIEWS],
+            counts: [0, 0, frame.shadow_lod, next.records_per_view],
+            sizes: [next.buckets.len() as u32, 0, u32::from(frame.hidden), 0],
+        };
+        self.shadow_views.clear();
 
-    // The draws' fixed arguments, rewritten whenever a mesh moves or arrives.
-    let mut args = Vec::with_capacity(VIEWS * next.entries.len());
+        if let Some(view) = &frame.view {
+            camera.eye_dt = view.eye.extend(frame.dt).to_array();
+            camera.planes = view.planes.map(|p| p.to_array());
 
-    for view in 0..VIEWS as u32 {
-        for (entry, bucket) in next.entries.iter().zip(&next.buckets) {
-            let (count, first, base) =
-                mesh_args(entry_mesh(entry), &meshes, &allocator).unwrap_or((0, 0, 0));
-            args.push([
-                count,
-                0,
-                first,
-                base as u32,
-                view * next.records_per_view + bucket.records,
-            ]);
-        }
-    }
+            for (i, cascade) in view.cascades.iter().enumerate() {
+                for (p, plane) in cascade.planes.iter().enumerate() {
+                    camera.shadow_planes[i * 6 + p] = plane.to_array();
+                }
 
-    if args != gpu.args_written && !args.is_empty() {
-        queue.write_buffer(gpu.args.get(), 0, bytemuck::cast_slice(&args));
-        gpu.args_written = args;
-    }
+                for (p, plane) in cascade.receivers.iter().enumerate() {
+                    camera.shadow_receivers[i * 3 + p] = plane.to_array();
+                }
 
-    // This frame's view.
-    gpu.camera.reserve(
-        &device,
-        "tree LOD camera",
-        BufferUsages::UNIFORM,
-        std::mem::size_of::<GpuCamera>() as u64,
-    );
-    let mut camera = GpuCamera {
-        eye_dt: [0.0; 4],
-        planes: [[0.0; 4]; 6],
-        shadow_planes: [[0.0; 4]; 6 * MAX_SHADOW_VIEWS],
-        shadow_receivers: [[0.0; 4]; 3 * MAX_SHADOW_VIEWS],
-        counts: [0, 0, frame.shadow_lod, next.records_per_view],
-        sizes: [next.buckets.len() as u32, 0, u32::from(frame.hidden), 0],
-    };
-    gpu.shadow_views.clear();
-
-    if let Some(view) = &frame.view {
-        camera.eye_dt = view.eye.extend(frame.dt).to_array();
-        camera.planes = view.planes.map(|p| p.to_array());
-
-        for (i, cascade) in view.cascades.iter().enumerate() {
-            for (p, plane) in cascade.planes.iter().enumerate() {
-                camera.shadow_planes[i * 6 + p] = plane.to_array();
+                self.shadow_views.insert(cascade.retained, i);
             }
 
-            for (p, plane) in cascade.receivers.iter().enumerate() {
-                camera.shadow_receivers[i * 3 + p] = plane.to_array();
-            }
-
-            gpu.shadow_views.insert(cascade.retained, i);
+            camera.counts[0] = self.instances_len;
+            camera.counts[1] = view.cascades.len() as u32;
         }
 
-        camera.counts[0] = gpu.instances_len;
-        camera.counts[1] = view.cascades.len() as u32;
+        queue.write_buffer(self.camera.get(), 0, bytemuck::bytes_of(&camera));
     }
 
-    queue.write_buffer(gpu.camera.get(), 0, bytemuck::bytes_of(&camera));
-
-    if regroup || gpu.compute_group.is_none() {
+    /// The compute pass's and the draws' bind groups, after their buffers changed.
+    fn rebind(
+        &mut self,
+        device: &RenderDevice,
+        cache: &PipelineCache,
+        pipelines: &TreeGpuPipelines,
+    ) {
         let layout = cache.get_bind_group_layout(&pipelines.compute_layout);
-        gpu.compute_group = Some(device.create_bind_group(
+        self.compute_group = Some(device.create_bind_group(
             "tree LOD",
             &layout,
             &BindGroupEntries::sequential((
-                gpu.camera.get().as_entire_binding(),
-                gpu.instances.get().as_entire_binding(),
-                gpu.origins.get().as_entire_binding(),
-                gpu.forms.get().as_entire_binding(),
-                gpu.states.get().as_entire_binding(),
-                gpu.counters.get().as_entire_binding(),
-                gpu.records.get().as_entire_binding(),
-                gpu.buckets.get().as_entire_binding(),
-                gpu.args.get().as_entire_binding(),
-                gpu.transforms.get().as_entire_binding(),
+                self.camera.get().as_entire_binding(),
+                self.instances.get().as_entire_binding(),
+                self.origins.get().as_entire_binding(),
+                self.forms.get().as_entire_binding(),
+                self.states.get().as_entire_binding(),
+                self.counters.get().as_entire_binding(),
+                self.records.get().as_entire_binding(),
+                self.buckets.get().as_entire_binding(),
+                self.args.get().as_entire_binding(),
+                self.transforms.get().as_entire_binding(),
             )),
         ));
-        gpu.draw_group = Some(device.create_bind_group(
+        self.draw_group = Some(device.create_bind_group(
             "tree instances",
             &cache.get_bind_group_layout(&instance_layout()),
             &BindGroupEntries::sequential((
-                gpu.records.get().as_entire_binding(),
-                gpu.instances.get().as_entire_binding(),
-                gpu.origins.get().as_entire_binding(),
-                gpu.transforms.get().as_entire_binding(),
+                self.records.get().as_entire_binding(),
+                self.instances.get().as_entire_binding(),
+                self.origins.get().as_entire_binding(),
+                self.transforms.get().as_entire_binding(),
             )),
         ));
     }
-
-    gpu.active = frame.view.is_some()
-        && gpu.entries_len > 0
-        && cache.get_compute_pipeline(pipelines.lod).is_some()
-        && cache.get_compute_pipeline(pipelines.finalize).is_some();
 }
 
 /// Fills every view's buckets and the draws' instance counts.

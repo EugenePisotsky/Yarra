@@ -1,17 +1,70 @@
 //! Routes database replies to the consumer that sent each request.
 use super::*;
 
+/// What opening the runtime database sets up: the active space, the catalog, where the
+/// view starts and the render origin.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(super) struct Opening<'w> {
+    active_space: ResMut<'w, ActiveWorldSpace>,
+    catalog: ResMut<'w, WorldCatalog>,
+    viewpoint: ResMut<'w, WorldViewpoint>,
+    start_view: ResMut<'w, crate::WorldStartView>,
+    adopted: MessageWriter<'w, crate::WorldStartAdopted>,
+    origin: ResMut<'w, WorldOrigin>,
+}
+
+impl Opening<'_> {
+    /// Adopts a newly opened generation. Where the view starts and the origin are set only
+    /// the first time: an explicit start view wins, otherwise play starts where the world
+    /// says.
+    fn adopt(&mut self, manifest: &world_db::RuntimeManifest) {
+        info!(
+            "opened runtime world generation {} with {} spaces from SQLite",
+            manifest.generation_id,
+            manifest.world_spaces.len()
+        );
+
+        if self.active_space.current.is_none() {
+            self.active_space.current = Some(manifest.default_world_space);
+        }
+
+        self.catalog.adopt(manifest);
+
+        if self.viewpoint.position.is_none() {
+            if self.start_view.0.is_none()
+                && let Some(view) = &manifest.start_view
+            {
+                info!(
+                    "starting at the world's start view ({:.0}, {:.0}, {:.0})",
+                    view.position[0], view.position[1], view.position[2]
+                );
+                self.start_view.0 = Some(view.clone());
+                self.adopted.write(crate::WorldStartAdopted(view.clone()));
+            }
+
+            let start = self
+                .start_view
+                .0
+                .as_ref()
+                .map_or([0.; 3], |v| v.position.map(f64::from));
+            self.viewpoint.position = Some(WorldPosition::from_world(
+                manifest.default_world_space,
+                start,
+                manifest.default_world_space().cell_size,
+            ));
+        }
+
+        if self.origin.space.is_none() {
+            self.origin.space = Some(manifest.default_world_space);
+            self.origin.cell = CellCoord::ZERO;
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn receive_database_results(
     worker: Option<Res<WorldDatabaseWorker>>,
-    mut active_space: ResMut<ActiveWorldSpace>,
-    mut catalog: ResMut<WorldCatalog>,
-    mut viewpoint: ResMut<WorldViewpoint>,
-    (mut start_view, mut adopted): (
-        ResMut<crate::WorldStartView>,
-        MessageWriter<crate::WorldStartAdopted>,
-    ),
-    mut origin: ResMut<WorldOrigin>,
+    mut opening: Opening,
     mut stream: ResMut<WorldStream>,
     mut residency: ResMut<SourceResidency>,
     mut reload: ResMut<WorldGenerationReload>,
@@ -48,46 +101,7 @@ pub(super) fn receive_database_results(
                 }
             }
             DatabaseResult::Opened(Ok(manifest)) => {
-                info!(
-                    "opened runtime world generation {} with {} spaces from SQLite",
-                    manifest.generation_id,
-                    manifest.world_spaces.len()
-                );
-
-                if active_space.current.is_none() {
-                    active_space.current = Some(manifest.default_world_space);
-                }
-
-                catalog.adopt(&manifest);
-
-                if viewpoint.position.is_none() {
-                    // An explicit start view wins; otherwise play starts where the
-                    // world says.
-                    if start_view.0.is_none()
-                        && let Some(view) = &manifest.start_view
-                    {
-                        info!(
-                            "starting at the world's start view ({:.0}, {:.0}, {:.0})",
-                            view.position[0], view.position[1], view.position[2]
-                        );
-                        start_view.0 = Some(view.clone());
-                        adopted.write(crate::WorldStartAdopted(view.clone()));
-                    }
-                    viewpoint.position = Some(WorldPosition::from_world(
-                        manifest.default_world_space,
-                        start_view
-                            .0
-                            .as_ref()
-                            .map_or([0.; 3], |v| v.position.map(f64::from)),
-                        manifest.default_world_space().cell_size,
-                    ));
-                }
-
-                if origin.space.is_none() {
-                    origin.space = Some(manifest.default_world_space);
-                    origin.cell = CellCoord::ZERO;
-                }
-
+                opening.adopt(&manifest);
                 stream.manifest = Some(manifest);
                 stream.phase = StreamPhase::Ready;
             }
@@ -121,7 +135,7 @@ pub(super) fn receive_database_results(
                     continue;
                 };
 
-                if active_space.current != Some(space) {
+                if opening.active_space.current != Some(space) {
                     continue;
                 }
 

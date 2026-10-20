@@ -1,8 +1,7 @@
 //! Far objects: the static objects that end in an impostor, streamed by block of cells far
 //! beyond the cells' object residency (`world_db` far-object pages). Each block holds one
-//! batch per form. The game's GPU trees draw every representation of them from these batches
-//! (`crate::trees::gpu`); the editor draws only their impostors from here, from each mesh
-//! LOD's hand-off outward, and its cells draw the meshes.
+//! batch per form, from which the GPU trees draw every representation of them
+//! (`crate::trees::gpu`).
 use super::database::{
     DatabaseRequest, FarObjectPayloads, NotSent, RequestId, WorldDatabaseWorker,
 };
@@ -21,7 +20,7 @@ const HYSTERESIS_METRES: f64 = 256.0;
 
 const MAX_BLOCKS_PER_REQUEST: usize = 16;
 
-/// Each attached block spawns a batch per impostor, whose mesh is built when it loads.
+/// Each attached block spawns a batch per form.
 const MAX_ATTACHMENTS_PER_FRAME: usize = 4;
 
 #[derive(Resource, Default)]
@@ -185,64 +184,76 @@ pub(super) fn update(
         let low = DVec2::new(f64::from(block.x), f64::from(block.z)) * size;
         eye.distance(eye.clamp(low, low + size))
     };
-    let mut gone = Vec::new();
+    far.drop_distant(&mut commands, distance);
 
-    for (&block, state) in &far.blocks {
-        if distance(block) > RADIUS_METRES + HYSTERESIS_METRES {
-            if let Block::Drawn(entity) = state {
+    if far.requested.is_none() {
+        far.request_near(&worker, space.id, eye, size, distance);
+    }
+}
+
+impl FarObjects {
+    /// Blocks wholly beyond the radius and its hysteresis leave.
+    fn drop_distant(&mut self, commands: &mut Commands, distance: impl Fn(CellCoord) -> f64) {
+        self.blocks.retain(|&block, state| {
+            let keep = distance(block) <= RADIUS_METRES + HYSTERESIS_METRES;
+
+            if let (false, Block::Drawn(entity)) = (keep, &state) {
                 commands.entity(*entity).despawn();
             }
-            gone.push(block);
-        }
+
+            keep
+        });
     }
 
-    for block in gone {
-        far.blocks.remove(&block);
-    }
+    /// Requests the nearest blocks within the radius not yet known.
+    fn request_near(
+        &mut self,
+        worker: &WorldDatabaseWorker,
+        space: WorldSpaceId,
+        eye: DVec2,
+        size: f64,
+        distance: impl Fn(CellCoord) -> f64,
+    ) {
+        let block_of = |v: f64| (v / size).floor() as i32;
+        let (low, high) = (eye - RADIUS_METRES, eye + RADIUS_METRES);
+        let mut missing: Vec<(f64, CellCoord)> = Vec::new();
 
-    if far.requested.is_some() {
-        return;
-    }
+        for x in block_of(low.x)..=block_of(high.x) {
+            for z in block_of(low.y)..=block_of(high.y) {
+                let block = CellCoord { x, z };
+                let d = distance(block);
 
-    let block_of = |v: f64| (v / size).floor() as i32;
-    let (low, high) = (eye - RADIUS_METRES, eye + RADIUS_METRES);
-    let mut missing: Vec<(f64, CellCoord)> = Vec::new();
-
-    for x in block_of(low.x)..=block_of(high.x) {
-        for z in block_of(low.y)..=block_of(high.y) {
-            let block = CellCoord { x, z };
-            let d = distance(block);
-
-            if d <= RADIUS_METRES && !far.blocks.contains_key(&block) {
-                missing.push((d, block));
+                if d <= RADIUS_METRES && !self.blocks.contains_key(&block) {
+                    missing.push((d, block));
+                }
             }
         }
-    }
 
-    if missing.is_empty() {
-        return;
-    }
-
-    missing.sort_by(|a, b| a.0.total_cmp(&b.0));
-    let blocks: Vec<_> = missing
-        .into_iter()
-        .take(MAX_BLOCKS_PER_REQUEST)
-        .map(|(_, block)| block)
-        .collect();
-
-    match worker.send(DatabaseRequest::ReadFarObjects {
-        generation: far.generation.clone(),
-        space: space.id,
-        blocks: blocks.clone(),
-    }) {
-        Ok(id) => {
-            for &block in &blocks {
-                far.blocks.insert(block, Block::Requested);
-            }
-            far.requested = Some((id, blocks));
+        if missing.is_empty() {
+            return;
         }
-        Err(NotSent::Full) => {}
-        Err(NotSent::Stopped) => warn!("far objects: database request channel closed"),
+
+        missing.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let blocks: Vec<_> = missing
+            .into_iter()
+            .take(MAX_BLOCKS_PER_REQUEST)
+            .map(|(_, block)| block)
+            .collect();
+
+        match worker.send(DatabaseRequest::ReadFarObjects {
+            generation: self.generation.clone(),
+            space,
+            blocks: blocks.clone(),
+        }) {
+            Ok(id) => {
+                for &block in &blocks {
+                    self.blocks.insert(block, Block::Requested);
+                }
+                self.requested = Some((id, blocks));
+            }
+            Err(NotSent::Full) => {}
+            Err(NotSent::Stopped) => warn!("far objects: database request channel closed"),
+        }
     }
 }
 

@@ -168,39 +168,43 @@ fn sync_scene(
         *previous = default();
         return;
     };
-    let surfaces: HashMap<_, _> = terrain
+
+    // Each cell's grass fields join its terrain page.
+    let mut surfaces: HashMap<_, _> = terrain
         .iter()
         .filter(|(_, page)| page.key.space == space)
-        .map(|(entity, page)| (cell_key(page.key), entity))
+        .map(|(entity, page)| (cell_key(page.key), (entity, page)))
         .collect();
-    let mut pairs: Vec<_> = fields
+    let mut joined: Vec<_> = fields
         .iter()
         .filter(|(_, page)| page.key.space == space)
-        .filter_map(|(entity, page)| {
-            let surface = *surfaces.get(&cell_key(page.key))?;
-            terrain
-                .get(surface)
-                .ok()?
-                .1
+        .filter_map(|(field, page)| {
+            let key = cell_key(page.key);
+            let (surface, ground) = surfaces.remove(&key)?;
+            ground
                 .matches_vegetation(&page)
-                .then_some((cell_key(page.key), entity, surface))
+                .then_some((key, field, page, surface, ground))
         })
         .collect();
-    pairs.sort_by_key(|&(key, entity, _)| (key, entity));
-    let pairs: Vec<_> = pairs
-        .into_iter()
-        .map(|(_, field, surface)| (field, surface))
+    joined.sort_by_key(|&(key, field, ..)| (key, field));
+    let pairs: Vec<_> = joined
+        .iter()
+        .map(|&(_, field, _, surface, _)| (field, surface))
         .collect();
+    let changed = |(_, _, page, _, ground): &(
+        _,
+        _,
+        Ref<StreamedVegetationFieldPage>,
+        _,
+        Ref<StreamedTerrainSurface>,
+    )| { page.is_changed() || ground.is_changed() };
     let frame = (space, origin.cell());
-    let edited = pairs.iter().any(|&(field, surface)| {
-        fields.get(field).unwrap().1.is_changed() || terrain.get(surface).unwrap().1.is_changed()
-    });
 
     if previous.pairs == pairs
         && previous.frame == Some(frame)
         && !catalog.is_changed()
         && !looks.is_changed()
-        && !edited
+        && !joined.iter().any(changed)
     {
         return;
     }
@@ -211,27 +215,20 @@ fn sync_scene(
         source_catalog.adopt_looks(looks);
     }
 
-    let pages = pairs
+    let pages = joined
         .iter()
-        .map(|&(field, surface)| {
-            terrain
-                .get(surface)
-                .unwrap()
-                .1
-                .vegetation_page(origin.cell(), &fields.get(field).unwrap().1.data)
-        })
+        .map(|(_, _, page, _, ground)| ground.vegetation_page(origin.cell(), &page.data))
         .collect();
-    let mut keys = HashMap::with_capacity(pairs.len());
-    let page_keys = pairs
+    let mut keys = HashMap::with_capacity(joined.len());
+    let page_keys = joined
         .iter()
-        .map(|&(field, surface)| {
-            let changed = fields.get(field).unwrap().1.is_changed()
-                || terrain.get(surface).unwrap().1.is_changed();
-            let key = match previous.keys.get(&(field, surface)) {
-                Some(&key) if !changed => key,
+        .map(|j| {
+            let pair = (j.1, j.3);
+            let key = match previous.keys.get(&pair) {
+                Some(&key) if !changed(j) => key,
                 _ => VegetationSceneState::new_page_key(),
             };
-            keys.insert((field, surface), key);
+            keys.insert(pair, key);
             key
         })
         .collect();
