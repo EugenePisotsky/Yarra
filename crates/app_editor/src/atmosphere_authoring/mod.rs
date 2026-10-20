@@ -296,12 +296,12 @@ fn draw(
                 return;
             };
             let before = entry.current.clone();
-            let mut edited = before.clone();
             let saved = entry.base.clone();
             ui.strong(catalog.world_space(id).map_or("World", |s| s.name.as_str()));
             ui.small("Changes preview on the landscape. Save & Publish updates the game.");
-            ui.checkbox(&mut preview.game_start, "Game start")
-                .on_hover_text("Show the edited profile as the game starts: its initial phase, clouds running.");
+            ui.checkbox(&mut preview.game_start, "Game start").on_hover_text(
+                "Show the edited profile as the game starts: its initial phase, clouds running.",
+            );
 
             if preview.game_start {
                 ui.label("Turn off Game start to edit atmosphere.");
@@ -312,289 +312,462 @@ fn draw(
                 .worlds
                 .entry(id)
                 .or_insert_with(|| Controls::new(&before));
+            let published = catalog.world_space(id).map(|s| &s.atmosphere);
             ui.separator();
-            ui.strong("Preview · temporary");
-            ui.horizontal(|ui| {
-                ui.label("Cloud quality");
-                for (quality, label) in [(engine::CloudQuality::Off, "Off"),
-                    (engine::CloudQuality::Balanced, "Balanced"), (engine::CloudQuality::High, "High")] {
-                    ui.selectable_value(&mut *cloud_quality, quality, label).on_hover_text(match quality {
-                        engine::CloudQuality::Off => "Hide clouds and their direct shadows.",
-                        engine::CloudQuality::Balanced => "Reuse a cached sky with a limited refresh rate to reduce GPU load.",
-                        engine::CloudQuality::High => "Render clouds every frame. More detail and smoother fast previews, with higher GPU load.",
-                    });
-                }
-            });
-            ui.horizontal(|ui| {
-                for i in [1, 2, 3, 0] {
-                    if ui.button(PHASE_NAMES[i]).clicked() {
-                        controls.phase = PHASE_TIMES[i];
-                        controls.playing = false;
-                    }
-                }
-            });
-            preview_hour(ui, controls);
-            ui.horizontal(|ui| {
-                ui.checkbox(&mut controls.playing, "Play");
-                ui.add(egui::Slider::new(&mut controls.speed, 1.0..=120.0).text("Speed ×"));
-            });
-            ui.horizontal(|ui| {
-                ui.checkbox(&mut controls.clouds_playing, "Animate clouds");
-                if ui.button("Reset clouds").clicked() { controls.cloud_seconds = 0.; }
-            });
-            ui.horizontal(|ui| {
-                ui.add(egui::Slider::new(&mut controls.cloud_speed, 1.0..=30.0)
-                    .clamping(egui::SliderClamping::Edits).text("Cloud speed ×"));
-                ui.label(format!("{:.1} s", controls.cloud_seconds));
-            });
-            ui.horizontal(|ui| {
-                ui.selectable_value(&mut controls.published, false, "Edited");
-                ui.selectable_value(&mut controls.published, true, "Published");
-
-                if ui.button("Reset preview").clicked() {
-                    *controls = Controls::new(&before);
-                }
-            });
-            let mut locked = controls.exposure.is_some();
-
-            if ui.checkbox(&mut locked, "Lock preview exposure").changed() {
-                let profile = if controls.published {
-                    catalog.world_space(id).map_or(&before, |s| &s.atmosphere)
-                } else {
-                    &before
-                };
-                controls.exposure = locked.then(|| evaluate(profile, controls.phase).exposure_ev100);
-            }
-
-            if let Some(ev) = &mut controls.exposure {
-                ui.add(egui::Slider::new(ev, 0.0..=20.0).text("Preview EV100"));
-            }
-
-            ui.horizontal_wrapped(|ui| {
-                ui.label("Weather");
-                ui.selectable_value(&mut controls.weather, None, "Off");
-
-                for kind in WeatherKind::ALL {
-                    ui.selectable_value(&mut controls.weather, Some(kind), kind.label());
-                }
-            });
-
-            if controls.weather.is_some() {
-                ui.add(egui::Slider::new(&mut controls.wetness, 0.0..=1.0).text("Preview wetness"))
-                    .on_hover_text("In the game, wetness builds up over minutes of rain and dries afterwards.");
-            }
-
+            preview_controls(ui, controls, &before, published, &mut cloud_quality);
             ui.separator();
             ui.strong("World settings · saved");
-            let can_edit = !controls.published && editable;
-            ui.add_enabled_ui(can_edit, |ui| {
-                ui.checkbox(&mut edited.outdoor, "Outdoor sky and celestial lighting");
-                egui::CollapsingHeader::new("Clouds").default_open(true).show(ui, |ui| {
-                    let c = &mut edited.clouds;
-                    ui.horizontal(|ui| {
-                        if ui.button("Clear").clicked() { c.enabled = false; }
-                        if ui.button("Scattered").clicked() { *c = world::clouds::CloudSettings::scattered(); }
-                        if ui.button("Overcast").clicked() { *c = world::clouds::CloudSettings::overcast(); }
-                    });
-                    ui.checkbox(&mut c.enabled, "Cloud layer");
-                    ui.add(egui::Slider::new(&mut c.coverage,0.0..=1.0).text("Coverage"));
-                    ui.add(egui::Slider::new(&mut c.density,0.0..=3.0).text("Density"));
-                    ui.add(egui::Slider::new(&mut c.base_metres,300.0..=6000.0).text("Base · m"));
-                    ui.add(egui::Slider::new(&mut c.thickness_metres,100.0..=3000.0).text("Thickness · m"));
-                    ui.add(egui::Slider::new(&mut c.size_metres,300.0..=6000.0).text("Size · m"));
-                    ui.add(egui::Slider::new(&mut c.erosion,0.0..=1.0).text("Edge detail"));
-                    ui.add(egui::Slider::new(&mut c.wind_degrees,-180.0..=180.0).text("Wind heading °"));
-                    ui.add(egui::Slider::new(&mut c.wind_metres_per_second,0.0..=100.0).text("Wind · m/s"));
-                    ui.horizontal(|ui| { ui.label("Seed"); ui.add(egui::DragValue::new(&mut c.seed)); });
-                    ui.small("Ground-view cloud layer. Use Animate clouds to preview wind independently of the day cycle.");
-                });
-                egui::CollapsingHeader::new("Sun and sky")
-                    .default_open(true)
-                    .show(ui, |ui| {
-                        ui.add(
-                            egui::Slider::new(&mut edited.azimuth_degrees, -180.0..=180.0)
-                                .text("Sun path heading °"),
-                        );
-                        ui.add(
-                            egui::Slider::new(&mut edited.maximum_elevation_degrees, 5.0..=85.0)
-                                .text("Noon elevation °"),
-                        );
-                        ui.add(
-                            egui::Slider::new(&mut edited.sun_diameter_degrees, 0.1..=5.0)
-                                .text("Sun diameter °"),
-                        );
-                        color(ui, "Sun tint", &mut edited.sun_srgb);
-                        ui.add(
-                            egui::Slider::new(&mut edited.sun_lux, 0.0..=200_000.0)
-                                .text("Sun · lux"),
-                        );
-                        ui.small("Sunlight above the atmosphere; the air reddens and dims it towards the horizon.");
-                        ui.add(
-                            egui::Slider::new(&mut edited.molecular_density, 0.1..=4.0)
-                                .text("Air scattering"),
-                        );
-                    });
-                egui::CollapsingHeader::new("Day palette")
-                    .default_open(true)
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.label("Editing:");
-                            egui::ComboBox::from_id_salt("phase_target")
-                                .selected_text(PHASE_NAMES[controls.target])
-                                .show_ui(ui, |ui| {
-                                    for (i, name) in PHASE_NAMES.iter().enumerate() {
-                                        ui.selectable_value(&mut controls.target, i, *name);
-                                    }
-                                });
-                        });
-
-                        if ui.button("Preview this phase").clicked() {
-                            controls.phase = PHASE_TIMES[controls.target];
-                            controls.playing = false;
-                        }
-
-                        let p = &mut edited.phases[controls.target];
-                        color(ui, "Ambient tint", &mut p.ambient_srgb);
-                        ui.add(
-                            egui::Slider::new(&mut p.ambient_lux, 0.0..=20_000.0)
-                                .text("Ambient strength"),
-                        );
-                    });
-                egui::CollapsingHeader::new("Night lighting").show(ui, |ui| {
-                    if ui.button("Preview night").clicked() {
-                        controls.phase = PHASE_TIMES[0];
-                        controls.playing = false;
-                    }
-
-                    ui.checkbox(&mut edited.night.enabled, "Moon light");
-                    color(ui, "Moon tint", &mut edited.night.light_srgb);
-                    ui.add(egui::Slider::new(&mut edited.night.illuminance_lux, 0.0..=20_000.0)
-                        .text("Moon · lux"));
-                    ui.add(egui::Slider::new(&mut edited.night.age_days, 0.0..=29.5)
-                        .text("Moon age on the first day · days"));
-                    ui.add(egui::Slider::new(&mut edited.night.diameter_degrees, 0.1..=8.0)
-                        .text("Moon diameter °"));
-                    ui.add(egui::Slider::new(&mut edited.night.exposure_ev100, 0.0..=20.0)
-                        .text("Night exposure · EV100"));
-                    ui.small("The moon follows the sun's path, lagging by its age: 0 new, 7.4 first quarter, 14.8 full, 22.1 last quarter. Moonlight is the full moon's; less of the moon lit gives less. Moonlight and exposure blend through twilight. Adjust shadow fill in the Night palette.");
-                });
-                egui::CollapsingHeader::new("Weather").show(ui, |ui| {
-                    weather_editor(ui, &mut edited.weather, controls);
-                });
-                egui::CollapsingHeader::new("Haze").show(ui, |ui| {
-                    ui.add(
-                        egui::Slider::new(&mut edited.visibility_metres, 50.0..=100_000.0)
-                            .logarithmic(true)
-                            .text("Visibility · m"),
-                    );
-                    color(ui, "Haze tint", &mut edited.haze_srgb);
-                    ui.small("Near-ground aerosols in clear weather. Weather adds fog on top of this.");
-                });
-                egui::CollapsingHeader::new("Fog and mist").show(ui, |ui| {
-                    let f = &mut edited.fog;
-                    ui.checkbox(&mut f.enabled, "Ground haze and valley mist");
-                    ui.add(egui::Slider::new(&mut f.haze_visibility_metres, 200.0..=200_000.0)
-                        .logarithmic(true)
-                        .text("Ground haze visibility · m"));
-                    ui.add(egui::Slider::new(&mut f.haze_height_metres, 10.0..=2000.0)
-                        .logarithmic(true)
-                        .text("Ground haze height · m"));
-                    ui.add(egui::Slider::new(&mut f.mist_visibility_metres, 20.0..=5000.0)
-                        .logarithmic(true)
-                        .text("Mist visibility · m"));
-                    ui.add(egui::Slider::new(&mut f.mist_depth_metres, 0.0..=300.0)
-                        .text("Mist depth · m"));
-
-                    for (amount, name) in f.mist_amount.iter_mut().zip(PHASE_NAMES) {
-                        ui.add(egui::Slider::new(amount, 0.0..=1.0).text(format!("Mist · {name}")));
-                    }
-
-                    ui.add(egui::Slider::new(&mut f.mist_after_rain, 0.0..=1.0)
-                        .text("Extra mist after rain"));
-                    ui.add(egui::Slider::new(&mut f.canopy_air_visibility_metres, 100.0..=100_000.0)
-                        .logarithmic(true)
-                        .text("Air under crowns visibility · m"));
-                    ui.small("Ground haze thickens towards the sea. Mist pools in valleys under a level top and burns off as the sun climbs; where it pools comes from the cooked terrain. Sunbeams light the haze, the mist and the air under crowns near the camera.");
-                });
-                egui::CollapsingHeader::new("Presentation").show(ui, |ui| {
-                    ui.add(
-                        egui::Slider::new(&mut edited.exposure_ev100, 0.0..=20.0)
-                            .text("Day exposure · EV100"),
-                    );
-                    ui.add(egui::Slider::new(&mut edited.bloom_intensity, 0.0..=1.0).text("Bloom"));
-                });
-                egui::CollapsingHeader::new("Startup and cycle").show(ui, |ui| {
-                    let mut hour = edited.initial_phase * 24.0;
-
-                    if ui
-                        .add(egui::Slider::new(&mut hour, 0.0..=23.999).text("Initial time"))
-                        .changed()
-                    {
-                        edited.initial_phase = hour / 24.0;
-                    }
-
-                    if ui.button("Use preview as startup").clicked() {
-                        edited.initial_phase = controls.phase;
-                    }
-
-                    ui.add(
-                        egui::Slider::new(&mut edited.day_seconds, 10.0..=604_800.0)
-                            .logarithmic(true)
-                            .text("Day length · seconds"),
-                    );
-                    ui.small(
-                        "Game time stays fixed in this first slice. Preview Play tests the cycle.",
-                    );
-                });
+            let mut edited = before.clone();
+            ui.add_enabled_ui(!controls.published && editable, |ui| {
+                world_settings(ui, &mut edited, controls);
 
                 if before != saved && ui.button("Revert unsaved atmosphere edits").clicked() {
                     edited = saved;
                 }
             });
-
-            if edited != before && let Err(error) = edited.validate() {
-                ui.colored_label(egui::Color32::YELLOW, format!("Not applied: {error}"));
-            }
-
-            if edited != before && edited.validate().is_ok() {
-                if dense.atmospheres.gesture.is_none() {
-                    dense.atmospheres.gesture = Some((id, before));
-                }
-
-                dense.atmospheres.entries.get_mut(&id).unwrap().current = edited;
-                dense.atmospheres.error = None;
-            }
-
-            if let Some(error) = &dense.atmospheres.error {
-                ui.colored_label(egui::Color32::YELLOW, error);
-            }
-
-            if dense.atmospheres.conflict.is_some() {
-                ui.horizontal(|ui| {
-                    for (label, keep) in [("Keep my edits", true), ("Use database", false)] {
-                        if ui.button(label).clicked() {
-                            dense.atmospheres.resolve_conflict(keep);
-                            history.clear();
-                        }
-                    }
-                });
-            }
-
-            let dirty = dense.atmospheres.dirty_count();
-
-            if dirty > 0 {
-                ui.colored_label(
-                    egui::Color32::YELLOW,
-                    format!("{dirty} world atmosphere(s) unsaved"),
-                );
-            } else if catalog
-                .world_space(id)
-                .is_some_and(|s| s.atmosphere != dense.atmospheres.entries[&id].current)
-            {
-                ui.label("Saved · publish to update the game");
-            }
+            take_edit(ui, &mut dense, id, before, edited);
+            save_state(ui, &mut dense, &mut history, id, published);
         });
     windows.set_open(WINDOW.id, open);
+}
+
+/// What the preview shows, none of it saved: cloud quality, the time of day and its
+/// playback, clouds, the edited or the published profile, exposure and weather.
+fn preview_controls(
+    ui: &mut egui::Ui,
+    controls: &mut Controls,
+    before: &AtmosphereProfile,
+    published: Option<&AtmosphereProfile>,
+    cloud_quality: &mut engine::CloudQuality,
+) {
+    ui.strong("Preview · temporary");
+    ui.horizontal(|ui| {
+        ui.label("Cloud quality");
+
+        for (quality, label, hint) in [
+            (
+                engine::CloudQuality::Off,
+                "Off",
+                "Hide clouds and their direct shadows.",
+            ),
+            (
+                engine::CloudQuality::Balanced,
+                "Balanced",
+                "Reuse a cached sky with a limited refresh rate to reduce GPU load.",
+            ),
+            (
+                engine::CloudQuality::High,
+                "High",
+                "Render clouds every frame. More detail and smoother fast previews, with \
+                 higher GPU load.",
+            ),
+        ] {
+            ui.selectable_value(cloud_quality, quality, label)
+                .on_hover_text(hint);
+        }
+    });
+    ui.horizontal(|ui| {
+        for i in [1, 2, 3, 0] {
+            if ui.button(PHASE_NAMES[i]).clicked() {
+                controls.phase = PHASE_TIMES[i];
+                controls.playing = false;
+            }
+        }
+    });
+    preview_hour(ui, controls);
+    ui.horizontal(|ui| {
+        ui.checkbox(&mut controls.playing, "Play");
+        ui.add(egui::Slider::new(&mut controls.speed, 1.0..=120.0).text("Speed ×"));
+    });
+    ui.horizontal(|ui| {
+        ui.checkbox(&mut controls.clouds_playing, "Animate clouds");
+
+        if ui.button("Reset clouds").clicked() {
+            controls.cloud_seconds = 0.;
+        }
+    });
+    ui.horizontal(|ui| {
+        ui.add(
+            egui::Slider::new(&mut controls.cloud_speed, 1.0..=30.0)
+                .clamping(egui::SliderClamping::Edits)
+                .text("Cloud speed ×"),
+        );
+        ui.label(format!("{:.1} s", controls.cloud_seconds));
+    });
+    ui.horizontal(|ui| {
+        ui.selectable_value(&mut controls.published, false, "Edited");
+        ui.selectable_value(&mut controls.published, true, "Published");
+
+        if ui.button("Reset preview").clicked() {
+            *controls = Controls::new(before);
+        }
+    });
+    let mut locked = controls.exposure.is_some();
+
+    if ui.checkbox(&mut locked, "Lock preview exposure").changed() {
+        let profile = if controls.published {
+            published.unwrap_or(before)
+        } else {
+            before
+        };
+        controls.exposure = locked.then(|| evaluate(profile, controls.phase).exposure_ev100);
+    }
+
+    if let Some(ev) = &mut controls.exposure {
+        ui.add(egui::Slider::new(ev, 0.0..=20.0).text("Preview EV100"));
+    }
+
+    ui.horizontal_wrapped(|ui| {
+        ui.label("Weather");
+        ui.selectable_value(&mut controls.weather, None, "Off");
+
+        for kind in WeatherKind::ALL {
+            ui.selectable_value(&mut controls.weather, Some(kind), kind.label());
+        }
+    });
+
+    if controls.weather.is_some() {
+        ui.add(egui::Slider::new(&mut controls.wetness, 0.0..=1.0).text("Preview wetness"))
+            .on_hover_text(
+                "In the game, wetness builds up over minutes of rain and dries afterwards.",
+            );
+    }
+}
+
+/// The saved profile's sections.
+fn world_settings(ui: &mut egui::Ui, edited: &mut AtmosphereProfile, controls: &mut Controls) {
+    ui.checkbox(&mut edited.outdoor, "Outdoor sky and celestial lighting");
+    section(ui, "Clouds", true, |ui| clouds(ui, &mut edited.clouds));
+    section(ui, "Sun and sky", true, |ui| sun_and_sky(ui, edited));
+    section(ui, "Day palette", true, |ui| {
+        day_palette(ui, edited, controls)
+    });
+    section(ui, "Night lighting", false, |ui| {
+        night(ui, &mut edited.night, controls)
+    });
+    section(ui, "Weather", false, |ui| {
+        weather_editor(ui, &mut edited.weather, controls)
+    });
+    section(ui, "Haze", false, |ui| {
+        log_sliders(
+            ui,
+            [(
+                &mut edited.visibility_metres,
+                50.0..=100_000.0,
+                "Visibility · m",
+            )],
+        );
+        color(ui, "Haze tint", &mut edited.haze_srgb);
+        ui.small("Near-ground aerosols in clear weather. Weather adds fog on top of this.");
+    });
+    section(ui, "Fog and mist", false, |ui| fog(ui, &mut edited.fog));
+    section(ui, "Presentation", false, |ui| {
+        sliders(
+            ui,
+            [
+                (
+                    &mut edited.exposure_ev100,
+                    0.0..=20.0,
+                    "Day exposure · EV100",
+                ),
+                (&mut edited.bloom_intensity, 0.0..=1.0, "Bloom"),
+            ],
+        );
+    });
+    section(ui, "Startup and cycle", false, |ui| {
+        startup(ui, edited, controls)
+    });
+}
+
+fn section(ui: &mut egui::Ui, title: &str, open: bool, body: impl FnOnce(&mut egui::Ui)) {
+    egui::CollapsingHeader::new(title)
+        .default_open(open)
+        .show(ui, body);
+}
+
+/// A slider per field: its value, range and label.
+fn sliders<'a, const N: usize>(
+    ui: &mut egui::Ui,
+    rows: [(&'a mut f32, std::ops::RangeInclusive<f32>, &'a str); N],
+) {
+    for (value, range, label) in rows {
+        ui.add(egui::Slider::new(value, range).text(label));
+    }
+}
+
+/// As [`sliders`], on a logarithmic scale.
+fn log_sliders<'a, const N: usize>(
+    ui: &mut egui::Ui,
+    rows: [(&'a mut f32, std::ops::RangeInclusive<f32>, &'a str); N],
+) {
+    for (value, range, label) in rows {
+        ui.add(
+            egui::Slider::new(value, range)
+                .logarithmic(true)
+                .text(label),
+        );
+    }
+}
+
+fn clouds(ui: &mut egui::Ui, c: &mut world::clouds::CloudSettings) {
+    ui.horizontal(|ui| {
+        if ui.button("Clear").clicked() {
+            c.enabled = false;
+        }
+
+        if ui.button("Scattered").clicked() {
+            *c = world::clouds::CloudSettings::scattered();
+        }
+
+        if ui.button("Overcast").clicked() {
+            *c = world::clouds::CloudSettings::overcast();
+        }
+    });
+    ui.checkbox(&mut c.enabled, "Cloud layer");
+    sliders(
+        ui,
+        [
+            (&mut c.coverage, 0.0..=1.0, "Coverage"),
+            (&mut c.density, 0.0..=3.0, "Density"),
+            (&mut c.base_metres, 300.0..=6000.0, "Base · m"),
+            (&mut c.thickness_metres, 100.0..=3000.0, "Thickness · m"),
+            (&mut c.size_metres, 300.0..=6000.0, "Size · m"),
+            (&mut c.erosion, 0.0..=1.0, "Edge detail"),
+            (&mut c.wind_degrees, -180.0..=180.0, "Wind heading °"),
+            (&mut c.wind_metres_per_second, 0.0..=100.0, "Wind · m/s"),
+        ],
+    );
+    ui.horizontal(|ui| {
+        ui.label("Seed");
+        ui.add(egui::DragValue::new(&mut c.seed));
+    });
+    ui.small(
+        "Ground-view cloud layer. Use Animate clouds to preview wind independently of the day \
+         cycle.",
+    );
+}
+
+fn sun_and_sky(ui: &mut egui::Ui, edited: &mut AtmosphereProfile) {
+    sliders(
+        ui,
+        [
+            (
+                &mut edited.azimuth_degrees,
+                -180.0..=180.0,
+                "Sun path heading °",
+            ),
+            (
+                &mut edited.maximum_elevation_degrees,
+                5.0..=85.0,
+                "Noon elevation °",
+            ),
+            (
+                &mut edited.sun_diameter_degrees,
+                0.1..=5.0,
+                "Sun diameter °",
+            ),
+        ],
+    );
+    color(ui, "Sun tint", &mut edited.sun_srgb);
+    sliders(ui, [(&mut edited.sun_lux, 0.0..=200_000.0, "Sun · lux")]);
+    ui.small("Sunlight above the atmosphere; the air reddens and dims it towards the horizon.");
+    sliders(
+        ui,
+        [(&mut edited.molecular_density, 0.1..=4.0, "Air scattering")],
+    );
+}
+
+fn day_palette(ui: &mut egui::Ui, edited: &mut AtmosphereProfile, controls: &mut Controls) {
+    ui.horizontal(|ui| {
+        ui.label("Editing:");
+        egui::ComboBox::from_id_salt("phase_target")
+            .selected_text(PHASE_NAMES[controls.target])
+            .show_ui(ui, |ui| {
+                for (i, name) in PHASE_NAMES.iter().enumerate() {
+                    ui.selectable_value(&mut controls.target, i, *name);
+                }
+            });
+    });
+
+    if ui.button("Preview this phase").clicked() {
+        controls.phase = PHASE_TIMES[controls.target];
+        controls.playing = false;
+    }
+
+    let p = &mut edited.phases[controls.target];
+    color(ui, "Ambient tint", &mut p.ambient_srgb);
+    sliders(
+        ui,
+        [(&mut p.ambient_lux, 0.0..=20_000.0, "Ambient strength")],
+    );
+}
+
+fn night(ui: &mut egui::Ui, night: &mut world::atmosphere::NightLighting, controls: &mut Controls) {
+    if ui.button("Preview night").clicked() {
+        controls.phase = PHASE_TIMES[0];
+        controls.playing = false;
+    }
+
+    ui.checkbox(&mut night.enabled, "Moon light");
+    color(ui, "Moon tint", &mut night.light_srgb);
+    sliders(
+        ui,
+        [
+            (&mut night.illuminance_lux, 0.0..=20_000.0, "Moon · lux"),
+            (
+                &mut night.age_days,
+                0.0..=29.5,
+                "Moon age on the first day · days",
+            ),
+            (&mut night.diameter_degrees, 0.1..=8.0, "Moon diameter °"),
+            (
+                &mut night.exposure_ev100,
+                0.0..=20.0,
+                "Night exposure · EV100",
+            ),
+        ],
+    );
+    ui.small(
+        "The moon follows the sun's path, lagging by its age: 0 new, 7.4 first quarter, 14.8 \
+         full, 22.1 last quarter. Moonlight is the full moon's; less of the moon lit gives \
+         less. Moonlight and exposure blend through twilight. Adjust shadow fill in the Night \
+         palette.",
+    );
+}
+
+fn fog(ui: &mut egui::Ui, f: &mut world::fog::FogSettings) {
+    ui.checkbox(&mut f.enabled, "Ground haze and valley mist");
+    log_sliders(
+        ui,
+        [
+            (
+                &mut f.haze_visibility_metres,
+                200.0..=200_000.0,
+                "Ground haze visibility · m",
+            ),
+            (
+                &mut f.haze_height_metres,
+                10.0..=2000.0,
+                "Ground haze height · m",
+            ),
+            (
+                &mut f.mist_visibility_metres,
+                20.0..=5000.0,
+                "Mist visibility · m",
+            ),
+        ],
+    );
+    sliders(
+        ui,
+        [(&mut f.mist_depth_metres, 0.0..=300.0, "Mist depth · m")],
+    );
+
+    for (amount, name) in f.mist_amount.iter_mut().zip(PHASE_NAMES) {
+        ui.add(egui::Slider::new(amount, 0.0..=1.0).text(format!("Mist · {name}")));
+    }
+
+    sliders(
+        ui,
+        [(&mut f.mist_after_rain, 0.0..=1.0, "Extra mist after rain")],
+    );
+    log_sliders(
+        ui,
+        [(
+            &mut f.canopy_air_visibility_metres,
+            100.0..=100_000.0,
+            "Air under crowns visibility · m",
+        )],
+    );
+    ui.small(
+        "Ground haze thickens towards the sea. Mist pools in valleys under a level top and \
+         burns off as the sun climbs; where it pools comes from the cooked terrain. Sunbeams \
+         light the haze, the mist and the air under crowns near the camera.",
+    );
+}
+
+fn startup(ui: &mut egui::Ui, edited: &mut AtmosphereProfile, controls: &Controls) {
+    let mut hour = edited.initial_phase * 24.0;
+
+    if ui
+        .add(egui::Slider::new(&mut hour, 0.0..=23.999).text("Initial time"))
+        .changed()
+    {
+        edited.initial_phase = hour / 24.0;
+    }
+
+    if ui.button("Use preview as startup").clicked() {
+        edited.initial_phase = controls.phase;
+    }
+
+    log_sliders(
+        ui,
+        [(
+            &mut edited.day_seconds,
+            10.0..=604_800.0,
+            "Day length · seconds",
+        )],
+    );
+    ui.small("Game time stays fixed in this first slice. Preview Play tests the cycle.");
+}
+
+/// A valid edit becomes the working profile, inside the window's gesture.
+fn take_edit(
+    ui: &mut egui::Ui,
+    dense: &mut SourceWorkingSets,
+    id: WorldSpaceId,
+    before: AtmosphereProfile,
+    edited: AtmosphereProfile,
+) {
+    if edited == before {
+        return;
+    }
+
+    if let Err(error) = edited.validate() {
+        ui.colored_label(egui::Color32::YELLOW, format!("Not applied: {error}"));
+        return;
+    }
+
+    if dense.atmospheres.gesture.is_none() {
+        dense.atmospheres.gesture = Some((id, before));
+    }
+
+    dense.atmospheres.entries.get_mut(&id).unwrap().current = edited;
+    dense.atmospheres.error = None;
+}
+
+/// Errors, the conflict choice and whether the edits are saved or published.
+fn save_state(
+    ui: &mut egui::Ui,
+    dense: &mut SourceWorkingSets,
+    history: &mut EditorHistory,
+    id: WorldSpaceId,
+    published: Option<&AtmosphereProfile>,
+) {
+    if let Some(error) = &dense.atmospheres.error {
+        ui.colored_label(egui::Color32::YELLOW, error);
+    }
+
+    if dense.atmospheres.conflict.is_some() {
+        ui.horizontal(|ui| {
+            for (label, keep) in [("Keep my edits", true), ("Use database", false)] {
+                if ui.button(label).clicked() {
+                    dense.atmospheres.resolve_conflict(keep);
+                    history.clear();
+                }
+            }
+        });
+    }
+
+    let dirty = dense.atmospheres.dirty_count();
+
+    if dirty > 0 {
+        ui.colored_label(
+            egui::Color32::YELLOW,
+            format!("{dirty} world atmosphere(s) unsaved"),
+        );
+    } else if published.is_some_and(|p| *p != dense.atmospheres.entries[&id].current) {
+        ui.label("Saved · publish to update the game");
+    }
 }
 
 /// Presets and the random sequence the game plays. Values match `WeatherParams::validate`.
