@@ -50,14 +50,14 @@ cooker a stable asset identity while storage policy can change independently.
 The local pack layout separates source files from engine-ready artifacts:
 
 ```text
-assets/local/yarra_trees/
-  source/forest_tree.hiplc
-  runtime/forest_b/forest_b_lod{0,1,2,3}.{gltf,bin}
+assets/local/yarra_longleaf/
+  import.json, source/pine_longleaf_branch_library.json
+  runtime/pine_longleaf/pine_longleaf_lod{0,1,2,3}.{gltf,bin}, pine_longleaf_impostor_*.ktx2
+  runtime/textures/
 ```
 
 Terrain packs follow the same local-only rule. `assets/packs/terrain/baltic.toml` tracks the
-surfaces, their Megascans sources under `~/Dev/Assets/terrain/sources` and their parameters;
-`assets/packs/terrain/bake.ron` names the cooker's inputs:
+surfaces, their Megascans sources under `~/Dev/Assets/terrain/sources` and their parameters:
 
 ```text
 assets/local/terrain/baltic/
@@ -89,39 +89,12 @@ Build the KTX2 arrays (portable UASTC and native iOS ASTC) with
 [Terrain surfaces](../docs/WORKFLOWS.md#terrain-surfaces). The SQLite terrain catalog refers to
 these runtime URIs; source images and compiled KTX2 files remain ignored.
 
-## Houdini trees
+## Tree shading contracts
 
-`assets/local/yarra_trees/` holds forest trees generated in Houdini
-(`/obj/FOREST_TREE` in the tree scene). The leaf sprig atlas (Davidia involucrata)
-and bark textures stay local. Leaves are 0.75 m branch-cluster cards: the scene's
-`BAKE_CLUSTERS` node arranges sprigs on small branches and renders four of them into a
-2×2 atlas, so one card carries a whole leafy branch. Export from the repository with
-Houdini's Python:
-
-```bash
-hython tools/houdini_export_tree.py /path/to/forest_tree.hiplc assets/local/yarra_trees \
-  --catalog assets/packs/yarra_trees/trees.catalog.ron --lod-heights 640,320,160,0 \
-  --variant forest_a:1:19:5.8:8.5 --variant forest_b:2:17.5:5.2:7.5 \
-  --variant forest_c:3:20:6.2:9
-cargo run -p yarra-world-cook -- import-assets assets/packs/yarra_trees/trees.catalog.ron
-```
-
-Each variant is `NAME:SEED:HEIGHT:WIDTH[:CROWN_BASE]` and gets LOD0–3. LOD1 only drops
-cards hidden deep in the crown; LOD2 and LOD3 keep nested subsets of enlarged cards, so
-the crown keeps its leaf area. The 640/320/160/0 thresholds put LOD0 within about 35 m
-of a 19 m tree; switches crossfade (see `ObjectLodPlugin`). `--set PARM=VALUE` overrides a CONTROLS
-parameter for an export. The exporter prints each LOD's triangles and leaf-card area;
-the area (overlapping alpha-tested layers) drives GPU cost more than triangles do.
-
-The six shared textures are written once to `runtime/textures/` as mipmapped UASTC
-KTX2, which needs the Khronos `ktx` 4.4.2 tool used for terrain. Leaf colour mips keep
-their alpha coverage, so crowns do not thin out with distance. A copy of the scene goes
-to `source/`, because the importer requires a local source file. `--preview DIR` also
-writes PNG-textured glTFs for Blender or other viewers.
-
-Leaf cards are lit by the crown, not by their own orientation. `NORMAL` is the
-smoothed crown surface normal (blended 85% with the card) and `COLOR_0` is
-crown-depth occlusion. The foliage material is tagged `yarra_shading: "crown_v1"`:
+Trees come from the vegetation kit (`tools/import_vegetation_bundle.py`). Leaf cards are lit
+by the crown, not by their own orientation. `NORMAL` is the smoothed crown surface normal
+and `COLOR_0` is crown-depth occlusion. The foliage material is tagged
+`yarra_shading: "crown_v1"`:
 both sides of a card keep the crown normal (Bevy's two-sided flip would light every
 back face as if it faced into the crown). Occlusion dims sky and ambient light;
 past the shadow range it also supplies a coarse self-shadow fallback. Leaves are kept rough and use half
