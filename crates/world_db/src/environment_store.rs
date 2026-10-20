@@ -8,7 +8,6 @@ use environment::{
     CoverageCell, CoverageSnapshot, CoverageTile, EnvironmentDefinition, PresetLibrary,
 };
 
-use environment_compile::{CompilePlan, CompileProfile};
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use vegetation::VegetationCatalog;
@@ -128,8 +127,10 @@ fn checked_definition(
     plants: &VegetationCatalog,
     presets: &PresetLibrary,
 ) -> Result<(), WorldDbError> {
-    CompilePlan::new(definition, plants, presets, CompileProfile::default())?;
-    Ok(())
+    plants.validate()?;
+    definition
+        .validate(presets)
+        .map_err(|e| invalid(e.to_string()))
 }
 
 pub(crate) fn read_definition(
@@ -650,7 +651,9 @@ pub(crate) fn write_environment_document(
     }
 
     for (&space, definition) in &definitions {
-        let plan = CompilePlan::new(definition, &plants, presets, CompileProfile::default())?;
+        definition
+            .validate(presets)
+            .map_err(|e| invalid(e.to_string()))?;
         let cells = document
             .environment_cells
             .iter()
@@ -665,7 +668,7 @@ pub(crate) fn write_environment_document(
                 definition,
                 &environment_dependency_cells(batch)?,
             )?;
-            plan.validate_coverage(batch, &coverage)?;
+            coverage.validate(definition, batch, environment::CoverageLimits::default())?;
         }
     }
 

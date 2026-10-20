@@ -1,5 +1,5 @@
 use super::*;
-use environment_compile::{TerrainSource, TerrainSourceCell};
+use environment::{TerrainSource, TerrainSourceCell};
 
 pub struct RoadTerrainSnapshot {
     pub source: RoadEnvironmentSnapshot,

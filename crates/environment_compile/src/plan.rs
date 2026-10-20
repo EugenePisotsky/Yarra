@@ -49,21 +49,7 @@ impl CompilePlan {
         cells: &[world::CellCoord],
         source: &environment::CoverageSnapshot,
     ) -> Result<(), CompileError> {
-        if cells.len() > self.profile.max_cells_per_batch {
-            return Err(CompileError::Budget("requested cells"));
-        }
-
-        let coverage = crate::coverage::Coverage::new(self, source)?;
-        let mut unique = std::collections::BTreeSet::new();
-
-        for &cell in cells {
-            if !unique.insert(cell) {
-                return Err(CompileError::DuplicateCell(cell));
-            }
-            coverage.check_halo(self, cell)?;
-        }
-
-        Ok(())
+        Ok(source.validate(&self.definition, cells, self.coverage_limits())?)
     }
 
     pub fn new(

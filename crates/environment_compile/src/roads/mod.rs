@@ -7,7 +7,6 @@ use super::*;
 use environment::roads::*;
 use environment::{GRASS_CHANNEL, PresetKind};
 use geometry::Curve;
-pub use relief::{TerrainSource, TerrainSourceCell};
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

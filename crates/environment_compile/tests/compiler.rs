@@ -293,7 +293,9 @@ fn known_cell_at_coordinate_limit_reports_unrepresentable_halo() {
     };
     assert!(matches!(
         plan.compile_cells(&[cell], &source),
-        Err(CompileError::CoordinateRange)
+        Err(CompileError::Coverage(
+            environment::CoverageError::CoordinateRange
+        ))
     ));
 }
 
@@ -305,7 +307,9 @@ fn unloaded_cells_corrupt_borders_and_invalid_tiles_fail_without_partial_results
     missing_target.cells.retain(|c| c.cell != CELLS[0]);
     assert!(matches!(
         plan.compile_cells(&CELLS, &missing_target),
-        Err(CompileError::UnloadedCell(_))
+        Err(CompileError::Coverage(
+            environment::CoverageError::UnloadedCell(_)
+        ))
     ));
     let mut missing_halo = source.clone();
     missing_halo
@@ -313,7 +317,9 @@ fn unloaded_cells_corrupt_borders_and_invalid_tiles_fail_without_partial_results
         .retain(|c| c.cell != CellCoord { x: -1, z: -1 });
     assert!(matches!(
         plan.compile_cells(&CELLS, &missing_halo),
-        Err(CompileError::UnloadedCell(_))
+        Err(CompileError::Coverage(
+            environment::CoverageError::UnloadedCell(_)
+        ))
     ));
     let mut corrupt = source.clone();
     corrupt
@@ -325,20 +331,26 @@ fn unloaded_cells_corrupt_borders_and_invalid_tiles_fail_without_partial_results
         .samples[16] = 0;
     assert!(matches!(
         plan.compile_cells(&CELLS, &corrupt),
-        Err(CompileError::BorderMismatch { .. })
+        Err(CompileError::Coverage(
+            environment::CoverageError::BorderMismatch { .. }
+        ))
     ));
     let mut malformed = source.clone();
     malformed.cells[0].tiles[0].samples.pop();
     assert!(matches!(
         plan.compile_cells(&CELLS, &malformed),
-        Err(CompileError::InvalidTile(_))
+        Err(CompileError::Coverage(
+            environment::CoverageError::InvalidTile(_)
+        ))
     ));
     let mut duplicate = source.clone();
     let tile = duplicate.cells[0].tiles[0].clone();
     duplicate.cells[0].tiles.push(tile);
     assert!(matches!(
         plan.compile_cells(&CELLS, &duplicate),
-        Err(CompileError::InvalidTile(_))
+        Err(CompileError::Coverage(
+            environment::CoverageError::InvalidTile(_)
+        ))
     ));
     assert!(matches!(
         plan.compile_cells(&[CELLS[0], CELLS[0]], &source),
@@ -348,7 +360,9 @@ fn unloaded_cells_corrupt_borders_and_invalid_tiles_fail_without_partial_results
     wrong_world.space = WorldSpaceId(2);
     assert!(matches!(
         plan.compile_cells(&CELLS, &wrong_world),
-        Err(CompileError::WrongSpace)
+        Err(CompileError::Coverage(
+            environment::CoverageError::WrongSpace
+        ))
     ));
 }
 
@@ -457,7 +471,8 @@ fn unsupported_material_counts_and_work_budgets_are_errors() {
         let plan = CompilePlan::new(&definition, &plants, &library, limits).unwrap();
         assert!(matches!(
             plan.compile_cells(&CELLS, &source),
-            Err(CompileError::Budget(_))
+            Err(CompileError::Budget(_)
+                | CompileError::Coverage(environment::CoverageError::Budget(_)))
         ));
     }
 
@@ -526,7 +541,9 @@ fn logical_negative_and_large_cell_coordinates_do_not_affect_sampling() {
     };
     assert!(matches!(
         plan.compile_cells(&[CellCoord { x: i32::MAX, z: 0 }], &empty),
-        Err(CompileError::UnloadedCell(_))
+        Err(CompileError::Coverage(
+            environment::CoverageError::UnloadedCell(_)
+        ))
     ));
 }
 

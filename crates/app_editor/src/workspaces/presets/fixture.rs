@@ -238,14 +238,14 @@ impl Request {
         let cell = if let Some(road) = &self.road {
             let loaded_cells = coverage.cells.iter().map(|c| c.cell).collect::<Vec<_>>();
             let resolution = self.size * 4 + 1; // Match the current world's 25 cm height grid.
-            let terrain = environment_compile::TerrainSource {
+            let terrain = environment::TerrainSource {
                 space: definition.space,
                 cell_size: self.size as f32,
                 minimum_height: -8.0,
                 maximum_height: 8.0,
                 cells: loaded_cells
                     .iter()
-                    .map(|&cell| environment_compile::TerrainSourceCell {
+                    .map(|&cell| environment::TerrainSourceCell {
                         flat: false,
                         cell,
                         revision: 1,

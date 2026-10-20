@@ -10,8 +10,8 @@ pub enum WorldDbError {
     Cook(String),
     #[error("environment source: {0}")]
     Environment(String),
-    #[error(transparent)]
-    EnvironmentCompile(#[from] environment_compile::CompileError),
+    #[error("environment coverage: {0}")]
+    Coverage(#[from] environment::CoverageError),
     #[error("SQLite operation failed: {0}")]
     Sqlite(#[from] rusqlite::Error),
     #[error("filesystem operation failed: {0}")]

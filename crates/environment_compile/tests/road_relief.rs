@@ -4,10 +4,11 @@ mod road_support;
 mod support;
 
 use environment::roads::*;
+use environment::{TerrainSource, TerrainSourceCell};
 use road_support::*;
 use support::*;
 use world::{CellCoord, TerrainHeightfield};
-use yarra_environment_compile::{CompilePlan, TerrainSource, TerrainSourceCell};
+use yarra_environment_compile::CompilePlan;
 
 fn terrain(cell: CellCoord, resolution: u16) -> TerrainSource {
     let loaded_cells = (-1..=1)

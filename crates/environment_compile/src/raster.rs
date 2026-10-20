@@ -39,11 +39,11 @@ impl CompilePlan {
         }
 
         self.check_raster_budget(cells.len())?;
-        let coverage = Coverage::new(self, source)?;
+        let coverage = self.coverage(source)?;
 
         // Check the entire halo before any allocation/rasterization, including each target itself.
         for cell in &cells {
-            coverage.check_halo(self, *cell)?;
+            coverage.check_halo(*cell)?;
         }
 
         cells
@@ -72,7 +72,7 @@ impl CompilePlan {
                     roads: page_roads,
                     wear,
                     input_fingerprint: {
-                        let base = coverage.fingerprint(self, cell)?;
+                        let base = crate::coverage::fingerprint(&coverage, self, cell)?;
                         if let Some(roads) = roads {
                             let base = roads.fingerprint(cell, base)?;
                             if self.has_collections() {

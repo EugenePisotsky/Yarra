@@ -7,7 +7,7 @@ mod raster;
 mod roads;
 mod scatter;
 
-pub use roads::{RoadCompileProfile, RoadDetailLimits, TerrainSource, TerrainSourceCell};
+pub use roads::{RoadCompileProfile, RoadDetailLimits};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -93,24 +93,12 @@ pub enum CompileError {
     InvalidProfile,
     #[error("compiler budget exceeded: {0}")]
     Budget(&'static str),
-    #[error("coverage snapshot belongs to another world space")]
-    WrongSpace,
+    #[error(transparent)]
+    Coverage(#[from] environment::CoverageError),
     #[error("duplicate world in generation catalog: {0:?}")]
     DuplicateWorld(WorldSpaceId),
-    #[error("duplicate requested or loaded cell {0:?}")]
+    #[error("duplicate requested cell {0:?}")]
     DuplicateCell(CellCoord),
-    #[error("coverage cell {0:?} is not loaded")]
-    UnloadedCell(CellCoord),
-    #[error("cell {0:?} has an invalid, duplicate or unknown coverage tile")]
-    InvalidTile(CellCoord),
-    #[error("coverage border mismatch between {cell:?} and {neighbour:?}, layer {layer:?}")]
-    BorderMismatch {
-        cell: CellCoord,
-        neighbour: CellCoord,
-        layer: environment::LayerId,
-    },
-    #[error("cell coordinate has no representable dependency halo")]
-    CoordinateRange,
     #[error("invalid grass catalog: {0}")]
     Catalog(#[from] vegetation::CatalogValidationError),
     #[error("invalid derived vegetation page: {0}")]

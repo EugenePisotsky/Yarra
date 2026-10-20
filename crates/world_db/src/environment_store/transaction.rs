@@ -287,8 +287,7 @@ impl ProjectWriter {
                 .map(|r| r.cell)
                 .collect::<Vec<_>>();
             let coverage = read_coverage(&tx, &definition, &environment_dependency_cells(&cells)?)?;
-            CompilePlan::new(&definition, &plants, presets, CompileProfile::default())?
-                .validate_coverage(&cells, &coverage)?;
+            coverage.validate(&definition, &cells, environment::CoverageLimits::default())?;
         }
 
         let roads = if roads.is_empty() {

@@ -13,8 +13,7 @@ use crate::{
     SourceObjectRecord, WorldDbError, environment_dependency_cells, environment_store, road_store,
 };
 
-use environment::{CoverageSnapshot, EnvironmentDefinition};
-use environment_compile::TerrainSource;
+use environment::{CoverageSnapshot, EnvironmentDefinition, TerrainSource};
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
