@@ -125,7 +125,7 @@ impl RoadPlan {
                         / f64::from(relief.shoulder_falloff).min(closest.width * 0.5),
                 );
                 let signed_noise =
-                    |length, seed| world::road_patch(world, length, seed) * 2.0 - 1.0;
+                    |length, seed| world::road_noise::road_patch(world, length, seed) * 2.0 - 1.0;
                 let broad = signed_noise(relief.road_variation_length, road.source.seed ^ 0x906a);
                 let depth = f64::from(relief.road_depth)
                     * (1.0 + f64::from(relief.road_variation) * broad)

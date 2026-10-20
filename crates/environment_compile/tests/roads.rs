@@ -453,7 +453,7 @@ fn detail_minima_satisfy_sampling_constraints_and_broaden_only_what_falls_below(
         assert!(f64::from(limits.edge_softness) * 0.1 >= tolerance);
         assert!(f64::from(limits.patch_size) >= 4.0 * step);
         let p = &r.profiles[0];
-        let fine = world::RoadShape {
+        let fine = yarra_environment_compile::RoadShape {
             seed: 1,
             track_spacing: p.track_spacing,
             track_width: limits.track_core + 0.5,
@@ -466,7 +466,7 @@ fn detail_minima_satisfy_sampling_constraints_and_broaden_only_what_falls_below(
             breakup_patch_size: limits.patch_size,
         };
         assert_eq!(limits.broaden(fine), fine, "resolvable detail is kept");
-        let coarse = limits.broaden(world::RoadShape {
+        let coarse = limits.broaden(yarra_environment_compile::RoadShape {
             track_width: 0.1,
             edge_softness: 0.01,
             edge_patch_size: 0.25,

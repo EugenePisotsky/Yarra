@@ -21,9 +21,7 @@ mod gameplay_area;
 
 pub use gameplay_area::*;
 
-mod terrain_road;
-
-pub use terrain_road::*;
+pub mod road_noise;
 
 mod terrain_wear;
 

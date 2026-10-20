@@ -7,7 +7,10 @@ mod raster;
 mod roads;
 mod scatter;
 
-pub use roads::{RoadCompileProfile, RoadDetailLimits};
+pub use roads::{
+    RoadCompileProfile, RoadDetailLimits, RoadHit, RoadOffset, RoadShape, RoadZones, TerrainRoad,
+    TerrainRoadJunction, TerrainRoadSegment, TerrainRoads, junction_blend,
+};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -66,8 +69,8 @@ pub struct CompiledCell {
     pub cell: CellCoord,
     pub ground: CompiledGround,
     pub vegetation: VegetationFieldPageData,
-    /// Roads crossing the cell as its wear field draws them (`world::TerrainRoads::wear`).
-    pub roads: world::TerrainRoads,
+    /// Roads crossing the cell as its wear field draws them (`TerrainRoads::wear`).
+    pub roads: TerrainRoads,
     /// How roads and junctions wear the cell's natural ground; none where nothing does.
     pub wear: Option<world::TerrainWear>,
     /// Includes the plan and this cell's coverage dependency halo, not unrelated loaded cells.

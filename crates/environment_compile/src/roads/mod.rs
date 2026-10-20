@@ -2,6 +2,9 @@
 mod geometry;
 mod junctions;
 mod relief;
+mod terrain;
+
+pub use terrain::*;
 
 use super::*;
 use environment::roads::*;
@@ -76,7 +79,7 @@ pub struct RoadDetailLimits {
 
 impl RoadDetailLimits {
     /// `shape` as these grids can draw it.
-    pub fn broaden(&self, mut shape: world::RoadShape) -> world::RoadShape {
+    pub fn broaden(&self, mut shape: crate::roads::RoadShape) -> crate::roads::RoadShape {
         shape.edge_softness = shape.edge_softness.max(self.edge_softness);
         shape.track_width = shape
             .track_width
@@ -95,7 +98,7 @@ struct PlannedRoad {
     /// How worn its traffic leaves it.
     wear: RoadWear,
     /// The style's shape as the cell's grids draw it.
-    baked: world::RoadShape,
+    baked: crate::roads::RoadShape,
     ground_preset: environment::Preset,
     curves: Vec<Curve>,
 }
@@ -336,7 +339,7 @@ impl RoadPlan {
             (f64::from(cell.z) + uv[1]) * size,
         ];
         let z = road.baked.zones(
-            &world::RoadOffset {
+            &crate::roads::RoadOffset {
                 distance: closest.distance_squared.sqrt(),
                 lateral: closest.lateral,
                 longitudinal: closest.longitudinal,
@@ -436,7 +439,7 @@ impl RoadPlan {
         &self,
         cell: CellCoord,
         height_step: f32,
-        roads: &mut world::TerrainRoads,
+        roads: &mut crate::roads::TerrainRoads,
     ) {
         for ((index, _), road) in self.cells[&cell].iter().zip(&mut roads.roads) {
             if self.roads[*index].profile.carves_ruts(height_step) {
@@ -446,7 +449,7 @@ impl RoadPlan {
     }
 
     /// A plan road as pages draw it.
-    fn terrain_road(&self, index: usize) -> world::TerrainRoad {
+    fn terrain_road(&self, index: usize) -> crate::roads::TerrainRoad {
         let road = &self.roads[index];
         let p = &road.profile;
         let PresetKind::Ground(ground) = &road.ground_preset.kind else {
@@ -455,7 +458,7 @@ impl RoadPlan {
 
         // Pages wear tracks by the road's strength and its centre and shoulders by shares of it.
         let w = &road.wear;
-        world::TerrainRoad {
+        crate::roads::TerrainRoad {
             shape: shape(p, w, road.source.seed),
             center_ground: (w.center / w.tracks).min(1.0),
             shoulder_ground: (w.shoulders / w.tracks).min(1.0),
@@ -465,8 +468,8 @@ impl RoadPlan {
         }
     }
 
-    pub(crate) fn terrain_roads(&self, cell: CellCoord) -> world::TerrainRoads {
-        let mut result = world::TerrainRoads::default();
+    pub(crate) fn terrain_roads(&self, cell: CellCoord) -> crate::roads::TerrainRoads {
+        let mut result = crate::roads::TerrainRoads::default();
         let entries = self.cells.get(&cell).map_or(&[][..], Vec::as_slice);
         let junctions: Vec<_> = self
             .junctions
@@ -497,7 +500,7 @@ impl RoadPlan {
         }
 
         for j in junctions {
-            result.junctions.push(world::TerrainRoadJunction {
+            result.junctions.push(crate::roads::TerrainRoadJunction {
                 centre: j.source.position.relative_to(cell, size).map(|v| v as f32),
                 radius: j.source.radius,
                 seed: j.source.seed,
@@ -538,7 +541,7 @@ impl RoadPlan {
                         continue;
                     }
 
-                    result.segments.push(world::TerrainRoadSegment {
+                    result.segments.push(crate::roads::TerrainRoadSegment {
                         a: pa.map(|v| v as f32),
                         b: pb.map(|v| v as f32),
                         normal_a: a.normal.map(|v| v as f32),
@@ -554,8 +557,8 @@ impl RoadPlan {
     }
 }
 
-fn shape(p: &CartTrackProfile, wear: &RoadWear, seed: u32) -> world::RoadShape {
-    world::RoadShape {
+fn shape(p: &CartTrackProfile, wear: &RoadWear, seed: u32) -> crate::roads::RoadShape {
+    crate::roads::RoadShape {
         seed,
         track_spacing: p.track_spacing,
         track_width: p.track_width,
