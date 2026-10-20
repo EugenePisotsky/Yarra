@@ -3,8 +3,9 @@
 //! `git diff --ignore-blank-lines` after `--write` is empty by construction.
 //!
 //! Rules, applied where no blank line separates the two already:
-//! - Items in a file, an inline module, an impl or a trait are separated, except runs of one
-//!   kind of one-line declaration (`use`, `mod x;`, consts, statics, type aliases).
+//! - Items in a file, an inline module, an impl or a trait are separated, except runs of
+//!   imports and of `mod x;` declarations, and runs of one kind of one-line declaration
+//!   (consts, statics, type aliases).
 //! - In a block of three or more statements, a multi-line `if`, `match`, `for`, `while`,
 //!   `loop` or block is separated from its neighbours, and a comment that opens a statement
 //!   starts a paragraph.
@@ -115,6 +116,12 @@ impl Gaps<'_> {
             }
 
             let one_line = a.first == a.last && b.first == b.last;
+            let declarations =
+                matches!(a.kind, Kind::Use | Kind::ModDeclaration | Kind::ExternCrate);
+
+            if declarations && a.kind == b.kind {
+                continue;
+            }
 
             if one_line && a.kind == b.kind && a.kind != Kind::Other {
                 continue;
@@ -323,8 +330,8 @@ mod tests {
 
     #[test]
     fn items_are_separated_but_one_line_runs_stay_together() {
-        let source = "use a::b;\nuse c::d;\nconst A: u8 = 1;\nconst B: u8 = 2;\n/// Doc.\nfn f() {}\nstruct S;\nimpl S {\n    const C: u8 = 3;\n    fn g() {}\n    // Why.\n    fn h() {}\n}\n";
-        let expected = "use a::b;\nuse c::d;\n\nconst A: u8 = 1;\nconst B: u8 = 2;\n\n/// Doc.\nfn f() {}\n\nstruct S;\n\nimpl S {\n    const C: u8 = 3;\n\n    fn g() {}\n\n    // Why.\n    fn h() {}\n}\n";
+        let source = "use a::{\n    b,\n};\nuse c::d;\nconst A: u8 = 1;\nconst B: u8 = 2;\n/// Doc.\nfn f() {}\nstruct S;\nimpl S {\n    const C: u8 = 3;\n    fn g() {}\n    // Why.\n    fn h() {}\n}\n";
+        let expected = "use a::{\n    b,\n};\nuse c::d;\n\nconst A: u8 = 1;\nconst B: u8 = 2;\n\n/// Doc.\nfn f() {}\n\nstruct S;\n\nimpl S {\n    const C: u8 = 3;\n\n    fn g() {}\n\n    // Why.\n    fn h() {}\n}\n";
         assert_eq!(tidy(source), expected);
     }
 
