@@ -198,10 +198,7 @@ impl CompilePlan {
             .iter()
             .map(|b| (b.grass, &b.amounts, b.on_paths, b.wear))
             .collect();
-        let bytes = bincode::serde::encode_to_vec(
-            (&definition, &compositions, &growth, &profile),
-            bincode::config::standard(),
-        )?;
+        let bytes = world::codec::encode(&(&definition, &compositions, &growth, &profile))?;
         let mut hash = blake3::Hasher::new();
 
         // v5: grass follows the ground that shows, not faint blend weights.

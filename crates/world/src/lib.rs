@@ -1,9 +1,11 @@
 pub mod atmosphere;
 pub mod clouds;
+pub mod codec;
 pub mod fog;
 pub mod terrain_hierarchy;
 pub mod weather;
 
+pub use codec::DecodeError;
 pub use terrain_hierarchy::*;
 
 mod terrain_heightfield_codec;
@@ -44,9 +46,12 @@ pub const DEFAULT_RUNTIME_DATABASE: &str = "generated/world.runtime.sqlite";
 
 pub const DEFAULT_CELL_SIZE: f32 = 32.0;
 pub const MAX_DECODED_PAGE_BYTES: u64 = 64 * 1024 * 1024;
-pub const PROJECT_SCHEMA_VERSION: i64 = 32;
+
+/// Versions of everything a project or runtime database stores, its blobs included
+/// ([`codec`]): any change to a stored type bumps one.
+pub const PROJECT_SCHEMA_VERSION: i64 = 33;
+
 pub const RUNTIME_SCHEMA_VERSION: i64 = 33;
-pub const PAGE_PAYLOAD_VERSION: u16 = 14;
 
 /// Surfaces a terrain page holds, four per RGBA weight page: natural ground and what roads wear
 /// it to, so varied ground along a road keeps both.
@@ -726,63 +731,17 @@ impl PagePayload {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct VersionedPagePayload {
-    version: u16,
-    payload: PagePayload,
-}
-
 pub fn encode_page_payload(payload: &PagePayload) -> Result<Vec<u8>, bincode::error::EncodeError> {
-    bincode::serde::encode_to_vec(
-        VersionedPagePayload {
-            version: PAGE_PAYLOAD_VERSION,
-            payload: payload.clone(),
-        },
-        bincode::config::standard()
-            .with_little_endian()
-            .with_fixed_int_encoding(),
-    )
+    codec::encode(payload)
 }
 
-pub fn decode_page_payload(bytes: &[u8]) -> Result<PagePayload, PagePayloadDecodeError> {
-    let (versioned, consumed): (VersionedPagePayload, usize) = bincode::serde::decode_from_slice(
-        bytes,
-        bincode::config::standard()
-            .with_little_endian()
-            .with_fixed_int_encoding()
-            .with_limit::<{ MAX_DECODED_PAGE_BYTES as usize }>(),
-    )?;
-
-    if consumed != bytes.len() {
-        return Err(PagePayloadDecodeError::TrailingBytes {
-            consumed,
-            total: bytes.len(),
-        });
-    }
-
-    if versioned.version != PAGE_PAYLOAD_VERSION {
-        return Err(PagePayloadDecodeError::UnsupportedVersion(
-            versioned.version,
-        ));
-    }
-
-    Ok(versioned.payload)
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum PagePayloadDecodeError {
-    #[error("page payload codec failed: {0}")]
-    Bincode(#[from] bincode::error::DecodeError),
-    #[error("page payload contains trailing bytes: decoded {consumed} of {total}")]
-    TrailingBytes { consumed: usize, total: usize },
-    #[error("page payload version {0} is not supported")]
-    UnsupportedVersion(u16),
+pub fn decode_page_payload(bytes: &[u8]) -> Result<PagePayload, DecodeError> {
+    codec::decode::<_, { MAX_DECODED_PAGE_BYTES as usize }>(bytes)
 }
 
 /// Cells per side of a far-object block.
 pub const FAR_OBJECT_BLOCK_CELLS: i32 = 16;
 
-pub const FAR_OBJECTS_PAGE_VERSION: u16 = 2;
 pub const MAX_FAR_OBJECT_FORMS: usize = 256;
 pub const MAX_FAR_OBJECTS_PER_BLOCK: usize = 262_144;
 
@@ -835,12 +794,6 @@ pub struct FarObjectInstance {
     pub scale: f32,
 }
 
-#[derive(Serialize, Deserialize)]
-struct VersionedFarObjectsPage {
-    version: u16,
-    page: FarObjectsPage,
-}
-
 impl FarObjectsPage {
     pub fn validate(&self) -> Result<(), String> {
         if self.forms.is_empty()
@@ -888,41 +841,11 @@ impl FarObjectsPage {
     }
 
     pub fn encode(&self) -> Result<Vec<u8>, bincode::error::EncodeError> {
-        bincode::serde::encode_to_vec(
-            VersionedFarObjectsPage {
-                version: FAR_OBJECTS_PAGE_VERSION,
-                page: self.clone(),
-            },
-            bincode::config::standard()
-                .with_little_endian()
-                .with_fixed_int_encoding(),
-        )
+        codec::encode(self)
     }
 
-    pub fn decode(bytes: &[u8]) -> Result<Self, PagePayloadDecodeError> {
-        let (versioned, consumed): (VersionedFarObjectsPage, usize) =
-            bincode::serde::decode_from_slice(
-                bytes,
-                bincode::config::standard()
-                    .with_little_endian()
-                    .with_fixed_int_encoding()
-                    .with_limit::<{ MAX_DECODED_PAGE_BYTES as usize }>(),
-            )?;
-
-        if consumed != bytes.len() {
-            return Err(PagePayloadDecodeError::TrailingBytes {
-                consumed,
-                total: bytes.len(),
-            });
-        }
-
-        if versioned.version != FAR_OBJECTS_PAGE_VERSION {
-            return Err(PagePayloadDecodeError::UnsupportedVersion(
-                versioned.version,
-            ));
-        }
-
-        Ok(versioned.page)
+    pub fn decode(bytes: &[u8]) -> Result<Self, DecodeError> {
+        codec::decode::<_, { MAX_DECODED_PAGE_BYTES as usize }>(bytes)
     }
 }
 
@@ -1040,10 +963,10 @@ mod tests {
         let mut bytes = encode_page_payload(&payload).unwrap();
         assert_eq!(decode_page_payload(&bytes).unwrap(), payload);
         assert_eq!(payload.domain(), PageDomain::Terrain);
-        bytes[..2].copy_from_slice(&(PAGE_PAYLOAD_VERSION - 1).to_le_bytes());
+        bytes.push(0);
         assert!(matches!(
             decode_page_payload(&bytes),
-            Err(PagePayloadDecodeError::UnsupportedVersion(_))
+            Err(DecodeError::TrailingBytes { .. })
         ));
 
         let center = heightfield.sample([2.0, 2.0], 4.0);

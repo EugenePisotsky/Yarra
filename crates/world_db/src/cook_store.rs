@@ -257,10 +257,7 @@ impl ProjectCookSnapshot {
                     },
                 };
                 let roads = road_store::read_cook_roads(&self.connection, space, bounds)?;
-                hash.update(
-                    &bincode::serde::encode_to_vec(&roads.roads, bincode::config::standard())
-                        .map_err(|e| invalid(e.to_string()))?,
-                );
+                hash.update(&world::codec::encode(&roads.roads)?);
             }
 
             result.insert(

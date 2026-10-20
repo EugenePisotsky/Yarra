@@ -9,34 +9,21 @@ use world::{
     TerrainTextureSet, TerrainTextureSetId, WorldSpaceId,
 };
 
-pub(crate) const VEGETATION_CATALOG_FORMAT_VERSION: i64 = 13;
-
+/// Writes the vegetation catalog, replacing any; `None` leaves the table as it is.
 pub(crate) fn write_vegetation_catalog(
-    transaction: &Connection,
+    connection: &Connection,
     catalog: Option<&VegetationCatalog>,
 ) -> Result<(), WorldDbError> {
     let Some(catalog) = catalog else {
         return Ok(());
     };
-    let payload = encode_vegetation_catalog(catalog)?;
-    transaction.execute(
-        "INSERT INTO vegetation_catalog(singleton, format_version, payload) \
-         VALUES (1, ?1, ?2)",
-        params![VEGETATION_CATALOG_FORMAT_VERSION, payload],
+    catalog.validate()?;
+    connection.execute(
+        "INSERT INTO vegetation_catalog(singleton, payload) VALUES (1, ?1) \
+         ON CONFLICT(singleton) DO UPDATE SET payload = excluded.payload",
+        [world::codec::encode(catalog)?],
     )?;
     Ok(())
-}
-
-pub(crate) fn encode_vegetation_catalog(
-    catalog: &VegetationCatalog,
-) -> Result<Vec<u8>, WorldDbError> {
-    catalog.validate()?;
-    Ok(bincode::serde::encode_to_vec(
-        catalog,
-        bincode::config::standard()
-            .with_little_endian()
-            .with_fixed_int_encoding(),
-    )?)
 }
 
 pub(crate) fn read_vegetation_catalog(
@@ -44,35 +31,14 @@ pub(crate) fn read_vegetation_catalog(
 ) -> Result<Option<VegetationCatalog>, WorldDbError> {
     connection
         .query_row(
-            "SELECT format_version, payload FROM vegetation_catalog WHERE singleton = 1",
+            "SELECT payload FROM vegetation_catalog WHERE singleton = 1",
             [],
-            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?)),
+            |row| row.get::<_, Vec<u8>>(0),
         )
         .optional()?
-        .map(|(format_version, payload)| {
-            if format_version != VEGETATION_CATALOG_FORMAT_VERSION {
-                return Err(WorldDbError::VegetationCatalogFormatVersion {
-                    expected: VEGETATION_CATALOG_FORMAT_VERSION,
-                    actual: format_version,
-                });
-            }
-
-            let (catalog, consumed): (VegetationCatalog, usize) =
-                bincode::serde::decode_from_slice(
-                    &payload,
-                    bincode::config::standard()
-                        .with_little_endian()
-                        .with_fixed_int_encoding()
-                        .with_limit::<{ MAX_DECODED_PAGE_BYTES as usize }>(),
-                )?;
-
-            if consumed != payload.len() {
-                return Err(WorldDbError::VegetationCatalogTrailingBytes {
-                    consumed,
-                    total: payload.len(),
-                });
-            }
-
+        .map(|payload| {
+            let catalog: VegetationCatalog =
+                world::codec::decode::<_, { MAX_DECODED_PAGE_BYTES as usize }>(&payload)?;
             catalog.validate()?;
             Ok(catalog)
         })

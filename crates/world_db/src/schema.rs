@@ -1,4 +1,3 @@
-use crate::catalog::VEGETATION_CATALOG_FORMAT_VERSION;
 use rusqlite::Connection;
 use world::{PROJECT_SCHEMA_VERSION, RUNTIME_SCHEMA_VERSION};
 
@@ -18,13 +17,12 @@ pub(crate) fn create_runtime_schema(connection: &Connection) -> rusqlite::Result
 }
 
 fn create_vegetation_catalog(connection: &Connection) -> rusqlite::Result<()> {
-    connection.execute_batch(&format!(
+    connection.execute_batch(
         "CREATE TABLE vegetation_catalog (
     singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
-    format_version INTEGER NOT NULL CHECK(format_version = {VEGETATION_CATALOG_FORMAT_VERSION}),
     payload BLOB NOT NULL
-) STRICT;"
-    ))
+) STRICT;",
+    )
 }
 
 const PROJECT_SCHEMA: &str = r#"
@@ -61,7 +59,8 @@ CREATE TABLE gameplay_areas (
     revision INTEGER NOT NULL CHECK(revision > 0),
     payload BLOB NOT NULL CHECK(length(payload) BETWEEN 1 AND 4194304)
 ) STRICT;
-INSERT INTO gameplay_areas VALUES (1, 1, x'00');
+-- No areas yet: an empty list as world::codec writes it, its length in eight bytes.
+INSERT INTO gameplay_areas VALUES (1, 1, x'0000000000000000');
 
 CREATE TABLE source_cells (
     world_space_id INTEGER NOT NULL REFERENCES world_spaces(id),
@@ -343,7 +342,6 @@ CREATE TABLE world_spaces (
 
 CREATE TABLE runtime_metadata (
     singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
-    schema_version INTEGER NOT NULL,
     generation_id TEXT NOT NULL,
     content_hash BLOB NOT NULL CHECK(length(content_hash) = 32),
     -- Content hash of the global catalogs and environment, shared by every cell.

@@ -375,10 +375,7 @@ impl CompilePlan {
         let mut canonical = terrain.clone();
         canonical.loaded_cells.sort();
         canonical.cells.sort_by_key(|c| c.cell);
-        hash.update(&bincode::serde::encode_to_vec(
-            &canonical,
-            bincode::config::standard(),
-        )?);
+        hash.update(&world::codec::encode(&canonical)?);
 
         for c in halo {
             hash.update(&road_plan.fingerprint(c, [0; 32])?);

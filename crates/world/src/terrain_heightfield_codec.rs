@@ -230,13 +230,7 @@ mod tests {
     #[test]
     fn smooth_ground_takes_about_one_byte_per_value() {
         let field = relief(33, 8.0, 0.0);
-        let bytes = bincode::serde::encode_to_vec(
-            &field,
-            bincode::config::standard()
-                .with_little_endian()
-                .with_fixed_int_encoding(),
-        )
-        .unwrap();
+        let bytes = crate::codec::encode(&field).unwrap();
 
         // One height and two normal axes per sample. Float heights and 16-bit normals took
         // 8 bytes per sample (8,712 here).
@@ -246,13 +240,8 @@ mod tests {
     #[test]
     fn corrupt_samples_are_rejected() {
         let field = relief(3, 8.0, 1.0);
-        let config = bincode::config::standard()
-            .with_little_endian()
-            .with_fixed_int_encoding();
-        let valid = bincode::serde::encode_to_vec(&field, config).unwrap();
-        let decode = |bytes: &[u8]| {
-            bincode::serde::decode_from_slice::<TerrainHeightfield, _>(bytes, config).map(|v| v.0)
-        };
+        let valid = crate::codec::encode(&field).unwrap();
+        let decode = |bytes: &[u8]| crate::codec::decode::<TerrainHeightfield, 65536>(bytes);
         assert_eq!(decode(&valid).unwrap(), field);
 
         // Resolution (u16), then the height plane's u64 length and bytes.

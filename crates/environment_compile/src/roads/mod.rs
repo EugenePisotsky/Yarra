@@ -411,18 +411,15 @@ impl RoadPlan {
                 )
             })
             .collect::<Vec<_>>();
-        let bytes = bincode::serde::encode_to_vec(
-            (
-                &self.profile,
-                dependencies,
-                self.junctions
-                    .iter()
-                    .filter(|j| j.bounds.contains(cell))
-                    .map(|j| (&j.source, &j.profile, &j.ground_preset))
-                    .collect::<Vec<_>>(),
-            ),
-            bincode::config::standard(),
-        )?;
+        let bytes = world::codec::encode(&(
+            &self.profile,
+            dependencies,
+            self.junctions
+                .iter()
+                .filter(|j| j.bounds.contains(cell))
+                .map(|j| (&j.source, &j.profile, &j.ground_preset))
+                .collect::<Vec<_>>(),
+        ))?;
         let mut hash = blake3::Hasher::new();
         hash.update(b"yarra.environment.road.v3");
         hash.update(&base);

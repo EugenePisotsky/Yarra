@@ -74,15 +74,6 @@ impl RuntimeReader {
         connection.execute_batch("PRAGMA query_only = ON; PRAGMA foreign_keys = ON;")?;
         ensure_schema_version(&connection, RUNTIME_SCHEMA_VERSION, "runtime")?;
         let manifest = read_runtime_manifest(&connection)?;
-
-        if manifest.schema_version != RUNTIME_SCHEMA_VERSION {
-            return Err(WorldDbError::SchemaVersion {
-                database: "runtime",
-                expected: RUNTIME_SCHEMA_VERSION,
-                actual: manifest.schema_version,
-            });
-        }
-
         Ok(Self {
             connection,
             manifest,
@@ -283,24 +274,24 @@ pub(crate) fn read_runtime_manifest(
     let world_spaces = query_world_spaces(connection)?;
     let vegetation_catalog = read_vegetation_catalog(connection)?;
     let (mut manifest, start_view, gameplay_areas) = connection.query_row(
-        "SELECT schema_version, generation_id, content_hash, default_world_space_id, start_view, \
-                gameplay_areas \
+        "SELECT generation_id, content_hash, default_world_space_id, start_view, gameplay_areas \
          FROM runtime_metadata WHERE singleton = 1",
         [],
         |row| {
             Ok((
                 RuntimeManifest {
-                    schema_version: row.get(0)?,
-                    generation_id: row.get(1)?,
-                    content_hash: blob_array(row.get_ref(2)?.as_blob()?, "content_hash")?,
-                    default_world_space: WorldSpaceId(row.get(3)?),
+                    schema_version: connection
+                        .query_row("PRAGMA user_version", [], |row| row.get(0))?,
+                    generation_id: row.get(0)?,
+                    content_hash: blob_array(row.get_ref(1)?.as_blob()?, "content_hash")?,
+                    default_world_space: WorldSpaceId(row.get(2)?),
                     world_spaces,
                     vegetation_catalog,
                     start_view: None,
                     gameplay_areas: Default::default(),
                 },
-                row.get::<_, Option<Vec<u8>>>(4)?,
-                row.get::<_, Vec<u8>>(5)?,
+                row.get::<_, Option<Vec<u8>>>(3)?,
+                row.get::<_, Vec<u8>>(4)?,
             ))
         },
     )?;

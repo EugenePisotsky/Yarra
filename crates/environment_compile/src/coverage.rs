@@ -160,10 +160,7 @@ impl<'a> Coverage<'a> {
             let source = &self.cells[&neighbour];
 
             // BTreeMap gives a canonical tile order, including explicit absent-tile information.
-            let bytes = bincode::serde::encode_to_vec(
-                (neighbour, source.source.revision, &source.tiles),
-                bincode::config::standard(),
-            )?;
+            let bytes = world::codec::encode(&(neighbour, source.source.revision, &source.tiles))?;
             hash.update(&bytes);
         }
 

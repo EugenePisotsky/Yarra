@@ -47,7 +47,7 @@ fn invalid(message: impl std::fmt::Display) -> WorldDbError {
 
 pub(crate) fn encode(areas: &[GameplayArea]) -> Result<Vec<u8>, WorldDbError> {
     world::validate_gameplay_areas(areas).map_err(invalid)?;
-    let bytes = bincode::serde::encode_to_vec(areas, bincode::config::standard())?;
+    let bytes = world::codec::encode(areas)?;
 
     if bytes.len() > MAX_GAMEPLAY_AREA_BYTES {
         return Err(invalid("the encoded set is too large"));
@@ -61,13 +61,7 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<Arc<[GameplayArea]>, WorldDbError> 
         return Err(invalid("the encoded set is too large"));
     }
 
-    let (areas, used): (Vec<GameplayArea>, usize) =
-        bincode::serde::decode_from_slice(bytes, bincode::config::standard())?;
-
-    if used != bytes.len() {
-        return Err(invalid("trailing bytes"));
-    }
-
+    let areas: Vec<GameplayArea> = world::codec::decode::<_, MAX_GAMEPLAY_AREA_BYTES>(bytes)?;
     world::validate_gameplay_areas(&areas).map_err(invalid)?;
     Ok(areas.into())
 }

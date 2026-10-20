@@ -957,23 +957,14 @@ fn hash_sources(
         hasher.update(&space.minimum_y.to_bits().to_le_bytes());
         hasher.update(&space.maximum_y.to_bits().to_le_bytes());
         space.atmosphere.validate().map_err(anyhow::Error::msg)?;
-        hasher.update(&bincode::serde::encode_to_vec(
-            &space.atmosphere,
-            bincode::config::standard(),
-        )?);
+        hasher.update(&world::codec::encode(&space.atmosphere)?);
     }
 
     hash_terrain_catalog(hasher, project, environment);
     hasher.update(&environment.fingerprint);
 
     if let Some(catalog) = &environment.catalog {
-        let encoded = bincode::serde::encode_to_vec(
-            catalog,
-            bincode::config::standard()
-                .with_little_endian()
-                .with_fixed_int_encoding(),
-        )?;
-        hasher.update(&encoded);
+        hasher.update(&world::codec::encode(catalog)?);
     }
 
     for heightfield in &project.terrain_cell_heightfields {

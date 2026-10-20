@@ -152,20 +152,10 @@ pub(crate) fn read_definition(
         )
         .optional()?;
     raw.map(|(revision, bytes)| {
-        let (definition, consumed): (EnvironmentDefinition, usize) =
-            bincode::serde::decode_from_slice(
-                &bytes,
-                bincode::config::standard()
-                    .with_little_endian()
-                    .with_fixed_int_encoding()
-                    .with_limit::<MAX_DEFINITION_BYTES>(),
-            )?;
+        let definition: EnvironmentDefinition =
+            world::codec::decode::<_, MAX_DEFINITION_BYTES>(&bytes)?;
 
-        if consumed != bytes.len()
-            || definition.space != space
-            || revision <= 0
-            || definition.revision != revision as u64
-        {
+        if definition.space != space || revision <= 0 || definition.revision != revision as u64 {
             return Err(invalid(
                 "definition payload does not match its database header",
             ));
@@ -242,12 +232,7 @@ fn store_definition(
     definition: &EnvironmentDefinition,
 ) -> Result<(), WorldDbError> {
     let revision = i64::try_from(definition.revision).map_err(|_| WorldDbError::IntegerOverflow)?;
-    let bytes = bincode::serde::encode_to_vec(
-        definition,
-        bincode::config::standard()
-            .with_little_endian()
-            .with_fixed_int_encoding(),
-    )?;
+    let bytes = world::codec::encode(definition)?;
 
     if bytes.len() > MAX_DEFINITION_BYTES || revision <= 0 {
         return Err(invalid("definition size or revision is invalid"));

@@ -29,13 +29,9 @@ pub(super) fn read_state(
         .optional()?;
     let record = raw
         .map(|bytes| {
-            let (record, n): (RoadSourceRecord, usize) = bincode::serde::decode_from_slice(
-                &bytes,
-                bincode::config::standard().with_limit::<MAX_ROAD_BYTES>(),
-            )?;
+            let record: RoadSourceRecord = world::codec::decode::<_, MAX_ROAD_BYTES>(&bytes)?;
 
-            if n != bytes.len()
-                || record.key() != key
+            if record.key() != key
                 || revision.is_none_or(|r| r <= 0 || r as u64 != record.revision())
             {
                 return Err(invalid("record identity/revision or payload mismatch"));
@@ -114,7 +110,7 @@ pub(super) fn store(c: &Connection, record: &RoadSourceRecord) -> Result<(), Wor
         _ => {}
     }
 
-    let bytes = bincode::serde::encode_to_vec(record, bincode::config::standard())?;
+    let bytes = world::codec::encode(record)?;
 
     if bytes.len() > MAX_ROAD_BYTES {
         return Err(invalid("record byte budget"));

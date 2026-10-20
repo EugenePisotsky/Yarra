@@ -61,16 +61,16 @@ pub(crate) fn blob_array<const N: usize>(
     })
 }
 
+/// The start view column's size limit.
+const MAX_START_VIEW_BYTES: usize = 65536;
+
 pub(crate) fn encode_start_view(
     view: Option<&world::WorldViewBookmark>,
 ) -> Result<Option<Vec<u8>>, WorldDbError> {
     view.map(|view| {
         view.validate()
             .map_err(|e| WorldDbError::Cook(format!("start view: {e}")))?;
-        Ok(bincode::serde::encode_to_vec(
-            view,
-            bincode::config::standard(),
-        )?)
+        Ok(world::codec::encode(view)?)
     })
     .transpose()
 }
@@ -80,13 +80,8 @@ pub(crate) fn decode_start_view(
 ) -> Result<Option<world::WorldViewBookmark>, WorldDbError> {
     bytes
         .map(|bytes| {
-            let (view, used): (world::WorldViewBookmark, usize) =
-                bincode::serde::decode_from_slice(&bytes, bincode::config::standard())?;
-
-            if used != bytes.len() {
-                return Err(WorldDbError::Cook("start view has trailing bytes".into()));
-            }
-
+            let view: world::WorldViewBookmark =
+                world::codec::decode::<_, MAX_START_VIEW_BYTES>(&bytes)?;
             view.validate()
                 .map_err(|e| WorldDbError::Cook(format!("start view: {e}")))?;
             Ok(view)

@@ -31,18 +31,11 @@ pub(crate) fn read_library(connection: &Connection) -> Result<PresetLibrary, Wor
             return Err(invalid("preset library byte/count budget"));
         }
 
-        let (preset, consumed): (Preset, usize) = bincode::serde::decode_from_slice(
-            raw,
-            bincode::config::standard().with_limit::<1048576>(),
-        )?;
+        let preset: Preset = world::codec::decode::<_, MAX_DEFINITION_BYTES>(raw)?;
         let id: Vec<u8> = row.get(0)?;
         let stored: i64 = row.get(1)?;
 
-        if consumed != raw.len()
-            || id != preset.id.0
-            || stored <= 0
-            || preset.revision != stored as u64
-        {
+        if id != preset.id.0 || stored <= 0 || preset.revision != stored as u64 {
             return Err(invalid("preset row identity/revision mismatch"));
         }
 
@@ -100,7 +93,7 @@ pub(super) fn store_library(
     let mut bytes = 0;
 
     for preset in &library.presets {
-        let payload = bincode::serde::encode_to_vec(preset, bincode::config::standard())?;
+        let payload = world::codec::encode(preset)?;
         bytes += payload.len();
 
         if payload.len() > MAX_DEFINITION_BYTES || bytes > MAX_LIBRARY_BYTES {

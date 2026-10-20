@@ -199,9 +199,7 @@ impl ProjectWriter {
 
             checked_definition(&write.definition, &plants, presets)?;
             validate_definition_references(&tx, &write.definition)?;
-            definition_bytes +=
-                bincode::serde::encode_to_vec(&write.definition, bincode::config::standard())?
-                    .len();
+            definition_bytes += world::codec::encode(&write.definition)?.len();
 
             if definition_bytes > 4 * MAX_DEFINITION_BYTES {
                 return Err(invalid("definition transaction exceeds the byte budget"));

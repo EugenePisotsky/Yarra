@@ -56,11 +56,10 @@ fn write_runtime_header(
 
     transaction.execute(
         "INSERT INTO runtime_metadata( \
-            singleton, schema_version, generation_id, content_hash, header_hash, \
-            default_world_space_id, start_view, gameplay_areas \
-         ) VALUES (1, ?1, ?2, ?3, ?3, ?4, ?5, ?6)",
+            singleton, generation_id, content_hash, header_hash, default_world_space_id, \
+            start_view, gameplay_areas \
+         ) VALUES (1, ?1, ?2, ?2, ?3, ?4, ?5)",
         params![
-            manifest.schema_version,
             manifest.generation_id,
             manifest.content_hash.as_slice(),
             manifest.default_world_space.0,

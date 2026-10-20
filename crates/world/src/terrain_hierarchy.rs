@@ -4,7 +4,6 @@ use serde::{Deserialize, Serialize};
 
 pub const MAX_TERRAIN_NODE_LEVEL: u8 = 30;
 pub const MAX_TERRAIN_NODE_BYTES: usize = 1024 * 1024;
-pub const TERRAIN_NODE_VERSION: u16 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct TerrainNodeKey {
@@ -324,36 +323,16 @@ fn invalid(message: &'static str) -> TerrainHierarchyError {
 
 pub fn encode_terrain_node(node: &TerrainNode) -> Result<Vec<u8>, TerrainHierarchyError> {
     node.validate()?;
-    bincode::serde::encode_to_vec(
-        (TERRAIN_NODE_VERSION, node),
-        bincode::config::standard()
-            .with_little_endian()
-            .with_fixed_int_encoding(),
-    )
-    .map_err(|e| TerrainHierarchyError::Codec(e.to_string()))
+    crate::codec::encode(node).map_err(|e| TerrainHierarchyError::Codec(e.to_string()))
 }
 
 pub fn decode_terrain_node(bytes: &[u8]) -> Result<TerrainNode, TerrainHierarchyError> {
-    if bytes.len() > MAX_TERRAIN_NODE_BYTES
-        || bytes.len() < 2
-        || u16::from_le_bytes([bytes[0], bytes[1]]) != TERRAIN_NODE_VERSION
-    {
-        return Err(invalid("node size or version"));
+    if bytes.len() > MAX_TERRAIN_NODE_BYTES {
+        return Err(invalid("node size"));
     }
 
-    let ((_, node), consumed): ((u16, TerrainNode), usize) = bincode::serde::decode_from_slice(
-        bytes,
-        bincode::config::standard()
-            .with_little_endian()
-            .with_fixed_int_encoding()
-            .with_limit::<MAX_TERRAIN_NODE_BYTES>(),
-    )
-    .map_err(|e| TerrainHierarchyError::Codec(e.to_string()))?;
-
-    if consumed != bytes.len() {
-        return Err(invalid("node trailing bytes"));
-    }
-
+    let node: TerrainNode = crate::codec::decode::<_, MAX_TERRAIN_NODE_BYTES>(bytes)
+        .map_err(|e| TerrainHierarchyError::Codec(e.to_string()))?;
     node.validate()?;
     Ok(node)
 }
@@ -587,13 +566,10 @@ mod tests {
     }
 
     #[test]
-    fn codec_rejects_version_trailing_and_nonfinite_data() {
+    fn codec_rejects_trailing_and_nonfinite_data() {
         let node = leaf(0, 0, true);
         let bytes = encode_terrain_node(&node).unwrap();
         assert_eq!(decode_terrain_node(&bytes).unwrap(), node);
-        let mut bad = bytes.clone();
-        bad[0] = 0;
-        assert!(decode_terrain_node(&bad).is_err());
         let mut bad = bytes;
         bad.push(0);
         assert!(decode_terrain_node(&bad).is_err());
