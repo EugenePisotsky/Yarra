@@ -50,7 +50,6 @@ pub(crate) fn run() -> std::result::Result<(), String> {
     crate::startup::validate_databases(&project_database, &runtime_database)?;
     App::new()
         .insert_resource(start_view)
-        .insert_resource(engine::TerrainRenderer::Clipmap)
         .insert_resource(ClearColor(Color::srgb(0.055, 0.065, 0.075)))
         .insert_resource(editor_winit_settings())
         .insert_resource(EguiGlobalSettings {

@@ -4,7 +4,7 @@ use crate::actor::PlayerControlled;
 use crate::{
     StreamedTerrainSurface,
     actor::{CharacterGait, CharacterMotorConfig, MoveIntent},
-    world_streaming::{terrain_lod::test_flat_contact, test_world_resources},
+    world_streaming::{ClipmapTerrain, test_world_resources},
 };
 use target::TargetIndicator;
 
@@ -46,7 +46,7 @@ fn headless_game(input: bool, camera: bool, marker: bool) -> App {
         plugins = plugins.disable::<MovementTargetPlugin>();
     }
     app.add_plugins(plugins);
-    // The drawn cover grounds actors; the CPU source places pointer targets.
+    // Terrain v2's resident leaves ground actors; the CPU source places pointer targets.
     ground_at(app.world_mut(), 5.);
     app.world_mut().spawn(StreamedTerrainSurface {
         key: world::PageKey {
@@ -64,7 +64,12 @@ fn headless_game(input: bool, camera: bool, marker: bool) -> App {
 
 fn ground_at(world: &mut World, height: f32) {
     let space = world::WorldSpaceId(1);
-    test_flat_contact(world, space, world::CellCoord::ZERO, 16., height);
+    world.insert_resource(ClipmapTerrain::test_flat(
+        space,
+        world::CellCoord::ZERO,
+        16.,
+        height,
+    ));
 }
 
 fn tick(app: &mut App) {

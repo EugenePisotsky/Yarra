@@ -279,7 +279,7 @@ fn terrain_ground(world_xz: vec2<f32>) -> SurfaceSample {
             settings.roughness_ranges.w,
             settings.macro_settings.w >= 0.5,
         );
-        // Base colour alpha is each surface's blend height, as in near detail.
+        // Base colour alpha is each surface's blend height.
         blend = height_blend(vec3(blend, 0.0), vec3(first.base_color.a, second.base_color.a, 0.0)).xy;
         base = first.base_color * blend.x + second.base_color * blend.y;
         tangent_normal = normalize(

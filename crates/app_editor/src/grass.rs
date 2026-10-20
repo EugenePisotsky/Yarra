@@ -4,7 +4,6 @@
 use crate::{project_store::ProjectEditorStore, workspaces::EditorWorkspace};
 use bevy::prelude::*;
 use engine::{StreamedTerrainSurface, StreamedVegetationFieldPage, WorldOrigin};
-use terrain_render::near::NearGrassCover;
 use vegetation::{VegetationCatalog, VegetationScene};
 use vegetation_render::{VegetationRenderPlugin, VegetationSceneState};
 
@@ -76,11 +75,9 @@ struct PreviewSignature {
 }
 
 /// Joins resident terrain with the accepted grass fields (edited cells from the environment
-/// preview, published pages elsewhere) into the rendered scene, and gives near terrain their
-/// grass cover.
+/// preview, published pages elsewhere) into the rendered scene.
 #[allow(clippy::too_many_arguments)]
 fn sync_live_preview(
-    mut commands: Commands,
     runtime: Res<engine::WorldCatalog>,
     paint: Res<crate::environment_paint::EnvironmentPaintState>,
     workspace: Res<State<EditorWorkspace>>,
@@ -158,7 +155,7 @@ fn sync_live_preview(
         terrain_pages
             .iter()
             .filter(|(_, terrain)| Some(terrain.key.space) == active_space)
-            .filter_map(|(entity, terrain)| {
+            .filter_map(|(_, terrain)| {
                 let data = environment
                     .cell(terrain.key.space, terrain.key.cell)
                     .map(|cell| &cell.vegetation)
@@ -171,10 +168,6 @@ fn sync_live_preview(
                             .find(|(_, page)| terrain.matches_vegetation(page))
                             .map(|(_, page)| &page.data)
                     })?;
-                match engine::near_grass_cover(data, &catalog) {
-                    Some(cover) => commands.entity(entity).insert(cover),
-                    None => commands.entity(entity).remove::<NearGrassCover>(),
-                };
                 Some(terrain.vegetation_page(origin.cell(), data))
             })
             .collect()

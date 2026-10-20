@@ -1,10 +1,10 @@
-// Worn ground in near terrain detail: roads, paths and junctions as the cook draws them into each
-// page's wear field (world terrain_wear.rs `TerrainWear`), at 12.5 cm. The page's weights hold the
-// natural ground; where the field wears it, each surface gives way to what it wears down to, as
-// `TerrainWear::lay` lays it. Ruts sink by parallax over the field's rut depth; grooves of many
-// wheels run along its traffic direction, and rain stands in dips of the rut floors.
+// Worn ground near the camera in terrain v2: roads, paths and junctions as the cook draws them into
+// each page's wear field (world terrain_wear.rs `TerrainWear`), at 12.5 cm. The control tiles hold
+// the ground already worn as `TerrainWear::lay` lays it; here bare road ground is re-sharpened from
+// the field, ruts sink by parallax over its rut depth, grooves of many wheels run along its traffic
+// direction, and rain stands in dips of the rut floors.
 
-// Wear fields come in a texture array (near detail's and terrain v2's), one page a layer: wear,
+// Wear fields come in a texture array (terrain v2's wear atlas), one page a layer: wear,
 // rut depth (of RUT_DEPTH_SCALE), and the traffic direction as a doubled angle (cosine and sine
 // mapped to 0..1), at texel centres over the page, sampled clamped.
 
@@ -47,25 +47,6 @@ fn rut_at(pages: texture_2d_array<f32>, clamped: sampler, layer: i32, uv: vec2<f
     return textureSampleLevel(pages, clamped, uv, layer, 0.0).y*RUT_DEPTH_SCALE;
 }
 
-// A page's surface weights (up to twelve) worn by `wear`, as world `TerrainWear::lay` wears them: each
-// surface gives that share of itself, `bare` of it to what it wears bare to (`worn[i]`: two
-// slots, -1 none, and their shares) and the rest to what it is trampled to (`trampled[i]`, -1
-// none: it goes bare).
-fn lay_worn(weights: array<f32, 12>, worn: array<vec4<f32>, 12>, trampled: array<f32, 12>, count: u32, wear: f32, bare: f32) -> array<f32, 12> {
-    var out = weights;
-    for (var i = 0u; i < count; i += 1u) {
-        if weights[i] <= 0.0 { continue; }
-        let given = weights[i]*wear;
-        let to = worn[i];
-        let to_trampled = select(0.0, given*(1.0-bare), trampled[i] >= 0.0);
-        let to_bare = select(given - to_trampled, 0.0, to.x < 0.0);
-        out[i] -= to_trampled + to_bare;
-        if trampled[i] >= 0.0 { out[u32(trampled[i])] += to_trampled; }
-        if to.x >= 0.0 { out[u32(to.x)] += to_bare*to.y; }
-        if to.z >= 0.0 { out[u32(to.z)] += to_bare*to.w; }
-    }
-    return out;
-}
 // How much of the worn ground goes bare rather than trampled at `world` (absolute XZ), as world
 // `bare_share`: light wear tramples, heavy wear bares, the line broken up in patches.
 fn bare_share(wear: f32, world: vec2<f32>) -> f32 {

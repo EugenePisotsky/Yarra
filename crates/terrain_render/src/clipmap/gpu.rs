@@ -699,8 +699,26 @@ pub fn patch_mesh(layout: &ClipmapLayout) -> Mesh {
     let positions: Vec<[f32; 3]> = (0..n * n)
         .map(|i| [(i % n) as f32, 0.0, (i / n) as f32])
         .collect();
-    let indices = crate::lod::mesh::stitch_indices(n as u16, crate::lod::StitchEdges(0))
-        .expect("clipmap patch grid");
+    // Quads in 8×8 blocks, row by row within each: consecutive rows then share vertices a
+    // small post-transform cache still holds.
+    const BLOCK: u32 = 8;
+    let end = n - 1;
+    let mut indices = Vec::with_capacity((end * end * 6) as usize);
+    for block_z in (0..end).step_by(BLOCK as usize) {
+        for block_x in (0..end).step_by(BLOCK as usize) {
+            for z in block_z..(block_z + BLOCK).min(end) {
+                for x in block_x..(block_x + BLOCK).min(end) {
+                    let [a, b, c, d] = [
+                        z * n + x,
+                        (z + 1) * n + x,
+                        (z + 1) * n + x + 1,
+                        z * n + x + 1,
+                    ];
+                    indices.extend([a, b, c, a, c, d]);
+                }
+            }
+        }
+    }
     let mut mesh = Mesh::new(
         bevy::render::render_resource::PrimitiveTopology::TriangleList,
         RenderAssetUsages::RENDER_WORLD,

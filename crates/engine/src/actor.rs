@@ -210,9 +210,8 @@ struct MotorOutput {
 pub(crate) fn advance_character_motors(
     time: Res<Time>,
     player_speed: Option<Res<crate::PlayerMovementSpeed>>,
-    readiness: Option<Res<crate::TerrainContactReadiness>>,
     origin: Option<Res<crate::WorldOrigin>>,
-    lod: Option<Res<crate::world_streaming::terrain_lod::TerrainLodStream>>,
+    terrain: Option<Res<crate::ClipmapTerrain>>,
     mut actors: Query<(
         &mut Transform,
         &mut MoveIntent,
@@ -259,18 +258,15 @@ pub(crate) fn advance_character_motors(
         let proposed =
             transform.translation + Vec3::new(output.displacement.x, 0., output.displacement.y);
         if grounded
-            && readiness.as_ref().is_some_and(|r| r.published())
-            && !lod
+            && terrain
                 .as_ref()
                 .zip(origin.as_ref())
-                .zip(readiness.as_ref())
-                .is_some_and(|((lod, origin), readiness)| {
-                    lod.sample_contact_height(proposed, origin, readiness)
-                        .is_some()
+                .is_some_and(|(terrain, origin)| {
+                    terrain.has_ground() && terrain.ground_height(proposed, origin).is_none()
                 })
         {
-            // Keep intent, but do not accumulate movement/animation into unloaded or
-            // still-morphing ground. Resume normally when the certified cover arrives.
+            // Keep intent, but do not accumulate movement/animation onto ground not yet
+            // resident. Resume normally when it arrives.
             motor.reset();
             *motion = CharacterMotion::default();
             continue;
@@ -615,15 +611,10 @@ mod tests {
                     .1,
                 )
                 .add_systems(Update, advance_character_motors);
-            // Published ground elsewhere: none under the actor yet.
+            // Resident ground elsewhere: none under the actor yet.
             let far = world::CellCoord { x: 5, z: 5 };
-            crate::world_streaming::terrain_lod::test_flat_contact(
-                app.world_mut(),
-                space,
-                far,
-                16.,
-                0.,
-            );
+            app.world_mut()
+                .insert_resource(crate::ClipmapTerrain::test_flat(space, far, 16., 0.));
             let mut intent = MoveIntent::default();
             intent.set_destination(Vec3::new(8., 0., 8.0001), CharacterGait::Walk);
             let start = Vec3::new(8., 0., 8.);
@@ -652,14 +643,14 @@ mod tests {
                 app.world().get::<CharacterMotion>(actor).unwrap().phase,
                 CharacterMotionPhase::Idle
             );
-            // The certified cover arrives under the actor: motion resumes.
-            crate::world_streaming::terrain_lod::test_flat_contact(
-                app.world_mut(),
-                space,
-                world::CellCoord::ZERO,
-                16.,
-                0.,
-            );
+            // The ground under the actor arrives: motion resumes.
+            app.world_mut()
+                .insert_resource(crate::ClipmapTerrain::test_flat(
+                    space,
+                    world::CellCoord::ZERO,
+                    16.,
+                    0.,
+                ));
             app.update();
             assert_eq!(
                 app.world().get::<Transform>(actor).unwrap().translation,

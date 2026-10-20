@@ -13,13 +13,14 @@ mod residency;
 use residency::SourceResidency;
 pub use residency::StreamingStats;
 #[cfg(test)]
-use residency::{MAX_PENDING_SOURCE_PAGES, PageState, attachment::PageAttachment};
+use residency::{PageState, attachment::PageAttachment};
 mod rebase;
 mod smoke;
 mod source_demand;
 mod surface;
 pub use surface::{
-    StreamedTerrainSurface, StreamedVegetationFieldPage, sample_resident_terrain_surface,
+    StreamedTerrainSurface, StreamedTerrainWear, StreamedVegetationFieldPage,
+    sample_resident_terrain_surface,
 };
 mod valley_mist;
 mod world_space;
@@ -29,14 +30,11 @@ pub use crate::object_lod::{
 pub use rebase::WorldRenderRoot;
 pub use smoke::StreamingSmokePlugin;
 pub use world_space::ActiveWorldSpace;
-use world_space::WorldSpaceTransition;
 pub(crate) use world_space::sync_world_atmosphere;
 pub(crate) mod terrain_clipmap;
 pub use terrain_clipmap::{
-    ClipmapStats, ClipmapTerrain, LiveTerrainPreview, TerrainPreviewRequest, TerrainRenderer,
+    ClipmapStats, ClipmapTerrain, LiveTerrainPreview, TerrainPreviewRequest,
 };
-pub(crate) mod terrain_lod;
-pub use terrain_lod::{TerrainContactReadiness, TerrainLodStats};
 
 use std::path::PathBuf;
 
@@ -88,7 +86,6 @@ impl Plugin for WorldStreamingPlugin {
             PostUpdate,
             sync_world_atmosphere.before(crate::ApplyAtmosphere),
         );
-        terrain_lod::install(app);
         app.add_plugins(database::WorldDatabasePlugin(self.database_path.clone()))
             .insert_resource(self.config)
             .init_resource::<WorldStream>()
@@ -115,7 +112,6 @@ impl Plugin for WorldStreamingPlugin {
                     replies::receive_database_results,
                     generation::request_reload,
                     world_space::request_world_space_from_keyboard,
-                    terrain_lod::entry::prepare.run_if(terrain_clipmap::lod_terrain),
                     generation::advance_reload,
                     world_space::apply_world_space_transition,
                     origin::sync_stream_focus_to_viewpoint,
@@ -137,11 +133,8 @@ impl Plugin for WorldStreamingPlugin {
                 PostUpdate,
                 (
                     source_demand::collect_view.after(TransformSystems::Propagate),
-                    terrain_clipmap::apply_preview
-                        .run_if(terrain_clipmap::clipmap_terrain)
-                        .before(terrain_clipmap::update),
+                    terrain_clipmap::apply_preview.before(terrain_clipmap::update),
                     terrain_clipmap::update
-                        .run_if(terrain_clipmap::clipmap_terrain)
                         .after(TransformSystems::Propagate)
                         .before(bevy::camera::visibility::VisibilitySystems::VisibilityPropagate)
                         .before(bevy::camera::visibility::VisibilitySystems::CheckVisibility),

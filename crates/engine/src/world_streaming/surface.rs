@@ -13,6 +13,15 @@ pub struct StreamedTerrainSurface {
     pub heightfield: TerrainHeightfield,
 }
 
+/// How roads wear a resident terrain page, for terrain v2's wear atlas: its wear field, and the
+/// texture layer of each of the page's surfaces, which the field's worn-to slots name.
+#[derive(Component, Debug, Clone)]
+pub struct StreamedTerrainWear {
+    pub key: PageKey,
+    pub wear: Option<world::TerrainWear>,
+    pub layers: Vec<u16>,
+}
+
 /// Terrain-independent vegetation fields attached for one resident streamed cell.
 ///
 /// Consumers join this component with the matching [`StreamedTerrainSurface`] by page key. No

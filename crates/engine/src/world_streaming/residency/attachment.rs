@@ -3,11 +3,10 @@ use super::PreparedPage;
 use crate::object_lod::{ObjectFootprint, ScreenSpaceLod, ScreenSpaceLodVariant};
 use crate::world_streaming::{
     GameplayObject, GeneratedEnvironmentObject, StreamedPageEntity, StreamedTerrainSurface,
-    StreamedVegetationFieldPage, StreamedVisualObject,
+    StreamedTerrainWear, StreamedVegetationFieldPage, StreamedVisualObject,
 };
 use bevy::prelude::*;
 use std::collections::HashMap;
-use terrain_render::TerrainSurfaceLayer;
 use vegetation::VegetationCatalog;
 use world::{AssetId, CellCoord, ObjectActivationPolicy, PageKey, PagePayload};
 use world_db::{PageDependency, RuntimeObjectDefinition};
@@ -72,7 +71,6 @@ pub(super) fn attach_page(
             key,
             terrain,
             prepared.terrain,
-            vegetation_catalog,
             cell_size,
         )?,
         PagePayload::StaticObjects(objects) => attach_static_objects(
@@ -284,64 +282,38 @@ fn attach_gameplay_objects(
     Ok(())
 }
 
-/// A terrain cell's CPU relief and surface inputs; the hierarchy draws the ground, and GPU
-/// near shading admits its own bounded subset of these sources.
+/// A terrain cell's CPU relief and road wear; terrain v2 draws the ground from the hierarchy and
+/// control tiles, and its wear atlas takes the wear of the cells around the camera.
 pub(super) fn attach_terrain_source(
     attachment: &mut PageAttachment,
     commands: &mut Commands,
     key: PageKey,
     terrain: world::TerrainHeightfieldPage,
     resources: Option<world_db::TerrainRenderResources>,
-    grass: Option<&VegetationCatalog>,
     cell_size: f32,
 ) -> Result<(), String> {
     let world::TerrainHeightfieldPage {
         heightfield,
         surfaces,
-        weight_pages: weights,
         wear,
+        ..
     } = terrain;
     heightfield.validate().map_err(|e| e.to_string())?;
-    let bounds = [
-        heightfield
-            .heights
-            .iter()
-            .copied()
-            .fold(f32::INFINITY, f32::min),
-        heightfield
-            .heights
-            .iter()
-            .copied()
-            .fold(f32::NEG_INFINITY, f32::max),
-    ];
-    let near = resources
+    // The texture layer of each of the page's surfaces, which its wear's worn-to slots name.
+    let wear = resources
         .map(|resources| {
             let layers = surfaces
                 .iter()
                 .map(|id| {
-                    let r = resources
+                    resources
                         .surfaces
                         .iter()
                         .find(|s| s.surface.id == *id)
-                        .ok_or("unresolved near terrain surface")?;
-                    Ok(TerrainSurfaceLayer {
-                        surface: r.surface.clone(),
-                        layer: r.layer,
-                        grass: grass.map_or([0.0; 4], |g| g.cover(id.0).rgba()),
-                    })
+                        .map(|s| s.layer)
+                        .ok_or("unresolved terrain surface")
                 })
-                .collect::<Result<Vec<_>, String>>()?;
-            Ok::<_, String>(terrain_render::near::NearSource {
-                key,
-                cell_size,
-                height_bounds: bounds,
-                surfaces,
-                weights,
-                profile: resources.profile,
-                texture_set: resources.texture_set,
-                layers,
-                wear,
-            })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok::<_, String>(StreamedTerrainWear { key, wear, layers })
         })
         .transpose()?;
     let entity = commands
@@ -355,8 +327,8 @@ pub(super) fn attach_terrain_source(
             Name::new(format!("Terrain source {}, {}", key.cell.x, key.cell.z)),
         ))
         .id();
-    if let Some(near) = near {
-        commands.entity(entity).insert(near);
+    if let Some(wear) = wear {
+        commands.entity(entity).insert(wear);
     }
     attachment.entities.push(entity);
     attachment.terrain_source_pages = 1;

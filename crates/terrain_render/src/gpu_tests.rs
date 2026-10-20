@@ -9,7 +9,10 @@ use bevy::{
         RenderApp, RenderPlugin,
         gpu_readback::{Readback, ReadbackComplete},
         pipelined_rendering::PipelinedRenderingPlugin,
-        render_resource::{CachedPipelineState, PipelineCache, PipelineDescriptor},
+        render_resource::{
+            CachedPipelineState, Extent3d, PipelineCache, PipelineDescriptor, TextureDimension,
+            TextureFormat,
+        },
     },
     window::ExitCondition,
     winit::WinitPlugin,

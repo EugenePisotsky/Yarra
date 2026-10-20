@@ -191,7 +191,7 @@ pub(super) fn sample(
     mut settings: ResMut<RuntimeSettings>,
     pending: Res<PendingPipelines>,
     streaming: Res<engine::StreamingStats>,
-    terrain: Res<engine::TerrainLodStats>,
+    terrain: Res<engine::ClipmapTerrain>,
     camera: Single<(&GlobalTransform, &Camera), With<WorldViewCamera>>,
     atmosphere: Res<engine::AtmosphereState>,
     upscaler: Query<&upscaling::UpscaleStatus, With<WorldViewCamera>>,
@@ -211,7 +211,7 @@ pub(super) fn sample(
     let now = time.elapsed_secs_f64();
     let busy = pending.count() > 0
         || streaming.loading > 0
-        || terrain.quality_pending
+        || terrain.pending()
         || upscaler
             .single()
             .is_ok_and(|s| s.active.is_none() || s.requested != settings.upscaler);
@@ -263,8 +263,8 @@ pub(super) fn sample(
             camera.0.to_matrix(),
             atmosphere.phase,
             atmosphere.weather,
-            terrain.triangles,
-            terrain.patches,
+            terrain.stats.triangles,
+            terrain.stats.patches,
             streaming.resident
         );
         recording.capture.context += &format!(

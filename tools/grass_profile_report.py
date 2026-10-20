@@ -200,7 +200,7 @@ def analyze_run(directory, power_rows):
         if any(a.get(key) != value for a in selected_audits):
             result['errors'].append(f'Actual {key} does not match requested {value}')
     # Also flag interactive changes beyond the requested controls.
-    for key in ('shadows', 'ground_shader', 'wind', 'ui', 'render_px', 'surface_px', 'window_mode', 'monitor_px', 'monitor_hz', 'scale_factor', 'low_power'):
+    for key in ('shadows', 'wind', 'ui', 'render_px', 'surface_px', 'window_mode', 'monitor_px', 'monitor_hz', 'scale_factor', 'low_power'):
         if len({a.get(key) for a in selected_audits}) > 1:
             result['errors'].append(f'{key} changed during measurement')
     if settings['view'] not in ('grass-stream', 'grass-soak') and len({a.get('source_revision') for a in selected_audits}) > 1:

@@ -1,7 +1,6 @@
 //! Authoritative player root, motor and terrain contact.
 use crate::{
-    DEFAULT_CHARACTER_PRESENTATION_ID, TerrainContactReadiness, WorldOrigin, WorldRenderRoot,
-    WorldStartView,
+    DEFAULT_CHARACTER_PRESENTATION_ID, WorldOrigin, WorldRenderRoot, WorldStartView,
     actor::{
         CameraTarget, CharacterMotion, CharacterMotor, MoveIntent, PlayerControlled,
         TerrainGrounded, WorldStreamFocus,
@@ -165,24 +164,15 @@ pub(super) fn move_player_to_adopted_start(
     }
 }
 
-/// Actors stand on the drawn cover's certified contact height, never on ground not yet drawn;
-/// with terrain v2, on its resident leaf surface.
+/// Actors stand on terrain v2's resident leaf surface, the triangles drawn near the camera,
+/// never on ground not yet resident.
 pub(crate) fn ground_characters_to_streamed_terrain(
     origin: Res<WorldOrigin>,
     mut actors: Query<&mut Transform, With<TerrainGrounded>>,
-    lod: Res<world_streaming::terrain_lod::TerrainLodStream>,
-    readiness: Res<TerrainContactReadiness>,
-    renderer: Option<Res<world_streaming::TerrainRenderer>>,
-    clipmap: Option<Res<world_streaming::ClipmapTerrain>>,
+    terrain: Res<world_streaming::ClipmapTerrain>,
 ) {
-    let clipmap = clipmap
-        .filter(|_| renderer.is_some_and(|r| *r == world_streaming::TerrainRenderer::Clipmap));
     for mut transform in &mut actors {
-        let height = match &clipmap {
-            Some(clipmap) => clipmap.ground_height(transform.translation, &origin),
-            None => lod.sample_contact_height(transform.translation, &origin, &readiness),
-        };
-        if let Some(height) = height {
+        if let Some(height) = terrain.ground_height(transform.translation, &origin) {
             transform.translation.y = height;
         }
     }

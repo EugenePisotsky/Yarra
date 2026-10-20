@@ -32,19 +32,6 @@ impl EnvironmentInputs for crate::clipmap::ClipmapTerrainMaterial {
         self.terrain_shadow = Some(environment.terrain_shadow.clone());
     }
 }
-impl EnvironmentInputs for crate::TerrainCompositeMaterial {
-    fn parameters(&self) -> &Handle<ShaderBuffer> {
-        &self.environment
-    }
-    fn bind_environment(&mut self, environment: &EnvironmentAssets) {
-        self.environment = environment.parameters.clone();
-        self.cloud_shadows = Some(environment.shadows.clone());
-        self.rain_shelter = Some(environment.shelter.clone());
-        self.forest_shadow = Some(environment.forest_shadow.clone());
-        self.terrain_shadow = Some(environment.terrain_shadow.clone());
-    }
-}
-
 /// Binds the environment into materials still on another buffer; only those are marked changed.
 pub(crate) fn sync<M: EnvironmentInputs>(
     environment: Option<Res<EnvironmentAssets>>,

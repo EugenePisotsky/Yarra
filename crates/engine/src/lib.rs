@@ -24,9 +24,7 @@ pub use world::weather::{WeatherKind, WeatherParams};
 mod ground_details;
 mod world_streaming;
 mod world_vegetation;
-pub use world_vegetation::{
-    GrassLooks, WorldVegetationPlugin, WorldVegetationSystems, near_grass_cover,
-};
+pub use world_vegetation::{GrassLooks, WorldVegetationPlugin, WorldVegetationSystems};
 
 pub use atmosphere::clouds::CloudQuality;
 pub use atmosphere::forest_shadow::ForestSkyOcclusion;
@@ -48,12 +46,11 @@ pub use msaa_store::{MsaaColorStorePlugin, MsaaColorStorePolicy};
 pub use world_streaming::{
     ActiveWorldSpace, ClipmapStats, ClipmapTerrain, FLOATING_ORIGIN_THRESHOLD_CELLS,
     GameplayObject, GeneratedEnvironmentObject, LiveTerrainPreview, StreamedTerrainSurface,
-    StreamedVegetationFieldPage, StreamedVisualObject, StreamingSmokePlugin, StreamingStats,
-    TerrainContactReadiness, TerrainLodStats, TerrainPreviewRequest, TerrainRenderer,
-    VisualLodScale, WorldCatalog, WorldDebugControls, WorldDetailDemand, WorldGenerationReload,
-    WorldOrigin, WorldRenderRoot, WorldSpaceInfo, WorldStreamingConfig, WorldStreamingPlugin,
-    WorldStreamingSystems, WorldViewCamera, WorldViewpoint, sample_resident_terrain_surface,
-    spawn_collection_visual,
+    StreamedTerrainWear, StreamedVegetationFieldPage, StreamedVisualObject, StreamingSmokePlugin,
+    StreamingStats, TerrainPreviewRequest, VisualLodScale, WorldCatalog, WorldDebugControls,
+    WorldDetailDemand, WorldGenerationReload, WorldOrigin, WorldRenderRoot, WorldSpaceInfo,
+    WorldStreamingConfig, WorldStreamingPlugin, WorldStreamingSystems, WorldViewCamera,
+    WorldViewpoint, sample_resident_terrain_surface, spawn_collection_visual,
 };
 
 mod ocean;

@@ -18,7 +18,7 @@ fn panel_app() -> App {
         .init_resource::<engine::PlayerMovementSpeed>()
         .init_resource::<GamePointerInputBlocked>()
         .init_resource::<engine::StreamingStats>()
-        .init_resource::<engine::TerrainLodStats>()
+        .init_resource::<engine::ClipmapTerrain>()
         .init_resource::<engine::AtmosphereState>()
         .init_resource::<vegetation_render::VegetationDiagnostics>()
         .add_plugins(PerformancePanelPlugin)

@@ -44,7 +44,7 @@ impl Group {
             Self::Look => "Look captures",
             Self::LodLab => "LOD lab",
             Self::GrassReference => "Grass references",
-            Self::Reference => "Terrain, output and pacing references",
+            Self::Reference => "Output and pacing references",
             Self::Input => "Input and demo controls",
         }
     }
@@ -155,12 +155,6 @@ const FLAGS: &[Flag] = &[
         "off|balanced|high",
         Scene,
         "Clouds (default balanced)",
-    ),
-    flag(
-        "--terrain",
-        "lod|v2",
-        Scene,
-        "Ground renderer: clipmaps with per-pixel materials, or the old terrain LOD (default v2)",
     ),
     flag(
         "--tree-shadow-lod",
@@ -475,7 +469,6 @@ const FLAGS: &[Flag] = &[
         GrassReference,
         "Disable the source acceptance cache",
     ),
-    flag("--terrain-near-off", "", Reference, "Disable hierarchy near detail"),
     flag(
         "--msaa-store-reference",
         "",

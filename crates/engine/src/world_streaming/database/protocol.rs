@@ -1,10 +1,9 @@
 //! Messages between residency/terrain consumers and immutable SQLite IO.
 //! Encoded payloads cross this boundary; decoding, admission and GPU state stay with consumers.
-use world::{CellCoord, PageKey, TerrainMaterialKey, TerrainNodeKey, WorldSpaceId};
+use world::{CellCoord, PageKey, TerrainNodeKey, WorldSpaceId};
 use world_db::{
-    CellDescriptor, EncodedPage, EncodedTerrainComposite, EncodedTerrainNode, PageDependency,
-    RuntimeManifest, RuntimeObjectDefinition, TerrainCompositeDescriptor, TerrainNodeDescriptor,
-    TerrainRenderResources,
+    CellDescriptor, EncodedPage, EncodedTerrainNode, PageDependency, RuntimeManifest,
+    RuntimeObjectDefinition, TerrainNodeDescriptor, TerrainRenderResources,
 };
 
 /// Encoded far-object pages by block; `None` for a block without far objects.
@@ -76,13 +75,11 @@ pub(in crate::world_streaming) struct FetchedPage {
 #[derive(Clone, Debug)]
 pub(in crate::world_streaming) enum TerrainQuery {
     Roots(WorldSpaceId),
-    Metadata(Vec<TerrainNodeKey>),
     Node(TerrainNodeKey),
     /// Several nodes at once with their control tiles; absent nodes are left out of the reply.
     Nodes(Vec<TerrainNodeKey>),
     /// A space's terrain profile, texture set and every surface of the set.
     Surfaces(WorldSpaceId),
-    Material(TerrainMaterialQuery),
 }
 #[derive(Debug)]
 pub(in crate::world_streaming) enum TerrainReply {
@@ -91,18 +88,4 @@ pub(in crate::world_streaming) enum TerrainReply {
     /// Nodes and their compressed control tiles (`world_db::decode_terrain_control`).
     Nodes(Vec<(EncodedTerrainNode, Option<Vec<u8>>)>),
     Surfaces(world_db::TerrainRenderResources),
-    Material(TerrainMaterialReply),
-}
-#[derive(Clone, Debug)]
-pub(in crate::world_streaming) enum TerrainMaterialQuery {
-    Presence(WorldSpaceId),
-    Descriptors(Vec<TerrainMaterialKey>),
-    Tile(TerrainMaterialKey),
-}
-#[derive(Debug)]
-pub(in crate::world_streaming) enum TerrainMaterialReply {
-    /// The finest published composite level, or `None` without baked ground.
-    Presence(Option<u8>),
-    Descriptors(Vec<TerrainCompositeDescriptor>),
-    Tile(EncodedTerrainComposite),
 }

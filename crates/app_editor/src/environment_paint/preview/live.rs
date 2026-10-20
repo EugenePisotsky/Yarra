@@ -523,18 +523,18 @@ fn compile_inner(
     }))
 }
 
-/// Height-only LOD sources have no Mesh3d. Keep CPU picking, vegetation roots and
-/// near-material inputs on the exact same accepted edit as the hierarchy.
+/// Height-only terrain sources have no Mesh3d. Keep CPU picking, vegetation roots and the road
+/// wear terrain v2 draws on the exact same accepted edit as its overlay.
 pub(crate) fn apply_sources(
     preview: Res<EnvironmentPreview>,
     state: Res<LivePreviewState>,
     project: Res<ProjectEditorStore>,
     mut terrain: Query<(
         &mut StreamedTerrainSurface,
-        Option<&mut terrain_render::near::NearSource>,
+        Option<&mut engine::StreamedTerrainWear>,
     )>,
 ) {
-    for (mut surface, near) in &mut terrain {
+    for (mut surface, wear) in &mut terrain {
         let page = state
             .accepted
             .as_ref()
@@ -544,45 +544,37 @@ pub(crate) fn apply_sources(
         let height = cell
             .and_then(|c| c.terrain.as_ref())
             .or_else(|| page.map(|p| &p.heightfield));
-        let height_changed = height.is_some_and(|h| surface.heightfield != *h);
         if let Some(height) = height
             && surface.heightfield != *height
         {
             surface.heightfield = height.clone();
         }
-        let ground = cell
-            .map(|c| (&c.ground.surfaces, &c.ground.weight_pages))
-            .or_else(|| page.map(|p| (&p.surfaces, &p.weight_pages)));
-        if let (Some(mut near), Some((surfaces, weights))) = (near, ground) {
-            if near.surfaces != *surfaces || near.weights != *weights {
-                near.surfaces = surfaces.clone();
-                near.weights = weights.clone();
-                if let Some(r) = project.terrain_resources(surface.key.space) {
-                    near.layers = surfaces
+        let Some(mut wear) = wear else {
+            continue;
+        };
+        let surfaces = cell
+            .map(|c| &c.ground.surfaces)
+            .or_else(|| page.map(|p| &p.surfaces));
+        if let (Some(surfaces), Some(r)) = (surfaces, project.terrain_resources(surface.key.space))
+        {
+            let layers: Vec<u16> = surfaces
+                .iter()
+                .filter_map(|id| {
+                    r.surfaces
                         .iter()
-                        .filter_map(|id| {
-                            r.surfaces.iter().find(|s| s.surface.id == *id).map(|s| {
-                                TerrainSurfaceLayer {
-                                    surface: s.surface.clone(),
-                                    layer: s.layer,
-                                    grass: project
-                                        .vegetation_catalog()
-                                        .map_or([0.0; 4], |c| c.cover(s.surface.id.0).rgba()),
-                                }
-                            })
-                        })
-                        .collect();
-                }
+                        .find(|s| s.surface.id == *id)
+                        .map(|s| s.layer)
+                })
+                .collect();
+            if wear.layers != layers {
+                wear.layers = layers;
             }
-            if height_changed {
-                near.height_bounds = surface.heightfield.height_bounds();
-            }
-            let wear = cell.map(|c| &c.wear).or_else(|| page.map(|p| &p.wear));
-            if let Some(wear) = wear
-                && near.wear != *wear
-            {
-                near.wear = wear.clone();
-            }
+        }
+        let field = cell.map(|c| &c.wear).or_else(|| page.map(|p| &p.wear));
+        if let Some(field) = field
+            && wear.wear != *field
+        {
+            wear.wear = field.clone();
         }
     }
 }

@@ -145,8 +145,8 @@ fn initialize(
         });
         for (tab, note, controls) in [
             (Tab::Features, "Grass Disabled skips its render preparation, compute and draws; source streaming remains. Terrain/object draw switches keep streaming, animation and collision. Sky + haze keeps authored illumination. Cloud Off skips cloud passes; shared material bookkeeping remains. Fog & mist hides ground haze and valley mist; weather fog stays. Ambient particles hides dust motes, seed fluff and falling leaves. Light shafts and sun rays skips the sunbeam passes; the sun's glare stays.", &[Control::Clouds, Control::GrassEnabled, Control::Sky, Control::Bloom, Control::AutoExposure, Control::Fog, Control::Particles, Control::LightShafts, Control::Terrain, Control::Objects, Control::Shadows, Control::ShadowMap, Control::Wind][..]),
-            (Tab::Quality, "Click to cycle. Larger terrain error allows coarser geometry. Object LOD size below 1 selects coarser available assets. Ground contact requirements still apply. Lower resolution affects the 3D scene only.", &[Control::Scale, Control::Upscaler, Control::TemporalDebug, Control::Antialiasing, Control::TerrainDetail, Control::ObjectDetail, Control::Near][..]),
-            (Tab::Advanced, "Diagnostic experiments. Compute only hides grass draws but keeps generation; Schedule only omits generation. Draw frozen locks controls. These settings do not change published content.", &[Control::Grass, Control::Scene, Control::Shading, Control::Prepass, Control::Counters, Control::GpuPassTimings, Control::Lock, Control::PageGizmos, Control::TerrainMacro][..]),
+            (Tab::Quality, "Click to cycle. Object LOD size below 1 selects coarser available assets. Lower resolution affects the 3D scene only.", &[Control::Scale, Control::Upscaler, Control::TemporalDebug, Control::Antialiasing, Control::ObjectDetail][..]),
+            (Tab::Advanced, "Diagnostic experiments. Compute only hides grass draws but keeps generation; Schedule only omits generation. Draw frozen locks controls. These settings do not change published content.", &[Control::Grass, Control::Scene, Control::Prepass, Control::Counters, Control::GpuPassTimings, Control::Lock, Control::PageGizmos, Control::TerrainMacro][..]),
         ] {
             panel.spawn((Page(tab), page_node())).with_children(|page| {
                 page.spawn((Text::new(note), font(12.0)));
@@ -271,7 +271,7 @@ fn refresh(
     state: Res<PanelState>,
     session: Res<CaptureSession>,
     streaming: Res<engine::StreamingStats>,
-    terrain: Res<engine::TerrainLodStats>,
+    terrain: Res<engine::ClipmapTerrain>,
     camera: Single<&Camera, With<WorldViewCamera>>,
     upscaler: Query<&upscaling::UpscaleStatus, With<WorldViewCamera>>,
     window: Single<&Window, With<PrimaryWindow>>,
@@ -388,7 +388,7 @@ fn refresh(
     );
     for mut text in &mut texts.p1() {
         **text = format!(
-            "3D: {}x{} | display: {}x{}\nMain-app elapsed median: {:.2} ms\nPipelines compiling: {} | loading pages: {}\nResident pages: {} | failed: {}\nTerrain: {} triangles / {} patches\nContact limited: {} | quality pending: {}\nObject LOD counts: {:?}\n{source_info}\n{}",
+            "3D: {}x{} | display: {}x{}\nMain-app elapsed median: {:.2} ms\nPipelines compiling: {} | loading pages: {}\nResident pages: {} | failed: {}\nTerrain: {} triangles / {} patches | pending: {}\nObject LOD counts: {:?}\n{source_info}\n{}",
             telemetry::scene_size(&camera, upscaler.single().ok()).x,
             telemetry::scene_size(&camera, upscaler.single().ok()).y,
             window.physical_width(),
@@ -398,10 +398,9 @@ fn refresh(
             streaming.loading,
             streaming.resident,
             streaming.failed,
-            terrain.triangles,
-            terrain.patches,
-            terrain.contact_limited,
-            terrain.quality_pending,
+            terrain.stats.triangles,
+            terrain.stats.patches,
+            terrain.pending(),
             streaming.lod_counts,
             session.message
         );

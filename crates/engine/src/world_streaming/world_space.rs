@@ -67,7 +67,6 @@ pub(super) fn request_world_space_from_keyboard(
 #[allow(clippy::too_many_arguments)]
 pub(super) fn apply_world_space_transition(
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
     mut active_space: ResMut<ActiveWorldSpace>,
     mut viewpoint: ResMut<WorldViewpoint>,
     mut origin: ResMut<WorldOrigin>,
@@ -82,27 +81,16 @@ pub(super) fn apply_world_space_transition(
         ),
         With<WorldStreamFocus>,
     >,
-    mut entry: ResMut<terrain_lod::entry::TerrainEntry>,
-    mut terrain: ResMut<terrain_lod::TerrainLodStream>,
-    tracker: Res<terrain_lod::UploadTracker>,
     reload: Res<WorldGenerationReload>,
-    renderer: Option<Res<super::TerrainRenderer>>,
 ) {
     if reload.active() {
         return;
     }
-    // Terrain v2 refills its clipmaps for the new space on its own; only the terrain LOD stages
-    // a destination cover first.
-    let staged = super::terrain_clipmap::lod_terrain(renderer);
+    // Terrain v2 refills its clipmaps for the new space on its own.
     if active_space
         .requested
         .is_some_and(|t| Some(t.space) != active_space.current)
-        && !active_space.requested.is_some_and(|t| {
-            stream
-                .manifest
-                .as_ref()
-                .is_some_and(|m| !staged || entry.ready_for(&m.generation_id, t))
-        })
+        && stream.manifest.is_none()
     {
         return;
     }
@@ -145,16 +133,6 @@ pub(super) fn apply_world_space_transition(
     if changed_space {
         origin.space = Some(transition.space);
         origin.cell = position.cell;
-    }
-    if changed_space && staged {
-        entry.commit(
-            &mut terrain,
-            &mut commands,
-            &mut meshes,
-            &tracker,
-            origin.cell,
-            space.cell_size,
-        );
     }
     for (mut transform, mut intent, mut motor, mut motion) in &mut focuses {
         transform.translation =

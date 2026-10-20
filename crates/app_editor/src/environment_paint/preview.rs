@@ -10,7 +10,6 @@ use bevy::prelude::*;
 use crossbeam_channel::Receiver;
 use engine::{StreamedTerrainSurface, WorldCatalog, WorldOrigin};
 use environment_compile::{CompilePlan, CompiledCell};
-use terrain_render::TerrainSurfaceLayer;
 use world::{CellCoord, WorldSpaceId};
 use world_db::{ProjectReader, SourceEnvironmentCellRecord, environment_dependency_cells};
 

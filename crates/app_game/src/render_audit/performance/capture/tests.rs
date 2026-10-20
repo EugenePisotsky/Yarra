@@ -16,7 +16,7 @@ fn recording_app() -> App {
         })
         .init_resource::<timing::Stamp>()
         .init_resource::<engine::StreamingStats>()
-        .init_resource::<engine::TerrainLodStats>()
+        .init_resource::<engine::ClipmapTerrain>()
         .init_resource::<engine::AtmosphereState>()
         .init_resource::<CaptureSession>()
         .add_systems(Update, sample.map(drop));

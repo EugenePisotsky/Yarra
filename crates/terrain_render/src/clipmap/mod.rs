@@ -1,5 +1,5 @@
-//! Terrain v2: GPU height clipmaps with CDLOD patches (`--terrain v2`). See the terrain rendering
-//! roadmap in docs/REFACTORING.md.
+//! Terrain v2: GPU height clipmaps with CDLOD patches. See the terrain rendering roadmap in
+//! docs/REFACTORING.md.
 mod gpu;
 mod select;
 pub(crate) use gpu::install;

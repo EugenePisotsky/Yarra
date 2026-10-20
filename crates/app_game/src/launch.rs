@@ -15,7 +15,6 @@ pub(crate) struct LaunchOptions {
     pub fps: u32,
     pub upscaler: upscaling::UpscaleMethod,
     pub clouds: engine::CloudQuality,
-    pub terrain: engine::TerrainRenderer,
     pub weather: engine::WeatherStart,
     /// Day phase to start at instead of the authored time, 0..1.
     pub time: Option<f32>,
@@ -37,7 +36,6 @@ pub(crate) struct LaunchOptions {
     /// How many LODs coarser than the drawn one instanced trees cast shadows from.
     pub tree_shadow_lod: usize,
     pub timer_pacing: bool,
-    pub terrain_near_off: bool,
     pub candidate_reference: bool,
     pub msaa_store_reference: bool,
     pub temporal_standard_output: bool,
@@ -181,14 +179,6 @@ impl LaunchOptions {
                     ("high", engine::CloudQuality::High),
                 ],
             )?,
-            terrain: args.choice(
-                "--terrain",
-                "v2",
-                &[
-                    ("lod", engine::TerrainRenderer::Lod),
-                    ("v2", engine::TerrainRenderer::Clipmap),
-                ],
-            )?,
             weather: weather(&args)?.unwrap_or(if measured {
                 engine::WeatherStart::Authored
             } else {
@@ -213,7 +203,6 @@ impl LaunchOptions {
             debug_world_switch: args.has("--debug-world-switch"),
             tree_shadow_lod: args.number("--tree-shadow-lod", 0, 0..=2)?,
             timer_pacing: args.has("--frame-pacing-timer"),
-            terrain_near_off: args.has("--terrain-near-off"),
             candidate_reference: args.has("--grass-candidate-reference"),
             msaa_store_reference: args.has("--msaa-store-reference"),
             temporal_standard_output: args.has("--temporal-standard-output"),

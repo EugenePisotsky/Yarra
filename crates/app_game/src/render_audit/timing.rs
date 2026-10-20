@@ -251,7 +251,8 @@ fn classify(name: &str, schedule: &str, render: bool) -> Kind {
         Kind::Prepare
     } else if render {
         Kind::Encode
-    } else if name.contains("world_streaming::terrain_lod") || name.contains("yarra_terrain_render")
+    } else if name.contains("world_streaming::terrain_clipmap")
+        || name.contains("yarra_terrain_render")
     {
         Kind::Terrain
     } else if name.contains("world_streaming") {

@@ -116,18 +116,11 @@ pub(super) fn advance_reload(
     mut stream: ResMut<WorldStream>,
     mut residency: ResMut<SourceResidency>,
     mut reload: ResMut<WorldGenerationReload>,
-    mut entry: ResMut<terrain_lod::entry::TerrainEntry>,
-    mut terrain: ResMut<terrain_lod::TerrainLodStream>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    tracker: Res<terrain_lod::UploadTracker>,
-    renderer: Option<Res<super::TerrainRenderer>>,
 ) {
     let Some((id, expected)) = reload.in_flight.clone() else {
         return;
     };
-    // Terrain v2 refills its clipmaps for the new generation on its own; only the terrain LOD
-    // stages a destination cover first.
-    let staged = super::terrain_clipmap::lod_terrain(renderer);
+    // Terrain v2 reads the new generation in place on its own.
     let Some(worker) = worker else {
         return;
     };
@@ -137,7 +130,6 @@ pub(super) fn advance_reload(
         if let Err(NotSent::Full) = worker.send(DatabaseRequest::DiscardReload { reload: id }) {
             return;
         }
-        entry.clear(&mut commands, &mut meshes, &tracker);
         reload.candidate = None;
         reload.in_flight = None;
         reload.commit = None;
@@ -147,15 +139,7 @@ pub(super) fn advance_reload(
         reload.completion = Some(Err(error));
         return;
     }
-    let Some(candidate) = &reload.candidate else {
-        return;
-    };
-    let space = active.current.unwrap_or(candidate.default_world_space);
-    let request = WorldSpaceTransition {
-        space,
-        local_position: [0.; 3],
-    };
-    if staged && !entry.ready_for(&expected, request) {
+    if reload.candidate.is_none() {
         return;
     }
     if reload.commit.is_none() {
@@ -177,7 +161,6 @@ pub(super) fn advance_reload(
     // All remaining operations are infallible moves of already-validated data.
     // Deferred entity changes, catalog identity and completion share this Update.
     let candidate = reload.candidate.take().unwrap();
-    let size = candidate.world_space(space).unwrap().cell_size;
     clear_streamed_pages(&mut commands, &mut stream, &mut residency);
     residency.definition_cache.clear();
     adopt_runtime_manifest(
@@ -188,16 +171,6 @@ pub(super) fn advance_reload(
         &mut origin,
         &mut stream,
     );
-    if staged {
-        entry.commit(
-            &mut terrain,
-            &mut commands,
-            &mut meshes,
-            &tracker,
-            origin.cell(),
-            size,
-        );
-    }
     reload.in_flight = None;
     reload.commit = None;
     reload.committed = false;
@@ -279,10 +252,6 @@ mod tests {
                 .init_resource::<super::far_objects::FarObjects>()
                 .init_resource::<super::valley_mist::MistTerrain>()
                 .init_resource::<super::terrain_clipmap::ClipmapTerrain>()
-                .init_resource::<terrain_lod::TerrainLodStream>()
-                .init_resource::<terrain_lod::entry::TerrainEntry>()
-                .init_resource::<terrain_lod::UploadTracker>()
-                .init_resource::<Assets<Mesh>>()
                 .add_systems(
                     Update,
                     (
@@ -341,18 +310,6 @@ mod tests {
             id
         }
         fn prepared(&mut self, id: u64, candidate: RuntimeManifest) {
-            // The terrain hand-off has its own tests; here the destination cover is ready.
-            let world = self.app.world_mut();
-            let space = world.resource::<ActiveWorldSpace>().current.unwrap();
-            world
-                .resource_mut::<terrain_lod::entry::TerrainEntry>()
-                .test_ready(
-                    &candidate.generation_id,
-                    WorldSpaceTransition {
-                        space,
-                        local_position: [0.; 3],
-                    },
-                );
             self.replies
                 .send((id, DatabaseResult::Reloaded(Ok(candidate))))
                 .unwrap();

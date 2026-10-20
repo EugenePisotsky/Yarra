@@ -6,12 +6,9 @@ mod timing;
 
 use crate::frame_pacing::{FramePacing, FrameRate};
 use crate::game_render::{GameRenderAssets, RESOLUTION_SCALES};
-use crate::runtime_settings::{
-    OBJECT_DETAIL_SCALES, RuntimeSettings, RuntimeSettingsApply, Scene, TERRAIN_ERROR_PIXELS,
-};
+use crate::runtime_settings::{OBJECT_DETAIL_SCALES, RuntimeSettings, RuntimeSettingsApply, Scene};
 use bevy::{prelude::*, ui::Pressed, window::PrimaryWindow};
 use engine::{GamePointerInputBlocked, GameplaySystems};
-use terrain_render::TerrainShadingMode;
 use vegetation_render::VegetationProfileMode;
 
 /// Composition is chosen at launch. Hiding F1 does not uninstall instrumentation.
@@ -87,7 +84,6 @@ enum Control {
     Scene,
     Grass,
     GrassEnabled,
-    Shading,
     Shadows,
     ShadowMap,
     Prepass,
@@ -109,8 +105,6 @@ enum Control {
     LightShafts,
     Terrain,
     Objects,
-    TerrainDetail,
-    Near,
     PageGizmos,
     TerrainMacro,
     ObjectDetail,
@@ -145,13 +139,6 @@ impl Control {
             Self::LightShafts => format!("Light shafts and sun rays: {}", on_off(s.light_shafts)),
             Self::Terrain => format!("Terrain draws: {}", on_off(!s.hide_terrain)),
             Self::Objects => format!("Object draws: {}", on_off(!s.hide_objects)),
-            Self::TerrainDetail => {
-                format!(
-                    "Terrain error: {} px",
-                    TERRAIN_ERROR_PIXELS[s.terrain_detail]
-                )
-            }
-            Self::Near => format!("Near terrain detail: {}", on_off(!s.terrain_near_disabled)),
             Self::PageGizmos => format!("Terrain page gizmos: {}", on_off(s.page_gizmos)),
             Self::TerrainMacro => format!("Terrain macro: {}", s.terrain_macro.label()),
             Self::Scene => format!("Scene: {:?}", s.scene),
@@ -160,10 +147,6 @@ impl Control {
                 on_off(s.grass_mode() != VegetationProfileMode::Disabled)
             ),
             Self::Grass => format!("Grass: {}", s.grass_mode().label()),
-            Self::Shading if s.scene == Scene::Ground => {
-                format!("Ground: {}", s.terrain_shading().label())
-            }
-            Self::Shading => format!("Shading: {}", if s.unlit { "unlit" } else { "production" }),
             Self::Shadows => ["PBR shadows: Gaussian", "PBR shadows: 2x2", "Shadows: off"]
                 [s.shadows as usize]
                 .into(),
@@ -253,10 +236,6 @@ fn buttons(
             Control::LightShafts => s.light_shafts = !s.light_shafts,
             Control::Terrain => s.hide_terrain = !s.hide_terrain,
             Control::Objects => s.hide_objects = !s.hide_objects,
-            Control::TerrainDetail => {
-                s.terrain_detail = (s.terrain_detail + 1) % TERRAIN_ERROR_PIXELS.len()
-            }
-            Control::Near => s.terrain_near_disabled = !s.terrain_near_disabled,
             Control::PageGizmos => s.page_gizmos = !s.page_gizmos,
             Control::TerrainMacro => s.terrain_macro = s.terrain_macro.toggled(),
             Control::Scene => {
@@ -287,15 +266,6 @@ fn buttons(
                     s.controls_locked = true;
                 }
             }
-            Control::Shading if s.scene == Scene::Ground => {
-                s.ground_shading = match s.ground_shading {
-                    TerrainShadingMode::Production => TerrainShadingMode::SurfaceUnlit,
-                    TerrainShadingMode::SurfaceUnlit => TerrainShadingMode::SingleTexture,
-                    TerrainShadingMode::SingleTexture => TerrainShadingMode::Flat,
-                    TerrainShadingMode::Flat => TerrainShadingMode::Production,
-                };
-            }
-            Control::Shading => s.unlit = !s.unlit,
             Control::Shadows => s.shadows = (s.shadows + 1) % 3,
             Control::ShadowMap => {
                 s.shadow_map = (s.shadow_map + 1) % crate::runtime_settings::SHADOW_MAP_SIZES.len()
@@ -474,15 +444,12 @@ mod tests {
                 .init_resource::<GamePointerInputBlocked>()
                 .init_resource::<engine::AtmospherePresentation>()
                 .init_resource::<engine::AtmosphereState>()
-                .init_resource::<terrain_render::lod::LodSettings>()
                 .init_resource::<engine::VisualLodScale>()
-                .init_resource::<engine::TerrainLodStats>()
+                .init_resource::<engine::ClipmapTerrain>()
                 .init_resource::<engine::StreamingStats>()
                 .init_resource::<VegetationWind>()
                 .init_resource::<vegetation_render::VegetationDiagnostics>()
                 .init_resource::<terrain_render::TerrainMacroVariation>()
-                .init_resource::<Assets<terrain_render::TerrainMaterial>>()
-                .init_resource::<Assets<terrain_render::composite::TerrainCompositeMaterial>>()
                 .insert_resource(engine::CloudQuality::Off)
                 .init_resource::<vegetation_render::VegetationLighting>()
                 .init_resource::<VegetationSettings>()

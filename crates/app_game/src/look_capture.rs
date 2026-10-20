@@ -373,7 +373,7 @@ fn run(
     mut commands: Commands,
     mut capture: ResMut<Capture>,
     atmosphere: Res<AtmosphereState>,
-    terrain: Res<engine::TerrainLodStats>,
+    terrain: Res<engine::ClipmapTerrain>,
     window: Single<&Window, With<PrimaryWindow>>,
     sun: Option<Single<&GlobalTransform, With<WorldSun>>>,
     time: Res<Time<Real>>,
@@ -400,7 +400,7 @@ fn run(
         // Wait for the world to settle at full terrain quality, then start.
         capture.warm += 1;
         let settled = time.elapsed_secs() >= capture.options.settle;
-        let quality = !terrain.quality_pending || capture.warm > QUALITY_FRAMES;
+        let quality = !terrain.pending() || capture.warm > QUALITY_FRAMES;
         if settled && quality {
             if let Err(e) = std::fs::create_dir_all(&capture.options.dir) {
                 error!("LOOK cannot create {}: {e}", capture.options.dir.display());

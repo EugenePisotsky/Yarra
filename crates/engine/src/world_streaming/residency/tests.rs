@@ -50,7 +50,7 @@ fn terrain_sources_preserve_relief_without_render_assets() {
         unreachable!()
     };
     let mut attachment = PageAttachment::default();
-    attach_terrain_source(&mut attachment, &mut commands, key, terrain, None, None, 8.).unwrap();
+    attach_terrain_source(&mut attachment, &mut commands, key, terrain, None, 8.).unwrap();
     queue.apply(&mut world);
     assert_eq!(attachment.terrain_source_pages, 1);
     let entity = attachment.entities[0];

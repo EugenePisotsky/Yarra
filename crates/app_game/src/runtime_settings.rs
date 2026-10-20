@@ -7,7 +7,6 @@ use crate::game_render::{
 use crate::launch::LaunchOptions;
 use bevy::{core_pipeline::prepass::DepthPrepass, light::ShadowFilteringMethod, prelude::*};
 use engine::{GameInputEnabled, GameplaySystems, WorldViewCamera};
-use terrain_render::{TerrainMaterial, TerrainShadingMode, composite::TerrainCompositeMaterial};
 use vegetation_render::{VegetationProfileMode, VegetationSettings, VegetationWind};
 
 /// Launch options applied once to the resources they configure, before [`RuntimeSettingsPlugin`]
@@ -46,7 +45,6 @@ impl Plugin for RuntimeSettingsPlugin {
             .init_resource::<engine::PlayerMovementSpeed>();
         let options = app.world().resource::<LaunchOptions>();
         let settings = RuntimeSettings {
-            terrain_near_disabled: options.terrain_near_off,
             upscaler: options.upscaler,
             counters: options.counters,
             gpu_pass_timings: options.gpu_detail,
@@ -125,8 +123,6 @@ pub(crate) enum Scene {
 
 /// F1's object LOD size steps, as `VisualLodScale` factors.
 pub(crate) const OBJECT_DETAIL_SCALES: [f32; 3] = [0.5, 1.0, 2.0];
-/// F1's terrain hierarchy refinement error steps, in pixels.
-pub(crate) const TERRAIN_ERROR_PIXELS: [f64; 4] = [1.0, 2.0, 4.0, 8.0];
 
 /// Directional shadow map edge per cascade. Rendering the maps is most of the shadow cost; at
 /// 2560×1440 with 4× MSAA, 1024 saved ~0.7 ms against 2048 on M2 Max.
@@ -136,9 +132,6 @@ pub(crate) const SHADOW_MAP_SIZES: [usize; 3] = [2048, 1536, 1024];
 pub(crate) struct RuntimeSettings {
     pub(crate) scene: Scene,
     pub(crate) grass: VegetationProfileMode,
-    pub(crate) unlit: bool,
-    pub(crate) ground_shading: TerrainShadingMode,
-    pub(crate) terrain_near_disabled: bool,
     pub(crate) shadows: u8,
     /// Index into `SHADOW_MAP_SIZES`.
     pub(crate) shadow_map: usize,
@@ -169,7 +162,6 @@ pub(crate) struct RuntimeSettings {
     pub(crate) light_shafts: bool,
     pub(crate) hide_terrain: bool,
     pub(crate) hide_objects: bool,
-    pub(crate) terrain_detail: usize,
     pub(crate) page_gizmos: bool,
     pub(crate) terrain_macro: terrain_render::TerrainMacroVariation,
     pub(crate) object_detail: usize,
@@ -181,9 +173,6 @@ impl Default for RuntimeSettings {
         Self {
             scene: Scene::Current,
             grass: VegetationProfileMode::Full,
-            unlit: false,
-            ground_shading: TerrainShadingMode::Production,
-            terrain_near_disabled: false,
             shadows: 0,
             shadow_map: 0,
             prepass: false,
@@ -209,7 +198,6 @@ impl Default for RuntimeSettings {
             light_shafts: true,
             hide_terrain: false,
             hide_objects: false,
-            terrain_detail: 1,
             page_gizmos: false,
             terrain_macro: default(),
             object_detail: 1,
@@ -225,16 +213,6 @@ impl RuntimeSettings {
         RESOLUTION_SCALES[self.scale_index]
     }
 
-    pub(crate) fn terrain_shading(&self) -> TerrainShadingMode {
-        if self.scene == Scene::Ground {
-            self.ground_shading
-        } else if self.unlit {
-            TerrainShadingMode::SurfaceUnlit
-        } else {
-            TerrainShadingMode::Production
-        }
-    }
-
     pub(crate) fn grass_mode(&self) -> VegetationProfileMode {
         if matches!(self.scene, Scene::Clear | Scene::Ground) {
             VegetationProfileMode::Disabled
@@ -248,10 +226,8 @@ impl RuntimeSettings {
 struct MeshOverrideState {
     original_visibility: Visibility,
     override_active: bool,
-    terrain: Option<Handle<TerrainMaterial>>,
-    composite: Option<Handle<TerrainCompositeMaterial>>,
-    /// Terrain v2's patches (`--terrain v2`), which have no shading modes.
-    clipmap: bool,
+    /// One of terrain v2's patches.
+    terrain: bool,
 }
 
 fn sync_render_settings(
@@ -290,7 +266,6 @@ fn apply_settings(
     mut wind: ResMut<VegetationWind>,
     mut clouds: ResMut<engine::CloudQuality>,
     mut atmosphere: ResMut<engine::AtmospherePresentation>,
-    mut lod: ResMut<terrain_render::lod::LodSettings>,
     mut object_lod: ResMut<engine::VisualLodScale>,
     shadow_map: Option<ResMut<bevy::light::DirectionalLightShadowMap>>,
 ) {
@@ -311,8 +286,6 @@ fn apply_settings(
     atmosphere.low_air = s.fog;
     atmosphere.particles = s.particles;
     atmosphere.light_shafts = s.light_shafts;
-    lod.refine_pixels = TERRAIN_ERROR_PIXELS[s.terrain_detail];
-    lod.collapse_pixels = lod.refine_pixels * 0.5;
     grass.profile_mode = s.grass_mode();
     grass.gpu_counters_enabled = s.counters;
     wind.enabled = s.wind;
@@ -340,19 +313,15 @@ fn apply_trees(s: Res<RuntimeSettings>, trees: Option<ResMut<engine::TreeInstanc
     }
 }
 
-#[allow(clippy::type_complexity)] // Keep the optional original-material/state query explicit.
+#[allow(clippy::type_complexity)] // Keep the optional state query explicit.
 fn apply_meshes(
     mut commands: Commands,
     s: Res<RuntimeSettings>,
     new_meshes: Query<(), Added<Mesh3d>>,
-    mut materials: ResMut<Assets<TerrainMaterial>>,
-    mut composites: ResMut<Assets<TerrainCompositeMaterial>>,
     mut meshes: Query<
         (
             Entity,
             &mut Visibility,
-            Option<&MeshMaterial3d<TerrainMaterial>>,
-            Option<&MeshMaterial3d<TerrainCompositeMaterial>>,
             Option<&mut MeshOverrideState>,
             Has<MeshMaterial3d<terrain_render::clipmap::ClipmapTerrainMaterial>>,
         ),
@@ -367,28 +336,26 @@ fn apply_meshes(
     {
         return;
     }
-    for (entity, mut visibility, material, composite, saved, clipmap) in &mut meshes {
+    for (entity, mut visibility, saved, terrain) in &mut meshes {
         if !s.is_changed() && saved.as_ref().is_some_and(|state| !state.override_active) {
             continue;
         }
-        let initial = MeshOverrideState {
+        let mut initial = MeshOverrideState {
             original_visibility: *visibility,
             override_active: false,
-            terrain: material.map(|m| m.0.clone()),
-            composite: composite.map(|m| m.0.clone()),
-            clipmap,
+            terrain,
         };
         let is_new = saved.is_none();
         let mut saved = saved;
-        let mut initial = initial;
         let state = saved.as_deref_mut().unwrap_or(&mut initial);
-        let terrain = state.terrain.is_some() || state.composite.is_some() || state.clipmap;
         let forced = match s.scene {
-            Scene::Current if (terrain && s.hide_terrain) || (!terrain && s.hide_objects) => {
+            Scene::Current
+                if (state.terrain && s.hide_terrain) || (!state.terrain && s.hide_objects) =>
+            {
                 Some(Visibility::Hidden)
             }
             Scene::Current => None,
-            Scene::Ground if terrain => Some(Visibility::Visible),
+            Scene::Ground if state.terrain => Some(Visibility::Visible),
             _ => Some(Visibility::Hidden),
         };
         if let Some(desired) = forced {
@@ -403,28 +370,6 @@ fn apply_meshes(
             *visibility = state.original_visibility;
             state.override_active = false;
         }
-        if !is_new && !s.is_changed() {
-            continue;
-        }
-        if let Some(handle) = &state.terrain {
-            let desired = s.terrain_shading();
-            if materials
-                .get(handle)
-                .is_some_and(|m| m.shading_mode != desired)
-            {
-                materials.get_mut(handle).unwrap().shading_mode = desired;
-            }
-        }
-        if let Some(handle) = &state.composite {
-            let desired = s.terrain_shading();
-            if composites.get(handle).is_some_and(|m| {
-                m.shading_mode != desired || m.near_disabled != s.terrain_near_disabled
-            }) {
-                let mut m = composites.get_mut(handle).unwrap();
-                m.shading_mode = desired;
-                m.near_disabled = s.terrain_near_disabled;
-            }
-        }
         if is_new {
             commands.entity(entity).insert(initial);
         }
@@ -436,26 +381,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ground_audit_includes_hierarchy_materials_and_restores_visibility() {
+    fn ground_audit_includes_terrain_patches_and_restores_visibility() {
         let mut app = App::new();
-        app.init_resource::<Assets<TerrainMaterial>>()
-            .init_resource::<Assets<TerrainCompositeMaterial>>()
-            .insert_resource(RuntimeSettings {
-                scene: Scene::Ground,
-                ground_shading: TerrainShadingMode::Flat,
-                terrain_near_disabled: true,
-                ..default()
-            })
-            .add_systems(Update, apply_meshes);
-        let material = app
-            .world_mut()
-            .resource_mut::<Assets<TerrainCompositeMaterial>>()
-            .add(TerrainCompositeMaterial::default());
+        app.insert_resource(RuntimeSettings {
+            scene: Scene::Ground,
+            ..default()
+        })
+        .add_systems(Update, apply_meshes);
         let ground = app
             .world_mut()
             .spawn((
                 Mesh3d::default(),
-                MeshMaterial3d(material.clone()),
+                MeshMaterial3d::<terrain_render::clipmap::ClipmapTerrainMaterial>::default(),
                 Visibility::Inherited,
             ))
             .id();
@@ -472,13 +409,6 @@ mod tests {
             *app.world().get::<Visibility>(object).unwrap(),
             Visibility::Hidden
         );
-        let m = app
-            .world()
-            .resource::<Assets<TerrainCompositeMaterial>>()
-            .get(&material)
-            .unwrap();
-        assert_eq!(m.shading_mode, TerrainShadingMode::Flat);
-        assert!(m.near_disabled);
         app.world_mut().resource_mut::<RuntimeSettings>().scene = Scene::Clear;
         app.update();
         assert_eq!(
@@ -495,21 +425,12 @@ mod tests {
             *app.world().get::<Visibility>(object).unwrap(),
             Visibility::Inherited
         );
-        let m = app
-            .world()
-            .resource::<Assets<TerrainCompositeMaterial>>()
-            .get(&material)
-            .unwrap();
-        assert_eq!(m.shading_mode, TerrainShadingMode::Production);
-        assert!(!m.near_disabled);
     }
 
     #[test]
     fn draw_switches_cover_new_meshes_and_restore_current_visibility() {
         let mut app = App::new();
         app.init_resource::<RuntimeSettings>()
-            .init_resource::<Assets<TerrainMaterial>>()
-            .init_resource::<Assets<TerrainCompositeMaterial>>()
             .add_systems(Update, apply_meshes);
         let object = app
             .world_mut()

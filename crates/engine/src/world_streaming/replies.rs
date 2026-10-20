@@ -3,8 +3,6 @@ use super::*;
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn receive_database_results(
-    mut terrain: ResMut<terrain_lod::TerrainLodStream>,
-    mut entry: ResMut<terrain_lod::entry::TerrainEntry>,
     worker: Option<Res<WorldDatabaseWorker>>,
     mut active_space: ResMut<ActiveWorldSpace>,
     mut catalog: ResMut<WorldCatalog>,
@@ -45,10 +43,6 @@ pub(super) fn receive_database_results(
                     mist.receive(id, result);
                 } else if clipmap.owns_request(id) {
                     clipmap.receive(id, result);
-                } else if entry.owns_request(id) {
-                    entry.receive(id, result);
-                } else {
-                    terrain.receive(id, result);
                 }
             }
             DatabaseResult::Opened(Ok(manifest)) => {

@@ -1,6 +1,5 @@
-//! Terrain v2 (`--terrain v2`, step 1 of the terrain rendering roadmap in docs/REFACTORING.md):
-//! the ground drawn from GPU height clipmaps with CDLOD patches (`terrain_render::clipmap`)
-//! instead of the terrain LOD's CPU-built meshes.
+//! Terrain v2 (the terrain rendering roadmap in docs/REFACTORING.md): the ground drawn from GPU
+//! height clipmaps with CDLOD patches (`terrain_render::clipmap`).
 //!
 //! Every level keeps a window of nodes around the camera resident in its clipmap layer. Nodes
 //! are read from the world database in batches, decoded on a pool thread and written into their
@@ -40,23 +39,6 @@ use world::{
     TerrainHeightfield, TerrainNode, TerrainNodeKey, TerrainPreviewProducts, WorldSpaceId,
 };
 use world_db::{EncodedTerrainNode, TerrainNodeDescriptor};
-
-/// Which renderer draws the ground.
-#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum TerrainRenderer {
-    /// The terrain LOD's stitched meshes and baked composites.
-    #[default]
-    Lod,
-    /// Terrain v2: clipmaps and CDLOD patches.
-    Clipmap,
-}
-
-pub(crate) fn lod_terrain(renderer: Option<Res<TerrainRenderer>>) -> bool {
-    renderer.is_none_or(|r| *r == TerrainRenderer::Lod)
-}
-pub(crate) fn clipmap_terrain(renderer: Option<Res<TerrainRenderer>>) -> bool {
-    !lod_terrain(renderer)
-}
 
 /// Texels per side of a level: 32 nodes' blocks, of which 31 are a window and one its guard.
 const SIDE: u32 = if cfg!(target_os = "ios") { 512 } else { 1024 };
@@ -429,6 +411,16 @@ impl ClipmapTerrain {
         self.ready_logged = false;
     }
 
+    /// Whether nodes the view needs are still being read or decoded.
+    pub fn pending(&self) -> bool {
+        self.stats.missing > 0 || !self.decoding.is_empty()
+    }
+
+    /// Whether any leaf is resident to stand on.
+    pub fn has_ground(&self) -> bool {
+        !self.resident.leaves.is_empty()
+    }
+
     /// The drawn leaf surface's height under a render-space position, once its node is
     /// resident: the same triangles the patch draws within the leaf range.
     pub fn ground_height(&self, render: Vec3, origin: &WorldOrigin) -> Option<f32> {
@@ -505,7 +497,7 @@ fn relief(node: &TerrainNode, intervals: u32) -> Result<Decoded, String> {
 fn follow_wear(
     terrain: &mut ClipmapTerrain,
     uploads: &mut ClipmapUploads,
-    sources: &Query<(Entity, Ref<terrain_render::near::NearSource>)>,
+    sources: &Query<(Entity, Ref<super::StreamedTerrainWear>)>,
     space: WorldSpaceId,
     eye: DVec3,
     cell_size: f32,
@@ -523,7 +515,7 @@ fn follow_wear(
             Entity,
             bool,
             &world::TerrainWear,
-            &terrain_render::near::NearSource,
+            &super::StreamedTerrainWear,
         ),
     > = HashMap::new();
     for (entity, source) in sources {
@@ -557,7 +549,7 @@ fn follow_wear(
                         terrain.bare.extend(wear.worn.iter().flatten().filter_map(
                             |&(to, share)| {
                                 (to != world::NO_WORN_SLOT && share > 0)
-                                    .then(|| source.layers.get(usize::from(to)).map(|l| l.layer))
+                                    .then(|| source.layers.get(usize::from(to)).copied())
                                     .flatten()
                             },
                         ));
@@ -640,7 +632,7 @@ pub(super) fn update(
         ResMut<Assets<bevy::render::storage::ShaderBuffer>>,
         Res<AssetServer>,
     ),
-    sources: Query<(Entity, Ref<terrain_render::near::NearSource>)>,
+    sources: Query<(Entity, Ref<super::StreamedTerrainWear>)>,
 ) {
     let (Some(worker), Some(space)) = (worker, active_space.current()) else {
         return;
@@ -863,6 +855,29 @@ pub(super) fn update(
             "TERRAIN_V2_READY {seconds:.2} s: {} nodes resident, {} patches, {} triangles",
             resident, terrain.stats.patches, terrain.stats.triangles
         );
+    }
+}
+
+#[cfg(test)]
+impl ClipmapTerrain {
+    /// One resident flat leaf at `height`, for grounding tests.
+    pub(crate) fn test_flat(
+        space: WorldSpaceId,
+        cell: world::CellCoord,
+        cell_size: f32,
+        height: f32,
+    ) -> Self {
+        let field =
+            TerrainHeightfield::from_heights(2, &[height; 4], height, height, cell_size).unwrap();
+        let key = TerrainNodeKey::leaf(space, cell);
+        let mut terrain = Self {
+            space: Some(space),
+            cell_size,
+            ..default()
+        };
+        terrain.resident.bounds.insert(key, [height, height]);
+        terrain.resident.leaves.insert(key, field);
+        terrain
     }
 }
 

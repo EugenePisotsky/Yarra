@@ -8,12 +8,15 @@ pub(super) const PRELOAD_METERS: f64 = 16.;
 // Bevy culls resident meshes separately for the camera and each shadow cascade.
 // Meshes end within this bounded range; far-object blocks draw impostors beyond it.
 const OBJECT_VISIBILITY_METERS: f64 = crate::object_lod::OBJECT_RESIDENCY_METRES as f64;
-/// Near terrain detail draws the ground's surfaces from terrain pages out to its end, as many
-/// pages as it holds (nearest first): with small cells it stops sooner, which also keeps the
-/// source index within its query limit.
+/// Terrain pages (CPU relief for picking, rain and the editor's tools; road wear for terrain
+/// v2's atlas) stay resident out to this many metres, and at most this many pages nearest first:
+/// with small cells the range ends sooner, which also keeps the source index within its query
+/// limit. iOS keeps the close 80 m.
+const TERRAIN_SOURCE_METRES: f64 = if cfg!(target_os = "ios") { 80. } else { 240. };
+const TERRAIN_SOURCE_PAGES: f64 = if cfg!(target_os = "ios") { 64. } else { 256. };
 fn terrain_detail_meters(cell_size: f32) -> f64 {
-    let cells = (terrain_render::near::NEAR_SLOTS as f64 / std::f64::consts::PI).sqrt();
-    f64::from(terrain_render::near::NEAR_END).min(cells * f64::from(cell_size)) + PRELOAD_METERS
+    let cells = (TERRAIN_SOURCE_PAGES / std::f64::consts::PI).sqrt();
+    TERRAIN_SOURCE_METRES.min(cells * f64::from(cell_size)) + PRELOAD_METERS
 }
 pub(super) type Window = [CellCoord; 2];
 pub(super) type Priority = (u8, f64);

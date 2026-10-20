@@ -181,18 +181,10 @@ fn read_page(reader: &RuntimeReader, key: PageKey) -> Result<Option<FetchedPage>
 
 fn read_terrain(reader: &RuntimeReader, query: TerrainQuery) -> Result<TerrainReply, String> {
     match query {
-        TerrainQuery::Material(query) => read_material(reader, query).map(TerrainReply::Material),
         TerrainQuery::Roots(space) => reader
             .read_terrain_roots(space)
             .map(TerrainReply::Metadata)
             .map_err(|e| e.to_string()),
-        TerrainQuery::Metadata(keys) => reader
-            .read_terrain_node_descriptors(&keys)
-            .map_err(|e| e.to_string())?
-            .into_iter()
-            .collect::<Option<Vec<_>>>()
-            .map(TerrainReply::Metadata)
-            .ok_or("missing required terrain metadata".into()),
         TerrainQuery::Node(key) => reader
             .read_terrain_node(key)
             .map_err(|e| e.to_string())?
@@ -216,29 +208,5 @@ fn read_terrain(reader: &RuntimeReader, query: TerrainQuery) -> Result<TerrainRe
             .read_space_terrain_resources(space)
             .map(TerrainReply::Surfaces)
             .map_err(|e| e.to_string()),
-    }
-}
-
-fn read_material(
-    reader: &RuntimeReader,
-    query: TerrainMaterialQuery,
-) -> Result<TerrainMaterialReply, String> {
-    match query {
-        TerrainMaterialQuery::Presence(space) => reader
-            .terrain_composite_minimum_level(space)
-            .map(TerrainMaterialReply::Presence)
-            .map_err(|e| e.to_string()),
-        TerrainMaterialQuery::Descriptors(keys) => reader
-            .read_terrain_composite_descriptors(&keys)
-            .map_err(|e| e.to_string())?
-            .into_iter()
-            .collect::<Option<Vec<_>>>()
-            .map(TerrainMaterialReply::Descriptors)
-            .ok_or("missing declared terrain composite".into()),
-        TerrainMaterialQuery::Tile(key) => reader
-            .read_terrain_composite(key)
-            .map_err(|e| e.to_string())?
-            .map(TerrainMaterialReply::Tile)
-            .ok_or("missing declared terrain composite".into()),
     }
 }

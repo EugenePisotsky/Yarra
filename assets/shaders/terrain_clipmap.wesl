@@ -1,7 +1,7 @@
 // Terrain v2's surface (crates/terrain_render/src/clipmap): one material function at every
 // distance. Per pixel, the control clipmap names the ground's three heaviest surfaces (dithered
 // between two levels by the pixel's footprint, world::terrain_control); they blend by their
-// heights as near detail blends them. Ground grass mostly covers takes one plain colour sample
+// heights (terrain_blend.wesl). Ground grass mostly covers takes one plain colour sample
 // under its field's colour; other surfaces sample the pack's textures, with anti-tiling and their
 // normal maps near the camera and one sample each further out. The normal under them comes per pixel
 // from the height clipmap at the pixel's footprint.
@@ -35,17 +35,16 @@ struct ClipmapSurface { texture: vec4<f32>, material: vec4<f32>, grass: vec4<f32
 // Past this distance each surface is sampled once and shades by the clipmap's normal alone: the
 // scans' normals and anti-tiling blend are lost in their coarse mips there.
 const FAR_GROUND: f32 = 120.0;
-// Ground between grass blades (as near detail, terrain_near.wesl): close by it keeps most of its
-// own texture, a little of the field's colour and the blades' shade; over UNDER_RANGE, as blades
-// thin out, more of the field's colour and its shade; over FIELD_RANGE, past the blades, the
-// field's colour unshaded. Pairs (close, at UNDER_RANGE's end).
+// Ground between grass blades: close by it keeps most of its own texture, a little of the field's
+// colour and the blades' shade; over UNDER_RANGE, as blades thin out, more of the field's colour
+// and its shade; over FIELD_RANGE, past the blades, the field's colour unshaded. Pairs (close, at UNDER_RANGE's end).
 const UNDER_RANGE: vec2<f32> = vec2(5.0, 30.0);
 const UNDER_TINT: vec2<f32> = vec2(0.25, 0.5);
 const UNDER_SHADE: vec2<f32> = vec2(0.8, 0.55);
 const FIELD_RANGE: vec2<f32> = vec2(44.0, 76.0);
 const FIELD_STRENGTH: f32 = 0.85;
-// Wheel ruts sink by parallax within this range, fading out over its second half, as near
-// detail's; worn edges darken out to the wear window (two cells or more around the camera's).
+// Wheel ruts sink by parallax within this range, fading out over its second half; worn edges
+// darken out to the wear window (two cells or more around the camera's).
 const RUT_RANGE: vec2<f32> = vec2(20.0, 35.0);
 const RUT_DEEPEST: f32 = 0.16;
 const WEAR_FADE: vec2<f32> = vec2(40.0, 56.0);
@@ -260,7 +259,7 @@ fn surface(layer: u32, p: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, far: bool, un
 fn rotate_medium(p: vec2<f32>) -> vec2<f32> { return vec2(p.x * 0.819 - p.y * 0.574, p.x * 0.574 + p.y * 0.819); }
 fn rotate_large(p: vec2<f32>) -> vec2<f32> { return vec2(p.x * -0.342 - p.y * 0.940, p.x * 0.940 + p.y * -0.342); }
 
-// Large-scale brightness variation over three scales, as near detail's.
+// Large-scale brightness variation over three scales.
 fn macro_response(p: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>) -> f32 {
     if settings.ground.y < 0.5 {
         return 1.0;
@@ -296,7 +295,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let under = vec2(mix(mix(UNDER_TINT.x, UNDER_TINT.y, thinning), FIELD_STRENGTH, field),
         mix(mix(UNDER_SHADE.x, UNDER_SHADE.y, thinning), 1.0, field));
 
-    // Roads near the camera, as near detail draws them: the wear field sinks ruts by parallax
+    // Roads near the camera: the wear field sinks ruts by parallax
     // (surfaces are sampled where the eye meets the rut floor), tilts the ground with their
     // walls, shades their floors and scores them with grooves, and darkens worn edges.
     var sampled = p;
@@ -379,7 +378,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         }
     }
     // A surface shows only where its score (weight share plus height) comes within the blend
-    // depth of the best; one that cannot, even at full height, is not sampled (as near detail).
+    // depth of the best; one that cannot, even at full height, is not sampled.
     let share = top.weights / max(dot(top.weights, vec3(1.0)), 0.000001);
     let a = surface(top.layers.x, sampled, world_dx, world_dy, far, under, side, plane);
     var b = a;
@@ -400,7 +399,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let worn = mix(vec3(1.0), vec3(0.76, 0.7, 0.64), compacted) * (1.0 - 0.12 * rim);
     let color = (a.color.rgb * w.x + b.color.rgb * w.y + c.color.rgb * w.z) * worn;
     let local_normal = normalize(a.normal * w.x + b.normal * w.y + c.normal * w.z);
-    // World-X tangent with the heightfield's +Z bitangent, as near detail's.
+    // World-X tangent with the heightfield's +Z bitangent.
     let t = normalize(vec3(ground_normal.y, -ground_normal.x, 0.0));
     let bt = normalize(cross(t, ground_normal));
     let normal = normalize(t * local_normal.x + bt * local_normal.y + ground_normal * local_normal.z);

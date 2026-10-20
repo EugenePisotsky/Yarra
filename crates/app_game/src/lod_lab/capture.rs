@@ -338,7 +338,7 @@ fn run(
     camera: Single<(&Camera, &GlobalTransform), With<WorldViewCamera>>,
     window: Single<&Window, With<PrimaryWindow>>,
     sun: Single<&GlobalTransform, With<WorldSun>>,
-    terrain: Res<engine::TerrainLodStats>,
+    terrain: Res<engine::ClipmapTerrain>,
     settings: Res<RuntimeSettings>,
     time: Res<Time<Real>>,
     mut exit: MessageWriter<AppExit>,
@@ -452,7 +452,7 @@ fn run(
         || (!pose.sequence
             && (capture.waited < pose.settle
                 || (tree.fading && capture.waited < pose.settle + 600)
-                || (terrain.quality_pending && capture.waited < pose.settle + 300)))
+                || (terrain.pending() && capture.waited < pose.settle + 300)))
     {
         capture.waited += 1;
         return;
