@@ -233,6 +233,7 @@ impl GameSession {
 /// resources kept within their caps, and party members reach the level the party's
 /// experience now earns. What cannot be brought in line fails the check that follows.
 fn adopt(content: &GameContent, state: &mut SessionState) -> Result<()> {
+    state.rebuild_indexes();
     let rules = &content.game.rules;
     let actors: Vec<ActorId> = state.actors.keys().copied().collect();
 

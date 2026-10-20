@@ -63,7 +63,9 @@ pub struct SessionState {
     pub owners: BTreeSet<OwnerRef>,
     #[serde(with = "crate::keyed::list")]
     pub inventories: BTreeMap<InventoryId, Inventory>,
-    /// Each actor's carried inventory. Maintained by `add_inventory`, checked by `validate`.
+    /// Each actor's carried inventory: an index of `inventories`, not saved but rebuilt when
+    /// a session opens, and kept up to date by `add_inventory` and the command journal.
+    #[serde(skip)]
     pub carried: BTreeMap<ActorId, InventoryId>,
     #[serde(with = "crate::keyed::list")]
     pub wallets: BTreeMap<WalletId, Wallet>,
@@ -83,6 +85,8 @@ pub struct SessionState {
     pub party: Party,
     pub floor: Floor,
     /// Characters with an effect that will tick or end: the only ones passing time looks at.
+    /// An index of `actors`, rebuilt as `carried` is.
+    #[serde(skip)]
     pub timed: BTreeSet<ActorId>,
     pub world: crate::WorldState,
 }
@@ -164,6 +168,21 @@ impl SessionState {
             timed: BTreeSet::new(),
             world: Default::default(),
         }
+    }
+
+    /// Works the indexes out again from the records they index, as after a load.
+    pub(crate) fn rebuild_indexes(&mut self) {
+        self.carried = self
+            .inventories
+            .values()
+            .filter_map(|inventory| Some((inventory.carried_by()?, inventory.id)))
+            .collect();
+        self.timed = self
+            .actors
+            .values()
+            .filter(|actor| actor.next_event().is_some())
+            .map(|actor| actor.id)
+            .collect();
     }
 
     pub fn add_actor(&mut self, actor: Actor) {

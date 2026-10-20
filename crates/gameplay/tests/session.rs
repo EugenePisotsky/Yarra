@@ -489,13 +489,13 @@ fn dialogue_graphs_load_on_first_use_and_stay_cached() {
     // A restored playthrough reloads the graph of its active conversation only.
     let saved = serde_json::to_vec(session.state()).unwrap();
     let restored: SessionState = serde_json::from_slice(&saved).unwrap();
-    assert_eq!(&restored, session.state());
     let again = std::rc::Rc::new(std::cell::Cell::new(0));
     let source = Counting {
         inner: ToolContent::new(content()).unwrap(),
         graphs: again.clone(),
     };
-    GameSession::new(source, restored).unwrap();
+    let restored = GameSession::new(source, restored).unwrap();
+    assert_eq!(restored.state(), session.state());
     assert_eq!(again.get(), 1);
 }
 
@@ -1032,10 +1032,8 @@ mod variables {
 
         // The values survive a save.
         let saved = serde_json::to_vec(state).unwrap();
-        assert_eq!(
-            &serde_json::from_slice::<SessionState>(&saved).unwrap(),
-            state
-        );
+        let loaded = serde_json::from_slice::<SessionState>(&saved).unwrap();
+        assert_eq!(loaded.variables, state.variables);
 
         // A per-actor variable cannot be read without saying whose.
         assert!(state.variable(session.content(), INSULTED).is_err());

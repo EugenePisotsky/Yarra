@@ -637,16 +637,22 @@ fn a_saved_character_is_brought_in_line_with_the_rules_or_refused_on_load() {
         })
         .is_err()
     );
-    assert!(
-        open(|a| a.effects.push(rules::ActiveEffect {
+
+    // Indexes are not saved: a session works them out again from what they index.
+    let effect = open(|a| {
+        a.effects.push(rules::ActiveEffect {
             effect: key("fortified"),
             expires_at: Some(GameTime(5)),
             next_tick: None,
-        }))
-        .is_err()
-    );
+        })
+    })
+    .unwrap();
+    assert!(effect.state().timed.contains(&HERO));
     let saved = serde_json::to_string(&good).unwrap();
-    assert_eq!(serde_json::from_str::<SessionState>(&saved).unwrap(), good);
+    let loaded = serde_json::from_str::<SessionState>(&saved).unwrap();
+    assert!(loaded.carried.is_empty());
+    let loaded = GameSession::new(ToolContent::new(content.clone()).unwrap(), loaded).unwrap();
+    assert_eq!(loaded.state(), &good);
 }
 
 #[test]

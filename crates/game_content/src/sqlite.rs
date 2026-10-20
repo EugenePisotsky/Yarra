@@ -39,7 +39,6 @@ pub(crate) fn publish(
         tx.pragma_update(None, "user_version", version)?;
         tx.commit()?;
         connection.close().map_err(|(_, error)| error)?;
-        fs::File::open(&stage)?.sync_all()?;
 
         // A hard link of the closed file: it appears whole, and only where nothing is.
         fs::hard_link(&stage, output)?;
