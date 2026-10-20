@@ -447,16 +447,15 @@ fn help_lists_every_group() {
 }
 
 #[test]
-#[ignore = "docs/PERFORMANCE.md is being rewritten; its launch table returns with it"]
-fn the_performance_guide_lists_every_option() {
+fn the_workflows_guide_lists_every_option() {
     let table = flags::markdown_table();
     let guide = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../docs/PERFORMANCE.md"
+        "/../../docs/WORKFLOWS.md"
     ))
     .unwrap();
     assert!(
         guide.contains(&table),
-        "docs/PERFORMANCE.md's launch table is out of date; replace it with:\n\n{table}"
+        "docs/WORKFLOWS.md's launch table is out of date; replace it with:\n\n{table}"
     );
 }

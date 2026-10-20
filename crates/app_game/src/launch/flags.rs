@@ -1,5 +1,5 @@
 //! The launch option registry: spelling, value syntax, help group and requirement of every
-//! flag in one table, which also generates `--help` and the launch table in docs/PERFORMANCE.md.
+//! flag in one table, which also generates `--help` and the launch table in docs/WORKFLOWS.md.
 use super::DiagnosticsMode;
 use std::{collections::BTreeMap, ffi::OsString, fmt::Display, ops::RangeInclusive, path::PathBuf};
 
@@ -213,7 +213,7 @@ const FLAGS: &[Flag] = &[
         "--render-repro",
         "NAME",
         Repro,
-        "Repeatable camera route (names in docs/PERFORMANCE.md)",
+        "Repeatable camera route (names in docs/WORKFLOWS.md)",
     ),
     flag(
         "--render-frames",
@@ -606,7 +606,7 @@ pub(crate) fn help() -> String {
     help
 }
 
-/// The launch table in docs/PERFORMANCE.md, one row per group (a test keeps them equal).
+/// The launch table in docs/WORKFLOWS.md, one row per group (a test keeps them equal).
 #[cfg(test)]
 pub(crate) fn markdown_table() -> String {
     let mut table = String::from("| Purpose | Controls |\n| --- | --- |\n");
