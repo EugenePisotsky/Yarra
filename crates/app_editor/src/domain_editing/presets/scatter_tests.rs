@@ -2,7 +2,7 @@ use super::*;
 
 use crate::{
     editing::{EditorHistory, EditorObjectWorkingSet},
-    environment_paint::preview::compile_source_cells_with_roads,
+    workspaces::world::tools::environment_paint::preview::compile_source_cells_with_roads,
 };
 
 use environment::*;

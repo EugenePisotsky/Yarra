@@ -73,7 +73,10 @@ pub(super) fn draw_world_hierarchy(
         .clicked()
     {
         tools.set_active(EditorWorkspace::World, AREA_TOOL.id);
-        windows.set_open(crate::area_authoring::WINDOW.id, true);
+        windows.set_open(
+            crate::workspaces::world::tools::area_authoring::WINDOW.id,
+            true,
+        );
     }
 
     let mut visible_assets = visible_asset_records(project, objects);

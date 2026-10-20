@@ -4,12 +4,12 @@ use crate::{
     activity::{SourceActions, SourceActivity},
     domain_editing::SourceWorkingSets,
     editing::{EditorHistory, EditorObjectWorkingSet, EditorSelection, TransformInspectorDraft},
-    environment_paint::EnvironmentPaintState,
     project_store::ProjectEditorStore,
     publication::RuntimePublicationState,
     saving::EditorSaveCoordinator,
     shell::EditorUiFrame,
     tools::{EditorToolRegistry, OBJECT_TOOL},
+    workspaces::world::tools::environment_paint::EnvironmentPaintState,
     workspaces::{EditorWorkspace, presets::PresetAuthoringState},
 };
 

@@ -3,10 +3,12 @@ use super::*;
 use crate::{
     activity::{SourceActions, SourceActivity},
     editing::{EditorHistory, EditorObjectWorkingSet, merge_preset_changes},
-    environment_paint::{EnvironmentPaintState, preset_controls as controls},
     publication::RuntimePublicationState,
     saving::EditorSaveCoordinator,
     shell::EditorUiFrame,
+    workspaces::world::tools::environment_paint::{
+        EnvironmentPaintState, preset_controls as controls,
+    },
 };
 
 use bevy::ecs::system::SystemParam;
@@ -17,7 +19,7 @@ pub(super) struct Resources<'w> {
     listings: ResMut<'w, crate::listings::ProjectListings>,
     state: ResMut<'w, PresetAuthoringState>,
     preview: Res<'w, viewport::PreviewState>,
-    roads: Res<'w, crate::road_authoring::RoadToolState>,
+    roads: Res<'w, crate::workspaces::world::tools::road_authoring::RoadToolState>,
     dense: ResMut<'w, SourceWorkingSets>,
     project: Res<'w, ProjectEditorStore>,
     history: ResMut<'w, EditorHistory>,

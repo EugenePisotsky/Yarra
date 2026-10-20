@@ -88,9 +88,9 @@ struct JournalRevision {
 
 #[derive(Debug)]
 struct JournalRecovery {
-    atmospheres: Vec<crate::atmosphere_authoring::working::Snapshot>,
-    areas: Option<crate::area_authoring::working::Snapshot>,
-    roads: Vec<crate::road_authoring::working::RoadEntry>,
+    atmospheres: Vec<crate::workspaces::world::tools::atmosphere_authoring::working::Snapshot>,
+    areas: Option<crate::workspaces::world::tools::area_authoring::working::Snapshot>,
+    roads: Vec<crate::workspaces::world::tools::road_authoring::working::RoadEntry>,
     presets: Option<DirtyPresetSnapshot>,
     definitions: Vec<DirtyDefinitionSnapshot>,
     objects: Vec<JournalEntry>,
@@ -133,9 +133,9 @@ enum JournalResult {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct JournalFile {
-    atmospheres: Vec<crate::atmosphere_authoring::working::Snapshot>,
-    areas: Option<crate::area_authoring::working::Snapshot>,
-    roads: Vec<crate::road_authoring::working::RoadEntry>,
+    atmospheres: Vec<crate::workspaces::world::tools::atmosphere_authoring::working::Snapshot>,
+    areas: Option<crate::workspaces::world::tools::area_authoring::working::Snapshot>,
+    roads: Vec<crate::workspaces::world::tools::road_authoring::working::RoadEntry>,
     presets: Option<DirtyPresetSnapshot>,
     definition_entries: Vec<DirtyDefinitionSnapshot>,
     schema_version: u32,

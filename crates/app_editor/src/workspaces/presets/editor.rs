@@ -1,6 +1,8 @@
 //! New presets of each kind, and the editor for one preset with its children.
 use super::*;
-use crate::environment_paint::preset_controls::{kind_name, preset_selector, quick_controls};
+use crate::workspaces::world::tools::environment_paint::preset_controls::{
+    kind_name, preset_selector, quick_controls,
+};
 
 use environment::{
     EnvironmentDefinition, Exclusion, GRASS_CHANNEL, GroundTreatment, OutputId, Preset, PresetKind,

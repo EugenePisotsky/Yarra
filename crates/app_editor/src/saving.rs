@@ -104,7 +104,7 @@ pub(crate) fn drive_editor_save(
     mut dense: ResMut<SourceWorkingSets>,
     mut publication: ResMut<RuntimePublicationState>,
     presets: Res<crate::workspaces::presets::PresetAuthoringState>,
-    paint: Res<crate::environment_paint::EnvironmentPaintState>,
+    paint: Res<crate::workspaces::world::tools::environment_paint::EnvironmentPaintState>,
 ) {
     if !coordinator.active() {
         return;

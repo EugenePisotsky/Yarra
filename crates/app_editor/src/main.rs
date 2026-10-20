@@ -1,17 +1,13 @@
 //! Yarra editor executable composition root.
 
 mod activity;
-mod area_authoring;
-mod atmosphere_authoring;
 mod domain_editing;
 mod editing;
-mod environment_paint;
 mod grass;
 mod journal;
 mod listings;
 mod project_store;
 mod publication;
-mod road_authoring;
 mod saving;
 mod shell;
 mod startup;

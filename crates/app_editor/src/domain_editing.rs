@@ -67,9 +67,10 @@ pub(crate) struct DirtyDenseSnapshot {
 
 #[derive(Resource, Default)]
 pub(crate) struct SourceWorkingSets {
-    pub(crate) atmospheres: crate::atmosphere_authoring::working::WorkingSet,
-    pub(crate) areas: crate::area_authoring::working::WorkingSet,
-    pub(crate) roads: crate::road_authoring::working::RoadWorkingSet,
+    pub(crate) atmospheres:
+        crate::workspaces::world::tools::atmosphere_authoring::working::WorkingSet,
+    pub(crate) areas: crate::workspaces::world::tools::area_authoring::working::WorkingSet,
+    pub(crate) roads: crate::workspaces::world::tools::road_authoring::working::RoadWorkingSet,
     definitions: BTreeMap<WorldSpaceId, DefinitionEntry>,
     presets: Option<DefinitionEntry<environment::PresetLibrary>>,
     definition_revision: u64,

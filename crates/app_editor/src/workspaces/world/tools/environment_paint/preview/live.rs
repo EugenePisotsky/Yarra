@@ -30,7 +30,7 @@ struct Input {
     definition_revision: u64,
     library_revision: u64,
     records: Vec<SourceEnvironmentCellRecord>,
-    roads: Vec<crate::road_authoring::working::RoadChange>,
+    roads: Vec<crate::workspaces::world::tools::road_authoring::working::RoadChange>,
     regions: Option<Vec<RoadCellBounds>>,
     resident: Vec<CellCoord>,
     global: bool,

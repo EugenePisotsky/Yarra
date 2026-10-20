@@ -70,11 +70,12 @@ fn live_road_edit_move_save_undo_and_cancel() {
     let mut profile = original.clone();
     profile.relief.road_depth = 0.25;
     profile.relief.track_depth = 0.1;
-    let change =
-        |p: environment::roads::CartTrackProfile| crate::road_authoring::working::RoadChange {
+    let change = |p: environment::roads::CartTrackProfile| {
+        crate::workspaces::world::tools::road_authoring::working::RoadChange {
             key: world_db::RoadRecordKey::Profile(p.id),
             record: Some(world_db::RoadSourceRecord::Profile(p)),
-        };
+        }
+    };
     job.base = Some(baseline);
     job.roads = vec![change(profile.clone())];
     job.regions = None;

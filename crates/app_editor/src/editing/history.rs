@@ -29,8 +29,8 @@ enum EditorCommand {
         after: Box<world::atmosphere::AtmosphereProfile>,
     },
     Roads {
-        before: Vec<crate::road_authoring::working::RoadChange>,
-        after: Vec<crate::road_authoring::working::RoadChange>,
+        before: Vec<crate::workspaces::world::tools::road_authoring::working::RoadChange>,
+        after: Vec<crate::workspaces::world::tools::road_authoring::working::RoadChange>,
     },
     /// The whole set before and after: it is one small record.
     Areas {
@@ -293,8 +293,8 @@ impl EditorHistory {
 
     pub(crate) fn record_roads(
         &mut self,
-        before: Vec<crate::road_authoring::working::RoadChange>,
-        after: Vec<crate::road_authoring::working::RoadChange>,
+        before: Vec<crate::workspaces::world::tools::road_authoring::working::RoadChange>,
+        after: Vec<crate::workspaces::world::tools::road_authoring::working::RoadChange>,
     ) {
         if before != after {
             self.record(EditorCommand::Roads { before, after });

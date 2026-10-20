@@ -53,7 +53,7 @@ pub(crate) fn handle_editor_shortcuts(
     (publication, project): (Res<RuntimePublicationState>, Res<ProjectEditorStore>),
     mut save: ResMut<EditorSaveCoordinator>,
     tools: Res<EditorToolRegistry>,
-    paint: Res<crate::environment_paint::EnvironmentPaintState>,
+    paint: Res<crate::workspaces::world::tools::environment_paint::EnvironmentPaintState>,
     presets: Res<crate::workspaces::presets::PresetAuthoringState>,
 ) {
     let object_tool_active = tools

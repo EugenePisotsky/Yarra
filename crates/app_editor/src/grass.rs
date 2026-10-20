@@ -79,9 +79,9 @@ struct PreviewSignature {
 #[allow(clippy::too_many_arguments)]
 fn sync_live_preview(
     runtime: Res<engine::WorldCatalog>,
-    paint: Res<crate::environment_paint::EnvironmentPaintState>,
+    paint: Res<crate::workspaces::world::tools::environment_paint::EnvironmentPaintState>,
     workspace: Res<State<EditorWorkspace>>,
-    environment: Res<crate::environment_paint::EnvironmentPreview>,
+    environment: Res<crate::workspaces::world::tools::environment_paint::EnvironmentPreview>,
     origin: Res<WorldOrigin>,
     terrain_pages: Query<(Entity, &StreamedTerrainSurface)>,
     field_pages: Query<(Entity, &StreamedVegetationFieldPage)>,
