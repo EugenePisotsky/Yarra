@@ -10,19 +10,10 @@ use bevy::{
 
 use engine::{MinimalGamePlugin, WorldVegetationPlugin};
 
+mod dev;
 mod frame_pacing;
 mod game_render;
-mod grass_pack;
 mod launch;
-mod lod_lab;
-mod look_capture;
-
-#[cfg(any(target_os = "macos", target_os = "ios"))]
-mod metal_capture;
-
-mod profile;
-mod render_audit;
-mod repro;
 mod runtime_settings;
 mod story;
 
@@ -95,9 +86,6 @@ fn run() -> Result<(), String> {
         .add_plugins(engine::GameDayClockPlugin);
     app.add_plugins((
         WorldVegetationPlugin,
-        grass_pack::GrassPackPlugin {
-            path: asset_root.join("packs/grass/baltic.ron"),
-        },
         engine::TreeWindPlugin,
         engine::OceanPlugin,
     ))
@@ -113,16 +101,7 @@ fn run() -> Result<(), String> {
     }
 
     app.add_plugins(runtime_settings::RuntimeSettingsPlugin);
-
-    // Explicit precedence: launch defaults, reproduction, then profile settings.
-    profile::install(&mut app);
-    repro::install(&mut app);
-    profile::apply_runtime_settings(&mut app);
-    lod_lab::install(&mut app)?;
-    look_capture::install(&mut app);
-    render_audit::install(&mut app);
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    metal_capture::install(&mut app);
+    dev::install(&mut app, &asset_root)?;
     app.run();
     Ok(())
 }

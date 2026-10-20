@@ -256,7 +256,7 @@ fn pose(frame: u32) -> Transform {
 fn move_camera(
     frame: Res<FrameCount>,
     time: Res<Time<Real>>,
-    profile: Option<Res<crate::profile::ProfileClock>>,
+    profile: Option<Res<crate::dev::profile::ProfileClock>>,
     view: Res<ReproView>,
     clock: Res<ReproClock>,
     mut camera: Single<&mut Transform, With<WorldViewCamera>>,
@@ -436,7 +436,7 @@ fn soak_focus(frame: u32) -> Vec3 {
 
 fn synchronize_wind(
     frame: Res<FrameCount>,
-    profile: Option<Res<crate::profile::ProfileClock>>,
+    profile: Option<Res<crate::dev::profile::ProfileClock>>,
     view: Res<ReproView>,
     mut wind: ResMut<vegetation_render::VegetationWind>,
 ) {

@@ -1,5 +1,5 @@
 use super::*;
-use crate::{launch::LaunchOptions, render_audit::PerformancePanelPlugin};
+use crate::{dev::render_audit::PerformancePanelPlugin, launch::LaunchOptions};
 use engine::{GameInputEnabled, GamePointerInputBlocked};
 
 fn panel_app() -> App {

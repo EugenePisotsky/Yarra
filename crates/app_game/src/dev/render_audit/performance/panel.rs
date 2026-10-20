@@ -6,8 +6,8 @@ use super::{
 };
 
 use crate::{
+    dev::render_audit::{AuditPanel, Control, font, timing},
     frame_pacing::FramePacing,
-    render_audit::{AuditPanel, Control, font, timing},
     runtime_settings::{RuntimeSettings, RuntimeSettingsInit},
 };
 
@@ -104,7 +104,7 @@ pub(super) fn install(app: &mut App) {
                 super::capture::sample.pipe(capture_finished),
             )
                 .chain()
-                .before(crate::render_audit::buttons),
+                .before(crate::dev::render_audit::buttons),
         )
         .add_systems(PostUpdate, (refresh, visibility).chain());
 }
@@ -332,7 +332,7 @@ fn refresh(
     let peak = t.peak_ms;
     t.graph.push_back(peak);
     t.peak_ms = 0.0;
-    let power = crate::render_audit::logging::power_state();
+    let power = crate::dev::render_audit::logging::power_state();
 
     for mut text in &mut texts.p3() {
         let value = session.progress(time.elapsed_secs_f64()).map_or_else(

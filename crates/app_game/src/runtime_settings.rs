@@ -220,7 +220,7 @@ struct MeshOverrideState {
 
 fn sync_render_settings(
     s: Res<RuntimeSettings>,
-    profile: Option<Res<crate::profile::ProfileSettings>>,
+    profile: Option<Res<crate::dev::profile::ProfileSettings>>,
     mut render: ResMut<GameRenderSettings>,
 ) {
     if s.is_changed() {

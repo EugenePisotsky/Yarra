@@ -34,15 +34,15 @@ pub(crate) struct LaunchOptions {
     pub timer_pacing: bool,
     pub temporal_standard_output: bool,
     pub metal_capture: Option<PathBuf>,
-    pub profile: Option<crate::profile::ProfileSettings>,
+    pub profile: Option<crate::dev::profile::ProfileSettings>,
     pub repro: Option<ReproOptions>,
     /// Render scale at launch (one of `RESOLUTION_SCALES`).
     pub resolution_scale: Option<f32>,
     pub lod_lab: Option<LodLabOptions>,
-    pub look_capture: Option<crate::look_capture::LookCaptureOptions>,
+    pub look_capture: Option<crate::dev::look_capture::LookCaptureOptions>,
 }
 
-/// `--lod-lab`: one tree's representations compared in place ([`crate::lod_lab`]).
+/// `--lod-lab`: one tree's representations compared in place ([`crate::dev::lod_lab`]).
 #[derive(Clone, Debug)]
 pub(crate) struct LodLabOptions {
     /// Catalog key (`pack/asset`) of the tree under study.
@@ -87,7 +87,7 @@ pub(crate) enum DiagnosticsMode {
 
 #[derive(Clone)]
 pub(crate) struct ReproOptions {
-    pub route: crate::repro::Route,
+    pub route: crate::dev::repro::Route,
     pub prepass: bool,
     pub hide_ui: bool,
     pub frame_clock: bool,
@@ -140,7 +140,7 @@ impl LaunchOptions {
                 ),
             ],
         )?;
-        let profile = crate::profile::ProfileSettings::parse(&args, resolution_scale)?;
+        let profile = crate::dev::profile::ProfileSettings::parse(&args, resolution_scale)?;
 
         if profile.is_some() && args.has("--fps") && !args.has("--profile-native-pacing") {
             return Err(
@@ -337,7 +337,9 @@ fn metal_capture(args: &Args) -> Result<Option<PathBuf>, String> {
     Ok(Some(capture))
 }
 
-fn look_capture(args: &Args) -> Result<Option<crate::look_capture::LookCaptureOptions>, String> {
+fn look_capture(
+    args: &Args,
+) -> Result<Option<crate::dev::look_capture::LookCaptureOptions>, String> {
     let Some(dir) = args.path("--look-capture") else {
         return Ok(None);
     };
@@ -346,9 +348,9 @@ fn look_capture(args: &Args) -> Result<Option<crate::look_capture::LookCaptureOp
         return Err("--look-capture shows the --start-view".into());
     }
 
-    Ok(Some(crate::look_capture::LookCaptureOptions {
+    Ok(Some(crate::dev::look_capture::LookCaptureOptions {
         dir,
-        variants: crate::look_capture::parse_variants(
+        variants: crate::dev::look_capture::parse_variants(
             args.value("--look-variants")?
                 .ok_or("--look-capture needs --look-variants")?,
         )?,
@@ -361,7 +363,7 @@ impl ReproOptions {
         let Some(name) = args.value("--render-repro")? else {
             return Ok(None);
         };
-        let route = crate::repro::Route::parse(name)?;
+        let route = crate::dev::repro::Route::parse(name)?;
 
         if route.needs_start_view() && !args.has("--start-view") {
             return Err(format!("{name} requires --start-view"));

@@ -4,7 +4,7 @@ use super::{
     timing::{self, Kind},
 };
 
-use crate::render_audit::Control;
+use crate::dev::render_audit::Control;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const ALL_CONTROLS: &[Control] = &[
