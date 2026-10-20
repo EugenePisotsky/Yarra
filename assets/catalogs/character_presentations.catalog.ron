@@ -1,5 +1,5 @@
 (
-    schema_version: 1,
+    schema_version: 2,
     skeletons: [
         (
             id: "skeletons/yarra_humanoid_v1",
@@ -17,6 +17,16 @@
                 translation_m: (0.0, 0.0, 0.0),
                 yaw_degrees: 0.0,
                 uniform_scale: 1.0,
+            ),
+            // Measured on the Walk clip's planted feet.
+            feet: (
+                joints: [("foot.l", "toes_01.l"), ("foot.r", "toes_01.r")],
+                ankle_height_m: 0.068,
+                toe_height_m: 0.012,
+                heel_behind_ankle_m: 0.065,
+                toe_ahead_m: 0.06,
+                heel_radius_m: 0.04,
+                ball_radius_m: 0.045,
             ),
         ),
     ],

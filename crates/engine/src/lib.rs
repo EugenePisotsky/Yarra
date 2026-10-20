@@ -27,6 +27,7 @@ pub use trees::{
 };
 
 mod day_clock;
+mod feet;
 
 pub use day_clock::{GameDayClock, GameDayClockPlugin, clock_time};
 

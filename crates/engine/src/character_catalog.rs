@@ -82,6 +82,51 @@ pub(crate) struct CharacterModelDefinition {
     name: String,
     pub(crate) skeleton: String,
     pub(crate) visual: CharacterVisualDefinition,
+    pub(crate) feet: FeetDefinition,
+}
+
+/// A model's feet: each one's ankle and toe joints, and its sole around them (measured on the
+/// model standing flat), for the prints it leaves in soft ground.
+#[derive(Clone, Debug, Deserialize)]
+pub(crate) struct FeetDefinition {
+    /// Each foot's ankle and toe joint names.
+    pub(crate) joints: Vec<(String, String)>,
+    /// How high the ankle and the toe joint stand over the sole, metres.
+    pub(crate) ankle_height_m: f32,
+    pub(crate) toe_height_m: f32,
+    /// How far the sole reaches behind the ankle and past the toe joint, metres.
+    pub(crate) heel_behind_ankle_m: f32,
+    pub(crate) toe_ahead_m: f32,
+    /// Half the sole's width at the heel and at the ball, metres.
+    pub(crate) heel_radius_m: f32,
+    pub(crate) ball_radius_m: f32,
+}
+
+impl FeetDefinition {
+    fn validate(&self, model: &str) -> Result<(), String> {
+        let joints = !self.joints.is_empty()
+            && self.joints.len() <= 4
+            && self
+                .joints
+                .iter()
+                .all(|(ankle, toe)| !ankle.trim().is_empty() && !toe.trim().is_empty());
+        let lengths = [self.ankle_height_m, self.toe_height_m]
+            .iter()
+            .all(|v| v.is_finite() && (0.0..=0.5).contains(v))
+            && [self.heel_radius_m, self.ball_radius_m]
+                .iter()
+                .all(|v| v.is_finite() && (0.005..=0.3).contains(v))
+            && self.heel_behind_ankle_m.is_finite()
+            && self.heel_behind_ankle_m >= self.heel_radius_m
+            && self.toe_ahead_m.is_finite()
+            && self.toe_ahead_m >= self.ball_radius_m;
+
+        if joints && lengths {
+            Ok(())
+        } else {
+            Err(format!("model {model:?} has invalid feet"))
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -260,7 +305,7 @@ impl CharacterPresentationCatalog {
     }
 
     fn validate(&self) -> Result<(), String> {
-        if self.schema_version != 1 {
+        if self.schema_version != 2 {
             return Err(format!(
                 "unsupported character presentation catalog schema {}",
                 self.schema_version
@@ -346,6 +391,8 @@ impl CharacterPresentationCatalog {
                     model.id
                 ));
             }
+
+            model.feet.validate(&model.id)?;
         }
 
         for bank in &self.animation_banks {

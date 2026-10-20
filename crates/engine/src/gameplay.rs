@@ -68,6 +68,7 @@ pub struct GameplayPlugin;
 
 impl Plugin for GameplayPlugin {
     fn build(&self, app: &mut App) {
+        crate::feet::plugin(app);
         app.add_plugins(CharacterPresentationPlugin)
             .init_resource::<WorldStartView>()
             .add_message::<crate::WorldStartAdopted>()

@@ -415,6 +415,7 @@ fn resolve_character_presentations(
                 movement_set_id: resolved.movement_set.id.clone(),
             },
             resolved.movement_set.motor_config(),
+            crate::feet::CharacterFeet::new(resolved.model.feet.clone()),
         ));
 
         let visual = &resolved.model.visual;
