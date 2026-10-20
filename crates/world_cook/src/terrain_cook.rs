@@ -233,40 +233,13 @@ fn leaf_cells(store: &TerrainCookStore, space: WorldSpaceId) -> Result<BTreeSet<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{build_runtime, demo_project_document, publish_runtime_database, road_demo};
+    use crate::{TestDirectory, cook_document, decoded_pages, demo_project_document, road_demo};
     use world_db::{RoadSourceRecord, RuntimeReader};
-
-    struct Output(std::path::PathBuf);
-
-    impl Output {
-        fn new() -> Self {
-            static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-            let path = std::env::temp_dir().join(format!(
-                "yarra-terrain-cook-{}-{}",
-                std::process::id(),
-                SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-            ));
-            std::fs::create_dir_all(&path).unwrap();
-            Self(path)
-        }
-
-        fn path(&self) -> std::path::PathBuf {
-            self.0.join("runtime.sqlite")
-        }
-    }
-
-    impl Drop for Output {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
-    }
 
     #[test]
     fn flat_world_hierarchy_keeps_midpoints_required_by_stitching() {
-        let output = Output::new();
-        let build = build_runtime(demo_project_document()).unwrap();
-        publish_runtime_database(&output.path(), &build).unwrap();
-        let reader = RuntimeReader::open_immutable(&output.path()).unwrap();
+        let directory = TestDirectory::new("flat-hierarchy");
+        let reader = directory.cook(&demo_project_document());
         let roots = reader.read_terrain_roots(WorldSpaceId(2)).unwrap();
         assert!(!roots.is_empty());
 
@@ -277,7 +250,6 @@ mod tests {
 
     #[test]
     fn mountain_fixture_has_deterministic_cover_and_nested_bounds() {
-        let output = Output::new();
         let mut project = demo_project_document();
         let space = project.default_world_space;
         project
@@ -301,9 +273,8 @@ mod tests {
             }
         }
 
-        let build = build_runtime(project).unwrap();
-        let first = publish_runtime_database(&output.path(), &build).unwrap();
-        let reader = RuntimeReader::open_immutable(&output.path()).unwrap();
+        let directory = TestDirectory::new("mountain-hierarchy");
+        let reader = directory.cook(&project);
         let roots = reader.read_terrain_roots(space).unwrap();
         assert_eq!(roots.len(), 4);
         assert!(
@@ -354,14 +325,14 @@ mod tests {
             check(&reader, root.key);
         }
 
-        drop(reader);
-        let second = publish_runtime_database(&output.path(), &build).unwrap();
-        assert_eq!(first.content_hash, second.content_hash);
+        assert_eq!(
+            directory.cook(&project).manifest().content_hash,
+            reader.manifest().content_hash
+        );
     }
 
     #[test]
     fn hierarchy_preserves_final_road_relief_and_failed_publication_keeps_old_generation() {
-        let output = Output::new();
         let mut project = road_demo::document();
 
         for space in &mut project.world_spaces {
@@ -380,19 +351,15 @@ mod tests {
             }
         }
 
-        let mut build = build_runtime(project).unwrap();
-        let manifest = publish_runtime_database(&output.path(), &build).unwrap();
-        let reader = RuntimeReader::open_immutable(&output.path()).unwrap();
+        let directory = TestDirectory::new("road-hierarchy");
+        let runtime = cook_document(&project, &directory.0).unwrap();
+        let reader = RuntimeReader::open_immutable(&runtime).unwrap();
+        let manifest = reader.manifest().clone();
         let mut deformed = 0;
 
-        for page in &build.pages {
-            if page.key.domain != world::PageDomain::Terrain {
+        for leaf in decoded_pages(&reader, manifest.default_world_space) {
+            let PagePayload::TerrainHeightfield(page) = leaf.payload else {
                 continue;
-            }
-
-            let PagePayload::TerrainHeightfield(page) = page.clone().decode().unwrap().payload
-            else {
-                panic!()
             };
 
             if page
@@ -403,17 +370,7 @@ mod tests {
             {
                 deformed += 1;
             }
-        }
 
-        for leaf in build
-            .pages
-            .iter()
-            .filter(|p| p.key.domain == world::PageDomain::Terrain)
-        {
-            let PagePayload::TerrainHeightfield(page) = leaf.clone().decode().unwrap().payload
-            else {
-                panic!()
-            };
             let node = reader
                 .read_terrain_node(TerrainNodeKey::leaf(leaf.key.space, leaf.key.cell))
                 .unwrap()
@@ -439,16 +396,26 @@ mod tests {
         );
         drop(reader);
 
-        // Corrupt a staged terrain page, after a good generation already exists.
-        build
-            .pages
-            .iter_mut()
-            .find(|p| p.key.domain == world::PageDomain::Terrain)
+        // Corrupt a terrain page of a staged copy whose hierarchy is to be built again,
+        // after a good generation already exists.
+        let staging = directory.0.join("staging.sqlite");
+        std::fs::copy(&runtime, &staging).unwrap();
+        rusqlite::Connection::open(&staging)
             .unwrap()
-            .payload
-            .pop();
-        assert!(publish_runtime_database(&output.path(), &build).is_err());
-        let reader = RuntimeReader::open_immutable(&output.path()).unwrap();
+            .execute_batch(
+                "DELETE FROM terrain_roots; DELETE FROM terrain_nodes; \
+                 DELETE FROM terrain_hierarchy_spaces; \
+                 UPDATE cell_pages SET payload = substr(payload, 2) \
+                 WHERE (world_space_id, cell_x, cell_z, domain) = \
+                     (SELECT world_space_id, cell_x, cell_z, domain FROM cell_pages \
+                      WHERE domain = 1 LIMIT 1);",
+            )
+            .unwrap();
+        assert!(
+            crate::publish_staged_runtime(&runtime, &staging, &manifest.world_spaces, None)
+                .is_err()
+        );
+        let reader = RuntimeReader::open_immutable(&runtime).unwrap();
         assert_eq!(reader.manifest().content_hash, manifest.content_hash);
         assert!(
             !reader

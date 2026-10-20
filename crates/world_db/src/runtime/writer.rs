@@ -1,45 +1,48 @@
-//! Whole-build and incremental writes share the same runtime encoding and SQL.
+//! Runtime output: a header, then cells one at a time. A whole runtime written at once and the
+//! cook's staged output share the SQL.
 use crate::catalog::{write_terrain_catalog, write_vegetation_catalog};
 use crate::runtime::read_runtime_manifest;
 use crate::storage::ensure_new_database_path;
 
 use crate::{
-    MAX_COOK_CATALOG_ROWS, MAX_COOK_CELL_BYTES, MAX_COOK_MANUAL_OBJECTS_PER_CELL, RuntimeBuild,
-    RuntimeManifest, WorldDbError, atmosphere, schema,
+    MAX_COOK_CATALOG_ROWS, MAX_COOK_CELL_BYTES, MAX_COOK_MANUAL_OBJECTS_PER_CELL, RuntimeCell,
+    RuntimeHeader, RuntimeManifest, WorldDbError, atmosphere, schema,
 };
 
 use rusqlite::{Connection, OptionalExtension, params};
 use std::path::Path;
-use world::PageDomain;
+use world::{CellCoord, PageDomain, PageKey, WorldSpaceId};
 
-pub fn write_runtime_database(path: &Path, build: &RuntimeBuild) -> Result<(), WorldDbError> {
+/// Writes a whole runtime at once, for fixtures. Its cells have no source fingerprints, so an
+/// incremental cook treats them as unknown.
+pub fn write_runtime_database(
+    path: &Path,
+    header: &RuntimeHeader,
+    cells: &[RuntimeCell],
+) -> Result<(), WorldDbError> {
     ensure_new_database_path(path)?;
     let mut connection = Connection::open(path)?;
     schema::create_runtime_schema(&connection)?;
     let transaction = connection.transaction()?;
-    write_runtime_build(&transaction, build)?;
+    write_header(&transaction, header)?;
+
+    for cell in cells {
+        write_cell(&transaction, cell, [0; 32])?;
+    }
+
     super::far_objects::rebuild(&transaction)?;
     transaction.commit()?;
     connection.execute_batch("PRAGMA optimize;")?;
     Ok(())
 }
 
-fn write_runtime_build(transaction: &Connection, build: &RuntimeBuild) -> Result<(), WorldDbError> {
-    write_runtime_header(transaction, build)?;
-    // A whole build has no per-cell source fingerprints or hashes; incremental cooks
-    // treat its cells as unknown.
-    write_runtime_spatial(transaction, build, [0; 32], [0; 32])
-}
-
-fn write_runtime_header(
-    transaction: &Connection,
-    build: &RuntimeBuild,
-) -> Result<(), WorldDbError> {
-    let manifest = &build.manifest;
+fn write_header(transaction: &Connection, header: &RuntimeHeader) -> Result<(), WorldDbError> {
+    let manifest = &header.manifest;
 
     for space in &manifest.world_spaces {
         transaction.execute(
-            "INSERT INTO world_spaces(id, name, cell_size, minimum_y, maximum_y, atmosphere, atmosphere_revision, sea_level) \
+            "INSERT INTO world_spaces(id, name, cell_size, minimum_y, maximum_y, atmosphere, \
+                atmosphere_revision, sea_level) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 space.id.0,
@@ -70,13 +73,13 @@ fn write_runtime_header(
     write_vegetation_catalog(transaction, manifest.vegetation_catalog.as_ref())?;
     write_terrain_catalog(
         transaction,
-        &build.terrain_surfaces,
-        &build.terrain_texture_sets,
-        &build.terrain_texture_layers,
-        &build.terrain_profiles,
+        &header.terrain_surfaces,
+        &header.terrain_texture_sets,
+        &header.terrain_texture_layers,
+        &header.terrain_profiles,
     )?;
 
-    for asset in &build.assets {
+    for asset in &header.assets {
         transaction.execute(
             "INSERT INTO asset_variants( \
                 asset_id, lod, kind, uri, bounds_x, bounds_y, bounds_z, \
@@ -98,7 +101,7 @@ fn write_runtime_header(
         )?;
     }
 
-    for definition in &build.definitions {
+    for definition in &header.definitions {
         transaction.execute(
             "INSERT INTO object_definitions( \
                 definition_id, definition_key, display_name, visual_asset_id, activation_policy \
@@ -116,43 +119,43 @@ fn write_runtime_header(
     Ok(())
 }
 
-fn write_runtime_spatial(
+/// A cell's record, pages, what they name and its leaf control tile.
+fn write_cell(
     transaction: &Connection,
-    build: &RuntimeBuild,
+    cell: &RuntimeCell,
     input_fingerprint: [u8; 32],
-    content_hash: [u8; 32],
 ) -> Result<(), WorldDbError> {
-    for cell in &build.cells {
-        transaction.execute(
-            "INSERT INTO cells( \
-                world_space_id, cell_x, cell_z, minimum_y, maximum_y, domain_mask, \
-                source_revision, terrain_resolution, input_fingerprint, content_hash \
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-            params![
-                cell.space.0,
-                cell.cell.x,
-                cell.cell.z,
-                cell.minimum_y,
-                cell.maximum_y,
-                i64::try_from(cell.domain_mask).map_err(|_| WorldDbError::IntegerOverflow)?,
-                cell.source_revision,
-                cell.terrain_resolution,
-                input_fingerprint.as_slice(),
-                content_hash.as_slice()
-            ],
-        )?;
-    }
+    let record = &cell.record;
+    let (space, x, z) = (record.space.0, record.cell.x, record.cell.z);
+    transaction.execute(
+        "INSERT INTO cells( \
+            world_space_id, cell_x, cell_z, minimum_y, maximum_y, domain_mask, \
+            source_revision, terrain_resolution, input_fingerprint, content_hash \
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        params![
+            space,
+            x,
+            z,
+            record.minimum_y,
+            record.maximum_y,
+            i64::try_from(record.domain_mask).map_err(|_| WorldDbError::IntegerOverflow)?,
+            record.source_revision,
+            record.terrain_resolution,
+            input_fingerprint.as_slice(),
+            cell.content_hash.as_slice()
+        ],
+    )?;
 
-    for page in &build.pages {
+    for page in &cell.pages {
         transaction.execute(
             "INSERT INTO cell_pages( \
                 world_space_id, cell_x, cell_z, domain, codec, encoded_bytes, \
                 decoded_bytes, gpu_bytes_estimate, checksum, payload \
              ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
-                page.key.space.0,
-                page.key.cell.x,
-                page.key.cell.z,
+                space,
+                x,
+                z,
                 page.key.domain as i64,
                 page.codec as i64,
                 i64::try_from(page.payload.len()).map_err(|_| WorldDbError::IntegerOverflow)?,
@@ -165,49 +168,35 @@ fn write_runtime_spatial(
         )?;
     }
 
-    for dependency in &build.dependencies {
+    for (asset, lod) in &cell.assets {
         transaction.execute(
-            "INSERT INTO page_dependencies( \
-                world_space_id, cell_x, cell_z, asset_id, asset_lod \
-             ) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![
-                dependency.page.space.0,
-                dependency.page.cell.x,
-                dependency.page.cell.z,
-                dependency.asset.0.as_slice(),
-                i64::from(dependency.asset_lod)
-            ],
+            "INSERT INTO page_dependencies(world_space_id, cell_x, cell_z, asset_id, asset_lod) \
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![space, x, z, asset.0.as_slice(), i64::from(*lod)],
         )?;
     }
 
-    for dependency in &build.definition_dependencies {
+    for definition in &cell.definitions {
         transaction.execute(
-            "INSERT INTO page_object_definitions( \
-                world_space_id, cell_x, cell_z, definition_id \
-             ) VALUES (?1, ?2, ?3, ?4)",
-            params![
-                dependency.page.space.0,
-                dependency.page.cell.x,
-                dependency.page.cell.z,
-                dependency.definition.0.as_slice(),
-            ],
+            "INSERT INTO page_object_definitions(world_space_id, cell_x, cell_z, definition_id) \
+             VALUES (?1, ?2, ?3, ?4)",
+            params![space, x, z, definition.0.as_slice()],
         )?;
     }
 
-    for dependency in &build.terrain_surface_dependencies {
+    for surface in &cell.surfaces {
         transaction.execute(
-            "INSERT INTO page_terrain_surfaces( \
-                world_space_id, cell_x, cell_z, surface_id \
-             ) VALUES (?1, ?2, ?3, ?4)",
-            params![
-                dependency.page.space.0,
-                dependency.page.cell.x,
-                dependency.page.cell.z,
-                dependency.surface.0.as_slice(),
-            ],
+            "INSERT INTO page_terrain_surfaces(world_space_id, cell_x, cell_z, surface_id) \
+             VALUES (?1, ?2, ?3, ?4)",
+            params![space, x, z, surface.0.as_slice()],
         )?;
     }
 
+    transaction.execute(
+        "INSERT INTO terrain_controls(world_space_id, level, node_x, node_z, payload) \
+         VALUES (?1, 0, ?2, ?3, ?4)",
+        params![space, x, z, cell.control],
+    )?;
     Ok(())
 }
 
@@ -217,22 +206,13 @@ pub struct RuntimeCookWriter {
 }
 
 impl RuntimeCookWriter {
-    pub fn create(path: &Path, header: &RuntimeBuild) -> Result<Self, WorldDbError> {
-        if !header.cells.is_empty()
-            || !header.pages.is_empty()
-            || !header.dependencies.is_empty()
-            || !header.definition_dependencies.is_empty()
-            || !header.terrain_surface_dependencies.is_empty()
-        {
-            return Err(invalid("runtime cook header contains spatial data"));
-        }
-
+    pub fn create(path: &Path, header: &RuntimeHeader) -> Result<Self, WorldDbError> {
         ensure_new_database_path(path)?;
         let connection = Connection::open(path)?;
         schema::create_runtime_schema(&connection)?;
         connection
             .execute_batch("PRAGMA cache_size=-8192; PRAGMA temp_store=FILE; BEGIN IMMEDIATE;")?;
-        write_runtime_header(&connection, header)?;
+        write_header(&connection, header)?;
         Ok(Self { connection })
     }
 
@@ -262,14 +242,14 @@ impl RuntimeCookWriter {
     /// Source fingerprints of the cells already in this output.
     pub fn cell_fingerprints(
         &self,
-        space: world::WorldSpaceId,
-    ) -> Result<std::collections::BTreeMap<world::CellCoord, [u8; 32]>, WorldDbError> {
+        space: WorldSpaceId,
+    ) -> Result<std::collections::BTreeMap<CellCoord, [u8; 32]>, WorldDbError> {
         let mut query = self.connection.prepare(
             "SELECT cell_x, cell_z, input_fingerprint FROM cells WHERE world_space_id=?1",
         )?;
         let rows = query.query_map([space.0], |r| {
             Ok((
-                world::CellCoord {
+                CellCoord {
                     x: r.get(0)?,
                     z: r.get(1)?,
                 },
@@ -301,7 +281,7 @@ impl RuntimeCookWriter {
         Ok(())
     }
 
-    pub fn page_checksum(&self, key: world::PageKey) -> Result<Option<[u8; 32]>, WorldDbError> {
+    pub fn page_checksum(&self, key: PageKey) -> Result<Option<[u8; 32]>, WorldDbError> {
         let checksum: Option<Vec<u8>> = self
             .connection
             .query_row(
@@ -316,12 +296,8 @@ impl RuntimeCookWriter {
             .transpose()?)
     }
 
-    /// Removes a cell and every page row that depends on it.
-    pub fn remove_cell(
-        &self,
-        space: world::WorldSpaceId,
-        cell: world::CellCoord,
-    ) -> Result<(), WorldDbError> {
+    /// Removes a cell, every row that depends on it and its leaf control tile.
+    pub fn remove_cell(&self, space: WorldSpaceId, cell: CellCoord) -> Result<(), WorldDbError> {
         for table in [
             "page_dependencies",
             "page_object_definitions",
@@ -334,62 +310,47 @@ impl RuntimeCookWriter {
                 params![space.0, cell.x, cell.z],
             )?;
         }
+
+        self.connection.execute(
+            "DELETE FROM terrain_controls \
+             WHERE world_space_id=?1 AND level=0 AND node_x=?2 AND node_z=?3",
+            params![space.0, cell.x, cell.z],
+        )?;
         Ok(())
     }
 
     pub fn append_cell(
         &self,
-        batch: &RuntimeBuild,
+        cell: &RuntimeCell,
         input_fingerprint: [u8; 32],
     ) -> Result<(), WorldDbError> {
-        let decoded_bytes = batch
+        let decoded = cell
             .pages
             .iter()
             .try_fold(0_u64, |bytes, page| bytes.checked_add(page.decoded_bytes));
+        let encoded: u64 = cell.pages.iter().map(|p| p.payload.len() as u64).sum();
 
-        if batch.cells.len() != 1
-            || batch.pages.len() > PageDomain::ALL.len()
-            || decoded_bytes.is_none_or(|bytes| bytes > MAX_COOK_CELL_BYTES)
-            || batch.dependencies.len() > MAX_COOK_CATALOG_ROWS
-            || batch.definition_dependencies.len() > MAX_COOK_MANUAL_OBJECTS_PER_CELL
-            || batch.terrain_surface_dependencies.len() > world::MAX_TERRAIN_SURFACES_PER_CELL
-            || batch
-                .pages
-                .iter()
-                .map(|p| p.payload.len() as u64)
-                .sum::<u64>()
-                > MAX_COOK_CELL_BYTES
+        if cell.pages.len() > PageDomain::ALL.len()
+            || decoded.is_none_or(|bytes| bytes > MAX_COOK_CELL_BYTES)
+            || encoded > MAX_COOK_CELL_BYTES
+            || cell.assets.len() > MAX_COOK_CATALOG_ROWS
+            || cell.definitions.len() > MAX_COOK_MANUAL_OBJECTS_PER_CELL
+            || cell.surfaces.len() > world::MAX_TERRAIN_SURFACES_PER_CELL
         {
             return Err(invalid("runtime cell output exceeds cook budget"));
         }
 
-        let cell = &batch.cells[0];
+        let record = &cell.record;
 
-        if batch
+        if cell
             .pages
             .iter()
-            .any(|p| p.key.space != cell.space || p.key.cell != cell.cell)
+            .any(|p| p.key.space != record.space || p.key.cell != record.cell)
         {
-            return Err(invalid("runtime batch crosses cell boundaries"));
+            return Err(invalid("runtime page belongs to another cell"));
         }
 
-        if batch
-            .dependencies
-            .iter()
-            .map(|d| d.page)
-            .chain(batch.definition_dependencies.iter().map(|d| d.page))
-            .chain(batch.terrain_surface_dependencies.iter().map(|d| d.page))
-            .any(|key| key.space != cell.space || key.cell != cell.cell)
-        {
-            return Err(invalid("runtime dependencies cross cell boundaries"));
-        }
-
-        write_runtime_spatial(
-            &self.connection,
-            batch,
-            input_fingerprint,
-            batch.manifest.content_hash,
-        )
+        write_cell(&self.connection, cell, input_fingerprint)
     }
 
     /// Regroups the impostor-drawn objects of every static-object page into far-object

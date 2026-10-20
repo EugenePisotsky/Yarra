@@ -6,8 +6,8 @@
 //! of the world's surfaces anywhere. Parents filter their children's surface shares, never their
 //! layer indices.
 use crate::{
-    CellCoord, MAX_TERRAIN_SURFACES_PER_CELL, TerrainHeightfieldPage, TerrainNodeKey,
-    TerrainWeightPage, bare_share,
+    CellCoord, MAX_TERRAIN_SURFACES_PER_CELL, TerrainNodeKey, TerrainWear, TerrainWeightPage,
+    bare_share,
 };
 
 /// Surfaces a sample keeps and the GPU blends at one point: the heaviest three.
@@ -120,24 +120,25 @@ impl ControlMix {
     }
 }
 
-/// A cell's samples from its page's ground weights, worn where its roads wear it as near
-/// detail wears it; `slot_layers` gives each page surface's texture layer.
+/// A cell's samples from its ground weights (four surfaces per RGBA page; none for a single
+/// surface), worn where its roads wear it; `slot_layers` gives each surface's texture layer.
 pub fn leaf_control(
-    page: &TerrainHeightfieldPage,
     slot_layers: &[u16],
+    weight_pages: &[TerrainWeightPage],
+    wear: Option<&TerrainWear>,
     cell: CellCoord,
     cell_size: f32,
 ) -> Result<Vec<u32>, String> {
-    let count = page.surfaces.len();
+    let count = slot_layers.len();
 
-    if count == 0 || count > MAX_TERRAIN_SURFACES_PER_CELL || slot_layers.len() != count {
+    if count == 0 || count > MAX_TERRAIN_SURFACES_PER_CELL {
         return Err(format!(
-            "terrain pages have one to {MAX_TERRAIN_SURFACES_PER_CELL} surfaces with layers"
+            "terrain cells have one to {MAX_TERRAIN_SURFACES_PER_CELL} surfaces"
         ));
     }
 
-    if count > 1 && page.weight_pages.len() != count.div_ceil(4) {
-        return Err("terrain page weights do not match its surfaces".into());
+    if count > 1 && weight_pages.len() != count.div_ceil(4) {
+        return Err("terrain weights do not match the cell's surfaces".into());
     }
 
     let mut samples = Vec::with_capacity(CONTROL_SAMPLES * CONTROL_SAMPLES);
@@ -153,8 +154,8 @@ pub fn leaf_control(
             if count == 1 {
                 ground[0] = 1.0;
             } else {
-                page_weights(&page.weight_pages, uv, &mut ground);
-                if let Some(wear) = &page.wear {
+                page_weights(weight_pages, uv, &mut ground);
+                if let Some(wear) = wear {
                     let world = [
                         (f64::from(cell.x) + uv[0]) * f64::from(cell_size),
                         (f64::from(cell.z) + uv[1]) * f64::from(cell_size),

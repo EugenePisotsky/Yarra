@@ -174,7 +174,6 @@ mod tests {
         let payload = PagePayload::TerrainHeightfield(TerrainHeightfieldPage {
             heightfield: field.clone(),
             surfaces: Vec::new(),
-            weight_pages: Vec::new(),
             wear: None,
         });
         let PagePayload::TerrainHeightfield(page) =
@@ -274,7 +273,6 @@ mod tests {
         let payload = PagePayload::TerrainHeightfield(TerrainHeightfieldPage {
             heightfield: field,
             surfaces: Vec::new(),
-            weight_pages: Vec::new(),
             wear: None,
         });
         assert!(encode_page_payload(&payload).is_err());

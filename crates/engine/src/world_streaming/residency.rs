@@ -28,7 +28,7 @@ use std::{
     time::Duration,
 };
 
-use world::{ObjectDefinitionId, PageDomain, PageKey};
+use world::{ObjectDefinitionId, PageKey};
 use world_db::{DecodedPage, PageDependency, RuntimeObjectDefinition, TerrainRenderResources};
 
 const COOLING_SECONDS: f32 = 2.0;
@@ -155,17 +155,11 @@ impl SourceResidency {
                     fetched
                         .encoded
                         .decode()
-                        .map(|mut decoded| {
-                            // Terrain pages are CPU height sources without GPU resources.
-                            if key.domain == PageDomain::Terrain {
-                                decoded.gpu_bytes_estimate = 0;
-                            }
-                            PreparedPage {
-                                decoded,
-                                dependencies: fetched.dependencies,
-                                definitions: fetched.definitions,
-                                terrain: fetched.terrain,
-                            }
+                        .map(|decoded| PreparedPage {
+                            decoded,
+                            dependencies: fetched.dependencies,
+                            definitions: fetched.definitions,
+                            terrain: fetched.terrain,
                         })
                         .map_err(|error| error.to_string())
                 });

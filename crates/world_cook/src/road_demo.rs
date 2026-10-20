@@ -112,7 +112,8 @@ mod tests {
     #[test]
     fn road_fixture_cooks_narrow_tracks_on_its_own_grid() {
         let project = document();
-        let build = build_runtime(project).unwrap();
-        assert!(!build.pages.is_empty());
+        let directory = crate::TestDirectory::new("road-demo");
+        let reader = directory.cook(&project);
+        assert!(!crate::decoded_pages(&reader, project.default_world_space).is_empty());
     }
 }

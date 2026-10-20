@@ -1,46 +1,12 @@
-use std::collections::{BTreeMap, BTreeSet};
+//! Each world's compile plan, and the demo world's environment.
+use std::collections::BTreeMap;
 
 use anyhow::{Context, Result, bail};
 use environment::*;
 use environment_compile::{CompilePlan, CompileProfile};
-use vegetation::{VegetationCatalog, VegetationFieldPageData};
+use vegetation::VegetationCatalog;
 use world::{CellCoord, TerrainSurfaceId, WorldSpaceId};
-use world_db::{ProjectDocument, SourceEnvironmentCellRecord, environment_dependency_cells};
-
-pub(super) struct TerrainSlot {
-    pub space: WorldSpaceId,
-    pub cell: CellCoord,
-    pub slot: u8,
-    pub surface: TerrainSurfaceId,
-}
-
-pub(super) struct TerrainWeights {
-    pub space: WorldSpaceId,
-    pub cell: CellCoord,
-    pub page: u8,
-    pub resolution: u16,
-    pub rgba: Vec<u8>,
-    pub source_revision: i64,
-}
-
-pub(super) struct VegetationPage {
-    pub space: WorldSpaceId,
-    pub cell: CellCoord,
-    pub data: VegetationFieldPageData,
-    pub source_revision: i64,
-}
-
-pub(super) struct CookedEnvironment {
-    pub objects: BTreeMap<(WorldSpaceId, CellCoord), Vec<world::StaticObjectInstance>>,
-    pub terrain: BTreeMap<(WorldSpaceId, CellCoord), world::TerrainHeightfield>,
-    /// How roads wear each cell's ground, where they do.
-    pub wear: BTreeMap<(WorldSpaceId, CellCoord), world::TerrainWear>,
-    pub catalog: Option<VegetationCatalog>,
-    pub slots: Vec<TerrainSlot>,
-    pub weights: Vec<TerrainWeights>,
-    pub vegetation: Vec<VegetationPage>,
-    pub fingerprint: [u8; 32],
-}
+use world_db::{ProjectDocument, SourceEnvironmentCellRecord};
 
 pub(super) fn prepare_plans(
     project: &ProjectDocument,
@@ -95,168 +61,6 @@ pub(super) fn prepare_plans(
     }
 
     Ok(plans)
-}
-
-pub(super) fn compile_environment(project: &ProjectDocument) -> Result<CookedEnvironment> {
-    let roads = world_db::RoadDocumentIndex::new(&project.roads, &project.environments)?;
-    let plans = prepare_plans(project)?;
-    let definitions: BTreeMap<_, _> = project.environments.iter().map(|d| (d.space, d)).collect();
-    let mut source = BTreeMap::new();
-
-    for record in &project.environment_cells {
-        let definition = definitions
-            .get(&record.space)
-            .context("coverage world has no environment definition")?;
-        if record.source_revision < 0
-            || record.definition_revision != definition.revision
-            || source.insert((record.space, record.cell), record).is_some()
-        {
-            bail!("invalid environment coverage header");
-        }
-    }
-
-    let heights = project
-        .terrain_cell_heightfields
-        .iter()
-        .map(|h| ((h.space, h.cell), h))
-        .collect::<BTreeMap<_, _>>();
-    let base_cells = project
-        .cells
-        .iter()
-        .map(|c| ((c.space, c.cell), c))
-        .collect::<BTreeMap<_, _>>();
-    let mut result = CookedEnvironment {
-        objects: BTreeMap::new(),
-        terrain: BTreeMap::new(),
-        wear: BTreeMap::new(),
-        catalog: project.vegetation_catalog.clone(),
-        slots: Vec::new(),
-        weights: Vec::new(),
-        vegetation: Vec::new(),
-        fingerprint: [0; 32],
-    };
-    let mut hash = blake3::Hasher::new();
-
-    for (space, plan) in &plans {
-        hash.update(&plan.fingerprint());
-
-        // Validate authored masks outside terrain too. They can own boundary endpoints, but
-        // cannot hide invalid layer references or seams simply because terrain is not built there.
-        let requested: BTreeSet<_> = source
-            .keys()
-            .filter(|(s, _)| s == space)
-            .map(|(_, c)| *c)
-            .chain(
-                project
-                    .cells
-                    .iter()
-                    .filter(|c| c.space == *space)
-                    .map(|c| c.cell),
-            )
-            .collect();
-        let terrain_cells: BTreeSet<_> = project
-            .cells
-            .iter()
-            .filter(|c| c.space == *space)
-            .map(|c| c.cell)
-            .collect();
-
-        // One output at a time: a 3x3 halo is bounded even for large source grids and many layers.
-        for cell in requested {
-            let coverage = CoverageSnapshot {
-                space: *space,
-                cells: environment_dependency_cells(&[cell])?
-                    .into_iter()
-                    .map(|cell| {
-                        source.get(&(*space, cell)).map_or(
-                            CoverageCell {
-                                cell,
-                                revision: 0,
-                                tiles: Vec::new(),
-                            },
-                            |r| r.coverage(),
-                        )
-                    })
-                    .collect(),
-            };
-
-            if !terrain_cells.contains(&cell) {
-                plan.validate_coverage(&[cell], &coverage)?;
-                continue;
-            }
-
-            let halo = environment_dependency_cells(&[cell])?;
-            let bounds = environment::roads::RoadCellBounds {
-                minimum: CellCoord {
-                    x: cell.x - 1,
-                    z: cell.z - 1,
-                },
-                maximum: CellCoord {
-                    x: cell.x + 1,
-                    z: cell.z + 1,
-                },
-            };
-            let road_snapshot = roads.snapshot(*space, bounds, definitions[space].cell_size)?;
-            let world = project
-                .world_spaces
-                .iter()
-                .find(|w| w.id == *space)
-                .unwrap();
-            let terrain = environment_compile::TerrainSource {
-                space: *space,
-                cell_size: world.cell_size,
-                minimum_height: world.minimum_y,
-                maximum_height: world.maximum_y,
-                cells: halo
-                    .iter()
-                    .filter_map(|&cell| {
-                        base_cells.get(&(*space, cell)).map(|base| {
-                            if let Some(h) = heights.get(&(*space, cell)) {
-                                environment_compile::TerrainSourceCell {
-                                    flat: false,
-                                    cell,
-                                    resolution: h.resolution,
-                                    heights: h.heights.clone(),
-                                    revision: h.source_revision as u64,
-                                }
-                            } else {
-                                environment_compile::TerrainSourceCell {
-                                    flat: true,
-                                    cell,
-                                    resolution: 33,
-                                    heights: vec![base.height; 33 * 33],
-                                    revision: base.source_revision as u64,
-                                }
-                            }
-                        })
-                    })
-                    .collect(),
-                loaded_cells: halo,
-            };
-            let compiled = plan.compile_cell_with_terrain(
-                cell,
-                &coverage,
-                &road_snapshot,
-                &terrain,
-                Default::default(),
-            )?;
-            hash.update(&compiled.input_fingerprint);
-            let source_revision = source.get(&(*space, cell)).map_or(0, |r| r.source_revision);
-            result.push_cell(*space, cell, source_revision, compiled);
-        }
-    }
-
-    for cell in &project.cells {
-        if !plans.contains_key(&cell.space) {
-            bail!(
-                "world {:?} requires an explicit environment definition and base surface",
-                cell.space
-            );
-        }
-    }
-
-    result.fingerprint = *hash.finalize().as_bytes();
-    Ok(result)
 }
 
 pub(super) fn demo_environment(
@@ -375,23 +179,41 @@ pub(super) fn demo_environment(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use world::{PageDomain, PagePayload};
+    use crate::{TestDirectory, cook_document, decoded_pages};
+    use world::{PageDomain, PageKey, PagePayload, TerrainNodeKey};
+    use world_db::{RuntimeReader, environment_dependency_cells};
+
+    fn payload(reader: &RuntimeReader, space: WorldSpaceId, domain: PageDomain) -> PagePayload {
+        let key = PageKey {
+            space,
+            cell: CellCoord::ZERO,
+            domain,
+        };
+        reader
+            .read_page(key)
+            .unwrap()
+            .unwrap()
+            .decode()
+            .unwrap()
+            .payload
+    }
 
     #[test]
     fn cooked_pages_match_the_bounded_source_compiler_and_preserve_manual_objects() {
         let project = super::super::demo_project_document();
         let definition = &project.environments[0];
+        let space = definition.space;
         let cell = CellCoord::ZERO;
         let halo = environment_dependency_cells(&[cell]).unwrap();
         let snapshot = CoverageSnapshot {
-            space: definition.space,
+            space,
             cells: halo
                 .iter()
                 .map(|cell| {
                     project
                         .environment_cells
                         .iter()
-                        .find(|r| r.space == definition.space && r.cell == *cell)
+                        .find(|r| r.space == space && r.cell == *cell)
                         .unwrap()
                         .coverage()
                 })
@@ -405,41 +227,34 @@ mod tests {
         )
         .unwrap();
         let compiled = plan.compile_cells(&[cell], &snapshot).unwrap().remove(0);
-        let manual_ids: BTreeSet<_> = project.objects.iter().map(|o| o.id.0).collect();
-        let build = super::super::build_runtime(project.clone()).unwrap();
-        let terrain = build
-            .pages
-            .iter()
-            .find(|p| {
-                p.key.space == definition.space
-                    && p.key.cell == cell
-                    && p.key.domain == PageDomain::Terrain
-            })
-            .unwrap()
-            .clone()
-            .decode()
-            .unwrap();
-        let PagePayload::TerrainHeightfield(terrain) = terrain.payload else {
+        let directory = TestDirectory::new("environment-cook");
+        let reader = directory.cook(&project);
+        let PagePayload::TerrainHeightfield(terrain) = payload(&reader, space, PageDomain::Terrain)
+        else {
             panic!()
         };
         assert_eq!(terrain.surfaces, compiled.ground.surfaces);
-        assert_eq!(terrain.weight_pages, compiled.ground.weight_pages);
-        let plants = build
-            .pages
-            .iter()
-            .find(|p| {
-                p.key.space == definition.space
-                    && p.key.cell == cell
-                    && p.key.domain == PageDomain::Vegetation
-            })
+
+        // The control tile lays the compiled ground's weights out by texture layer.
+        let leaf = crate::GroundLayers::read(&reader, space)
             .unwrap()
-            .clone()
-            .decode()
+            .leaf(
+                cell,
+                terrain.heightfield.clone(),
+                &compiled.ground,
+                compiled.wear.clone(),
+            )
             .unwrap();
-        let PagePayload::Vegetation(plants) = plants.payload else {
-            panic!()
-        };
-        assert_eq!(plants, compiled.vegetation);
+        assert_eq!(
+            crate::published_terrain_control(&reader, TerrainNodeKey::leaf(space, cell)).unwrap(),
+            Some(leaf.control)
+        );
+        assert_eq!(
+            payload(&reader, space, PageDomain::Vegetation),
+            PagePayload::Vegetation(compiled.vegetation)
+        );
+
+        // The order sources are listed in changes nothing.
         let mut reordered = project.clone();
         reordered.presets.presets.reverse();
         reordered.environments.reverse();
@@ -453,34 +268,31 @@ mod tests {
             cell.tiles.reverse();
         }
 
-        let repeat = super::super::build_runtime(reordered).unwrap();
-        assert_eq!(build.manifest.content_hash, repeat.manifest.content_hash);
-        let mut cleared = project;
-        cleared.environment_cells.clear();
+        let repeat = directory.cook(&reordered);
         assert_eq!(
-            cleared
-                .objects
-                .iter()
-                .map(|o| o.id.0)
-                .collect::<BTreeSet<_>>(),
-            manual_ids
+            reader.manifest().content_hash,
+            repeat.manifest().content_hash
         );
-        let empty = super::super::build_runtime(cleared).unwrap();
-        assert_ne!(build.manifest.content_hash, empty.manifest.content_hash);
 
-        for page in &build.pages {
-            if matches!(
-                page.key.domain,
-                PageDomain::StaticObjects | PageDomain::GameplayObjects
-            ) {
+        // Without paint the ground changes; placed objects do not.
+        let mut cleared = project.clone();
+        cleared.environment_cells.clear();
+        let empty = directory.cook(&cleared);
+        assert_ne!(
+            reader.manifest().content_hash,
+            empty.manifest().content_hash
+        );
+
+        for cell in &project.cells {
+            for domain in [PageDomain::StaticObjects, PageDomain::GameplayObjects] {
+                let key = PageKey {
+                    space: cell.space,
+                    cell: cell.cell,
+                    domain,
+                };
                 assert_eq!(
-                    page.checksum,
-                    empty
-                        .pages
-                        .iter()
-                        .find(|p| p.key == page.key)
-                        .unwrap()
-                        .checksum
+                    reader.read_page(key).unwrap().map(|p| p.checksum),
+                    empty.read_page(key).unwrap().map(|p| p.checksum)
                 );
             }
         }
@@ -490,34 +302,40 @@ mod tests {
     fn unpainted_world_has_only_its_explicit_base_and_missing_definitions_fail() {
         let mut project = super::super::demo_project_document();
         project.environment_cells.clear();
-        let compiled = compile_environment(&project).unwrap();
+        let directory = TestDirectory::new("unpainted");
+        let reader = directory.cook(&project);
+        let mut vegetation = 0;
 
         // Unpainted cells show their base ground and grow what grows on it.
-        assert!(!compiled.vegetation.is_empty());
-        assert!(compiled.weights.is_empty());
-
-        for slot in &compiled.slots {
-            assert_eq!(
-                slot.surface,
-                project
-                    .environments
-                    .iter()
-                    .find(|d| d.space == slot.space)
-                    .unwrap()
-                    .base_surface
-            );
+        for definition in &project.environments {
+            for page in decoded_pages(&reader, definition.space) {
+                match page.payload {
+                    PagePayload::TerrainHeightfield(ground) => {
+                        assert_eq!(ground.surfaces, [definition.base_surface]);
+                    }
+                    PagePayload::Vegetation(_) => vegetation += 1,
+                    _ => {}
+                }
+            }
         }
 
+        assert!(vegetation > 0);
         project.environments.clear();
-        assert!(compile_environment(&project).is_err());
+        assert!(cook_document(&project, &directory.0.join("undefined")).is_err());
     }
 }
 
 #[cfg(test)]
 mod road_tests {
     use super::*;
+    use crate::{TestDirectory, cook_document};
     use environment::roads::*;
-    use world_db::{RoadDocument, RoadSourceRecord, SourceRoad, SourceRoadKnot, SourceRoadSpan};
+    use world::{PageDomain, PageKey, PagePayload};
+
+    use world_db::{
+        RoadDocument, RoadSourceRecord, RuntimeReader, SourceRoad, SourceRoadKnot, SourceRoadSpan,
+        environment_dependency_cells,
+    };
 
     #[test]
     fn persisted_roads_cook_the_same_fields_as_a_bounded_database_snapshot() {
@@ -568,7 +386,8 @@ mod road_tests {
         };
         let a = knot(21, -16.0);
         let b = knot(22, 80.0);
-        let baseline = compile_environment(&project).unwrap();
+        let directory = TestDirectory::new("road-cook");
+        let baseline = directory.cook(&project);
         project.roads = RoadDocument {
             records: vec![
                 RoadSourceRecord::Profile(p),
@@ -593,16 +412,16 @@ mod road_tests {
                 }),
             ],
         };
-        let directory =
-            std::env::temp_dir().join(format!("yarra-road-cook-{}", std::process::id()));
-        std::fs::create_dir_all(&directory).unwrap();
-        let path = directory.join("project.sqlite");
-        world_db::write_project_database(&path, &project).unwrap();
-        let reader = world_db::ProjectReader::open_read_only(&path).unwrap();
-        let loaded = world_db::read_project_database(&path).unwrap();
-        let cooked = compile_environment(&loaded).unwrap();
-        assert_ne!(baseline.fingerprint, cooked.fingerprint);
-        let snapshot = reader
+        let roads = directory.0.join("roads");
+        let cooked =
+            RuntimeReader::open_immutable(&cook_document(&project, &roads).unwrap()).unwrap();
+        assert_ne!(
+            baseline.manifest().content_hash,
+            cooked.manifest().content_hash
+        );
+        let source =
+            world_db::ProjectReader::open_read_only(&roads.join("project.sqlite")).unwrap();
+        let snapshot = source
             .read_environment_with_roads(
                 space,
                 &environment_dependency_cells(&[CellCoord::ZERO]).unwrap(),
@@ -637,110 +456,35 @@ mod road_tests {
             )
             .unwrap()
             .remove(0);
-        let vegetation = cooked
-            .vegetation
-            .iter()
-            .find(|v| v.space == space && v.cell == CellCoord::ZERO)
-            .unwrap();
-        assert_eq!(vegetation.data, compiled.vegetation);
-        assert_ne!(
-            vegetation.data,
-            baseline
-                .vegetation
-                .iter()
-                .find(|v| v.space == space && v.cell == CellCoord::ZERO)
-                .unwrap()
-                .data
-        );
-        let weights = cooked
-            .weights
-            .iter()
-            .filter(|v| v.space == space && v.cell == CellCoord::ZERO)
-            .collect::<Vec<_>>();
-        assert_eq!(weights.len(), compiled.ground.weight_pages.len());
-
-        for (a, b) in weights.iter().zip(&compiled.ground.weight_pages) {
-            assert_eq!(a.rgba, b.rgba);
-            assert_eq!(a.resolution, b.resolution);
-        }
-
-        let mut reordered = loaded;
-        reordered.roads.records.reverse();
-        assert_eq!(
-            compile_environment(&reordered).unwrap().fingerprint,
-            cooked.fingerprint
-        );
-        drop(reader);
-        std::fs::remove_dir_all(directory).unwrap();
-    }
-}
-
-impl CookedEnvironment {
-    pub(super) fn empty(catalog: VegetationCatalog, fingerprint: [u8; 32]) -> Self {
-        Self {
-            objects: BTreeMap::new(),
-            terrain: BTreeMap::new(),
-            wear: BTreeMap::new(),
-            catalog: Some(catalog),
-            slots: vec![],
-            weights: vec![],
-            vegetation: vec![],
-            fingerprint,
-        }
-    }
-
-    pub(super) fn push_cell(
-        &mut self,
-        space: WorldSpaceId,
-        cell: CellCoord,
-        source_revision: i64,
-        compiled: environment_compile::CompiledCell,
-    ) {
-        self.terrain
-            .insert((space, cell), compiled.terrain.unwrap());
-
-        if let Some(wear) = compiled.wear {
-            self.wear.insert((space, cell), wear);
-        }
-
-        self.objects.insert((space, cell), compiled.objects);
-        self.slots.extend(
-            compiled
-                .ground
-                .surfaces
-                .iter()
-                .enumerate()
-                .map(|(slot, &surface)| TerrainSlot {
-                    space,
-                    cell,
-                    slot: slot as u8,
-                    surface,
-                }),
-        );
-        self.weights
-            .extend(
-                compiled
-                    .ground
-                    .weight_pages
-                    .into_iter()
-                    .enumerate()
-                    .map(|(page, weights)| TerrainWeights {
-                        space,
-                        cell,
-                        page: page as u8,
-                        resolution: weights.resolution,
-                        rgba: weights.rgba,
-                        source_revision,
-                    }),
-            );
-
-        if !compiled.vegetation.fields.is_empty() {
-            self.vegetation.push(VegetationPage {
+        let page = |reader: &RuntimeReader, domain| {
+            let key = PageKey {
                 space,
-                cell,
-                data: compiled.vegetation,
-                source_revision,
-            });
-        }
+                cell: CellCoord::ZERO,
+                domain,
+            };
+            reader
+                .read_page(key)
+                .unwrap()
+                .unwrap()
+                .decode()
+                .unwrap()
+                .payload
+        };
+        let vegetation = page(&cooked, PageDomain::Vegetation);
+        assert_eq!(vegetation, PagePayload::Vegetation(compiled.vegetation));
+        assert_ne!(vegetation, page(&baseline, PageDomain::Vegetation));
+        let PagePayload::TerrainHeightfield(ground) = page(&cooked, PageDomain::Terrain) else {
+            panic!()
+        };
+        assert_eq!(ground.surfaces, compiled.ground.surfaces);
+
+        // The order roads are listed in changes nothing.
+        let mut reordered = world_db::read_project_database(&roads.join("project.sqlite")).unwrap();
+        reordered.roads.records.reverse();
+        drop(source);
+        assert_eq!(
+            directory.cook(&reordered).manifest().content_hash,
+            cooked.manifest().content_hash
+        );
     }
 }

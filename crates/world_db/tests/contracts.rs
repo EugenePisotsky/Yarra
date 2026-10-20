@@ -115,7 +115,7 @@ fn project_and_runtime_databases_are_distinct_and_readable() {
         Some(authored_catalog)
     );
 
-    let runtime = RuntimeBuild {
+    let runtime = RuntimeHeader {
         manifest: RuntimeManifest {
             schema_version: RUNTIME_SCHEMA_VERSION,
             generation_id: "test-generation".into(),
@@ -126,19 +126,14 @@ fn project_and_runtime_databases_are_distinct_and_readable() {
             start_view: project.start_view.clone(),
             gameplay_areas: project.gameplay_areas.clone(),
         },
-        cells: Vec::new(),
-        pages: Vec::new(),
         terrain_surfaces: Vec::new(),
         terrain_texture_sets: Vec::new(),
         terrain_texture_layers: Vec::new(),
         terrain_profiles: Vec::new(),
         assets: Vec::new(),
         definitions: Vec::new(),
-        dependencies: Vec::new(),
-        definition_dependencies: Vec::new(),
-        terrain_surface_dependencies: Vec::new(),
     };
-    write_runtime_database(&runtime_path, &runtime).unwrap();
+    write_runtime_database(&runtime_path, &runtime, &[]).unwrap();
     let reader = RuntimeReader::open_immutable(&runtime_path).unwrap();
     assert_eq!(reader.manifest().generation_id, "test-generation");
     assert_eq!(reader.manifest().start_view, project.start_view);

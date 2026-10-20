@@ -1,9 +1,9 @@
 //! Production cook: one stable source snapshot, bounded local inputs, staged output.
 use super::*;
+use cell_cook::CookCatalog;
 use environment_compile::CompilePlan;
 use environment_cook::prepare_plans;
 use std::collections::BTreeSet;
-use vegetation::VegetationCatalog;
 use world_db::{ProjectCookSnapshot, RuntimeCookWriter};
 
 #[derive(Debug, Clone, Default)]
@@ -77,19 +77,14 @@ fn cook_snapshot_options(
 ) -> Result<CookReport> {
     let project = snapshot.catalog();
     let plans = prepare_plans(project)?;
-    let catalog = project.vegetation_catalog.clone().unwrap_or_default();
-    let mut environment_hash = blake3::Hasher::new();
+    let mut environment = blake3::Hasher::new();
 
     for plan in plans.values() {
-        environment_hash.update(&plan.fingerprint());
+        environment.update(&plan.fingerprint());
     }
 
-    // This document contains bounded global metadata and no spatial data. Reusing the
-    // existing packer keeps the validation/encoding contract common with reference tests.
-    let header = build_compiled_runtime(
-        project.clone(),
-        CookedEnvironment::empty(catalog.clone(), *environment_hash.finalize().as_bytes()),
-    )?;
+    let catalog = CookCatalog::new(project, *environment.finalize().as_bytes())?;
+    let header_hash = catalog.header.manifest.content_hash;
     let mut stats = CookStats::default();
     let start = std::time::Instant::now();
     let mut fingerprints = BTreeMap::new();
@@ -97,8 +92,7 @@ fn cook_snapshot_options(
     for world in &project.world_spaces {
         match project.environments.iter().find(|d| d.space == world.id) {
             Some(definition) => {
-                let cells =
-                    snapshot.cell_fingerprints(definition, &header.manifest.content_hash)?;
+                let cells = snapshot.cell_fingerprints(definition, &header_hash)?;
                 fingerprints.insert(world.id, cells);
             }
             None if !snapshot.next_cells(world.id, None)?.is_empty() => {
@@ -110,7 +104,7 @@ fn cook_snapshot_options(
 
     let staging = RuntimeStaging::new(runtime_path)?;
     let writer = match incremental
-        .then(|| continue_publication(runtime_path, &staging.path, &header, &fingerprints))
+        .then(|| continue_publication(runtime_path, &staging.path, &catalog, &fingerprints))
         .transpose()?
         .flatten()
     {
@@ -118,9 +112,12 @@ fn cook_snapshot_options(
             stats.incremental = true;
             writer
         }
-        None => RuntimeCookWriter::create(&staging.path, &header)?,
+        None => RuntimeCookWriter::create(&staging.path, &catalog.header)?,
     };
-    let mut changed = crate::terrain_cook::ChangedCells::new();
+    let mut changes = Changes {
+        cells: Default::default(),
+        ground: Default::default(),
+    };
 
     for world in &project.world_spaces {
         let Some(cells) = fingerprints.get(&world.id) else {
@@ -146,46 +143,44 @@ fn cook_snapshot_options(
             .context("world with source cells requires an environment definition")?;
 
         for batch in keys.chunks(world_db::COOK_KEY_BATCH) {
-            let compiled = compile_cells(
-                &snapshot,
-                project,
-                &plans[&world.id],
-                &catalog,
-                world.id,
+            let input = CellInput {
+                snapshot: &snapshot,
+                catalog: &catalog,
+                plan: &plans[&world.id],
                 definition,
-                batch,
-                &mut stats,
-            )?;
-            for (cell, compiled) in batch.iter().zip(compiled) {
-                let Some(compiled) = compiled else {
+            };
+
+            for (cell, cooked) in batch.iter().zip(compile_cells(input, batch, &mut stats)?) {
+                let Some(cooked) = cooked else {
                     stats.coverage_only_cells += 1;
                     continue;
                 };
                 stats.peak_encoded_cell_bytes = stats
                     .peak_encoded_cell_bytes
-                    .max(compiled.pages.iter().map(|p| p.payload.len() as u64).sum());
+                    .max(cooked.pages.iter().map(|p| p.payload.len() as u64).sum());
                 stats.peak_decoded_cell_bytes = stats
                     .peak_decoded_cell_bytes
-                    .max(compiled.pages.iter().map(|p| p.decoded_bytes).sum());
-                let ground = PageKey {
-                    space: world.id,
-                    cell: *cell,
-                    domain: PageDomain::Terrain,
-                };
+                    .max(cooked.pages.iter().map(|p| p.decoded_bytes).sum());
 
                 if stats.incremental {
                     // Cells whose ground page is unchanged keep their terrain nodes.
+                    let ground = PageKey {
+                        space: world.id,
+                        cell: *cell,
+                        domain: PageDomain::Terrain,
+                    };
                     let before = writer.page_checksum(ground)?;
-                    let after = compiled.pages.iter().find(|p| p.key == ground);
+                    let after = cooked.pages.iter().find(|p| p.key == ground);
 
                     if before != after.map(|p| p.checksum) {
-                        changed.entry(world.id).or_default().insert(*cell);
+                        changes.ground.entry(world.id).or_default().insert(*cell);
                     }
 
                     writer.remove_cell(world.id, *cell)?;
                 }
 
-                writer.append_cell(&compiled, cells[cell].input)?;
+                writer.append_cell(&cooked, cells[cell].input)?;
+                changes.cells.entry(world.id).or_default().insert(*cell);
                 stats.terrain_cells += 1;
             }
         }
@@ -201,12 +196,12 @@ fn cook_snapshot_options(
     // Release the read transaction before hierarchy work and publication. Every leaf
     // has already been evaluated from that one snapshot, including unsampled masks.
     drop(snapshot);
-    stats.changed_ground_cells = changed.values().map(|c| c.len() as u64).sum();
+    stats.changed_ground_cells = changes.ground.values().map(|c| c.len() as u64).sum();
     let (manifest, hierarchy_seconds) = publish_staged_runtime(
         runtime_path,
         &staging.path,
         &manifest.world_spaces,
-        stats.incremental.then_some(&changed),
+        stats.incremental.then_some(&changes),
     )?;
     stats.publish_seconds = start.elapsed().as_secs_f64();
     stats.hierarchy_seconds = hierarchy_seconds;
@@ -218,7 +213,7 @@ fn cook_snapshot_options(
 fn continue_publication(
     runtime_path: &Path,
     staging_path: &Path,
-    header: &RuntimeBuild,
+    catalog: &CookCatalog,
     fingerprints: &BTreeMap<WorldSpaceId, BTreeMap<CellCoord, world_db::CellFingerprint>>,
 ) -> Result<Option<RuntimeCookWriter>> {
     if !runtime_path.exists() {
@@ -231,7 +226,8 @@ fn continue_publication(
         fs::remove_file(staging_path)?;
         return Ok(None);
     };
-    let mut same = writer.header_hash()? == header.manifest.content_hash;
+    let manifest = &catalog.header.manifest;
+    let mut same = writer.header_hash()? == manifest.content_hash;
 
     for (space, cells) in fingerprints {
         if !same {
@@ -258,29 +254,34 @@ fn continue_publication(
     }
 
     // Outside the header hash, so a moved start does not recook anything.
-    writer.set_start_view(header.manifest.start_view.as_ref())?;
-    writer.set_gameplay_areas(&header.manifest.gameplay_areas)?;
+    writer.set_start_view(manifest.start_view.as_ref())?;
+    writer.set_gameplay_areas(&manifest.gameplay_areas)?;
     Ok(Some(writer))
 }
 
-/// Reads a batch of cells here and compiles them on every core; `None` for paint-only cells,
-/// which are validated. Output order matches `batch`.
-#[allow(clippy::too_many_arguments)] // The global cook inputs shared by every cell.
+/// What every cell of one world is compiled and encoded with.
+#[derive(Clone, Copy)]
+struct CellInput<'a> {
+    snapshot: &'a ProjectCookSnapshot,
+    catalog: &'a CookCatalog,
+    plan: &'a CompilePlan,
+    definition: &'a environment::EnvironmentDefinition,
+}
+
+/// Reads a batch of cells here and compiles and encodes them on every core; `None` for
+/// paint-only cells, which are validated. Output order matches `batch`.
 fn compile_cells(
-    snapshot: &ProjectCookSnapshot,
-    project: &ProjectDocument,
-    plan: &CompilePlan,
-    catalog: &VegetationCatalog,
-    space: WorldSpaceId,
-    definition: &environment::EnvironmentDefinition,
+    input: CellInput,
     batch: &[CellCoord],
     stats: &mut CookStats,
-) -> Result<Vec<Option<RuntimeBuild>>> {
+) -> Result<Vec<Option<RuntimeCell>>> {
+    let space = input.definition.space;
     let sources = batch
         .iter()
         .map(|&cell| {
-            let source = snapshot
-                .read_cell(definition, cell)
+            let source = input
+                .snapshot
+                .read_cell(input.definition, cell)
                 .with_context(|| format!("could not read source cell {space:?} {cell:?}"))?;
             Ok((cell, source))
         })
@@ -306,13 +307,14 @@ fn compile_cells(
             .max(source.roads.roads.spans.len());
     }
 
-    parallel::map(&sources, |(cell, source)| -> Result<Option<RuntimeBuild>> {
+    parallel::map(&sources, |(cell, source)| -> Result<Option<RuntimeCell>> {
         let cell = *cell;
-        let Some(base) = source.source.clone() else {
-            plan.validate_coverage(&[cell], &source.coverage)?;
+        let Some(base) = &source.source else {
+            input.plan.validate_coverage(&[cell], &source.coverage)?;
             return Ok(None);
         };
-        let compiled = plan
+        let compiled = input
+            .plan
             .compile_cell_with_terrain(
                 cell,
                 &source.coverage,
@@ -321,19 +323,11 @@ fn compile_cells(
                 Default::default(),
             )
             .with_context(|| format!("could not compile source cell {space:?} {cell:?}"))?;
-        let revision = source
-            .coverage
-            .cells
-            .iter()
-            .find(|c| c.cell == cell)
-            .context("missing requested coverage cell")?
-            .revision;
-        let mut environment = CookedEnvironment::empty(catalog.clone(), compiled.input_fingerprint);
-        environment.push_cell(space, cell, i64::try_from(revision)?, compiled);
-        let mut local = project.clone();
-        local.cells.push(base);
-        local.objects = source.objects.clone();
-        build_compiled_runtime(local, environment).map(Some)
+        input
+            .catalog
+            .encode_cell(base, &source.objects, compiled)
+            .with_context(|| format!("could not encode cell {space:?} {cell:?}"))
+            .map(Some)
     })
     .into_iter()
     .collect()
@@ -455,16 +449,21 @@ mod tests {
         );
     }
 
-    fn assert_pages(reference: &RuntimeBuild, reader: &RuntimeReader) {
-        for expected in &reference.pages {
-            let actual = reader.read_page(expected.key).unwrap().unwrap();
+    /// The control tiles of `cell` and its ancestors in both runtimes are the same.
+    fn assert_same_controls(a: &Path, b: &Path, space: WorldSpaceId, cell: CellCoord) {
+        let (a, b) = (
+            RuntimeReader::open_immutable(a).unwrap(),
+            RuntimeReader::open_immutable(b).unwrap(),
+        );
+        let mut key = world::TerrainNodeKey::leaf(space, cell);
+
+        for _ in 0..=world::CONTROL_TOP_LEVEL {
             assert_eq!(
-                actual.checksum, expected.checksum,
-                "page {:?}",
-                expected.key
+                a.read_terrain_controls(&[key]).unwrap(),
+                b.read_terrain_controls(&[key]).unwrap(),
+                "{key:?}"
             );
-            assert_eq!(actual.decoded_bytes, expected.decoded_bytes);
-            assert_eq!(actual.gpu_bytes_estimate, expected.gpu_bytes_estimate);
+            key = key.parent().unwrap().unwrap();
         }
     }
 
@@ -526,32 +525,32 @@ mod tests {
     }
 
     #[test]
-    fn streamed_cook_matches_reference_pages_including_roads_and_collections() {
+    fn cook_scatters_collections_beside_roads_and_repeats_exactly() {
         let project = collection_project();
         let fixture = Fixture::new(&project);
-        let reference = build_runtime(project).unwrap();
+        let report = cook_project_with_report(&fixture.source(), &fixture.runtime()).unwrap();
+        assert_eq!(report.stats.terrain_cells, project.cells.len() as u64);
+        assert!(report.stats.peak_source_height_samples <= 9 * 33 * 33);
+        assert!(report.stats.peak_source_mask_bytes <= world_db::MAX_ENVIRONMENT_MASK_BYTES);
+        let reader = RuntimeReader::open_immutable(&fixture.runtime()).unwrap();
         assert!(
-            reference
-                .pages
-                .iter()
-                .any(|p| match p.clone().decode().unwrap().payload {
+            crate::decoded_pages(&reader, project.default_world_space)
+                .into_iter()
+                .any(|page| match page.payload {
                     PagePayload::StaticObjects(p) => p.instances.iter().any(|i| i.generated),
                     _ => false,
                 })
         );
-        let report = cook_project_with_report(&fixture.source(), &fixture.runtime()).unwrap();
-        assert_eq!(report.stats.terrain_cells, reference.cells.len() as u64);
-        assert!(report.stats.peak_source_height_samples <= 9 * 33 * 33);
-        assert!(report.stats.peak_source_mask_bytes <= world_db::MAX_ENVIRONMENT_MASK_BYTES);
-        let reader = RuntimeReader::open_immutable(&fixture.runtime()).unwrap();
-        assert_pages(&reference, &reader);
         assert_eq!(
             reader.manifest().vegetation_catalog,
-            reference.manifest.vegetation_catalog
+            project.vegetation_catalog
         );
         drop(reader);
         let repeat = cook_project_with_report(&fixture.source(), &fixture.runtime()).unwrap();
         assert_eq!(report.manifest.content_hash, repeat.manifest.content_hash);
+        let fresh = fixture.dir.join("fresh.sqlite");
+        let fresh = cook_project_fresh(&fixture.source(), &fresh).unwrap();
+        assert_eq!(report.manifest.content_hash, fresh.manifest.content_hash);
         fixture.assert_no_staging_files();
     }
 
@@ -575,11 +574,14 @@ mod tests {
         let mut edited = record.clone();
         let n = project.environments[0].mask_resolution as usize;
 
-        // Interior samples only: borders are shared with the neighbouring cells.
-        for y in n / 3..n / 2 {
-            for x in 1..n - 1 {
-                let sample = &mut edited.tiles[0].samples[y * n + x];
-                *sample = 255 - *sample;
+        // Every layer's interior samples, so the ground shown changes; borders are shared
+        // with the neighbouring cells.
+        for tile in &mut edited.tiles {
+            for y in n / 3..n / 2 {
+                for x in 1..n - 1 {
+                    let sample = &mut tile.samples[y * n + x];
+                    *sample = 255 - *sample;
+                }
             }
         }
 
@@ -607,6 +609,9 @@ mod tests {
             incremental.manifest.content_hash,
             full.manifest.content_hash
         );
+        let painted = CellCoord { x: 2, z: 3 };
+        let space = project.default_world_space;
+        assert_same_controls(&fixture.runtime(), &full_path, space, painted);
 
         // Reshape the middle of one cell, within the demo's narrow height bounds. Samples next
         // to the border stay put, so neighbours' shared border normals do not change and only
@@ -651,7 +656,7 @@ mod tests {
     fn one_snapshot_ignores_concurrent_edits_and_failed_cook_keeps_previous_runtime() {
         let project = road_demo::document();
         let fixture = Fixture::new(&project);
-        let reference = build_runtime(project.clone()).unwrap();
+        let reference = crate::cook_document(&project, &fixture.dir.join("reference")).unwrap();
         let snapshot = ProjectCookSnapshot::open(&fixture.source()).unwrap();
         let record = project
             .environment_cells
@@ -660,8 +665,17 @@ mod tests {
             .unwrap();
         let mut edited = record.clone();
         let n = project.environments[0].mask_resolution as usize;
-        let index = (n / 2) * n + n / 2;
-        edited.tiles[0].samples[index] = 255 - edited.tiles[0].samples[index];
+
+        // A patch of every layer, so the ground shown changes.
+        for tile in &mut edited.tiles {
+            for y in n / 2 - 2..n / 2 + 2 {
+                for x in n / 2 - 2..n / 2 + 2 {
+                    let sample = &mut tile.samples[y * n + x];
+                    *sample = 255 - *sample;
+                }
+            }
+        }
+
         edited.source_revision += 1;
         let result = ProjectWriter::open(&fixture.source())
             .unwrap()
@@ -672,9 +686,12 @@ mod tests {
             .unwrap();
         assert!(matches!(result, EnvironmentCellWriteResult::Committed(_)));
         let old = cook_snapshot(snapshot, &fixture.runtime()).unwrap();
-        assert_pages(
-            &reference,
-            &RuntimeReader::open_immutable(&fixture.runtime()).unwrap(),
+        assert_eq!(
+            old.manifest.content_hash,
+            RuntimeReader::open_immutable(&reference)
+                .unwrap()
+                .manifest()
+                .content_hash
         );
         let updated = cook_project_with_report(&fixture.source(), &fixture.runtime()).unwrap();
         assert_ne!(old.manifest.content_hash, updated.manifest.content_hash);

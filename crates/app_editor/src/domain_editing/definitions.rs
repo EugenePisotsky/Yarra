@@ -594,18 +594,15 @@ mod tests {
             .unwrap();
         let runtime_path = dir.join("runtime.sqlite");
         world_cook::cook_project(&path, &runtime_path).unwrap();
-        let document = world_db::read_project_database(&path).unwrap();
-        let cooked = world_cook::build_runtime(document).unwrap();
-        let page = cooked
-            .pages
-            .iter()
-            .find(|p| {
-                p.key.space == definition.space
-                    && p.key.cell == CellCoord::ZERO
-                    && p.key.domain == world::PageDomain::Vegetation
+        let page = world_db::RuntimeReader::open_immutable(&runtime_path)
+            .unwrap()
+            .read_page(world::PageKey {
+                space: definition.space,
+                cell: CellCoord::ZERO,
+                domain: world::PageDomain::Vegetation,
             })
             .unwrap()
-            .clone()
+            .unwrap()
             .decode()
             .unwrap();
         let world::PagePayload::Vegetation(vegetation) = page.payload else {

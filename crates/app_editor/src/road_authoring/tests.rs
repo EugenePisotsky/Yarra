@@ -20,6 +20,33 @@ impl Fixture {
         ProjectReader::open_read_only(&self.path).unwrap()
     }
 
+    /// The project cooked afresh beside it.
+    fn cook(&self) -> RuntimeReader {
+        let runtime = self.path.with_extension("runtime.sqlite");
+        world_cook::cook_project_fresh(&self.path, &runtime).unwrap();
+        RuntimeReader::open_immutable(&runtime).unwrap()
+    }
+
+    /// Cell (0, 0)'s cooked ground.
+    fn cooked_ground(&self) -> world::TerrainHeightfieldPage {
+        let key = world::PageKey {
+            space: WorldSpaceId(1),
+            cell: CellCoord::ZERO,
+            domain: world::PageDomain::Terrain,
+        };
+        let page = self
+            .cook()
+            .read_page(key)
+            .unwrap()
+            .unwrap()
+            .decode()
+            .unwrap();
+        let world::PagePayload::TerrainHeightfield(page) = page.payload else {
+            panic!()
+        };
+        page
+    }
+
     fn load(&self) -> SourceWorkingSets {
         let mut dense = SourceWorkingSets::default();
         dense.roads.reconcile(
@@ -42,6 +69,7 @@ impl Fixture {
 impl Drop for Fixture {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(&self.path);
+        let _ = std::fs::remove_file(self.path.with_extension("runtime.sqlite"));
     }
 }
 
@@ -289,23 +317,7 @@ fn road_relief_preview_save_cook_and_undo_share_heights_without_modifying_base_t
     assert_eq!(saved.terrain, shaped.terrain);
     let document = read_project_database(&f.path).unwrap();
     assert_eq!(document.terrain_cell_heightfields, base);
-    let cooked = world_cook::build_runtime(document).unwrap();
-    let page = cooked
-        .pages
-        .iter()
-        .find(|p| {
-            p.key.space == WorldSpaceId(1)
-                && p.key.cell == CellCoord::ZERO
-                && p.key.domain == world::PageDomain::Terrain
-        })
-        .unwrap()
-        .clone()
-        .decode()
-        .unwrap();
-    let world::PagePayload::TerrainHeightfield(page) = page.payload else {
-        panic!()
-    };
-    assert_eq!(Some(page.heightfield), saved.terrain);
+    assert_eq!(Some(f.cooked_ground().heightfield), saved.terrain);
     let mut objects = EditorObjectWorkingSet::default();
     assert!(history.undo(&mut objects, &mut dense));
     assert_eq!(compile(&dense.roads.overrides()).terrain, original.terrain);
@@ -619,23 +631,7 @@ fn junction_branch_move_save_recovery_cook_and_delete_are_atomic() {
             .roads,
         index.snapshot(WorldSpaceId(1), bounds, 8.0).unwrap()
     );
-    let cooked = world_cook::build_runtime(document).unwrap();
-    let page = cooked
-        .pages
-        .iter()
-        .find(|p| {
-            p.key.space == WorldSpaceId(1)
-                && p.key.cell == CellCoord::ZERO
-                && p.key.domain == world::PageDomain::Terrain
-        })
-        .unwrap()
-        .clone()
-        .decode()
-        .unwrap();
-    let world::PagePayload::TerrainHeightfield(page) = page.payload else {
-        panic!()
-    };
-    assert_eq!(Some(page.heightfield), preview.terrain);
+    assert_eq!(Some(f.cooked_ground().heightfield), preview.terrain);
     let changes = commands::delete_span(&loaded.roads, branch_span).unwrap();
     assert!(state.commit(&mut loaded, &mut move_history, Ok(changes)));
     assert!(junctions::at(&loaded.roads, center).is_none());
@@ -738,5 +734,5 @@ fn connecting_two_interior_points_creates_a_four_arm_crossing() {
             .count(),
         2
     );
-    world_cook::build_runtime(read_project_database(&f.path).unwrap()).unwrap();
+    f.cook();
 }

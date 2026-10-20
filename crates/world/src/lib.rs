@@ -11,7 +11,7 @@ pub use terrain_hierarchy::*;
 mod terrain_heightfield_codec;
 mod terrain_preview;
 
-pub use terrain_preview::TerrainPreviewProducts;
+pub use terrain_preview::{TerrainPreviewLeaf, TerrainPreviewProducts};
 
 mod view_bookmark;
 
@@ -642,12 +642,10 @@ pub enum TerrainHeightfieldError {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TerrainHeightfieldPage {
     pub heightfield: TerrainHeightfield,
-    /// Local material slots. Their order maps directly to RGBA channels in
-    /// `weight_pages`, four surfaces per page.
+    /// The cell's ground surfaces, whose slots `wear` names. Which of them shows where is in
+    /// the cell's control tile (`terrain_control`).
     pub surfaces: Vec<TerrainSurfaceId>,
-    /// The natural ground: where roads or paths wear it, `wear` says how far.
-    pub weight_pages: Vec<TerrainWeightPage>,
-    /// How worn the ground is, finer than the weights resolve; none where nothing wears it.
+    /// How worn the ground is, where roads or paths wear it; none where nothing does.
     pub wear: Option<TerrainWear>,
 }
 
@@ -956,7 +954,6 @@ mod tests {
         let payload = PagePayload::TerrainHeightfield(TerrainHeightfieldPage {
             heightfield: heightfield.clone(),
             surfaces: vec![TerrainSurfaceId([4; 16])],
-            weight_pages: Vec::new(),
             wear: None,
         });
 

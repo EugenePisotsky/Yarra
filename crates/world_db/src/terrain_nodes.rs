@@ -612,14 +612,19 @@ fn invalid(message: impl Into<String>) -> WorldDbError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{RuntimeBuild, RuntimeCellRecord, domain_bit, write_runtime_database};
+
+    use crate::{
+        RuntimeCell, RuntimeCellRecord, RuntimeHeader, domain_bit, encode_terrain_control,
+        write_runtime_database,
+    };
+
     use std::{fs, path::PathBuf};
     use world::PagePayload;
     use world::{TerrainHeightfield, TerrainHeightfieldPage, encode_page_payload};
 
     struct Fixture {
         path: PathBuf,
-        build: RuntimeBuild,
+        header: RuntimeHeader,
         field: TerrainHeightfield,
     }
 
@@ -636,12 +641,11 @@ mod tests {
                 encode_page_payload(&PagePayload::TerrainHeightfield(TerrainHeightfieldPage {
                     heightfield: field.clone(),
                     surfaces: vec![],
-                    weight_pages: vec![],
                     wear: None,
                 }))
                 .unwrap();
             let space = WorldSpaceId(1);
-            let build = RuntimeBuild {
+            let header = RuntimeHeader {
                 manifest: RuntimeManifest {
                     schema_version: RUNTIME_SCHEMA_VERSION,
                     generation_id: "before".into(),
@@ -661,43 +665,53 @@ mod tests {
                     start_view: None,
                     gameplay_areas: Default::default(),
                 },
-                cells: (0..count)
-                    .map(|x| RuntimeCellRecord {
-                        space,
-                        cell: CellCoord { x, z: 0 },
-                        minimum_y: 0.0,
-                        maximum_y: 0.0,
-                        source_revision: 1,
-                        domain_mask: domain_bit(PageDomain::Terrain),
-                        terrain_resolution: 2,
-                    })
-                    .collect(),
-                pages: (0..count)
-                    .map(|x| EncodedPage {
-                        key: PageKey {
-                            space,
-                            cell: CellCoord { x, z: 0 },
-                            domain: PageDomain::Terrain,
-                        },
-                        codec: PageCodec::Raw,
-                        decoded_bytes: payload.len() as u64,
-                        gpu_bytes_estimate: 0,
-                        checksum: *blake3::hash(&payload).as_bytes(),
-                        payload: payload.clone(),
-                    })
-                    .collect(),
                 terrain_surfaces: vec![],
                 terrain_texture_sets: vec![],
                 terrain_texture_layers: vec![],
                 terrain_profiles: vec![],
                 assets: vec![],
                 definitions: vec![],
-                dependencies: vec![],
-                definition_dependencies: vec![],
-                terrain_surface_dependencies: vec![],
             };
-            write_runtime_database(&path, &build).unwrap();
-            Self { path, build, field }
+            let control = encode_terrain_control(&[0; world::CONTROL_SAMPLES.pow(2)]).unwrap();
+            let cells: Vec<_> = (0..count)
+                .map(|x| {
+                    let cell = CellCoord { x, z: 0 };
+                    RuntimeCell {
+                        record: RuntimeCellRecord {
+                            space,
+                            cell,
+                            minimum_y: 0.0,
+                            maximum_y: 0.0,
+                            source_revision: 1,
+                            domain_mask: domain_bit(PageDomain::Terrain),
+                            terrain_resolution: 2,
+                        },
+                        pages: vec![EncodedPage {
+                            key: PageKey {
+                                space,
+                                cell,
+                                domain: PageDomain::Terrain,
+                            },
+                            codec: PageCodec::Raw,
+                            decoded_bytes: payload.len() as u64,
+                            gpu_bytes_estimate: 0,
+                            checksum: *blake3::hash(&payload).as_bytes(),
+                            payload: payload.clone(),
+                        }],
+                        assets: vec![],
+                        definitions: vec![],
+                        surfaces: vec![],
+                        control: control.clone(),
+                        content_hash: [0; 32],
+                    }
+                })
+                .collect();
+            write_runtime_database(&path, &header, &cells).unwrap();
+            Self {
+                path,
+                header,
+                field,
+            }
         }
 
         fn key(x: i32) -> TerrainNodeKey {
@@ -725,8 +739,8 @@ mod tests {
         let parent = Fixture::key(0).parent().unwrap().unwrap();
         store.build_parent(parent).unwrap();
         assert!(store.read(parent).unwrap().unwrap().heightfield.is_none());
-        let manifest = store.finish(&fixture.build.manifest.world_spaces).unwrap();
-        assert_ne!(manifest.content_hash, fixture.build.manifest.content_hash);
+        let manifest = store.finish(&fixture.header.manifest.world_spaces).unwrap();
+        assert_ne!(manifest.content_hash, fixture.header.manifest.content_hash);
         let reader = RuntimeReader::open_immutable(&fixture.path).unwrap();
         assert_eq!(reader.read_terrain_roots(WorldSpaceId(1)).unwrap().len(), 2);
         assert!(reader.read_terrain_node(Fixture::key(3)).unwrap().is_none());
@@ -773,7 +787,7 @@ mod tests {
         store
             .insert_leaf(Fixture::key(0), &fixture.field, 2)
             .unwrap();
-        assert!(store.finish(&fixture.build.manifest.world_spaces).is_err());
+        assert!(store.finish(&fixture.header.manifest.world_spaces).is_err());
         let reader = RuntimeReader::open_immutable(&fixture.path).unwrap();
         assert_eq!(reader.manifest().generation_id, "before");
         assert!(reader.read_terrain_roots(WorldSpaceId(1)).is_err());
@@ -809,7 +823,7 @@ mod tests {
         assert_eq!(count, 257);
         assert!(
             store
-                .finish(&fixture.build.manifest.world_spaces)
+                .finish(&fixture.header.manifest.world_spaces)
                 .unwrap_err()
                 .to_string()
                 .contains("coarse terrain cover")

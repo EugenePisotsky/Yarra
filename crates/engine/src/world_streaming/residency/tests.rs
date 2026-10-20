@@ -2,7 +2,7 @@ use super::*;
 use crate::world_streaming::StreamedTerrainSurface;
 use attachment::attach_terrain_source;
 use bevy::ecs::system::RunSystemOnce;
-use world::{CellCoord, PagePayload, TerrainHeightfield, WorldSpaceId};
+use world::{CellCoord, PageDomain, PagePayload, TerrainHeightfield, WorldSpaceId};
 use world_db::RuntimeManifest;
 
 fn space(size: f32) -> world_db::WorldSpaceRecord {
@@ -31,7 +31,6 @@ pub(in crate::world_streaming) fn height_page(key: PageKey) -> PreparedPage {
                 heightfield: TerrainHeightfield::from_heights(2, &[1., 2., 4., 8.], 1., 8., 8.)
                     .unwrap(),
                 surfaces: vec![],
-                weight_pages: vec![],
                 wear: None,
             }),
         },
