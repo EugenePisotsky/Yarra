@@ -2,14 +2,11 @@
 use world_db::write_runtime_database;
 mod control_cook;
 mod environment_cook;
-mod material_bake;
 mod parallel;
 mod runtime_build;
 mod streaming_cook;
 mod terrain_cook;
-pub use material_bake::preview::bake_terrain_preview;
 mod terrain_preview;
-pub use material_bake::{TerrainBakeLibrary, TerrainMaterialBakeStats};
 pub use terrain_preview::{
     MAX_PREVIEW_LEAVES, preview_terrain, published_terrain_control, published_terrain_leaf,
 };
@@ -17,10 +14,7 @@ mod terrain_fixture;
 use environment_cook::{
     CookedEnvironment, TerrainSlot, TerrainWeights, compile_environment, demo_environment,
 };
-pub use streaming_cook::{
-    CookReport, CookStats, cook_project_fresh, cook_project_with_materials,
-    cook_project_with_report,
-};
+pub use streaming_cook::{CookReport, CookStats, cook_project_fresh, cook_project_with_report};
 pub use terrain_fixture::create_mountain_fixture;
 mod heightfield_import;
 mod hill_fixture;
@@ -41,12 +35,11 @@ use anyhow::{Context, Result, bail};
 use glam::Vec2;
 use world::{
     AssetId, CellCoord, DEFAULT_CELL_SIZE, GameplayObjectInstance, GameplayObjectsPage,
-    MAX_TERRAIN_HEIGHTFIELD_RESOLUTION, MAX_TERRAIN_NODE_LEVEL, MAX_TERRAIN_SURFACES_PER_CELL,
-    MAX_TERRAIN_WEIGHT_PAGES, MAX_TERRAIN_WEIGHT_RESOLUTION, ObjectActivationPolicy,
-    ObjectDefinitionId, PageCodec, PageDomain, PageKey, PagePayload, RUNTIME_SCHEMA_VERSION,
-    StableObjectId, StaticObjectInstance, StaticObjectsPage, TerrainHeightfieldPage,
-    TerrainProfile, TerrainSurface, TerrainSurfaceId, TerrainTextureSet, TerrainTextureSetId,
-    TerrainWeightPage, WorldSpaceId, encode_page_payload,
+    MAX_TERRAIN_HEIGHTFIELD_RESOLUTION, MAX_TERRAIN_SURFACES_PER_CELL, MAX_TERRAIN_WEIGHT_PAGES,
+    MAX_TERRAIN_WEIGHT_RESOLUTION, ObjectActivationPolicy, ObjectDefinitionId, PageCodec,
+    PageDomain, PageKey, PagePayload, RUNTIME_SCHEMA_VERSION, StableObjectId, StaticObjectInstance,
+    StaticObjectsPage, TerrainHeightfieldPage, TerrainProfile, TerrainSurface, TerrainSurfaceId,
+    TerrainTextureSet, TerrainTextureSetId, TerrainWeightPage, WorldSpaceId, encode_page_payload,
 };
 use world_db::{
     AssetVariantRecord, EncodedPage, PageDependencyRecord, PageObjectDefinitionRecord,
@@ -149,35 +142,19 @@ fn finish_runtime_publication(
     temporary_path: &Path,
     spaces: &[WorldSpaceRecord],
 ) -> Result<RuntimeManifest> {
-    finish_runtime_publication_with_materials(
-        runtime_path,
-        temporary_path,
-        spaces,
-        None,
-        None,
-        None,
-    )
-    .map(|(manifest, _, _)| manifest)
+    publish_staged_runtime(runtime_path, temporary_path, spaces, None).map(|(manifest, _)| manifest)
 }
-fn finish_runtime_publication_with_materials(
+/// Builds the staged runtime's terrain hierarchy (only above `changed` cells when given) and
+/// control tiles, validates its roots and publishes it; also returns the hierarchy's seconds.
+fn publish_staged_runtime(
     runtime_path: &Path,
     temporary_path: &Path,
     spaces: &[WorldSpaceRecord],
-    materials: Option<&TerrainBakeLibrary>,
-    core_cache: Option<&Path>,
     changed: Option<&terrain_cook::ChangedCells>,
-) -> Result<(RuntimeManifest, Option<TerrainMaterialBakeStats>, f64)> {
+) -> Result<(RuntimeManifest, f64)> {
     let start = std::time::Instant::now();
-    let (mut manifest, _) = terrain_cook::cook_hierarchy(temporary_path, spaces, changed)?;
+    let (manifest, _) = terrain_cook::cook_hierarchy(temporary_path, spaces, changed)?;
     let hierarchy_seconds = start.elapsed().as_secs_f64();
-    let stats = if let Some(materials) = materials {
-        let (next, stats) =
-            material_bake::cook(temporary_path, spaces, materials, core_cache, changed)?;
-        manifest = next;
-        Some(stats)
-    } else {
-        None
-    };
     control_cook::cook(temporary_path, spaces)?;
     let reader = world_db::RuntimeReader::open_immutable(temporary_path)
         .context("cooked runtime database did not pass validation")?;
@@ -189,12 +166,6 @@ fn finish_runtime_publication_with_materials(
                 .read_terrain_node(root.key)?
                 .context("missing cooked terrain root")?
                 .decode()?;
-            if materials.is_some() {
-                reader
-                    .read_terrain_composite(world::TerrainMaterialKey(root.key))?
-                    .context("missing cooked composite root")?
-                    .decode()?;
-            }
         }
     }
     drop(reader);
@@ -204,7 +175,7 @@ fn finish_runtime_publication_with_materials(
             runtime_path.display()
         )
     })?;
-    Ok((manifest, stats, hierarchy_seconds))
+    Ok((manifest, hierarchy_seconds))
 }
 
 fn demo_tree() -> world_db::AssetImport {
@@ -335,7 +306,6 @@ fn demo_project_document() -> ProjectDocument {
                 macro_scales: [7.7, 31.5, 235.0],
                 macro_contrast: 2.5,
                 macro_albedo_strength: 0.395,
-                composite_minimum_level: 0,
             },
             TerrainProfile {
                 space: interior_id,
@@ -344,7 +314,6 @@ fn demo_project_document() -> ProjectDocument {
                 macro_scales: [7.7, 31.5, 235.0],
                 macro_contrast: 2.5,
                 macro_albedo_strength: 0.395,
-                composite_minimum_level: 0,
             },
         ],
         presets,

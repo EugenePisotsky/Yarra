@@ -4,8 +4,7 @@
 #
 # Sources are Megascans surfaces under ~/Dev/Assets/terrain/sources (licensed, local only).
 # `tools/import_terrain_surfaces.py` converts them into assets/local/terrain/baltic/source,
-# `tools/compile_terrain_textures.py --pack baltic` builds the runtime arrays and
-# `tools/prepare_terrain_bake.py --pack baltic` the cooker's inputs.
+# `tools/compile_terrain_textures.py --pack baltic` builds the runtime arrays.
 #
 # Per surface:
 # - `tile_size`: metres of one texture repetition (the scan's physical size unless noted).

@@ -29,7 +29,7 @@ def main():
     if not project.exists():
         cargo('yarra-world-cook', ['create-hill-fixture', project])
     if not runtime.exists() or args.recook or args.action == 'prepare':
-        cargo('yarra-world-cook', ['cook', project, runtime, '--terrain-materials', ROOT / 'assets'])
+        cargo('yarra-world-cook', ['cook', project, runtime])
     print(f'Hill source: {project}\nRuntime: {runtime}', flush=True)
     if args.action == 'prepare':
         return

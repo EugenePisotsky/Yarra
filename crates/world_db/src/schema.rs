@@ -113,8 +113,7 @@ CREATE TABLE world_space_terrain_profiles (
     macro_medium_scale REAL NOT NULL CHECK(macro_medium_scale > 0.0),
     macro_large_scale REAL NOT NULL CHECK(macro_large_scale > 0.0),
     macro_contrast REAL NOT NULL CHECK(macro_contrast >= 0.0),
-    macro_albedo_strength REAL NOT NULL CHECK(macro_albedo_strength BETWEEN 0.0 AND 0.5),
-    composite_minimum_level INTEGER NOT NULL CHECK(composite_minimum_level BETWEEN 0 AND 30)
+    macro_albedo_strength REAL NOT NULL CHECK(macro_albedo_strength BETWEEN 0.0 AND 0.5)
 ) STRICT;
 
 CREATE TABLE terrain_cell_heightfields (
@@ -415,8 +414,7 @@ CREATE TABLE world_space_terrain_profiles (
     macro_medium_scale REAL NOT NULL CHECK(macro_medium_scale > 0.0),
     macro_large_scale REAL NOT NULL CHECK(macro_large_scale > 0.0),
     macro_contrast REAL NOT NULL CHECK(macro_contrast >= 0.0),
-    macro_albedo_strength REAL NOT NULL CHECK(macro_albedo_strength BETWEEN 0.0 AND 0.5),
-    composite_minimum_level INTEGER NOT NULL CHECK(composite_minimum_level BETWEEN 0 AND 30)
+    macro_albedo_strength REAL NOT NULL CHECK(macro_albedo_strength BETWEEN 0.0 AND 0.5)
 ) STRICT;
 
 CREATE TABLE cell_pages (
@@ -542,32 +540,6 @@ CREATE TABLE terrain_hierarchy_spaces (
     root_count INTEGER NOT NULL CHECK(root_count BETWEEN 0 AND 256)
 ) STRICT;
 
-CREATE TABLE terrain_composites (
-    world_space_id INTEGER NOT NULL, level INTEGER NOT NULL,
-    node_x INTEGER NOT NULL, node_z INTEGER NOT NULL,
-    fingerprint BLOB NOT NULL CHECK(length(fingerprint)=32),
-    checksum BLOB NOT NULL CHECK(length(checksum)=32),
-    decoded_bytes INTEGER NOT NULL CHECK(decoded_bytes BETWEEN 1 AND 65536),
-    gpu_bytes INTEGER NOT NULL CHECK(gpu_bytes=54432),
-    payload BLOB NOT NULL CHECK(length(payload) BETWEEN 1 AND 65536),
-    PRIMARY KEY(world_space_id,level,node_x,node_z),
-    FOREIGN KEY(world_space_id,level,node_x,node_z) REFERENCES terrain_nodes(world_space_id,level,node_x,node_z)
-) STRICT, WITHOUT ROWID;
-CREATE TABLE terrain_material_spaces (
-    world_space_id INTEGER PRIMARY KEY REFERENCES world_spaces(id),
-    tile_count INTEGER NOT NULL CHECK(tile_count>=0),
-    -- The bake inputs (texture library) the composites were made with.
-    library_fingerprint BLOB NOT NULL CHECK(length(library_fingerprint)=32)
-) STRICT;
--- The filtering core behind every node from the first baked level up. Equal fingerprints
--- mean equal cores, so a later cook reuses unchanged cores from its cache by them.
-CREATE TABLE terrain_cores (
-    world_space_id INTEGER NOT NULL, level INTEGER NOT NULL,
-    node_x INTEGER NOT NULL, node_z INTEGER NOT NULL,
-    fingerprint BLOB NOT NULL CHECK(length(fingerprint)=32),
-    PRIMARY KEY(world_space_id,level,node_x,node_z),
-    FOREIGN KEY(world_space_id,level,node_x,node_z) REFERENCES terrain_nodes(world_space_id,level,node_x,node_z)
-) STRICT, WITHOUT ROWID;
 -- Impostor-drawn static objects per block of world::FAR_OBJECT_BLOCK_CELLS² cells (an
 -- encoded world::FarObjectsPage), derived from the static-object pages when a cook finishes.
 CREATE TABLE far_object_pages (

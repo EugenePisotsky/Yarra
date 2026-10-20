@@ -8,8 +8,6 @@ use world_db::{ImportedTerrainCell, SourceEnvironmentCellRecord};
 /// 1 m geometry and paint; ground weights are still compiled at 0.5 m.
 pub(crate) const HEIGHT_SIDE: usize = 33;
 pub(crate) const MASK_SIDE: usize = 33;
-/// Composites stop at 128 m nodes (2 m texels); closer ground uses runtime near detail.
-const COMPOSITE_MINIMUM_LEVEL: u8 = 2;
 const VIEW_VISIBILITY: f32 = 20_000.;
 
 /// Terrain height at a world XZ position.
@@ -200,7 +198,6 @@ pub(crate) fn base_document(name: &str, bounds: [f32; 2], sea_level: f32) -> Pro
     }
     island_ground(&mut project);
     project.terrain_profiles.retain(|p| p.space == space);
-    project.terrain_profiles[0].composite_minimum_level = COMPOSITE_MINIMUM_LEVEL;
     project.cells.clear();
     project.terrain_cell_heightfields.clear();
     project.environment_cells.clear();

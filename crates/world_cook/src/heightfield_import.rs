@@ -497,7 +497,7 @@ mod tests {
         );
         let incremental = cook_project_with_report(&project, &runtime).unwrap();
         assert!(incremental.stats.incremental);
-        let fresh = cook_project_fresh(&project, &output.0.join("fresh.sqlite"), None).unwrap();
+        let fresh = cook_project_fresh(&project, &output.0.join("fresh.sqlite")).unwrap();
         assert_eq!(
             incremental.manifest.content_hash,
             fresh.manifest.content_hash

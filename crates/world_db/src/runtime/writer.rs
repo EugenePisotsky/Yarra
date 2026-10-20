@@ -286,14 +286,6 @@ impl RuntimeCookWriter {
         )?;
         Ok(())
     }
-    /// Drops the ground composites so they can be baked again from the updated hierarchy.
-    pub fn clear_terrain_composites(&self) -> Result<(), WorldDbError> {
-        self.connection.execute_batch(
-            "DELETE FROM terrain_composites; DELETE FROM terrain_cores;
-             DELETE FROM terrain_material_spaces;",
-        )?;
-        Ok(())
-    }
     pub fn page_checksum(&self, key: world::PageKey) -> Result<Option<[u8; 32]>, WorldDbError> {
         let checksum: Option<Vec<u8>> = self
             .connection

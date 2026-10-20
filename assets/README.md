@@ -64,7 +64,6 @@ assets/local/terrain/baltic/
   source/<surface>/{base_color.png,normal_material.png}   # tools/import_terrain_surfaces.py
   source/macro_variation.png, source/import-report.json
   runtime/{universal,astc}/{base_color_array,normal_material_array,macro_variation}.ktx2
-  runtime/material-inputs.terrain-bake                    # tools/prepare_terrain_bake.py
 ```
 
 The first character presentation is also restored from the legacy project into

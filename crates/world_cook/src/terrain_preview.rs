@@ -50,7 +50,6 @@ pub fn preview_terrain(
         nodes,
         controls,
         leaves,
-        ..Default::default()
     })
 }
 

@@ -21,7 +21,6 @@ Restore the ignored local assets described in [asset setup](assets/README.md), t
 ```sh
 uv run --with numpy --with pillow python tools/import_terrain_surfaces.py
 uv run python tools/compile_terrain_textures.py
-uv run --with numpy --with pillow python tools/prepare_terrain_bake.py
 cargo run -p yarra-world-cook -- init
 cargo run -p yarra-app-editor
 ```

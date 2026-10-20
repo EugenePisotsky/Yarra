@@ -6,9 +6,12 @@
 //! of the world's surfaces anywhere. Parents filter their children's surface shares, never their
 //! layer indices.
 use crate::{
-    CellCoord, MAX_TERRAIN_SURFACES_PER_CELL, TERRAIN_BLEND_SURFACES, TerrainHeightfieldPage,
-    TerrainNodeKey, TerrainWeightPage, bare_share,
+    CellCoord, MAX_TERRAIN_SURFACES_PER_CELL, TerrainHeightfieldPage, TerrainNodeKey,
+    TerrainWeightPage, bare_share,
 };
+
+/// Surfaces a sample keeps and the GPU blends at one point: the heaviest three.
+pub const TERRAIN_BLEND_SURFACES: usize = 3;
 
 /// Samples per tile side.
 pub const CONTROL_SAMPLES: usize = 65;

@@ -1,10 +1,8 @@
 pub mod atmosphere;
 pub mod clouds;
 pub mod fog;
-pub mod terrain_material;
-pub mod weather;
-pub use terrain_material::*;
 pub mod terrain_hierarchy;
+pub mod weather;
 pub use terrain_hierarchy::*;
 mod terrain_heightfield_codec;
 mod terrain_preview;
@@ -32,8 +30,8 @@ pub const DEFAULT_RUNTIME_DATABASE: &str = "generated/world.runtime.sqlite";
 
 pub const DEFAULT_CELL_SIZE: f32 = 32.0;
 pub const MAX_DECODED_PAGE_BYTES: u64 = 64 * 1024 * 1024;
-pub const PROJECT_SCHEMA_VERSION: i64 = 31;
-pub const RUNTIME_SCHEMA_VERSION: i64 = 31;
+pub const PROJECT_SCHEMA_VERSION: i64 = 32;
+pub const RUNTIME_SCHEMA_VERSION: i64 = 32;
 pub const PAGE_PAYLOAD_VERSION: u16 = 14;
 /// Surfaces a terrain page holds, four per RGBA weight page: natural ground and what roads wear
 /// it to, so varied ground along a road keeps both.
@@ -334,10 +332,6 @@ pub struct TerrainProfile {
     pub macro_scales: [f32; 3],
     pub macro_contrast: f32,
     pub macro_albedo_strength: f32,
-    /// Finest hierarchy level whose baked ground composites are published. Finer tiles are
-    /// still computed to filter their parents, but only roots are stored below this level.
-    /// Zero stores every level; each step up quarters the finest stored texel density.
-    pub composite_minimum_level: u8,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

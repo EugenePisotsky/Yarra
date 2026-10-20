@@ -967,7 +967,6 @@ fn validate_terrain_profile(profile: &TerrainProfile) -> Result<()> {
         || profile.macro_contrast < 0.0
         || !profile.macro_albedo_strength.is_finite()
         || !(0.0..=0.5).contains(&profile.macro_albedo_strength)
-        || profile.composite_minimum_level > MAX_TERRAIN_NODE_LEVEL
     {
         bail!("terrain profile for {:?} is invalid", profile.space);
     }
@@ -1097,7 +1096,6 @@ fn hash_terrain_catalog(
         }
         hasher.update(&profile.macro_contrast.to_bits().to_le_bytes());
         hasher.update(&profile.macro_albedo_strength.to_bits().to_le_bytes());
-        hasher.update(&[profile.composite_minimum_level]);
     }
     for slot in &environment.slots {
         hasher.update(&slot.space.0.to_le_bytes());
@@ -1164,7 +1162,6 @@ mod tests {
             macro_scales: [7.7, 31.5, 235.0],
             macro_contrast: 0.0,
             macro_albedo_strength: 0.5,
-            composite_minimum_level: MAX_TERRAIN_NODE_LEVEL,
         };
         assert!(validate_terrain_profile(&profile).is_ok());
 
@@ -1173,10 +1170,6 @@ mod tests {
 
         profile.weight_resolution = MAX_TERRAIN_WEIGHT_RESOLUTION;
         profile.macro_albedo_strength = 0.500_1;
-        assert!(validate_terrain_profile(&profile).is_err());
-
-        profile.macro_albedo_strength = 0.5;
-        profile.composite_minimum_level = MAX_TERRAIN_NODE_LEVEL + 1;
         assert!(validate_terrain_profile(&profile).is_err());
     }
 }

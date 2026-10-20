@@ -9,13 +9,12 @@ Restore local assets according to [pack contracts](../assets/README.md). License
 ```sh
 uv run --with numpy --with pillow python tools/import_terrain_surfaces.py
 uv run python tools/compile_terrain_textures.py
-uv run --with numpy --with pillow python tools/prepare_terrain_bake.py
 cargo run -p yarra-world-cook -- init
 cargo run -p yarra-app-editor
 cargo run --release -p yarra-app-game
 ```
 
-`init` creates source only if absent, then cooks it: the procedural Phase 0 island (8 km of sea and island, a few minutes to cook), with start views in `content/world.project.views/` (`spawn`, `beach`, `summit`, `hills`), e.g. `cargo run --release -p yarra-app-game -- --start-view content/world.project.views/beach.ron`. The local default world is currently imported from Houdini instead (see [Terrain from Houdini](#terrain-from-houdini)). To start over, delete the project and runtime databases and run `init` again. `cook` continues the existing runtime: it recompiles only cells whose sources changed and updates the terrain hierarchy and ground composites above them. Ground-composite cores are kept in `content/world.project.cook-cache.sqlite` for this (about 570 MB for the island). Deleting it is safe; the next cook re-evaluates what it needs. `cook --full` rebuilds the runtime from scratch. `cook` requires existing source and never creates a demo. The editor defaults to `content/world.project.sqlite`; the game reads `assets/generated/world.runtime.sqlite`. A fresh public clone needs the local pack inputs before ordinary material cooking succeeds.
+`init` creates source only if absent, then cooks it: the procedural Phase 0 island (8 km of sea and island, a few minutes to cook), with start views in `content/world.project.views/` (`spawn`, `beach`, `summit`, `hills`), e.g. `cargo run --release -p yarra-app-game -- --start-view content/world.project.views/beach.ron`. The local default world is currently imported from Houdini instead (see [Terrain from Houdini](#terrain-from-houdini)). To start over, delete the project and runtime databases and run `init` again. `cook` continues the existing runtime: it recompiles only cells whose sources changed, updates the terrain hierarchy above them and rebuilds the control tiles. `cook --full` rebuilds the runtime from scratch. `cook` requires existing source and never creates a demo. The editor defaults to `content/world.project.sqlite`; the game reads `assets/generated/world.runtime.sqlite`. A fresh public clone needs the local pack inputs before cooking succeeds.
 
 **Save** writes source edits. **Save & Publish** also cooks and atomically replaces the runtime. To publish from a terminal:
 
@@ -81,7 +80,6 @@ Terrain packs are tracked in `assets/packs/terrain/<pack>.toml`: surfaces in tex
 ```sh
 uv run --with numpy --with pillow python tools/import_terrain_surfaces.py [--only KEY…]
 uv run python tools/compile_terrain_textures.py
-uv run --with numpy --with pillow python tools/prepare_terrain_bake.py
 ```
 
 The import resamples each scan to 1024² in linear light with wrapped borders, stores the height map (normalised, times `blend_height`) in base colour alpha, packs normal/AO/roughness, and turns every normal into the engine's frame (+U along world X, +V along world Z), detecting each scan's green convention from its height map (`import-report.json` records the decision). `color_match` scales a surface's albedo to another scan's mean, as dune sand takes the beach sand's colour. `worn` names what roads and paths wear a surface down to (up to two surfaces with weights, such as meadow to dirt and road gravel) and `trampled` what light wear tramples it to (meadow to dry meadow); new worlds copy both with the surfaces. New worlds copy the pack's surfaces; an existing world keeps its own parameters until it is rebuilt. Eighteen 1024² layers take about 52 MB of GPU memory on desktop.

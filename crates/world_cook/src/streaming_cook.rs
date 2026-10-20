@@ -18,8 +18,8 @@ pub struct CookStats {
     pub peak_source_road_spans: usize,
     pub peak_encoded_cell_bytes: u64,
     pub peak_decoded_cell_bytes: u64,
-    /// Wall-clock time compiling and writing cells, then building the hierarchy, composites
-    /// and validating the publication.
+    /// Wall-clock time compiling and writing cells, then building the hierarchy and control
+    /// tiles and validating the publication.
     pub cell_seconds: f64,
     pub publish_seconds: f64,
     /// The part of `publish_seconds` spent building the terrain hierarchy.
@@ -36,35 +36,21 @@ pub struct CookStats {
 pub struct CookReport {
     pub manifest: RuntimeManifest,
     pub stats: CookStats,
-    pub materials: Option<TerrainMaterialBakeStats>,
 }
 
 /// Cooks continue the existing runtime at `runtime_path` when it was cooked from the same
 /// global inputs and terrain cells, recompiling only cells whose inputs changed.
 pub fn cook_project_with_report(project_path: &Path, runtime_path: &Path) -> Result<CookReport> {
-    cook_project_options(project_path, runtime_path, None, true)
-}
-/// Bake optional experimental ground composites using explicit preprocessed assets.
-pub fn cook_project_with_materials(
-    project_path: &Path,
-    runtime_path: &Path,
-    materials: &TerrainBakeLibrary,
-) -> Result<CookReport> {
-    cook_project_options(project_path, runtime_path, Some(materials), true)
+    cook_project_options(project_path, runtime_path, true)
 }
 /// Recompiles every cell, ignoring the existing runtime; for sources edited without
-/// revision bumps. Composite cores still come from the cook cache.
-pub fn cook_project_fresh(
-    project_path: &Path,
-    runtime_path: &Path,
-    materials: Option<&TerrainBakeLibrary>,
-) -> Result<CookReport> {
-    cook_project_options(project_path, runtime_path, materials, false)
+/// revision bumps.
+pub fn cook_project_fresh(project_path: &Path, runtime_path: &Path) -> Result<CookReport> {
+    cook_project_options(project_path, runtime_path, false)
 }
 fn cook_project_options(
     project_path: &Path,
     runtime_path: &Path,
-    materials: Option<&TerrainBakeLibrary>,
     incremental: bool,
 ) -> Result<CookReport> {
     if runtime_path.exists() && fs::canonicalize(project_path)? == fs::canonicalize(runtime_path)? {
@@ -72,25 +58,15 @@ fn cook_project_options(
     }
     let snapshot = ProjectCookSnapshot::open(project_path)
         .with_context(|| format!("failed to open cook snapshot {}", project_path.display()))?;
-    // Beside the project, like its other local state; it never ships and may be deleted.
-    let core_cache = project_path.with_extension("cook-cache.sqlite");
-    cook_snapshot_options(
-        snapshot,
-        runtime_path,
-        materials,
-        Some(&core_cache),
-        incremental,
-    )
+    cook_snapshot_options(snapshot, runtime_path, incremental)
 }
 #[cfg(test)]
 fn cook_snapshot(snapshot: ProjectCookSnapshot, runtime_path: &Path) -> Result<CookReport> {
-    cook_snapshot_options(snapshot, runtime_path, None, None, true)
+    cook_snapshot_options(snapshot, runtime_path, true)
 }
 fn cook_snapshot_options(
     snapshot: ProjectCookSnapshot,
     runtime_path: &Path,
-    materials: Option<&TerrainBakeLibrary>,
-    core_cache: Option<&Path>,
     incremental: bool,
 ) -> Result<CookReport> {
     let project = snapshot.catalog();
@@ -198,10 +174,6 @@ fn cook_snapshot_options(
             }
         }
     }
-    if stats.incremental && materials.is_none() {
-        // A geometry-only cook publishes no composites; otherwise they are updated in place.
-        writer.clear_terrain_composites()?;
-    }
     let far = writer.rebuild_far_objects()?;
     stats.far_object_blocks = far.blocks;
     stats.far_objects = far.instances;
@@ -212,21 +184,15 @@ fn cook_snapshot_options(
     // has already been evaluated from that one snapshot, including unsampled masks.
     drop(snapshot);
     stats.changed_ground_cells = changed.values().map(|c| c.len() as u64).sum();
-    let (manifest, materials, hierarchy_seconds) = finish_runtime_publication_with_materials(
+    let (manifest, hierarchy_seconds) = publish_staged_runtime(
         runtime_path,
         &staging.path,
         &manifest.world_spaces,
-        materials,
-        core_cache,
         stats.incremental.then_some(&changed),
     )?;
     stats.publish_seconds = start.elapsed().as_secs_f64();
     stats.hierarchy_seconds = hierarchy_seconds;
-    Ok(CookReport {
-        manifest,
-        stats,
-        materials,
-    })
+    Ok(CookReport { manifest, stats })
 }
 
 /// A copy of the previous publication to continue from, when it was cooked from the same
@@ -446,7 +412,7 @@ mod tests {
         assert_eq!(&*reader.manifest().gameplay_areas, &areas[..]);
         // A cook from scratch carries them too, and is the same generation.
         let full = fixture.dir.join("full.sqlite");
-        cook_project_fresh(&fixture.source(), &full, None).unwrap();
+        cook_project_fresh(&fixture.source(), &full).unwrap();
         let reader = RuntimeReader::open_immutable(&full).unwrap();
         assert_eq!(&*reader.manifest().gameplay_areas, &areas[..]);
         assert_eq!(
@@ -594,7 +560,7 @@ mod tests {
             first.manifest.content_hash
         );
         let full_path = fixture.dir.join("full.sqlite");
-        let full = cook_project_fresh(&fixture.source(), &full_path, None).unwrap();
+        let full = cook_project_fresh(&fixture.source(), &full_path).unwrap();
         assert!(!full.stats.incremental);
         assert_eq!(
             incremental.manifest.content_hash,
@@ -629,7 +595,7 @@ mod tests {
         let raised = cook_project_with_report(&fixture.source(), &fixture.runtime()).unwrap();
         assert!(raised.stats.incremental);
         assert_eq!(raised.stats.changed_ground_cells, 1);
-        let full = cook_project_fresh(&fixture.source(), &full_path, None).unwrap();
+        let full = cook_project_fresh(&fixture.source(), &full_path).unwrap();
         assert_eq!(raised.manifest.content_hash, full.manifest.content_hash);
         assert_ne!(
             raised.manifest.content_hash,

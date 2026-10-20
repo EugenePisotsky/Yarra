@@ -3,7 +3,7 @@
 # both islands) from
 # assets/local/terrain/reteya-detail-v13 merged into masks_1m/: forest plan and floors,
 # re-import (only changed cells), plant, cook. The retuned terrain textures must be compiled
-# first (import_terrain_surfaces / compile_terrain_textures / prepare_terrain_bake).
+# first (import_terrain_surfaces / compile_terrain_textures).
 setopt pipefail
 cd /Users/eugenepisotsky/Dev/Sources/Hobby/YarraProject
 W=tmp/reteya-v13

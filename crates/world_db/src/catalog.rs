@@ -139,9 +139,8 @@ pub(crate) fn write_terrain_catalog(
         transaction.execute(
             "INSERT INTO world_space_terrain_profiles( \
                 world_space_id, texture_set_id, weight_resolution, macro_small_scale, \
-                macro_medium_scale, macro_large_scale, macro_contrast, macro_albedo_strength, \
-                composite_minimum_level \
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                macro_medium_scale, macro_large_scale, macro_contrast, macro_albedo_strength \
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 profile.space.0,
                 profile.texture_set.0.as_slice(),
@@ -151,7 +150,6 @@ pub(crate) fn write_terrain_catalog(
                 profile.macro_scales[2],
                 profile.macro_contrast,
                 profile.macro_albedo_strength,
-                i64::from(profile.composite_minimum_level),
             ],
         )?;
     }
@@ -245,8 +243,7 @@ pub(crate) fn query_all_terrain_profiles(
 ) -> Result<Vec<TerrainProfile>, WorldDbError> {
     let mut statement = connection.prepare(
         "SELECT world_space_id, texture_set_id, weight_resolution, macro_small_scale, \
-                macro_medium_scale, macro_large_scale, macro_contrast, macro_albedo_strength, \
-                composite_minimum_level \
+                macro_medium_scale, macro_large_scale, macro_contrast, macro_albedo_strength \
          FROM world_space_terrain_profiles ORDER BY world_space_id",
     )?;
     Ok(statement
@@ -264,7 +261,6 @@ pub(crate) fn terrain_profile_from_row(
         macro_scales: [row.get(3)?, row.get(4)?, row.get(5)?],
         macro_contrast: row.get(6)?,
         macro_albedo_strength: row.get(7)?,
-        composite_minimum_level: row.get::<_, i64>(8)? as u8,
     })
 }
 

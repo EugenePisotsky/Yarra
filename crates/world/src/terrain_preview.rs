@@ -1,15 +1,11 @@
 //! Immutable, unpublished terrain replacements. Keys absent here still come from
 //! the published runtime. A preview is always relative to one runtime generation.
-use crate::{
-    CellCoord, TerrainComposite, TerrainHeightfieldPage, TerrainMaterialKey, TerrainNode,
-    TerrainNodeKey,
-};
+use crate::{CellCoord, TerrainHeightfieldPage, TerrainNode, TerrainNodeKey};
 use std::{collections::BTreeMap, sync::Arc};
 
 #[derive(Clone, Debug, Default)]
 pub struct TerrainPreviewProducts {
     pub nodes: BTreeMap<TerrainNodeKey, Arc<TerrainNode>>,
-    pub composites: BTreeMap<TerrainMaterialKey, Arc<TerrainComposite>>,
     /// Control tiles (`crate::terrain_control`) of the changed leaves and their ancestors up to
     /// `CONTROL_TOP_LEVEL`, packed samples.
     pub controls: BTreeMap<TerrainNodeKey, Arc<Vec<u32>>>,
@@ -26,7 +22,6 @@ impl TerrainPreviewProducts {
                     .map_or(128, |h| 128 + h.heights.len() * 4 + h.normals_oct.len() * 4)
             })
             .sum::<usize>()
-            + self.composites.len() * (TerrainComposite::gpu_bytes() + 128)
             + self
                 .controls
                 .values()

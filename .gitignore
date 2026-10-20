@@ -10,7 +10,6 @@ __pycache__/
 /content/study/
 /content/IMG_*.JPG
 /content/photo-*.avif
-/content/*.project.cook-cache.sqlite
 *.sqlite-wal
 *.sqlite-shm
 *.sqlite-journal

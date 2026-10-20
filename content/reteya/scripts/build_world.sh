@@ -3,7 +3,7 @@
 # the tracked route: import the 1 m terrain and its 16 ground masks, the 13 vegetation packs, the
 # roads, plant the forest plan, cook. Usage: build_world.sh [OUT_DIR] (default tmp/reteya).
 # The terrain texture pack must be compiled (tools/import_terrain_surfaces.py,
-# compile_terrain_textures.py, prepare_terrain_bake.py) and target/release/yarra-world-cook built.
+# compile_terrain_textures.py) and target/release/yarra-world-cook built.
 setopt pipefail
 cd "${0:A:h}/../../.."
 IN=assets/local/worlds/reteya-v13
