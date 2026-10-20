@@ -38,7 +38,6 @@ pub(super) fn draw_context_inspector(
     layer_browser: &mut crate::environment_paint::EnvironmentLayerBrowser,
     environment_preview: &crate::environment_paint::EnvironmentPreview,
     space: Option<world::WorldSpaceId>,
-    plants: Option<&vegetation::VegetationCatalog>,
     editable: bool,
 ) {
     let Some(active_tool) = tools.active(EditorWorkspace::World) else {
@@ -96,11 +95,9 @@ pub(super) fn draw_context_inspector(
             paint,
             layer_browser,
             environment_preview,
-            project,
             space,
             history,
             dense_domains,
-            plants,
             editable,
         );
         return;
