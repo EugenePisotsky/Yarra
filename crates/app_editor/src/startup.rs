@@ -4,7 +4,7 @@ use world_db::{ProjectReader, RuntimeReader};
 
 pub(crate) fn validate_databases(project: &Path, runtime: &Path) -> Result<(), String> {
     let source = ProjectReader::open_read_only(project).map_err(|e| {
-        format!("Project {}: {e}\nUse a compatible project via --project-db. For a new default world, run `cargo run -p yarra-world-cook -- init`. Existing projects are never reset automatically.", project.display())
+        format!("Project {}: {e}\nUse a compatible project via --project-db, or build and install the default world: `content/reteya/scripts/build_world.sh tmp/reteya` then `content/reteya/scripts/install_world.sh tmp/reteya`. Existing projects are never reset automatically.", project.display())
     })?;
     source
         .read_environment_catalog()
@@ -46,10 +46,10 @@ mod tests {
         assert!(
             validate_databases(&project, &runtime)
                 .unwrap_err()
-                .contains("-- init")
+                .contains("build_world.sh")
         );
 
-        // The default island takes minutes to cook; any small world exercises the checks.
+        // The default world takes minutes to build; any small world exercises the checks.
         world_cook::create_road_demo_project(&project).unwrap();
         assert!(
             validate_databases(&project, &runtime)

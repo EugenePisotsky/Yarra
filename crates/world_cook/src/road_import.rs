@@ -1,5 +1,5 @@
 //! Road styles and routes from RON (`yarra-world-cook import-roads`), for worlds whose roads are
-//! laid out by tools rather than in the editor (`content/roads/`). Each style becomes a cart-track
+//! laid out by tools rather than in the editor (`content/reteya/roads.ron`). Each style becomes a cart-track
 //! style with its own Ground preset; each route a road whose knots are its points, joined by
 //! smooth cubic spans. Identities derive from names, so importing the file again replaces what
 //! it imported before and leaves other roads alone. The editor edits imported roads as any other.
