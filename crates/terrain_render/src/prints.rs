@@ -3,9 +3,12 @@
 //! draws them into two toroidal windows centred on the player, 41 m at 2 cm and 164 m at 8 cm
 //! (`shaders/terrain/press.wesl`). Like Rise of the Tomb Raider's deformation map, a window holds
 //! not the snow but how high over the firm ground it may stand: a foot passing through the layer
-//! lowers it to its sole, with walls rising steeply beside it, and the lowest sole near. The
-//! terrain lowers its soft layer to that and raises rims beside it (`shaders/terrain/prints.wesl`,
-//! `world::TerrainSurface::soft_depth`), so shallow snow takes prints and deep snow trenches.
+//! lowers it to its sole, with walls rising steeply beside it, and the lowest sole near. Over the
+//! same tiles a second pass resolves that, with the soft layer's depth ([`PrintGround`],
+//! `world::soft_layer`), into the relief the terrain draws: how far feet lowered the ground, rims
+//! risen beside trenches, and its slope, filtered level by level so vertices take it at their own
+//! spacing (`shaders/terrain/print_relief.wesl`, `shaders/terrain/prints.wesl`). Shallow snow takes
+//! prints and deep snow trenches.
 //!
 //! The windows hold nothing the log does not: ground a window moves onto starts undisturbed and
 //! takes again every logged press that reaches it, so a trail lasts as long as the log holds it,
@@ -17,7 +20,7 @@ use bevy::{math::DVec2, prelude::*};
 use std::collections::{HashMap, HashSet, VecDeque};
 use world::WorldSpaceId;
 
-pub(crate) use gpu::{map_handle, windows_handle};
+pub(crate) use gpu::{relief_handle, windows_handle};
 
 /// Texels per side of a window.
 const SIDE: u32 = if cfg!(target_os = "ios") { 1024 } else { 2048 };
@@ -48,12 +51,15 @@ const MAX_PRESSES: usize = 64;
 /// Feet higher than this over the firm ground press nothing: no soft layer is deeper.
 const SOFT_REACH: f32 = 0.6;
 
+/// Widest a press's circles may be, metres: the legs' channel.
+const MAX_RADIUS: f32 = 1.0;
+
 /// How far past its outline a sole's trench wall still matters (its shape is
 /// `terrain/print_map.wesl`'s), metres.
 const WALL_REACH_METRES: f32 = 0.2;
 
-/// A foot pressing the ground this frame. Its sole is two circles, at the heel and the ball,
-/// joined along their tangents and drawn in a little at the arch.
+/// A foot pressing the ground this frame, or the legs wading. Its outline is two circles, at the
+/// heel and the ball, joined along their tangents and drawn in at the middle by its arch.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GroundPress {
     /// Stable for one foot, so a foot held still is logged once.
@@ -66,6 +72,9 @@ pub struct GroundPress {
     /// How high over the firm ground the heel's and the ball's undersides are, metres: the soft
     /// layer is pushed down to them where it stands higher.
     pub floor: [f32; 2],
+    /// How far the outline draws in at its middle, as a share of its width: a sole's arch, none
+    /// for the legs' channel, whose sweeps must join smoothly.
+    pub arch: f32,
 }
 
 /// What presses the ground this frame, listed by the application.
@@ -84,6 +93,31 @@ pub struct GroundPresses {
 #[derive(SystemSet, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct GroundPressSystems;
 
+/// The soft layer the prints lower: the drawn world's leaf depths
+/// (`ClipmapTextures::print_ground`). Without it nothing is lowered.
+#[derive(Resource, Clone, Debug)]
+pub struct PrintGround {
+    pub(crate) soft: Handle<Image>,
+    /// Metres between the leaves' samples, and the texture's texels per side.
+    pub(crate) spacing: f64,
+    pub(crate) side: u32,
+}
+
+impl PrintGround {
+    /// Where the depths lie for the resolve pass: the render origin's texel, texels per metre,
+    /// texels per side.
+    fn placement(&self, origin: DVec2) -> [f32; 4] {
+        let side = i64::from(self.side);
+        let texel = |v: f64| ((v / self.spacing).round() as i64).rem_euclid(side) as f32;
+        [
+            texel(origin.x),
+            texel(origin.y),
+            (1.0 / self.spacing) as f32,
+            self.side as f32,
+        ]
+    }
+}
+
 /// A logged press in world coordinates.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Logged {
@@ -91,6 +125,7 @@ struct Logged {
     ball: DVec2,
     radii: [f32; 2],
     floor: [f32; 2],
+    arch: f32,
 }
 
 impl Logged {
@@ -109,25 +144,20 @@ impl Logged {
             ball: self.ball,
             radii: [last.radii[0], self.radii[1]],
             floor: [last.floor[0], self.floor[1]],
+            arch: self.arch,
         }
     }
 
     /// The world tiles of a window's level the press reaches, as [x0, z0, x1, z1).
     fn tiles(&self, level: usize) -> [i64; 4] {
         let reach = f64::from(self.radii[0].max(self.radii[1]) + WALL_REACH_METRES);
-        let tile = TEXEL_METRES[level] * TILE as f64;
         let min = self.heel.min(self.ball) - reach;
         let max = self.heel.max(self.ball) + reach;
-        [
-            (min.x / tile).floor() as i64,
-            (min.y / tile).floor() as i64,
-            (max.x / tile).floor() as i64 + 1,
-            (max.y / tile).floor() as i64 + 1,
-        ]
+        world_tiles([min.x, min.y, max.x, max.y], level)
     }
 
-    /// Heel and ball in render space, their radii and floors.
-    fn stamp(&self, origin: DVec2) -> [f32; 8] {
+    /// Heel and ball in render space, their radii and floors, the arch.
+    fn stamp(&self, origin: DVec2) -> [f32; 12] {
         let heel = (self.heel - origin).as_vec2();
         let ball = (self.ball - origin).as_vec2();
         [
@@ -139,6 +169,10 @@ impl Logged {
             self.radii[1],
             self.floor[0],
             self.floor[1],
+            self.arch,
+            0.0,
+            0.0,
+            0.0,
         ]
     }
 }
@@ -167,8 +201,11 @@ pub(crate) struct PrintFrame {
     pub(crate) tiles: Vec<[u32; 4]>,
     /// Stamps by tile, oldest first.
     pub(crate) indices: Vec<u32>,
-    /// Render-space heel and ball, radii and floors, as [`Logged::stamp`] lays them out.
-    pub(crate) stamps: Vec<[f32; 8]>,
+    /// Render-space heel and ball, radii, floors and arch, as [`Logged::stamp`] lays them out.
+    pub(crate) stamps: Vec<[f32; 12]>,
+    /// The soft layer's depths, and where they lie ([`PrintGround::placement`]; no side, none).
+    pub(crate) soft: Option<AssetId<Image>>,
+    pub(crate) ground: [f32; 4],
 }
 
 pub(crate) fn install(app: &mut App) {
@@ -179,12 +216,31 @@ pub(crate) fn install(app: &mut App) {
     gpu::install(app);
 }
 
-fn update(presses: Res<GroundPresses>, mut prints: ResMut<GroundPrints>) {
-    prints.update(&presses);
+fn update(
+    presses: Res<GroundPresses>,
+    ground: Option<Res<PrintGround>>,
+    mut uploads: ResMut<crate::clipmap::ClipmapUploads>,
+    mut prints: ResMut<GroundPrints>,
+) {
+    let changed = uploads.take_soft_changes();
+    let ground = ground.as_deref();
+    let changed: Vec<_> = changed
+        .into_iter()
+        .filter(|(soft, _)| ground.is_some_and(|g| g.soft.id() == *soft))
+        .map(|(_, rect)| rect)
+        .collect();
+    prints.update(&presses, ground, &changed);
 }
 
 impl GroundPrints {
-    fn update(&mut self, presses: &GroundPresses) {
+    /// Takes this frame's presses and lists the work: tiles the windows entered or presses
+    /// reached, and those under `changed` (world rects, metres) where the soft layer changed.
+    fn update(
+        &mut self,
+        presses: &GroundPresses,
+        ground: Option<&PrintGround>,
+        changed: &[[f64; 4]],
+    ) {
         if presses.space != self.space {
             *self = Self {
                 space: presses.space,
@@ -208,9 +264,15 @@ impl GroundPrints {
             let window = to_tiles(windows[level]);
             let entered = entered(previous.map(|p| to_tiles(p[level])), window);
             work.press(level, window, &entered, &self.log, fresh);
+            work.resolve(level, window, changed);
         }
 
         self.frame = work.finish(windows, presses.origin);
+
+        if let Some(ground) = ground {
+            self.frame.soft = Some(ground.soft.id());
+            self.frame.ground = ground.placement(presses.origin);
+        }
     }
 
     /// Logs this frame's presses that add to their foot's last; returns how many it logged.
@@ -225,6 +287,7 @@ impl GroundPrints {
                     .radii
                     .iter()
                     .chain(&press.floor)
+                    .chain([&press.arch])
                     .all(|v| v.is_finite());
 
             if !finite || press.floor.iter().all(|&f| f >= SOFT_REACH) {
@@ -236,8 +299,9 @@ impl GroundPrints {
             let logged = Logged {
                 heel: at(press.heel),
                 ball: at(press.ball),
-                radii: press.radii.map(|r| r.clamp(0.005, 0.3)),
+                radii: press.radii.map(|r| r.clamp(0.005, MAX_RADIUS)),
                 floor: press.floor.map(|f| f.clamp(0.0, SOFT_REACH)),
+                arch: press.arch.clamp(0.0, 0.5),
             };
 
             let stamp = match self.last.get(&press.source) {
@@ -309,6 +373,17 @@ fn entered(previous: Option<[i64; 2]>, window: [i64; 2]) -> Vec<[i64; 4]> {
     rects
 }
 
+/// The world tiles of a window's level covering a world rect (metres), as [x0, z0, x1, z1).
+fn world_tiles(rect: [f64; 4], level: usize) -> [i64; 4] {
+    let tile = TEXEL_METRES[level] * TILE as f64;
+    [
+        (rect[0] / tile).floor() as i64,
+        (rect[1] / tile).floor() as i64,
+        (rect[2] / tile).floor() as i64 + 1,
+        (rect[3] / tile).floor() as i64 + 1,
+    ]
+}
+
 fn overlap(a: [i64; 4], b: [i64; 4]) -> Option<[i64; 4]> {
     let r = [
         a[0].max(b[0]),
@@ -374,6 +449,24 @@ impl Work {
                 self.add(level, window, rect, at, press, |x, z| {
                     !entered.iter().any(|r| inside(*r, x, z))
                 });
+            }
+        }
+    }
+
+    /// A window's tiles under `changed` (world rects, metres) are resolved again, pressing
+    /// nothing new.
+    fn resolve(&mut self, level: usize, window: [i64; 2], changed: &[[f64; 4]]) {
+        let n = i64::from(SIDE) / TILE;
+        let whole = [window[0], window[1], window[0] + n, window[1] + n];
+
+        for rect in changed
+            .iter()
+            .filter_map(|r| overlap(world_tiles(*r, level), whole))
+        {
+            for z in rect[1]..rect[3] {
+                for x in rect[0]..rect[2] {
+                    self.tile(level, window, [x, z], false);
+                }
             }
         }
     }

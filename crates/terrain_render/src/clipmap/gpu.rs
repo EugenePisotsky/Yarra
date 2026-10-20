@@ -182,12 +182,11 @@ pub struct ClipmapTerrainMaterial {
     #[texture(11, dimension = "2d_array")]
     #[sampler(12)]
     wear: Option<Handle<Image>>,
-    #[texture(13, dimension = "2d_array", sample_type = "u_int")]
-    prints: Option<Handle<Image>>,
+    #[texture(13, dimension = "2d_array")]
+    #[sampler(15)]
+    print_relief: Option<Handle<Image>>,
     #[texture(14, sample_type = "u_int")]
     print_windows: Option<Handle<Image>>,
-    #[texture(15)]
-    soft: Option<Handle<Image>>,
 }
 
 impl Material for ClipmapTerrainMaterial {
@@ -337,13 +336,12 @@ impl ClipmapTextures {
             normals: Some(normals.clone()),
             state: Some(state.clone()),
             control: Some(control.clone()),
-            soft: Some(soft.clone()),
             surfaces: surfaces.clone(),
             base_color: Some(ground.base_color),
             normal_material: Some(ground.normal_material),
             macro_variation: Some(ground.macro_variation),
             wear: Some(wear.clone()),
-            prints: Some(crate::prints::map_handle()),
+            print_relief: Some(crate::prints::relief_handle()),
             print_windows: Some(crate::prints::windows_handle()),
         });
         Self {
@@ -371,6 +369,15 @@ fn control_layout(layout: &ClipmapLayout) -> ClipmapLayout {
 }
 
 impl ClipmapTextures {
+    /// The soft layer the prints lower, when these textures draw the world.
+    pub fn print_ground(&self) -> crate::PrintGround {
+        crate::PrintGround {
+            soft: self.soft.clone(),
+            spacing: self.layout.spacing(0),
+            side: self.layout.side,
+        }
+    }
+
     /// Marks the surfaces roads wear ground bare to (the layers of their pages' worn slots), which
     /// near the camera follow the fine wear field (`terrain/clipmap.wesl`). True when one was new.
     pub fn mark_bare_ground(
@@ -514,6 +521,9 @@ pub struct ClipmapFrame<'a> {
 pub struct ClipmapUploads {
     queues: HashMap<AssetId<Image>, Queue>,
     pub uploaded_blocks: u64,
+    /// Leaves whose soft layer was written since the prints last took them: the soft texture
+    /// and the leaf's world rect (metres), for the prints to resolve again.
+    soft_changes: Vec<(AssetId<Image>, [f64; 4])>,
 }
 
 /// One clipmap's uploads.
@@ -571,10 +581,25 @@ impl ClipmapUploads {
     }
 
     pub fn push(&mut self, textures: &ClipmapTextures, block: NodeBlock) {
+        let key = block.key;
+        let soft = block.soft.is_some();
+
         if let Some(queue) = self.queue(textures) {
             queue.blocks.push(block);
             self.uploaded_blocks += 1;
+
+            if soft {
+                let cell = textures.layout.spacing(0) * f64::from(textures.layout.intervals);
+                let (x, z) = (f64::from(key.x) * cell, f64::from(key.z) * cell);
+                let rect = [x, z, x + cell, z + cell];
+                self.soft_changes.push((textures.soft.id(), rect));
+            }
         }
+    }
+
+    /// The leaves whose soft layer changed since last taken.
+    pub(crate) fn take_soft_changes(&mut self) -> Vec<(AssetId<Image>, [f64; 4])> {
+        std::mem::take(&mut self.soft_changes)
     }
 
     /// A cell's wear field (`world::TerrainWear`, at full resolution) into atlas slot `slot`.

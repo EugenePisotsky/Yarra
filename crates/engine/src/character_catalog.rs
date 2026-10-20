@@ -100,6 +100,10 @@ pub(crate) struct FeetDefinition {
     /// Half the sole's width at the heel and at the ball, metres.
     pub(crate) heel_radius_m: f32,
     pub(crate) ball_radius_m: f32,
+    /// The channel the legs plough through deep snow, its feet lanes in its floor: half its
+    /// width, and how high over the firm ground its floor lies, metres.
+    pub(crate) wade_radius_m: f32,
+    pub(crate) wade_floor_m: f32,
 }
 
 impl FeetDefinition {
@@ -119,7 +123,11 @@ impl FeetDefinition {
             && self.heel_behind_ankle_m.is_finite()
             && self.heel_behind_ankle_m >= self.heel_radius_m
             && self.toe_ahead_m.is_finite()
-            && self.toe_ahead_m >= self.ball_radius_m;
+            && self.toe_ahead_m >= self.ball_radius_m
+            && self.wade_radius_m.is_finite()
+            && (0.05..=1.0).contains(&self.wade_radius_m)
+            && self.wade_floor_m.is_finite()
+            && (0.0..=0.5).contains(&self.wade_floor_m);
 
         if joints && lengths {
             Ok(())
@@ -305,7 +313,7 @@ impl CharacterPresentationCatalog {
     }
 
     fn validate(&self) -> Result<(), String> {
-        if self.schema_version != 2 {
+        if self.schema_version != 3 {
             return Err(format!(
                 "unsupported character presentation catalog schema {}",
                 self.schema_version

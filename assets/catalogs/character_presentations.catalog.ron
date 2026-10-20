@@ -1,5 +1,5 @@
 (
-    schema_version: 2,
+    schema_version: 3,
     skeletons: [
         (
             id: "skeletons/yarra_humanoid_v1",
@@ -27,6 +27,9 @@
                 toe_ahead_m: 0.06,
                 heel_radius_m: 0.04,
                 ball_radius_m: 0.045,
+                // Hips and knees apart: a body-wide channel, its floor over the feet lanes.
+                wade_radius_m: 0.26,
+                wade_floor_m: 0.12,
             ),
         ),
     ],

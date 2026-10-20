@@ -15,8 +15,9 @@ struct Prints {
     counts: vec4<u32>,
 }
 
-// Heel and ball centres (render xz); their radii and floors over the firm ground.
-struct Stamp { ends: vec4<f32>, sole: vec4<f32>, }
+// Heel and ball centres (render xz); their radii and floors over the firm ground; x: how far
+// the outline draws in at its middle, as a share of its width.
+struct Stamp { ends: vec4<f32>, sole: vec4<f32>, shape: vec4<f32>, }
 
 @group(0) @binding(0) var<uniform> prints: Prints;
 // Per tile: x and z within its window, first stamp in `indices`, then level (bit 0), reset (bit 1)
@@ -28,8 +29,6 @@ struct Stamp { ends: vec4<f32>, sole: vec4<f32>, }
 
 // prints/gpu.rs DISPATCH_ROW.
 const DISPATCH_ROW: u32 = 256u;
-// The sole narrows by this share of its width at the arch.
-const ARCH: f32 = 0.22;
 const PI: f32 = 3.14159265;
 
 // The values a stamp gives render xz `p`: its cap there and, within its reach, its floor.
@@ -38,7 +37,7 @@ fn stamp_values(s: Stamp, p: vec2<f32>) -> vec2<f32> {
     let along = s.ends.zw - heel;
     let length2 = dot(along, along);
     let t = select(0.0, clamp(dot(p - heel, along) / length2, 0.0, 1.0), length2 > 1e-8);
-    let radius = mix(s.sole.x, s.sole.y, t) * (1.0 - ARCH * sin(PI * t));
+    let radius = mix(s.sole.x, s.sole.y, t) * (1.0 - s.shape.x * sin(PI * t));
     // Distance outside the sole's outline; negative inside.
     let edge = length(p - heel - along * t) - radius;
     if edge >= prints.shape.x {

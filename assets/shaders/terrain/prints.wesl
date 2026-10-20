@@ -1,14 +1,17 @@
-// Ground prints as terrain v2 draws them (crates/terrain_render/src/prints.rs): how feet left the
-// soft layer, read from a fine window and a coarse one centred on the player that wrap around it
-// toroidally (terrain/print_map.wesl), texel by texel and filtered bilinearly. The fine window
-// blends into the coarse one where it ends; the coarse one fades out at its own edge. The
-// vertices stand on the layer as feet left it, and the material slopes and packs it.
-import package::shaders::terrain::print_map::{print_heights, wall_distance};
+// Ground prints as terrain v2 draws them (crates/terrain_render/src/prints.rs): how far feet
+// lowered the ground and its slope, resolved per texel of a fine window and a coarse one centred on
+// the player that wrap around it toroidally (terrain/print_relief.wesl), and filtered like any
+// texture, mip levels and all. The fine window blends into the coarse one where it ends; the
+// coarse one fades out at its own edge. Vertices stand on the coarse window's relief filtered to
+// their own spacing, so the ground they draw holds still while they morph; the material tilts and
+// packs the ground by the relief at the pixel's footprint.
 
-// Two half floats per texel, one layer per window.
-@group(constants::MATERIAL_BIND_GROUP) @binding(13) var prints: texture_2d_array<u32>;
+// How far feet lowered the ground (x, metres; rims rise above it) and its slope along x and z
+// (y, z), one layer per window.
+@group(constants::MATERIAL_BIND_GROUP) @binding(13) var print_relief: texture_2d_array<f32>;
 // Two texels per window (prints.rs PrintFrame::windows).
 @group(constants::MATERIAL_BIND_GROUP) @binding(14) var print_windows: texture_2d<u32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(15) var print_sampler: sampler;
 
 // A window: the render-space corner of its first texel, the toroidal texel holding it, metres per
 // texel and texels per side (0 while not drawn).
@@ -17,14 +20,13 @@ struct PrintWindow { corner: vec2<f32>, wrap: vec2<i32>, texel: f32, side: i32, 
 // Both windows and each one's share of the prints around a point.
 struct PrintView { fine: PrintWindow, coarse: PrintWindow, shares: vec2<f32>, }
 
-// Texels a point keeps from a window's edge: room for the filter and the slope's reach.
-const PRINT_MARGIN: f32 = 4.0;
+// Texels a point keeps from a window's edge: room for the coarsest mip level's footprint, which
+// reaches across the toroidal seam.
+const PRINT_MARGIN: f32 = 32.0;
 // Texels over which a window gives way at its edge.
 const PRINT_BLEND: f32 = 64.0;
-// The snow pushed aside rises beside a trench to this share of the trench's depth, over this many
-// metres past its edge.
-const RIM_SHARE: f32 = 0.25;
-const RIM_WIDTH: f32 = 0.08;
+// prints/gpu.rs RELIEF_MIPS: past its coarsest level, a vertex's footprint takes no relief.
+const PRINT_MIPS: f32 = 6.0;
 
 fn print_window(level: i32) -> PrintWindow {
     let a = textureLoad(print_windows, vec2(2 * level, 0), 0);
@@ -49,52 +51,37 @@ fn print_view(p: vec2<f32>) -> PrintView {
     return PrintView(fine, coarse, vec2(f, (1.0 - f) * window_share(coarse, p)));
 }
 
-fn level_texel(level: i32, w: PrintWindow, texel: vec2<i32>) -> vec2<f32> {
-    return unpack2x16float(textureLoad(prints, (texel + w.wrap) & vec2(w.side - 1), level, 0).r);
+fn relief_uv(w: PrintWindow, p: vec2<f32>) -> vec2<f32> {
+    return ((p - w.corner) / w.texel + vec2<f32>(w.wrap)) / f32(w.side);
 }
 
-fn level_values(level: i32, w: PrintWindow, p: vec2<f32>) -> vec2<f32> {
-    let t = (p - w.corner) / w.texel - 0.5;
-    let i = vec2<i32>(floor(t));
-    let f = t - floor(t);
-    let a = level_texel(level, w, i);
-    let b = level_texel(level, w, i + vec2(1, 0));
-    let c = level_texel(level, w, i + vec2(0, 1));
-    let d = level_texel(level, w, i + vec2(1, 1));
-    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
-}
-
-// How high over the firm ground the soft layer may stand at render xz `p` (x), and the lowest sole
-// that reached it (y).
-fn print_caps(v: PrintView, p: vec2<f32>) -> vec2<f32> {
-    var values = vec2(0.0);
+// The relief at render xz `p` (lowering, slope along x and z), over the footprint of a pixel
+// whose xz changes by `dx` and `dy` across it.
+fn print_relief_at(v: PrintView, p: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>) -> vec3<f32> {
+    var relief = vec3(0.0);
     if v.shares.x > 0.0 {
-        values += v.shares.x * level_values(0, v.fine, p);
+        let s = 1.0 / (v.fine.texel * f32(v.fine.side));
+        relief += v.shares.x * textureSampleGrad(print_relief, print_sampler, relief_uv(v.fine, p), 0, dx * s, dy * s).xyz;
     }
     if v.shares.y > 0.0 {
-        values += v.shares.y * level_values(1, v.coarse, p);
+        let s = 1.0 / (v.coarse.texel * f32(v.coarse.side));
+        relief += v.shares.y * textureSampleGrad(print_relief, print_sampler, relief_uv(v.coarse, p), 1, dx * s, dy * s).xyz;
     }
-    return print_heights(values);
+    return relief;
 }
 
-// The soft layer, `depth` deep where untouched, as feet left it under `caps`: no higher than the
-// cap, and, where a sole went below its top, risen beside the trench into the snow pushed aside.
-// How far past the sole's outline a point lies follows from its cap's rise over the sole.
-fn pressed_layer(depth: f32, caps: vec2<f32>) -> f32 {
-    let deep = depth - caps.y;
-    if deep <= 0.0 {
-        return depth;
+// How far feet lowered the ground at render xz `p`, filtered over `footprint` metres: the coarse
+// window's, for vertices that far apart.
+fn print_lowering(p: vec2<f32>, footprint: f32) -> f32 {
+    let w = print_window(1);
+    let share = window_share(w, p);
+    if share <= 0.0 {
+        return 0.0;
     }
-    let past = wall_distance(caps.x - caps.y) - wall_distance(deep);
-    let u = clamp(past / RIM_WIDTH, 0.0, 1.0);
-    let rim = select(0.0, deep * RIM_SHARE * 4.0 * u * (1.0 - u), past > 0.0);
-    return min(depth + rim, caps.x);
-}
-
-// The pressed layer at render xz `p`, `depth` deep there untouched.
-fn pressed_layer_at(v: PrintView, p: vec2<f32>, depth: f32) -> f32 {
-    if dot(v.shares, vec2(1.0)) <= 0.0 {
-        return depth;
+    let lod = log2(max(footprint / w.texel, 1.0));
+    let reach = 1.0 - smoothstep(PRINT_MIPS - 1.0, PRINT_MIPS, lod);
+    if reach <= 0.0 {
+        return 0.0;
     }
-    return pressed_layer(depth, print_caps(v, p));
+    return share * reach * textureSampleLevel(print_relief, print_sampler, relief_uv(w, p), 1, lod).x;
 }

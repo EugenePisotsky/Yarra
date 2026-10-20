@@ -6,14 +6,14 @@
 // neighbours without cracks. Distances are from the main camera (the state texture's eye), so
 // shadow cascades draw the same surface. Detail patches, parts of a leaf on soft ground, place
 // their vertices on the leaves' triangles and morph the same way. The heights are the soft
-// layer's (snow's) top; on the leaves, where feet pushed the layer down (terrain/prints.wesl),
-// vertices stand on it as they left it.
+// layer's (snow's) top; where feet pushed the layer down (terrain/prints.wesl), vertices stand on
+// it as they left it, filtered to their spacing.
 import bevy_pbr::render::{mesh_functions, view_transformations::position_world_to_clip};
 import package::shaders::terrain::clipmap_common::{
     DETAIL_LEVELS, eye, heights, intervals, leaf_spacing, leaf_surface_height, level_normal, levels,
-    normals, origin_samples, render_xz, settings, soft_depth, texel, unpack_normal,
+    normals, render_xz, settings, texel, unpack_normal,
 };
-import package::shaders::terrain::prints::{pressed_layer_at, print_view};
+import package::shaders::terrain::prints::print_lowering;
 @if(PREPASS_PIPELINE) import bevy_pbr::prepass::io::VertexOutput;
 @else import bevy_pbr::render::forward_io::VertexOutput;
 
@@ -66,18 +66,6 @@ fn detail_normal(sample: vec2<i32>, detail: u32) -> vec3<f32> {
     return level_normal(0u, detail_leaf(sample, detail), detail_fraction(sample, detail));
 }
 
-// The ground at render xz `p` as feet left the soft layer over it: `height` lowered by however
-// far below its top they pushed it.
-fn pressed_height(p: vec2<f32>, height: f32) -> f32 {
-    let r = p / leaf_spacing();
-    let cell = floor(r);
-    let depth = soft_depth(origin_samples() + vec2<i32>(cell), r - cell);
-    if depth <= 0.0 {
-        return height;
-    }
-    return height + pressed_layer_at(print_view(p), p, depth) - depth;
-}
-
 @vertex
 fn vertex(vertex: Vertex) -> VertexOutput {
     var out: VertexOutput;
@@ -114,10 +102,10 @@ fn vertex(vertex: Vertex) -> VertexOutput {
             normal = normalize(mix(normal, sample_normal(even, level), k));
         }
     }
-    // Only the leaves hold their soft layer's depth.
-    if detailed || level == 0u {
-        position.y = pressed_height(position.xz, position.y);
-    }
+    // Prints filtered over the vertex's spacing, widening to the coarser grid's as it morphs, so
+    // a vertex fully morphed takes what that grid's vertex there takes.
+    let spacing = select(leaf_spacing() * f32(1u << level), leaf_spacing() / f32(1u << detail), detailed);
+    position.y += print_lowering(position.xz, spacing * (1.0 + k));
     out.world_position = vec4(position, 1.0);
     out.position = position_world_to_clip(position);
 @if(UNCLIPPED_DEPTH_ORTHO_EMULATION) {

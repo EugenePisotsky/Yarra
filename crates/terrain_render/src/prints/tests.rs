@@ -9,6 +9,7 @@ fn press(source: u64, at: Vec2, floor: f32) -> GroundPress {
         ball: at + Vec2::new(0.0, 0.15),
         radii: [0.04, 0.045],
         floor: [floor; 2],
+        arch: 0.22,
     }
 }
 
@@ -88,14 +89,18 @@ fn a_held_foot_logs_once_and_again_when_it_reaches_lower_moves_or_comes_back() {
     let mut prints = GroundPrints::default();
     let at = Vec2::new(3.0, 4.0);
 
-    prints.update(&presses(at, vec![press(7, at, 0.05)]));
-    prints.update(&presses(at, vec![press(7, at, 0.045)]));
+    prints.update(&presses(at, vec![press(7, at, 0.05)]), None, &[]);
+    prints.update(&presses(at, vec![press(7, at, 0.045)]), None, &[]);
     assert_eq!(prints.log.len(), 1, "a foot held still is logged once");
 
-    prints.update(&presses(at, vec![press(7, at, 0.02)]));
+    prints.update(&presses(at, vec![press(7, at, 0.02)]), None, &[]);
     assert_eq!(prints.log.len(), 2, "reaching lower is logged");
 
-    prints.update(&presses(at, vec![press(7, at + Vec2::X * 0.12, 0.02)]));
+    prints.update(
+        &presses(at, vec![press(7, at + Vec2::X * 0.12, 0.02)]),
+        None,
+        &[],
+    );
     assert_eq!(prints.log.len(), 3, "moving is logged");
     let sweep = prints.log[2];
     assert_eq!(
@@ -108,11 +113,11 @@ fn a_held_foot_logs_once_and_again_when_it_reaches_lower_moves_or_comes_back() {
         "to the ball now"
     );
 
-    prints.update(&presses(at, vec![press(7, at, SOFT_REACH)]));
-    prints.update(&presses(at, vec![press(7, at, 0.02)]));
+    prints.update(&presses(at, vec![press(7, at, SOFT_REACH)]), None, &[]);
+    prints.update(&presses(at, vec![press(7, at, 0.02)]), None, &[]);
     assert_eq!(prints.log.len(), 4, "a foot back in reach is logged");
 
-    prints.update(&presses(at, vec![press(8, at, f32::NAN)]));
+    prints.update(&presses(at, vec![press(8, at, f32::NAN)]), None, &[]);
     assert_eq!(prints.log.len(), 4, "a press that is not finite is ignored");
 }
 
@@ -120,7 +125,7 @@ fn a_held_foot_logs_once_and_again_when_it_reaches_lower_moves_or_comes_back() {
 fn the_first_frame_starts_both_windows_undisturbed_and_takes_its_presses() {
     let mut prints = GroundPrints::default();
     let at = Vec2::new(3.0, 4.0);
-    prints.update(&presses(at, vec![press(1, at, 0.05)]));
+    prints.update(&presses(at, vec![press(1, at, 0.05)]), None, &[]);
     let frame = &prints.frame;
 
     for level in 0..LEVELS as u32 {
@@ -150,7 +155,7 @@ fn windows_report_their_corner_in_render_space_and_their_toroidal_texel() {
     let mut prints = GroundPrints::default();
     let focus = Vec2::new(3.0, 4.0);
     let list = presses(focus, Vec::new());
-    prints.update(&list);
+    prints.update(&list, None, &[]);
 
     let windows = prints.windows.unwrap();
 
@@ -173,18 +178,18 @@ fn ground_a_window_returns_to_takes_its_logged_presses_again() {
     let mut prints = GroundPrints::default();
     let start = Vec2::new(0.0, 0.0);
     let print = Vec2::new(0.0, -15.0);
-    prints.update(&presses(start, vec![press(1, print, 0.05)]));
+    prints.update(&presses(start, vec![press(1, print, 0.05)]), None, &[]);
 
     // Walk away until the fine window no longer holds the print, then come back a tile at a time.
     let away = Vec2::new(0.0, 40.0);
-    prints.update(&presses(away, Vec::new()));
+    prints.update(&presses(away, Vec::new()), None, &[]);
     let tile = (TILE as f64 * TEXEL_METRES[0]) as f32;
     let mut focus = away;
     let mut taken = false;
 
     while focus.y > start.y {
         focus.y -= tile;
-        prints.update(&presses(focus, Vec::new()));
+        prints.update(&presses(focus, Vec::new()), None, &[]);
         let fine = level_tiles(&prints.frame, 0);
         assert!(
             fine.iter().all(|t| t[3] & 2 != 0),
@@ -201,8 +206,12 @@ fn ground_a_window_returns_to_takes_its_logged_presses_again() {
 fn a_tile_takes_its_stamps_oldest_first_and_each_tile_is_listed_once() {
     let mut prints = GroundPrints::default();
     let at = Vec2::new(1.0, 1.0);
-    prints.update(&presses(at, vec![press(1, at, 0.05)]));
-    prints.update(&presses(at, vec![press(1, at, 0.03), press(2, at, 0.04)]));
+    prints.update(&presses(at, vec![press(1, at, 0.05)]), None, &[]);
+    prints.update(
+        &presses(at, vec![press(1, at, 0.03), press(2, at, 0.04)]),
+        None,
+        &[],
+    );
     let frame = &prints.frame;
     let mut seen = HashSet::new();
 
@@ -220,10 +229,42 @@ fn a_tile_takes_its_stamps_oldest_first_and_each_tile_is_listed_once() {
 fn another_world_space_starts_over() {
     let mut prints = GroundPrints::default();
     let at = Vec2::new(1.0, 1.0);
-    prints.update(&presses(at, vec![press(1, at, 0.03)]));
+    prints.update(&presses(at, vec![press(1, at, 0.03)]), None, &[]);
     let mut other = presses(at, Vec::new());
     other.space = Some(WorldSpaceId(2));
-    prints.update(&other);
+    prints.update(&other, None, &[]);
     assert!(prints.log.is_empty());
     assert_eq!(level_tiles(&prints.frame, 0).len() as i64, N * N);
+}
+
+#[test]
+fn ground_whose_soft_layer_changed_is_resolved_again_without_new_presses() {
+    let mut prints = GroundPrints::default();
+    let at = Vec2::new(1.0, 1.0);
+    prints.update(&presses(at, Vec::new()), None, &[]);
+    let origin = list_origin();
+    let leaf = [
+        origin.x + 2.0,
+        origin.y + 2.0,
+        origin.x + 34.0,
+        origin.y + 34.0,
+    ];
+    prints.update(&presses(at, Vec::new()), None, &[leaf]);
+    let frame = &prints.frame;
+
+    for level in 0..LEVELS as u32 {
+        let tiles = level_tiles(frame, level);
+        let texel = TEXEL_METRES[level as usize] * TILE as f64;
+        let side = (32.0 / texel).ceil() as i64;
+        assert!(
+            tiles.len() as i64 >= side * side / 4,
+            "level {level} resolves the leaf"
+        );
+        assert!(
+            tiles.iter().all(|t| t[3] & 2 == 0 && t[3] >> 2 == 0),
+            "nothing is reset or pressed"
+        );
+    }
+
+    assert!(frame.stamps.is_empty());
 }

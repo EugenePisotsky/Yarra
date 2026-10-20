@@ -257,16 +257,20 @@ SQLite. The renderers (Bevy) have no SQLite: `engine` is the only library joinin
   (`GroundPresses`, in `GroundPressSystems`, heights of their soles over the firm ground);
   presses go into a log of 65,536 and a compute pass draws them into two toroidal windows centred
   on the player (2048Â² at 2 cm and at 8 cm, `terrain/print_map.wesl`): how high the soft layer
-  may stand and the lowest sole near. The vertices lower the layer to it and raise rims beside
-  trenches; the material slopes and packs it.
+  may stand and the lowest sole near. A second pass resolves the same tiles, with the leaves'
+  layer depths (`PrintGround`), into the relief: how far feet lowered the ground, rims beside
+  trenches and its slope, with six mip levels. Vertices take the coarse window's relief filtered
+  to their spacing; the material tilts, streaks and packs the ground by it at the pixel's
+  footprint.
 - Invariants: selection uses distance to a node's box, so turning the camera changes only
   culling. A node splits only when all four children are resident and vertices morph to the
   coarser grid, so levels meet without cracks. Soft leaves near the camera split into detail
   levels (`DETAIL_LEVELS` = 3: 0.5, 0.25 and 0.125 m within 48, 24 and 12 m) whose vertices lie
   on the leaves' triangles. Heights are the drawn ground, snow's top where it lies (the cook
   raises leaves by their soft layer); the leaves' layer depths, uploaded to a level-0 texture,
-  are all the prints need to lower it. The print windows hold nothing the log does not:
-  ground a window moves onto starts undisturbed and takes every logged press reaching it.
+  are all the prints need to lower it, and tiles under a leaf whose depths arrive are resolved
+  again. The print windows hold nothing the log does not: ground a window moves onto starts
+  undisturbed and takes every logged press reaching it.
 - Must not depend on `world_db` or `engine`.
 
 ### vegetation_render
@@ -287,7 +291,8 @@ SQLite. The renderers (Bevy) have no SQLite: `engine` is the only library joinin
   `TreeInstancing`), `WorldVegetationPlugin`, ground details, `OceanPlugin`.
 - Actors: `GameplayPlugins` (player, camera, input, destination marker), `GameplaySystems`,
   `MoveIntent`, and `MinimalGamePlugin` (environment, terrain, streaming and actors). Characters'
-  feet (`feet`, joints and soles from the character catalog) list their presses on the ground.
+  feet (`feet`, joints and soles from the character catalog) list their presses on the ground,
+  and their legs the channel they wade through deep snow.
 - Time and weather: `GameDayClock`, `GameWeather`, `GameLightning`.
 - Invariants: actor roots own movement; presentation scenes are children and never move them.
   Libraries do not read process arguments; the apps inject settings. The `gameplay` module here
@@ -332,8 +337,8 @@ share of the window's physical size (`resolution_scale`, 0.5 by default) with 4Ã
 MetalFX Temporal, MSAA is off and the backend reconstructs at output size. In order:
 
 1. Compute before the camera: grass trampling, candidate cache and placement; ground prints
-   (`shaders/terrain/press.wesl`); GPU tree LOD and culling (`shaders/tree/lod.wesl`); the
-   terrain-horizon search; cloud shadows.
+   (`shaders/terrain/press.wesl`, `print_relief.wesl`, `print_mips.wesl`); GPU tree LOD and
+   culling (`shaders/tree/lod.wesl`); the terrain-horizon search; cloud shadows.
 2. Main passes: terrain v2 patches (one shared grid mesh and `ClipmapTerrainMaterial`; heights
    come from the clipmap), grass as indirect opaque draws (no shadows), trees and impostors as
    indirect draws per form and representation in the main, prepass and shadow phases, meshes.
@@ -382,7 +387,8 @@ origins, and grass, wind and details are anchored to canonical coordinates
 All shaders are WESL in `assets/shaders/`, a folder per subsystem:
 
 - `terrain/`: clipmap material and vertex shader, height blend, road wear, anti-tiling, ground
-  prints (`print_map` their texels, `prints` read by the terrain, `press` the compute pass).
+  prints (`print_map` their texels, `press` pressing them, `print_relief` and `print_mips` the
+  relief, `prints` read by the terrain).
 - `vegetation/`: grass `schedule`, `placement/`, `candidate_cache`, `blade`, `draw/`,
   `trample`, sharing `types`, `random` and `lod`.
 - `tree/`: tree material, bark, wind and its prepass, impostors, the LOD compute pass.

@@ -81,6 +81,19 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
   only within 1.5–3.5 cm of the ground). Walls are lit by snow-bright bounce (the shared ground
   light assumes grass albedo). Walking through deep snow measured within noise of the build
   before snow.
+- **Prints drawn from a resolved, filtered relief.** *Kept* (October 21). Vertices read the caps
+  directly: 12.5 cm to 1 m apart over 2 and 8 cm texels, morphing with the camera's distance,
+  they caught different samples as the player walked, so trails far behind crawled. A pass now
+  resolves each touched tile (with the soft layer's depth) into the lowering and its slope, and
+  fills six mip levels; a vertex takes the level of its spacing, widening as it morphs, so a
+  fully morphed vertex takes what the coarser grid's takes, and pixels filter the slope like any
+  texture (one sample a window, not eight loads four times). Steep walls get streaks finer than
+  the relief, faded by the pixel's footprint.
+- **The legs plough a channel through deep snow.** *Kept* (October 21). Two feet sweeps alone
+  left two narrow lanes with scalloped walls; Red Dead Redemption 2 and The Last of Us Part II
+  show one body-wide channel with the feet lanes in its floor. Each character also presses a
+  circle at its root (`wade_radius_m` 0.26, floor `wade_floor_m` 0.12 over the firm ground) whose
+  sweeps join without the sole's arch, so its walls run smooth; 6 cm of packed road takes none.
 - **Detail levels below the leaves for deep snow, not tessellation.** *Kept* (October 20). wgpu has
   no tessellation; shipped deep snow (Rise of the Tomb Raider, God of War Ragnarök, Ghost of Yōtei)
   displaces real geometry near the camera and keeps parallax for far or fallback snow (Batman:

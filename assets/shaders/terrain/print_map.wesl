@@ -1,8 +1,9 @@
 // The print map's texels (crates/terrain_render/src/prints.rs), shared by the pass pressing it
-// (terrain/press.wesl) and the terrain reading it (terrain/prints.wesl). A texel holds how high
-// over the firm ground the soft layer may stand (its cap) and the lowest sole that reached it,
-// each as how far below CAP_REFERENCE it lies, two half floats in a u32: untouched ground is
-// zero, and the lower a cap or sole the larger its value, so presses combine by their maximum.
+// (terrain/press.wesl) and the one resolving it into the relief the terrain draws
+// (terrain/print_relief.wesl). A texel holds how high over the firm ground the soft layer may
+// stand (its cap) and the lowest sole that reached it, each as how far below CAP_REFERENCE it
+// lies, two half floats in a u32: untouched ground is zero, and the lower a cap or sole the larger
+// its value, so presses combine by their maximum.
 
 // Higher than any soft layer.
 const CAP_REFERENCE: f32 = 2.0;

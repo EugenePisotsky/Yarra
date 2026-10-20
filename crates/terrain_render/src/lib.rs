@@ -10,7 +10,7 @@ use bevy::prelude::*;
 
 pub use ground::{TerrainMacroVariation, TerrainSurfaceLayer};
 
-pub use prints::{GroundPress, GroundPressSystems, GroundPresses};
+pub use prints::{GroundPress, GroundPressSystems, GroundPresses, PrintGround};
 
 /// A value's bytes in WGSL storage-buffer layout, as `ShaderBuffer::from` encoded it before
 /// Bevy 0.20 (whose `ShaderBuffer` now takes plain-old-data vectors).

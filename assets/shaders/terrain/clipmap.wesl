@@ -7,9 +7,9 @@
 // from the height clipmap at the pixel's footprint: the soft layer's (snow's) top where there is
 // one, which takes the prints feet pressed into it (terrain/prints.wesl).
 import package::shaders::lighting::pbr_lighting::apply_pbr_lighting;
-import package::shaders::terrain::clipmap_common::{ControlCell, Sample, clipmap_normal, control_cell, intervals, leaf_height, leaf_spacing, levels, node_of, origin_samples, resident, resident_level, settings, soft_depth, unpack, wear_slot};
-import package::shaders::terrain::wear::{WEAR_TEXEL, bare_share, rut_at, rut_parallax, wear_at, wear_patch, wheel_grooves};
-import package::shaders::terrain::prints::{PrintView, pressed_layer, pressed_layer_at, print_caps, print_view};
+import package::shaders::terrain::clipmap_common::{ControlCell, Sample, clipmap_normal, control_cell, intervals, leaf_height, leaf_spacing, levels, node_of, origin_samples, resident_level, settings, unpack, wear_slot};
+import package::shaders::terrain::wear::{WEAR_TEXEL, bare_share, rut_at, rut_parallax, wear_at, wear_hash, wear_patch, wheel_grooves};
+import package::shaders::terrain::prints::{print_relief_at, print_view};
 import package::shaders::weather::ground_wetness::apply_rain_puddles;
 import package::shaders::lighting::surface::{ground_celestial_irradiance, surface_weather};
 import package::shaders::terrain::stochastic::{quarter_turn, stochastic_vertex_turn, stochastic_vertex_offset};
@@ -60,11 +60,14 @@ const PUDDLE_DISTANCE: f32 = 80.0;
 // to it.
 const PRINT_DISTANCE: f32 = 100.0;
 const PRINT_PACKED: f32 = 0.06;
-// The prints' slope is taken over one texel of the fine window.
-const PRINT_SLOPE_STEP: f32 = 0.02;
 // Steepest a print's wall tilts the ground (tan 56°): snow scatters light into its own shade, so
 // walls drawn as steep as the relief went near black facing away from the sun.
 const PRINT_STEEPEST: f32 = 1.5;
+// Steep print walls carry streaks where snow crumbled down them: this many a metre along the
+// wall, this deep, while a pixel spans less than the first footprint, gone past the second.
+const STREAKS_PER_METRE: f32 = 24.0;
+const STREAK_DEPTH: f32 = 0.006;
+const STREAK_FOOTPRINT: vec2<f32> = vec2(0.008, 0.025);
 const PACKED_TINT: vec3<f32> = vec3(0.8, 0.86, 0.95);
 const PACKED_SMOOTHING: f32 = 0.7;
 const PACKED_FLATTENING: f32 = 0.3;
@@ -81,6 +84,27 @@ fn terrain_hollow(leaf: vec2<i32>, fraction: vec2<f32>) -> f32 {
         sum += leaf_height(leaf, fraction + vec2(cos(angle), sin(angle)) * r);
     }
     return clamp((sum / 12.0 - centre) / HOLLOW_DEPTH, 0.0, 1.0);
+}
+
+// Value noise along one axis at `u`, and its slope.
+fn streak(u: f32) -> vec2<f32> {
+    let i = i32(floor(u));
+    let f = u - floor(u);
+    let a = wear_hash(i, 0, 0x5f3u);
+    let b = wear_hash(i + 1, 0, 0x5f3u);
+    return vec2(mix(a, b, f * f * (3.0 - 2.0 * f)), (b - a) * 6.0 * f * (1.0 - f));
+}
+
+// Streaks down a print wall whose slope is `slope`, at world xz `p` (kept small, so the noise
+// stays fine): how high the snow between them stands (0..1), and the wall's tilt along them.
+fn wall_streaks(p: vec2<f32>, slope: vec2<f32>) -> vec3<f32> {
+    let down = normalize(slope);
+    let along = vec2(-down.y, down.x);
+    let u = dot(p, along) * STREAKS_PER_METRE;
+    let a = streak(u);
+    let b = streak(u * 2.6 + 17.0);
+    let rise = (a.y + 1.3 * b.y) / 1.5 * STREAKS_PER_METRE * STREAK_DEPTH;
+    return vec3((a.x + 0.5 * b.x) / 1.5, along * rise);
 }
 
 // A layer's share of a sample.
@@ -146,13 +170,6 @@ fn ground_surfaces(leaf: vec2<i32>, fraction: vec2<f32>, lod: f32, pixel: vec2<f
     let noise = fract(52.9829189 * fract(dot(pixel + 5.588238 * frame, vec2(0.06711056, 0.00583715))));
     let level = select(fine, coarse, noise < t);
     return level_surfaces(control_cell(level, leaf, fraction));
-}
-
-// How far feet lowered the soft layer `offset` metres from render xz `p`, a leaf sample plus a
-// fraction of one.
-fn lowered(windows: PrintView, p: vec2<f32>, leaf: vec2<i32>, fraction: vec2<f32>, offset: vec2<f32>) -> f32 {
-    let depth = soft_depth(leaf, fraction + offset / leaf_spacing());
-    return pressed_layer_at(windows, p + offset, depth) - depth;
 }
 
 fn triangular(uv: vec2<f32>) -> vec2<f32> { return vec2(uv.x + uv.y * 0.5773502692, uv.y * 1.1547005384); }
@@ -372,20 +389,13 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     // layer's; their snow is packed, darker in their depths and lit by the snow around them.
     var slope = vec2(0.0);
     var pressed = 0.0;
-    if distance_to_camera < PRINT_DISTANCE && resident(0u, node_of(0u, leaf)) {
-        let depth = soft_depth(leaf, fraction);
+    if distance_to_camera < PRINT_DISTANCE {
         let xz = in.world_position.xz;
         let windows = print_view(xz);
-        if depth > 0.001 && dot(windows.shares, vec2(1.0)) > 0.0 {
-            let caps = print_caps(windows, xz);
-            if caps.y < depth {
-                pressed = max(depth - pressed_layer(depth, caps), 0.0);
-                let e = vec2(PRINT_SLOPE_STEP, 0.0);
-                slope = vec2(
-                    lowered(windows, xz, leaf, fraction, e) - lowered(windows, xz, leaf, fraction, -e),
-                    lowered(windows, xz, leaf, fraction, e.yx) - lowered(windows, xz, leaf, fraction, -e.yx),
-                ) / (2.0 * PRINT_SLOPE_STEP);
-            }
+        if dot(windows.shares, vec2(1.0)) > 0.0 {
+            let relief = print_relief_at(windows, xz, world_dx, world_dy);
+            pressed = max(-relief.x, 0.0);
+            slope = relief.yz;
         }
     }
     slope *= min(1.0, PRINT_STEEPEST / max(length(slope), 1e-6));
@@ -395,6 +405,14 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     ground_normal = tilted;
     let packed = smoothstep(0.0, PRINT_PACKED, pressed);
     occlusion *= 1.0 - 0.3 * smoothstep(0.02, 0.3, pressed);
+    let wall = smoothstep(0.5, 1.2, length(slope))
+        * (1.0 - smoothstep(STREAK_FOOTPRINT.x, STREAK_FOOTPRINT.y, footprint));
+    if wall > 0.0 {
+        let local = (vec2<f32>(leaf & vec2(4095)) + fraction) * leaf_spacing();
+        let streaks = wall_streaks(local, slope);
+        ground_normal = normalize(ground_normal - vec3(streaks.y, 0.0, streaks.z) * wall);
+        occlusion *= 1.0 - 0.2 * wall * (1.0 - streaks.x);
+    }
 
     let side = side_share(n);
     let plane = side_projection(in.world_position.xyz, n, dpdx(in.world_position.xyz), dpdy(in.world_position.xyz));

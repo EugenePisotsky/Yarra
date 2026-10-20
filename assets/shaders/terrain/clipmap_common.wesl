@@ -3,8 +3,7 @@
 // world sample s of the level is texel s mod side. Positions travel as a leaf sample index
 // (integer, world-wide) and a fraction of a leaf spacing, so they stay exact anywhere in the
 // world while render coordinates stay small. Heights are the drawn ground, the top of the soft
-// layer (snow) where there is one; the leaves' layer depths say how far it lies over the firm
-// ground (world::soft_layer).
+// layer (snow) where there is one (world::soft_layer).
 struct ClipmapSettings {
     // Texels per side, levels, sample intervals per node, metres between leaf samples.
     grid: vec4<f32>,
@@ -23,8 +22,6 @@ struct ClipmapSettings {
 @group(constants::MATERIAL_BIND_GROUP) @binding(3) var normal_sampler: sampler;
 @group(constants::MATERIAL_BIND_GROUP) @binding(4) var state: texture_2d<u32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(5) var control: texture_2d_array<u32>;
-// The leaves' soft layer depth, metres; filtered with the normals' sampler.
-@group(constants::MATERIAL_BIND_GROUP) @binding(15) var soft_depths: texture_2d<f32>;
 
 // State texels (gpu.rs, whose tests check these copies): eye, origin, a window per level, each
 // level's residency rows, then the cell each wear atlas slot holds.
@@ -155,13 +152,6 @@ fn control_cell(level: u32, leaf: vec2<i32>, fraction: vec2<f32>) -> ControlCell
     let packed = vec4(textureLoad(control, t0, l, 0).r, textureLoad(control, vec2(t1.x, t0.y), l, 0).r,
         textureLoad(control, vec2(t0.x, t1.y), l, 0).r, textureLoad(control, t1, l, 0).r);
     return ControlCell(packed, q - whole, leaf_spacing() * f32(1u << level) * 0.5);
-}
-
-// How deep the leaves' soft layer lies over the firm ground at a leaf sample plus a fraction of
-// one, bilinearly. Only resident leaves hold theirs.
-fn soft_depth(leaf: vec2<i32>, fraction: vec2<f32>) -> f32 {
-    let uv = (vec2<f32>(texel(leaf)) + fraction + 0.5) / f32(side());
-    return textureSampleLevel(soft_depths, normal_sampler, uv, 0.0).r;
 }
 
 // The leaves' drawn ground at a leaf sample plus a fraction (0..1) of one: their triangles, split
