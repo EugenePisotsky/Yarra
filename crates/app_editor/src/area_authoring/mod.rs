@@ -191,7 +191,7 @@ fn reconcile(
     if let Some(record) = project.gameplay_areas() {
         dense.areas.pin(record);
     }
-    if let Some((id, result)) = project.area_completion.take()
+    if let Some((id, result)) = project.take_area_completion()
         && dense.areas.saving == Some(id)
     {
         let committed = dense.areas.complete(result);

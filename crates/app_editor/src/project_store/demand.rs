@@ -139,12 +139,7 @@ pub(super) fn dispatch_project_save(
     worker: Option<Res<ProjectWorker>>,
     mut store: ResMut<ProjectEditorStore>,
 ) {
-    if !matches!(store.phase, ProjectStorePhase::Ready)
-        || store.save_in_flight.is_some()
-        || store.dense_save_in_flight.is_some()
-        || store.atmosphere_save_in_flight.is_some()
-        || store.area_save_in_flight.is_some()
-    {
+    if !matches!(store.phase, ProjectStorePhase::Ready) || store.writer_busy() {
         return;
     }
 
@@ -152,58 +147,42 @@ pub(super) fn dispatch_project_save(
         return;
     };
 
-    if let Some((id, revision, areas)) = store.pending_area_save.clone() {
-        match worker.try_send(ProjectRequest::SaveGameplayAreas(id, revision, areas)) {
-            Ok(()) => {
-                store.pending_area_save = None;
-                store.area_save_in_flight = Some(id);
-            }
-            Err(TrySendError::Full(_)) => {}
-            Err(TrySendError::Disconnected(_)) => {
-                store.write_error = Some("Project writer stopped".into());
-            }
-        }
-        return;
-    }
+    // One save at a time, areas and atmospheres first. A stopped writer fails the small
+    // saves with a write error and the transactions with the whole store, as before.
+    let store = store.as_mut();
 
-    if let Some((id, writes)) = store.pending_atmosphere_save.clone() {
-        match worker.try_send(ProjectRequest::SaveAtmospheres(id, writes)) {
-            Ok(()) => {
-                store.pending_atmosphere_save = None;
-                store.atmosphere_save_in_flight = Some(id);
-            }
-            Err(TrySendError::Full(_)) => {}
-            Err(TrySendError::Disconnected(_)) => {
-                store.write_error = Some("Project writer stopped".into());
-            }
-        }
-        return;
+    if let Some((id, request)) = store.area_saves.pending() {
+        let sent = worker.try_send(ProjectRequest::SaveGameplayAreas(id, request));
+        follow_send(sent, &mut store.area_saves, || {
+            store.write_error = Some("Project writer stopped".into())
+        });
+    } else if let Some((id, request)) = store.atmosphere_saves.pending() {
+        let sent = worker.try_send(ProjectRequest::SaveAtmospheres(id, request));
+        follow_send(sent, &mut store.atmosphere_saves, || {
+            store.write_error = Some("Project writer stopped".into())
+        });
+    } else if let Some((id, request)) = store.object_saves.pending() {
+        let sent = worker.try_send(ProjectRequest::SaveObjectTransaction(id, request));
+        follow_send(sent, &mut store.object_saves, || {
+            store.phase = ProjectStorePhase::Failed("project request channel closed".into())
+        });
+    } else if let Some((id, request)) = store.dense_saves.pending() {
+        let sent = worker.try_send(ProjectRequest::SaveDenseTransaction(id, request));
+        follow_send(sent, &mut store.dense_saves, || {
+            store.phase = ProjectStorePhase::Failed("project request channel closed".into())
+        });
     }
+}
 
-    if let Some(request) = store.pending_save.clone() {
-        match worker.try_send(ProjectRequest::SaveObjectTransaction(request.clone())) {
-            Ok(()) => {
-                store.pending_save = None;
-                store.save_in_flight = Some(request.request_id);
-            }
-            Err(TrySendError::Full(_)) => {}
-            Err(TrySendError::Disconnected(_)) => {
-                store.phase = ProjectStorePhase::Failed("project request channel closed".into());
-            }
-        }
-        return;
-    }
-
-    if let Some(request) = store.pending_dense_save.clone() {
-        match worker.try_send(ProjectRequest::SaveDenseTransaction(request.clone())) {
-            Ok(()) => {
-                store.pending_dense_save = None;
-                store.dense_save_in_flight = Some(request.request_id);
-            }
-            Err(TrySendError::Full(_)) => {}
-            Err(TrySendError::Disconnected(_)) => {
-                store.phase = ProjectStorePhase::Failed("project request channel closed".into());
-            }
-        }
+/// A sent request is in flight; a full queue tries again next frame.
+fn follow_send<Q: Clone, A>(
+    sent: Result<(), TrySendError<ProjectRequest>>,
+    channel: &mut SaveChannel<Q, A>,
+    stopped: impl FnOnce(),
+) {
+    match sent {
+        Ok(()) => channel.sent(),
+        Err(TrySendError::Full(_)) => {}
+        Err(TrySendError::Disconnected(_)) => stopped(),
     }
 }

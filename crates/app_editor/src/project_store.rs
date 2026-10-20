@@ -28,7 +28,10 @@ use worker::start_project_worker;
 
 mod demand;
 mod receive;
+mod save_channel;
 mod worker;
+
+use save_channel::SaveChannel;
 
 const SOURCE_RADIUS_CELLS: i32 = 2;
 const MAX_SOURCE_CELLS: usize = 25;
@@ -136,27 +139,15 @@ impl ProjectSourceDomains {
     }
 }
 
+/// One save of environment source: coverage, definitions, presets and roads together.
 #[derive(Debug, Clone)]
-struct PendingObjectSave {
-    request_id: u64,
-    writes: Vec<SourceObjectWrite>,
-}
-
-#[derive(Debug, Clone)]
-struct PendingDenseSave {
+struct DenseTransaction {
     roads: Vec<world_db::RoadSourceWrite>,
     road_dependencies: Vec<world_db::RoadDependency>,
     library_revision: u64,
     presets: Option<environment::PresetLibrary>,
     definitions: Vec<EnvironmentDefinitionWrite>,
-    request_id: u64,
     writes: Vec<EnvironmentCellWrite>,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct ObjectSaveCompletion {
-    pub(crate) request_id: u64,
-    pub(crate) outcome: ObjectSaveOutcome,
 }
 
 #[derive(Debug, Clone)]
@@ -167,12 +158,6 @@ pub(crate) enum ObjectSaveOutcome {
         actual: Option<SourceObjectRecord>,
     },
     Failed(String),
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct DenseSaveCompletion {
-    pub(crate) request_id: u64,
-    pub(crate) outcome: DenseSaveOutcome,
 }
 
 #[derive(Debug, Clone)]
@@ -226,35 +211,49 @@ pub(crate) struct ProjectEditorStore {
     source_epoch: u64,
     completed_queries: u64,
     stale_results: u64,
-    pending_save: Option<PendingObjectSave>,
-    save_in_flight: Option<u64>,
-    save_completion: Option<ObjectSaveCompletion>,
-    pending_dense_save: Option<PendingDenseSave>,
-    dense_save_in_flight: Option<u64>,
-    dense_save_completion: Option<DenseSaveCompletion>,
-    next_save_request_id: u64,
-    pending_atmosphere_save: Option<(u64, Vec<world_db::AtmosphereWrite>)>,
-    atmosphere_save_in_flight: Option<u64>,
-    pub(crate) atmosphere_completion:
-        Option<(u64, Result<world_db::AtmosphereWriteResult, String>)>,
     gameplay_areas: Option<world_db::GameplayAreasRecord>,
-    pending_area_save: Option<(u64, i64, Arc<[world::GameplayArea]>)>,
-    area_save_in_flight: Option<u64>,
-    pub(crate) area_completion: Option<(u64, Result<world_db::GameplayAreasWriteResult, String>)>,
+    next_save_request_id: u64,
+    object_saves: SaveChannel<Vec<SourceObjectWrite>, ObjectSaveOutcome>,
+    dense_saves: SaveChannel<DenseTransaction, DenseSaveOutcome>,
+    atmosphere_saves: SaveChannel<Vec<world_db::AtmosphereWrite>, AtmosphereAnswer>,
+    area_saves: SaveChannel<AreaSave, AreaAnswer>,
 }
+
+type AtmosphereAnswer = Result<world_db::AtmosphereWriteResult, String>;
+/// The revision the areas were read at, and the areas to write.
+type AreaSave = (i64, Arc<[world::GameplayArea]>);
+type AreaAnswer = Result<world_db::GameplayAreasWriteResult, String>;
 
 impl ProjectEditorStore {
     pub(crate) fn queue_atmospheres(
         &mut self,
         writes: Vec<world_db::AtmosphereWrite>,
     ) -> Option<u64> {
-        if writes.is_empty() || self.save_in_flight() || self.write_error.is_some() {
+        if writes.is_empty() || !self.can_queue_save() {
             return None;
         }
 
+        let id = self.next_save_id();
+        self.atmosphere_saves.queue(id, writes);
+        Some(id)
+    }
+
+    pub(crate) fn take_atmosphere_completion(&mut self) -> Option<(u64, AtmosphereAnswer)> {
+        self.atmosphere_saves.take()
+    }
+
+    pub(crate) fn take_area_completion(&mut self) -> Option<(u64, AreaAnswer)> {
+        self.area_saves.take()
+    }
+
+    /// One save at a time, and none once the project could not be written.
+    fn can_queue_save(&self) -> bool {
+        !self.save_in_flight() && self.write_error.is_none()
+    }
+
+    fn next_save_id(&mut self) -> u64 {
         self.next_save_request_id = self.next_save_request_id.wrapping_add(1).max(1);
-        self.pending_atmosphere_save = Some((self.next_save_request_id, writes));
-        Some(self.next_save_request_id)
+        self.next_save_request_id
     }
 
     /// The project's gameplay areas as last read or saved.
@@ -267,13 +266,13 @@ impl ProjectEditorStore {
         expected_revision: i64,
         areas: Arc<[world::GameplayArea]>,
     ) -> Option<u64> {
-        if self.save_in_flight() || self.write_error.is_some() {
+        if !self.can_queue_save() {
             return None;
         }
 
-        self.next_save_request_id = self.next_save_request_id.wrapping_add(1).max(1);
-        self.pending_area_save = Some((self.next_save_request_id, expected_revision, areas));
-        Some(self.next_save_request_id)
+        let id = self.next_save_id();
+        self.area_saves.queue(id, (expected_revision, areas));
+        Some(id)
     }
 
     pub(crate) fn status(&self) -> String {
@@ -397,32 +396,35 @@ impl ProjectEditorStore {
     }
 
     pub(crate) fn save_in_flight(&self) -> bool {
-        self.pending_save.is_some()
-            || self.save_in_flight.is_some()
-            || self.pending_dense_save.is_some()
-            || self.dense_save_in_flight.is_some()
-            || self.pending_atmosphere_save.is_some()
-            || self.atmosphere_save_in_flight.is_some()
-            || self.pending_area_save.is_some()
-            || self.area_save_in_flight.is_some()
+        self.object_saves.busy()
+            || self.dense_saves.busy()
+            || self.atmosphere_saves.busy()
+            || self.area_saves.busy()
+    }
+
+    /// The writer has a save.
+    fn writer_busy(&self) -> bool {
+        self.object_saves.in_flight()
+            || self.dense_saves.in_flight()
+            || self.atmosphere_saves.in_flight()
+            || self.area_saves.in_flight()
     }
 
     pub(crate) fn queue_object_transaction(
         &mut self,
         writes: Vec<SourceObjectWrite>,
     ) -> Option<u64> {
-        if writes.is_empty() || self.save_in_flight() || self.write_error.is_some() {
+        if writes.is_empty() || !self.can_queue_save() {
             return None;
         }
 
-        let request_id = self.next_save_request_id.wrapping_add(1).max(1);
-        self.next_save_request_id = request_id;
-        self.pending_save = Some(PendingObjectSave { request_id, writes });
-        Some(request_id)
+        let id = self.next_save_id();
+        self.object_saves.queue(id, writes);
+        Some(id)
     }
 
-    pub(crate) fn take_save_completion(&mut self) -> Option<ObjectSaveCompletion> {
-        self.save_completion.take()
+    pub(crate) fn take_save_completion(&mut self) -> Option<(u64, ObjectSaveOutcome)> {
+        self.object_saves.take()
     }
 
     pub(crate) fn queue_dense_transaction(
@@ -435,28 +437,28 @@ impl ProjectEditorStore {
         road_dependencies: Vec<world_db::RoadDependency>,
     ) -> Option<u64> {
         if (writes.is_empty() && definitions.is_empty() && presets.is_none() && roads.is_empty())
-            || self.save_in_flight()
-            || self.write_error.is_some()
+            || !self.can_queue_save()
         {
             return None;
         }
 
-        let request_id = self.next_save_request_id.wrapping_add(1).max(1);
-        self.next_save_request_id = request_id;
-        self.pending_dense_save = Some(PendingDenseSave {
-            roads,
-            road_dependencies,
-            library_revision,
-            presets,
-            request_id,
-            writes,
-            definitions,
-        });
-        Some(request_id)
+        let id = self.next_save_id();
+        self.dense_saves.queue(
+            id,
+            DenseTransaction {
+                roads,
+                road_dependencies,
+                library_revision,
+                presets,
+                writes,
+                definitions,
+            },
+        );
+        Some(id)
     }
 
-    pub(crate) fn take_dense_save_completion(&mut self) -> Option<DenseSaveCompletion> {
-        self.dense_save_completion.take()
+    pub(crate) fn take_dense_save_completion(&mut self) -> Option<(u64, DenseSaveOutcome)> {
+        self.dense_saves.take()
     }
 }
 
@@ -469,9 +471,9 @@ enum ProjectRequest {
         domains: ProjectSourceDomains,
     },
     SaveAtmospheres(u64, Vec<world_db::AtmosphereWrite>),
-    SaveGameplayAreas(u64, i64, Arc<[world::GameplayArea]>),
-    SaveObjectTransaction(PendingObjectSave),
-    SaveDenseTransaction(PendingDenseSave),
+    SaveGameplayAreas(u64, AreaSave),
+    SaveObjectTransaction(u64, Vec<SourceObjectWrite>),
+    SaveDenseTransaction(u64, DenseTransaction),
 }
 
 enum ProjectResult {
@@ -485,14 +487,8 @@ enum ProjectResult {
         domains: ProjectSourceDomains,
         result: Result<ProjectWindowSnapshot, String>,
     },
-    SaveObjectTransaction {
-        request_id: u64,
-        result: Result<ObjectWriteTransactionResult, String>,
-    },
-    SaveDenseTransaction {
-        request_id: u64,
-        result: Result<EnvironmentSourceWriteResult, String>,
-    },
+    SaveObjectTransaction(u64, Result<ObjectWriteTransactionResult, String>),
+    SaveDenseTransaction(u64, Result<EnvironmentSourceWriteResult, String>),
 }
 
 struct ProjectOpenSnapshot {

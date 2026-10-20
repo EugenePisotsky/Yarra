@@ -659,10 +659,10 @@ pub(crate) fn process_project_save_completion(
     mut objects: ResMut<EditorObjectWorkingSet>,
     mut coordinator: ResMut<EditorSaveCoordinator>,
 ) {
-    let Some(completion) = project.take_save_completion() else {
+    let Some((request_id, outcome)) = project.take_save_completion() else {
         return;
     };
-    let committed = matches!(&completion.outcome, ObjectSaveOutcome::Committed(_));
-    objects.finish_save(completion.request_id, completion.outcome);
+    let committed = matches!(&outcome, ObjectSaveOutcome::Committed(_));
+    objects.finish_save(request_id, outcome);
     coordinator.transaction_finished(committed);
 }

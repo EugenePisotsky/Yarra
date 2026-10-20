@@ -664,11 +664,11 @@ pub(crate) fn process_dense_save_completion(
     mut project: ResMut<ProjectEditorStore>,
     mut coordinator: ResMut<EditorSaveCoordinator>,
 ) {
-    let Some(completion) = project.take_dense_save_completion() else {
+    let Some((request_id, outcome)) = project.take_dense_save_completion() else {
         return;
     };
-    let committed = matches!(&completion.outcome, DenseSaveOutcome::Committed(_));
-    working_sets.finish_save(completion.request_id, completion.outcome);
+    let committed = matches!(&outcome, DenseSaveOutcome::Committed(_));
+    working_sets.finish_save(request_id, outcome);
     coordinator.transaction_finished(committed);
 }
 

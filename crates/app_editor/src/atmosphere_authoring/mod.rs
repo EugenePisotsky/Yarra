@@ -119,7 +119,7 @@ fn reconcile(
             dense.atmospheres.pin(source);
         }
     }
-    if let Some((id, result)) = project.atmosphere_completion.take()
+    if let Some((id, result)) = project.take_atmosphere_completion()
         && dense.atmospheres.saving == Some(id)
     {
         let committed = dense.atmospheres.complete(result);
