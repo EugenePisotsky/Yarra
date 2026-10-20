@@ -1,12 +1,16 @@
 //! What happens to characters: stats are worked out, resources change, effects come and go,
 //! levels are gained and points spent. Every function works on the command's journal, so a
 //! command that fails later leaves no trace.
-use crate::actors::Actor;
-use crate::inventory::Money;
-use crate::rules::{ActiveEffect, Rules, Sheet};
-use crate::tx::Tx;
-use crate::{GameContent, GameEvent, Rejection, Result};
+use crate::{
+    GameContent, GameEvent, Rejection, Result,
+    actors::Actor,
+    inventory::Money,
+    rules::{ActiveEffect, Rules, Sheet},
+    tx::Tx,
+};
+
 use game_types::*;
+use std::collections::BTreeSet;
 
 /// Works the character's stats out again and keeps its resources within their caps.
 /// A resource the character did not have yet starts full.
@@ -465,4 +469,34 @@ pub(crate) fn check(
         rolls,
     });
     Ok(passed)
+}
+
+/// After items leave a carried inventory, drop equipment that is no longer owned.
+pub(crate) fn sync_equipment(
+    content: &GameContent,
+    state: &mut Tx,
+    inventory: InventoryId,
+    events: &mut Vec<GameEvent>,
+) -> Result<()> {
+    let bag = state.inventory(inventory)?;
+    let Some(actor) = bag.carried_by() else {
+        return Ok(());
+    };
+    let owned: BTreeSet<_> = bag.entries.iter().map(|e| e.id).collect();
+
+    if state
+        .actor(actor)?
+        .equipment
+        .values()
+        .any(|id| !owned.contains(id))
+    {
+        state
+            .actor_mut(actor)?
+            .equipment
+            .retain(|_, id| owned.contains(id));
+        refresh(content, state, actor)?;
+        events.push(GameEvent::EquipmentChanged { actor });
+    }
+
+    Ok(())
 }

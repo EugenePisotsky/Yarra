@@ -1,9 +1,7 @@
 //! The logical world: objects and their locks, which areas actors are in, movement the
 //! engine carries out, and triggers that react to what happens. Shapes and positions belong
 //! to the engine; gameplay knows areas only by name and is told who is inside them.
-use crate::Result;
-use crate::actors::Position;
-use crate::*;
+use crate::{Action, Condition, GameContent, Result, SessionState, actors::Position};
 use game_types::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};

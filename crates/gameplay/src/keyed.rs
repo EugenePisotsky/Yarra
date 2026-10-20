@@ -6,8 +6,13 @@ use crate::dialogue::{
     Conversation, Dialogue, DialogueContract, History, HistoryKey, Interaction, InteractionKey,
 };
 
-use crate::inventory::{Category, Inventory, ItemDefinition, LootTable, Wallet};
-use crate::*;
+use crate::{
+    ConversationKey, InteractionProfile, LocationState, Movement, NamedPredicate, ObjectDefinition,
+    ObjectState, ScriptModule, TriggerDefinition, TriggerState, VariableDefinition,
+    inventory::{Category, Inventory, ItemDefinition, LootTable, Wallet},
+    quests,
+};
+
 use game_types::*;
 use std::collections::BTreeMap;
 

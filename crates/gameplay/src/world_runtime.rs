@@ -1,8 +1,10 @@
 //! What happens in the world as commands are accepted: occupancy reports, movement, object
 //! commands, and running the triggers that listen for the resulting signals.
-use crate::Result;
-use crate::tx::Tx;
-use crate::*;
+use crate::{
+    ConversationKey, GameContent, GameEvent, Movement, Pending, Rejection, Result, SessionState,
+    TriggerIndex, WorldCommand, WorldEvent, WorldSignal, inventory, quests, tx::Tx,
+};
+
 use game_types::*;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -182,7 +184,7 @@ fn run_trigger(content: &GameContent, tx: &mut Tx, id: TriggerId, events: &mut V
 
         for action in &d.actions {
             let (player, speaker, nobody) = (d.player, d.speaker(), &crate::script::NOBODY);
-            crate::session::run_action(content, tx, player, speaker, nobody, action, events)?;
+            crate::actions::run_action(content, tx, player, speaker, nobody, action, events)?;
         }
 
         progress.fired = progress

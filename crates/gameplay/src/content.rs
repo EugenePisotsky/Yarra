@@ -1,18 +1,17 @@
-use crate::Keyed;
-use crate::actors::ActorTemplate;
-use crate::dialogue::Dialogue;
-use crate::inventory::ItemCatalog;
-use crate::rules::Rules;
-
 use crate::{
-    InteractionProfile, NamedPredicate, Participant, Result, ScriptModule, ScriptName, Scripts,
+    Keyed, actors::ActorTemplate, dialogue::Dialogue, inventory::ItemCatalog, rules::Rules,
 };
+
+use crate::{InteractionProfile, NamedPredicate, Participant, Result, ScriptModule, Scripts};
 
 use crate::{dialogue, quests};
 use game_types::*;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
-use std::rc::Rc;
+
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    rc::Rc,
+};
 
 /// What a variable can hold. A variable keeps the type of its initial value.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -27,7 +26,7 @@ impl Value {
         std::mem::discriminant(self) == std::mem::discriminant(other)
     }
 
-    fn validate(&self) -> game_types::Result<()> {
+    pub(crate) fn validate(&self) -> game_types::Result<()> {
         match self {
             Self::Text(text) => require(text.len() <= 1024, "variable text exceeds 1024 bytes"),
             _ => Ok(()),
@@ -68,183 +67,6 @@ impl From<VariableId> for VariableKey {
             actor: None,
         }
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Test {
-    Is(Value),
-    AtLeast(i64),
-    AtMost(i64),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Condition {
-    /// A script function returning a boolean.
-    Script(ScriptName),
-    /// The actor takes part in the conversation or travels with the party.
-    Present(ActorId),
-    InsideArea {
-        area: AreaId,
-    },
-    History {
-        dialogue: DialogueId,
-        event: dialogue::HistoryEvent,
-        minimum: u64,
-    },
-    All(Vec<Condition>),
-    Any(Vec<Condition>),
-    Not(Box<Condition>),
-    Named(PredicateId),
-    QuestStatus {
-        quest: QuestId,
-        status: quests::Status,
-    },
-    ObjectiveCompleted {
-        quest: QuestId,
-        objective: Key,
-    },
-    Relationship {
-        from: Participant,
-        to: Participant,
-        minimum: i16,
-    },
-    HasItem {
-        definition: ItemDefinitionId,
-        quantity: u32,
-    },
-    Variable {
-        variable: VariableId,
-        /// Whose value, for a per-actor variable.
-        #[serde(default)]
-        of: Option<Participant>,
-        test: Test,
-    },
-    /// A stat of the player's after equipment and effects, or how much of a resource is
-    /// left.
-    Stat {
-        stat: Key,
-        minimum: i32,
-    },
-    /// The player's rank in a skill.
-    Skill {
-        skill: Key,
-        minimum: u8,
-    },
-    Level {
-        minimum: u32,
-    },
-    Class(Key),
-    /// A trainer could teach the player the next rank: the class allows it and the
-    /// learning points are there.
-    CanLearn {
-        skill: Key,
-    },
-    /// The party's shared purse holds at least this much.
-    Gold {
-        minimum: u64,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Action {
-    /// A script function making changes through the script API.
-    Script(ScriptName),
-    SetLocked {
-        object: ObjectId,
-        locked: bool,
-    },
-    /// `then` when the condition holds, otherwise `otherwise`. With a variable that the
-    /// actions set, it gives a reward once however often the choice is offered.
-    If {
-        condition: Condition,
-        then: Vec<Action>,
-        #[serde(default)]
-        otherwise: Vec<Action>,
-    },
-    Quest {
-        quest: QuestId,
-        transition: quests::Transition,
-    },
-    Relationship {
-        from: Participant,
-        to: Participant,
-        amount: i16,
-    },
-    ConsumeItem {
-        definition: ItemDefinitionId,
-        quantity: u32,
-    },
-    GrantItem {
-        definition: ItemDefinitionId,
-        quantity: u32,
-    },
-    /// Experience for the whole party; members gain the levels it earns.
-    AwardExperience {
-        amount: u64,
-    },
-    /// A trainer teaches the player the next rank of a skill for learning points.
-    Teach {
-        skill: Key,
-    },
-    /// Gold leaves the party's shared purse.
-    Pay {
-        amount: u64,
-    },
-    /// Adds to a resource, or takes from it with a negative amount: healing, a trap.
-    ChangeResource {
-        #[serde(default)]
-        of: Participant,
-        resource: Key,
-        amount: i32,
-    },
-    ApplyEffect {
-        #[serde(default)]
-        of: Participant,
-        effect: Key,
-        #[serde(default)]
-        duration_ms: Option<u64>,
-    },
-    RemoveEffect {
-        #[serde(default)]
-        of: Participant,
-        effect: Key,
-    },
-    /// Asks the engine to walk an actor into an area. `Arrived` or `MoveFailed` follows.
-    Move {
-        actor: Participant,
-        to: AreaId,
-        #[serde(default)]
-        timeout_ms: Option<u64>,
-    },
-    /// Starts a conversation with the player once the current command is done. Without a
-    /// speaker named, it is the speaker of the rule this action belongs to.
-    StartDialogue {
-        dialogue: DialogueId,
-        #[serde(default)]
-        speaker: Option<Participant>,
-    },
-    Set {
-        variable: VariableId,
-        #[serde(default)]
-        of: Option<Participant>,
-        value: Value,
-    },
-    /// Adds to a whole-number variable; the amount may be negative.
-    Add {
-        variable: VariableId,
-        #[serde(default)]
-        of: Option<Participant>,
-        amount: i64,
-    },
-    /// A skill check by the rules' formula. Failing is an accepted outcome with its own
-    /// effects. Invalid effects reject the entire command, restoring the random state along
-    /// with everything else.
-    Check {
-        skill: Key,
-        difficulty: u32,
-        success: Vec<Action>,
-        failure: Vec<Action>,
-    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -293,22 +115,6 @@ pub struct GameContent {
     pub scripts: Scripts,
     /// Where dialogue graphs are read from, and those read lately; see `dialogue`.
     pub graphs: crate::Graphs,
-}
-
-impl Action {
-    /// The participants this action names itself, not those of actions inside it.
-    pub fn participants(&self) -> Vec<&Participant> {
-        match self {
-            Self::Relationship { from, to, .. } => vec![from, to],
-            Self::ChangeResource { of, .. }
-            | Self::ApplyEffect { of, .. }
-            | Self::RemoveEffect { of, .. } => vec![of],
-            Self::Move { actor, .. } => vec![actor],
-            Self::StartDialogue { speaker, .. } => speaker.iter().collect(),
-            Self::Set { of, .. } | Self::Add { of, .. } => of.iter().collect(),
-            _ => vec![],
-        }
-    }
 }
 
 /// Names the record a mistake in content was found in.
@@ -467,137 +273,6 @@ impl GameContent {
         Ok(())
     }
 
-    /// Actions nest only so deep, so running them cannot exhaust the stack.
-    pub(crate) fn validate_action(&self, action: &Action, depth: usize) -> Result<()> {
-        self.validate_action_naming(action, depth, &|p| self.validate_participant(p))
-    }
-
-    /// As `validate_action`, with `participant` judging whom the action names: authored
-    /// content names declared characters, a running script anyone in the playthrough.
-    pub(crate) fn validate_action_naming(
-        &self,
-        action: &Action,
-        depth: usize,
-        participant: &dyn Fn(&Participant) -> Result<()>,
-    ) -> Result<()> {
-        require(depth <= 8, "actions nested too deeply")?;
-
-        for named in action.participants() {
-            participant(named)?;
-        }
-
-        match action {
-            Action::Script(name) => {
-                self.scripts.engine(name)?;
-            }
-            Action::SetLocked { object, .. } => {
-                self.object(*object)?;
-            }
-            Action::If {
-                condition,
-                then,
-                otherwise,
-            } => {
-                self.validate_condition(condition)?;
-                require(
-                    !then.is_empty() || !otherwise.is_empty(),
-                    "a conditional action does nothing either way",
-                )?;
-
-                for action in then.iter().chain(otherwise) {
-                    self.validate_action_naming(action, depth + 1, participant)?;
-                }
-            }
-            Action::Quest { quest, transition } => {
-                let q = self.quest(*quest)?;
-                if let quests::Transition::CompleteObjective(id) = transition {
-                    q.objective(id)?;
-                }
-            }
-            Action::Relationship { from, to, .. } => {
-                require(from != to, "relationship needs two roles")?
-            }
-            Action::GrantItem {
-                definition,
-                quantity,
-            }
-            | Action::ConsumeItem {
-                definition,
-                quantity,
-            } => {
-                self.items.item(*definition)?;
-                require(*quantity > 0, "zero item action")?;
-            }
-            Action::AwardExperience { amount } => {
-                require(*amount > 0, "zero XP reward")?;
-            }
-            Action::Teach { skill } => {
-                self.game.rules.skill(skill)?;
-            }
-            Action::Pay { amount } => require(*amount > 0, "paying nothing")?,
-            Action::ChangeResource {
-                resource, amount, ..
-            } => {
-                self.game.rules.resource(resource)?;
-                require(*amount != 0, "changing a resource by nothing")?;
-            }
-            Action::ApplyEffect {
-                effect,
-                duration_ms,
-                ..
-            } => {
-                self.game.rules.effect(effect)?;
-                require(
-                    duration_ms.is_none_or(|ms| ms > 0),
-                    "effect duration must be positive",
-                )?;
-            }
-            Action::RemoveEffect { effect, .. } => {
-                self.game.rules.effect(effect)?;
-            }
-            Action::Move { to, timeout_ms, .. } => {
-                self.area(*to)?;
-                require(
-                    timeout_ms.is_none_or(|ms| ms > 0 && ms <= 86_400_000),
-                    "movement timeout must be 1ms..1 day",
-                )?;
-            }
-            Action::StartDialogue { dialogue, .. } => {
-                self.dialogue_contract(*dialogue)?;
-            }
-            Action::Set {
-                variable,
-                of,
-                value,
-            } => {
-                value.validate()?;
-                require(
-                    self.variable_use(*variable, of)?.initial.same_type(value),
-                    "value has a different type than the variable",
-                )?
-            }
-            Action::Add { variable, of, .. } => require(
-                matches!(self.variable_use(*variable, of)?.initial, Value::Int(_)),
-                "only whole-number variables can be added to",
-            )?,
-            Action::Check {
-                skill,
-                difficulty,
-                success,
-                failure,
-            } => {
-                self.game.rules.skill(skill)?;
-                require(*difficulty > 0, "zero check difficulty")?;
-
-                for action in success.iter().chain(failure) {
-                    self.validate_action_naming(action, depth + 1, participant)?;
-                }
-            }
-        }
-
-        Ok(())
-    }
-
     /// A dialogue graph, read from the content's source the first time it is needed; the
     /// most recently used are kept. A graph that cannot be read, or that does not match its
     /// contract, is an error for whatever needed it.
@@ -668,14 +343,6 @@ impl GameContent {
             Some(name) => Ok(name),
             None => Ok(&self.template(actor.template)?.name),
         }
-    }
-
-    /// A participant naming a character names a declared one.
-    pub(crate) fn validate_participant(&self, participant: &Participant) -> Result<()> {
-        if let Participant::Actor(id) = participant {
-            self.character(*id)?;
-        }
-        Ok(())
     }
 
     pub fn template(&self, id: ActorTemplateId) -> Result<&ActorTemplate> {

@@ -252,7 +252,7 @@ impl ActScope<'_, '_> {
                 Participant::Actor(id) => state.actor(*id).map(|_| ()),
                 _ => Ok(()),
             })?;
-        crate::session::run_action(
+        crate::actions::run_action(
             self.content,
             self.tx,
             actor,
