@@ -839,3 +839,49 @@ return abilities
     assert!(hero.acting.is_none() && hero.intents.is_empty());
     assert!(hero.cooldowns.contains_key(&key("second-wind")));
 }
+
+#[test]
+fn a_script_may_name_an_actor_spawned_from_a_template() {
+    const BEFRIEND: &str = r#"
+local gate = {}
+
+function gate.has_key(game: Game, scene: Scene): boolean
+    return true
+end
+
+function gate.befriend(game: Game, scene: Scene)
+    game.adjust_relationship("stranger", scene.player, 5)
+end
+
+return gate
+"#;
+    let stranger = game_types::ActorId::named("stranger");
+    let content = content(BEFRIEND, "gate.befriend");
+    assert!(!content.game.characters.contains_key(&stranger));
+    let mut state = state();
+    state.spawn(&content, TRAVELLER, stranger).unwrap();
+    let mut session = GameSession::new(ToolContent::new(content).unwrap(), state).unwrap();
+    session
+        .apply(Command::StartDialogue {
+            bindings: Default::default(),
+            dialogue: GATE_DIALOGUE,
+            participant: HERO,
+            speaker: MERCHANT,
+        })
+        .unwrap();
+    let expected = session.conversation_view(TALK).unwrap().token;
+    session
+        .apply(Command::AdvanceLine {
+            key: TALK,
+            expected,
+        })
+        .unwrap();
+    choose(&mut session).unwrap();
+    let attitude = session
+        .state()
+        .relationship(gameplay::actors::RelationshipKey {
+            from: stranger,
+            to: HERO,
+        });
+    assert_eq!(attitude.attitude, 5);
+}

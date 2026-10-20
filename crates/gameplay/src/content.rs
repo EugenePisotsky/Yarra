@@ -448,9 +448,19 @@ impl GameContent {
     }
     /// Actions nest only so deep, so running them cannot exhaust the stack.
     pub(crate) fn validate_action(&self, action: &Action, depth: usize) -> Result<()> {
+        self.validate_action_naming(action, depth, &|p| self.validate_participant(p))
+    }
+    /// As `validate_action`, with `participant` judging whom the action names: authored
+    /// content names declared characters, a running script anyone in the playthrough.
+    pub(crate) fn validate_action_naming(
+        &self,
+        action: &Action,
+        depth: usize,
+        participant: &dyn Fn(&Participant) -> Result<()>,
+    ) -> Result<()> {
         require(depth <= 8, "actions nested too deeply")?;
-        for participant in action.participants() {
-            self.validate_participant(participant)?;
+        for named in action.participants() {
+            participant(named)?;
         }
         match action {
             Action::Script(name) => {
@@ -470,7 +480,7 @@ impl GameContent {
                     "a conditional action does nothing either way",
                 )?;
                 for action in then.iter().chain(otherwise) {
-                    self.validate_action(action, depth + 1)?;
+                    self.validate_action_naming(action, depth + 1, participant)?;
                 }
             }
             Action::Quest { quest, transition } => {
@@ -554,7 +564,7 @@ impl GameContent {
                 self.game.rules.skill(skill)?;
                 require(*difficulty > 0, "zero check difficulty")?;
                 for action in success.iter().chain(failure) {
-                    self.validate_action(action, depth + 1)?;
+                    self.validate_action_naming(action, depth + 1, participant)?;
                 }
             }
         }

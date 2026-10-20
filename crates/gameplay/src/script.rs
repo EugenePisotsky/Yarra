@@ -3,7 +3,7 @@
 //! scripted and built-in rules go through the same checks and the same command journal.
 use crate::rules::Sheet;
 use crate::tx::Tx;
-use crate::{Action, GameContent, GameEvent, Result, SessionState, Value, quests};
+use crate::{Action, GameContent, GameEvent, Participant, Result, SessionState, Value, quests};
 use game_types::*;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -213,9 +213,15 @@ impl ActScope<'_, '_> {
             others: self.others,
         }
     }
-    /// Runs a built-in action on behalf of `actor`, exactly as authored content would.
+    /// Runs a built-in action on behalf of `actor`, exactly as authored content would, except
+    /// that it may name any actor in the playthrough, spawned from a template or declared.
     pub fn apply(&mut self, actor: ActorId, action: &Action) -> Result<()> {
-        self.content.validate_action(action, 0)?;
+        let state: &SessionState = self.tx;
+        self.content
+            .validate_action_naming(action, 0, &|participant| match participant {
+                Participant::Actor(id) => state.actor(*id).map(|_| ()),
+                _ => Ok(()),
+            })?;
         crate::session::run_action(
             self.content,
             self.tx,
