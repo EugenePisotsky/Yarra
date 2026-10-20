@@ -1,12 +1,16 @@
 //! The ground: terrain v2's clipmap material ([`clipmap`]), its surfaces and textures
-//! ([`ground`]) and the environment it is lit by.
+//! ([`ground`]), the prints feet press into it ([`GroundPresses`]) and the environment it is lit
+//! by.
 pub mod clipmap;
 mod environment;
 mod ground;
+mod prints;
 
 use bevy::prelude::*;
 
 pub use ground::{TerrainMacroVariation, TerrainSurfaceLayer};
+
+pub use prints::{GroundPress, GroundPressSystems, GroundPresses};
 
 /// A value's bytes in WGSL storage-buffer layout, as `ShaderBuffer::from` encoded it before
 /// Bevy 0.20 (whose `ShaderBuffer` now takes plain-old-data vectors).
@@ -20,12 +24,13 @@ where
     buffer.into_inner()
 }
 
-/// Installs terrain v2's clipmap material and the macro-variation switch.
+/// Installs terrain v2's clipmap material, ground prints and the macro-variation switch.
 pub struct TerrainRenderPlugin;
 
 impl Plugin for TerrainRenderPlugin {
     fn build(&self, app: &mut App) {
         clipmap::install(app);
+        prints::install(app);
         app.init_resource::<TerrainMacroVariation>()
             .add_systems(Startup, atmosphere::environment::init_fallback)
             .add_systems(

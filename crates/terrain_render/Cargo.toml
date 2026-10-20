@@ -7,6 +7,7 @@ publish.workspace = true
 [dependencies]
 atmosphere.workspace = true
 bevy.workspace = true
+bytemuck.workspace = true
 half = "2.7"
 world.workspace = true
 ron.workspace = true
@@ -14,6 +15,5 @@ serde.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
-bytemuck.workspace = true
 glam.workspace = true
 shader-check.workspace = true

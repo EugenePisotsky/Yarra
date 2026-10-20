@@ -247,6 +247,7 @@ fn setup(
         texture: Vec4::new(1.0, 1.0, 1.0, 1.0),
         material: Vec4::new(0.3, 0.9, 0.0, 0.0),
         grass: Vec4::ZERO,
+        soft: Vec4::new(0.25, 0.0, 0.0, 0.0),
     };
     let ground = ClipmapGround {
         surfaces: vec![surface; 2],

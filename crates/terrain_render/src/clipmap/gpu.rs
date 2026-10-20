@@ -77,6 +77,8 @@ pub struct ClipmapSurface {
     pub material: Vec4,
     /// The grass field's linear colour and how fully it covers the surface.
     pub grass: Vec4,
+    /// x: how far feet press into it, metres (`world::TerrainSurface::soft_depth`).
+    pub soft: Vec4,
 }
 
 /// Grass covering this much of a surface hides its ground: it shades by the field colour.
@@ -124,6 +126,7 @@ impl ClipmapGround {
                     0.0,
                 ),
                 grass: Vec4::from_array(s.grass),
+                soft: Vec4::new(surface.soft_depth, 0.0, 0.0, 0.0),
             };
         }
 
@@ -179,6 +182,10 @@ pub struct ClipmapTerrainMaterial {
     #[texture(11, dimension = "2d_array")]
     #[sampler(12)]
     wear: Option<Handle<Image>>,
+    #[texture(13, dimension = "2d_array", sample_type = "float", filterable = false)]
+    prints: Option<Handle<Image>>,
+    #[texture(14, sample_type = "u_int")]
+    print_windows: Option<Handle<Image>>,
 }
 
 impl Material for ClipmapTerrainMaterial {
@@ -333,6 +340,8 @@ impl ClipmapTextures {
             normal_material: Some(ground.normal_material),
             macro_variation: Some(ground.macro_variation),
             wear: Some(wear.clone()),
+            prints: Some(crate::prints::map_handle()),
+            print_windows: Some(crate::prints::windows_handle()),
         });
         Self {
             layout,
