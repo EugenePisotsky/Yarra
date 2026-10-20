@@ -1,13 +1,17 @@
 use crate::catalog::{query_world_spaces, read_vegetation_catalog};
+
 use crate::project::query::{
     query_sql_limit, source_cell_from_row, source_object_palette_from_row,
     source_object_view_from_row, validate_spatial_query,
 };
+
 use crate::storage::ensure_schema_version;
+
 use crate::{
     ProjectManifest, SourceCellQuery, SourceObjectOutlinerCursor, SourceObjectOutlinerPage,
     SourceObjectPaletteCursor, SourceObjectPalettePage, SourceObjectViewQuery, WorldDbError,
 };
+
 use rusqlite::{Connection, OpenFlags, params};
 use std::path::Path;
 use vegetation::VegetationCatalog;
@@ -35,12 +39,14 @@ impl ProjectReader {
             [],
             |row| Ok(WorldSpaceId(row.get(0)?)),
         )?;
+
         if !world_spaces
             .iter()
             .any(|space| space.id == default_world_space)
         {
             return Err(WorldDbError::UnknownDefaultWorldSpace(default_world_space));
         }
+
         Ok(Self {
             connection,
             manifest: ProjectManifest {
@@ -152,6 +158,7 @@ impl ProjectReader {
         if maximum_records == 0 {
             return Err(WorldDbError::InvalidQueryLimit);
         }
+
         let sql_limit = query_sql_limit(maximum_records)?;
         let cursor_x = cursor.map(|cursor| cursor.owner_cell.x);
         let cursor_z = cursor.map(|cursor| cursor.owner_cell.z);
@@ -214,6 +221,7 @@ impl ProjectReader {
         if maximum_records == 0 {
             return Err(WorldDbError::InvalidQueryLimit);
         }
+
         let sql_limit = query_sql_limit(maximum_records)?;
         let cursor_key = cursor.map(|cursor| cursor.definition_key.as_str());
         let cursor_definition = cursor.map(|cursor| cursor.definition.0.to_vec());

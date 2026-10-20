@@ -27,9 +27,11 @@ pub(super) fn run(
     let mut reader = match RuntimeReader::open_immutable(&path) {
         Ok(reader) => {
             let opened = DatabaseResult::Opened(Ok(reader.manifest().clone()));
+
             if reply(&results, &cancel, 0, opened).is_err() {
                 return;
             }
+
             reader
         }
         Err(error) => {
@@ -41,6 +43,7 @@ pub(super) fn run(
 
     // The prepared candidate, named by the id of the reload request that opened it.
     let mut candidate: Option<(RequestId, RuntimeReader)> = None;
+
     loop {
         let (id, request) = crossbeam_channel::select_biased! {
             recv(cancel) -> _ => return,
@@ -75,12 +78,14 @@ pub(super) fn run(
                     .map_err(|error| format!("could not reopen {}: {error}", path.display()))
                     .and_then(|opened| {
                         let manifest = opened.manifest().clone();
+
                         if manifest.generation_id != expected_generation {
                             return Err(format!(
                                 "published generation mismatch: expected {expected_generation}, opened {}",
                                 manifest.generation_id
                             ));
                         }
+
                         candidate = Some((id, opened));
                         Ok(manifest)
                     }),
@@ -140,6 +145,7 @@ pub(super) fn run(
                     .map_err(|error| error.to_string())
             })),
         };
+
         if reply(&results, &cancel, id, result).is_err() {
             return;
         }

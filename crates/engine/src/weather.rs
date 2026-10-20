@@ -5,6 +5,7 @@ mod rain;
 use crate::{ActiveWorldSpace, ApplyAtmosphere, AtmosphereOwner, AtmosphereState, TreeWindSystems};
 use bevy::prelude::*;
 use vegetation_render::{VegetationAmbientGain, VegetationWind};
+
 use world::{
     atmosphere::{AtmosphereProfile, evaluate},
     weather::{WeatherKind, WeatherRuntime},
@@ -35,6 +36,7 @@ pub struct GameWeather {
     /// captures of wet ground).
     pub wetness_override: Option<f32>,
 }
+
 impl GameWeather {
     pub fn new(start: WeatherStart, seed: u64) -> Self {
         Self {
@@ -46,16 +48,20 @@ impl GameWeather {
             wetness_override: None,
         }
     }
+
     pub fn start(&self) -> WeatherStart {
         self.start
     }
+
     pub fn seed(&self) -> u64 {
         self.seed
     }
+
     /// None while authored or before the first world space is active.
     pub fn runtime(&self) -> Option<&WeatherRuntime> {
         self.runtime.as_ref()
     }
+
     /// The running weather, starting settled near the authored cloud layer if needed.
     fn running(&mut self, profile: &AtmosphereProfile) -> &mut WeatherRuntime {
         self.runtime.get_or_insert_with(|| {
@@ -67,29 +73,35 @@ impl GameWeather {
             )
         })
     }
+
     /// Blend to `kind` and hold it, starting weather from the authored profile if needed.
     pub fn request(&mut self, profile: &AtmosphereProfile, kind: WeatherKind, seconds: f32) {
         let runtime = self.running(profile);
         runtime.automatic = false;
         runtime.request(kind, seconds);
     }
+
     /// Follow or stop the random sequence, starting weather from the authored profile if needed.
     pub fn set_automatic(&mut self, profile: &AtmosphereProfile, automatic: bool) {
         self.running(profile).automatic = automatic;
     }
+
     /// Start the next scheduled change now, keeping the automatic setting.
     pub fn next_random(&mut self, profile: &AtmosphereProfile) -> WeatherKind {
         self.running(profile).next_random()
     }
+
     /// Return to the authored profile.
     pub fn clear(&mut self) {
         self.runtime = None;
         self.start = WeatherStart::Authored;
     }
+
     fn initialize(&mut self, profile: &AtmosphereProfile) {
         if self.runtime.is_some() {
             return;
         }
+
         self.runtime = match self.start {
             WeatherStart::Authored => None,
             WeatherStart::Automatic => Some(WeatherRuntime::new(
@@ -105,6 +117,7 @@ impl GameWeather {
                 false,
             )),
         };
+
         if let Some(runtime) = &self.runtime {
             info!(
                 "WEATHER start={:?} seed={} initial={:?}",
@@ -117,11 +130,13 @@ impl GameWeather {
 }
 
 pub struct GameWeatherPlugin;
+
 impl Plugin for GameWeatherPlugin {
     fn build(&self, app: &mut App) {
         if !app.world().contains_resource::<GameWeather>() {
             app.insert_resource(GameWeather::new(WeatherStart::Automatic, 0));
         }
+
         crate::lightning::plugin(app);
         app.add_systems(
             PostUpdate,
@@ -157,10 +172,12 @@ pub(crate) fn advance_weather(
         }
         return;
     }
+
     // The authored profile arrives with the first active world space.
     if active.is_some_and(|a| a.current().is_some()) {
         weather.initialize(&atmosphere.profile);
     }
+
     let paused = weather.paused;
     let scale = if weather.time_scale.is_finite() {
         weather.time_scale.clamp(0.0, 1000.0)
@@ -172,12 +189,15 @@ pub(crate) fn advance_weather(
         if runtime.settings() != &atmosphere.profile.weather {
             runtime.set_settings(atmosphere.profile.weather.clone());
         }
+
         if !paused {
             runtime.advance(time.delta_secs() * scale);
         }
+
         runtime.current()
     });
     let target = weather.runtime.as_ref().map(WeatherRuntime::target);
+
     if target != *previous_target {
         if let (Some(target), Some(runtime)) = (target, weather.runtime.as_ref()) {
             info!(
@@ -188,6 +208,7 @@ pub(crate) fn advance_weather(
         }
         *previous_target = target;
     }
+
     let transition = weather.runtime.as_ref().map(WeatherRuntime::transition);
     let wetness = weather.wetness_override.unwrap_or_else(|| {
         weather
@@ -195,6 +216,7 @@ pub(crate) fn advance_weather(
             .as_ref()
             .map_or(0.0, WeatherRuntime::wetness)
     });
+
     if atmosphere.weather != current
         || atmosphere.weather_transition != transition
         || atmosphere.wetness != wetness
@@ -247,6 +269,7 @@ fn apply_weather_wind(
     let strength = base.strength * weather.wind_strength;
     let gustiness = (base.gustiness * weather.wind_gustiness).clamp(0.0, 1.0);
     let rate = base.rate * weather.wind_rate;
+
     // Compare first: VegetationWind is extracted and uploaded when it changes.
     if wind.direction != direction
         || wind.strength != strength
@@ -272,8 +295,10 @@ fn ambient_gain(atmosphere: &AtmosphereState) -> f32 {
     {
         return 1.0;
     }
+
     let ev = |profile: &AtmosphereProfile| evaluate(profile, atmosphere.phase).exposure_ev100;
     let gain = 2_f32.powf(ev(&atmosphere.profile) - ev(&atmosphere.effective_profile()));
+
     if gain.is_finite() {
         gain.clamp(0.0625, 16.0)
     } else {
@@ -290,6 +315,7 @@ fn apply_weather_ambient(
         return;
     };
     let value = ambient_gain(&atmosphere);
+
     if gain.0 != value {
         gain.0 = value;
     }
@@ -342,6 +368,7 @@ mod tests {
         assert_eq!(state.weather, Some(WeatherKind::Storm.preset()));
         let effective = state.effective_profile();
         assert!(effective.clouds.enabled);
+
         // Reduced visibility is fog in front of the unchanged clear-air sky model.
         assert_eq!(effective.visibility_metres, profile.visibility_metres);
         let fog = state.weather_fog().unwrap();

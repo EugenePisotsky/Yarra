@@ -32,6 +32,7 @@ pub struct CookStats {
     pub far_object_blocks: usize,
     pub far_objects: usize,
 }
+
 #[derive(Debug, Clone)]
 pub struct CookReport {
     pub manifest: RuntimeManifest,
@@ -43,11 +44,13 @@ pub struct CookReport {
 pub fn cook_project_with_report(project_path: &Path, runtime_path: &Path) -> Result<CookReport> {
     cook_project_options(project_path, runtime_path, true)
 }
+
 /// Recompiles every cell, ignoring the existing runtime; for sources edited without
 /// revision bumps.
 pub fn cook_project_fresh(project_path: &Path, runtime_path: &Path) -> Result<CookReport> {
     cook_project_options(project_path, runtime_path, false)
 }
+
 fn cook_project_options(
     project_path: &Path,
     runtime_path: &Path,
@@ -56,14 +59,17 @@ fn cook_project_options(
     if runtime_path.exists() && fs::canonicalize(project_path)? == fs::canonicalize(runtime_path)? {
         bail!("source and runtime paths must be different");
     }
+
     let snapshot = ProjectCookSnapshot::open(project_path)
         .with_context(|| format!("failed to open cook snapshot {}", project_path.display()))?;
     cook_snapshot_options(snapshot, runtime_path, incremental)
 }
+
 #[cfg(test)]
 fn cook_snapshot(snapshot: ProjectCookSnapshot, runtime_path: &Path) -> Result<CookReport> {
     cook_snapshot_options(snapshot, runtime_path, true)
 }
+
 fn cook_snapshot_options(
     snapshot: ProjectCookSnapshot,
     runtime_path: &Path,
@@ -73,9 +79,11 @@ fn cook_snapshot_options(
     let plans = prepare_plans(project)?;
     let catalog = project.vegetation_catalog.clone().unwrap_or_default();
     let mut environment_hash = blake3::Hasher::new();
+
     for plan in plans.values() {
         environment_hash.update(&plan.fingerprint());
     }
+
     // This document contains bounded global metadata and no spatial data. Reusing the
     // existing packer keeps the validation/encoding contract common with reference tests.
     let header = build_compiled_runtime(
@@ -85,6 +93,7 @@ fn cook_snapshot_options(
     let mut stats = CookStats::default();
     let start = std::time::Instant::now();
     let mut fingerprints = BTreeMap::new();
+
     for world in &project.world_spaces {
         match project.environments.iter().find(|d| d.space == world.id) {
             Some(definition) => {
@@ -98,6 +107,7 @@ fn cook_snapshot_options(
             None => {}
         }
     }
+
     let staging = RuntimeStaging::new(runtime_path)?;
     let writer = match incremental
         .then(|| continue_publication(runtime_path, &staging.path, &header, &fingerprints))
@@ -111,6 +121,7 @@ fn cook_snapshot_options(
         None => RuntimeCookWriter::create(&staging.path, &header)?,
     };
     let mut changed = crate::terrain_cook::ChangedCells::new();
+
     for world in &project.world_spaces {
         let Some(cells) = fingerprints.get(&world.id) else {
             continue;
@@ -120,6 +131,7 @@ fn cook_snapshot_options(
         } else {
             BTreeMap::new()
         };
+
         // Unchanged cells keep their published pages. Paint-only cells have no pages and
         // are validated again every time.
         let keys: Vec<_> = cells
@@ -132,6 +144,7 @@ fn cook_snapshot_options(
             .iter()
             .find(|d| d.space == world.id)
             .context("world with source cells requires an environment definition")?;
+
         for batch in keys.chunks(world_db::COOK_KEY_BATCH) {
             let compiled = compile_cells(
                 &snapshot,
@@ -160,26 +173,32 @@ fn cook_snapshot_options(
                     domain: PageDomain::Terrain,
                     lod: 0,
                 };
+
                 if stats.incremental {
                     // Cells whose ground page is unchanged keep their terrain nodes.
                     let before = writer.page_checksum(ground)?;
                     let after = compiled.pages.iter().find(|p| p.key == ground);
+
                     if before != after.map(|p| p.checksum) {
                         changed.entry(world.id).or_default().insert(*cell);
                     }
+
                     writer.remove_cell(world.id, *cell)?;
                 }
+
                 writer.append_cell(&compiled, cells[cell].input)?;
                 stats.terrain_cells += 1;
             }
         }
     }
+
     let far = writer.rebuild_far_objects()?;
     stats.far_object_blocks = far.blocks;
     stats.far_objects = far.instances;
     let manifest = writer.finish()?;
     stats.cell_seconds = start.elapsed().as_secs_f64();
     let start = std::time::Instant::now();
+
     // Release the read transaction before hierarchy work and publication. Every leaf
     // has already been evaluated from that one snapshot, including unsampled masks.
     drop(snapshot);
@@ -206,6 +225,7 @@ fn continue_publication(
     if !runtime_path.exists() {
         return Ok(None);
     }
+
     // A copy-on-write clone on APFS; the published file is never opened for writing.
     fs::copy(runtime_path, staging_path)?;
     let Ok(writer) = RuntimeCookWriter::open_incremental(staging_path) else {
@@ -213,10 +233,12 @@ fn continue_publication(
         return Ok(None);
     };
     let mut same = writer.header_hash()? == header.manifest.content_hash;
+
     for (space, cells) in fingerprints {
         if !same {
             break;
         }
+
         let terrain: BTreeSet<_> = cells
             .iter()
             .filter(|(_, f)| f.source)
@@ -229,11 +251,13 @@ fn continue_publication(
             .collect::<BTreeSet<_>>()
             == terrain;
     }
+
     if !same {
         drop(writer);
         fs::remove_file(staging_path)?;
         return Ok(None);
     }
+
     // Outside the header hash, so a moved start does not recook anything.
     writer.set_start_view(header.manifest.start_view.as_ref())?;
     writer.set_gameplay_areas(&header.manifest.gameplay_areas)?;
@@ -262,6 +286,7 @@ fn compile_cells(
             Ok((cell, source))
         })
         .collect::<Result<Vec<_>>>()?;
+
     for (_, source) in &sources {
         stats.peak_source_height_samples = stats
             .peak_source_height_samples
@@ -281,6 +306,7 @@ fn compile_cells(
             .peak_source_road_spans
             .max(source.roads.roads.spans.len());
     }
+
     parallel::map(&sources, |(cell, source)| -> Result<Option<RuntimeBuild>> {
         let cell = *cell;
         let Some(base) = source.source.clone() else {
@@ -318,6 +344,7 @@ fn compile_cells(
 mod tests {
     use super::*;
     use environment::*;
+
     use world_db::{
         EnvironmentCellWrite, EnvironmentCellWriteResult, ProjectWriter, RuntimeReader,
     };
@@ -325,6 +352,7 @@ mod tests {
     struct Fixture {
         dir: std::path::PathBuf,
     }
+
     impl Fixture {
         fn new(project: &ProjectDocument) -> Self {
             static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -338,12 +366,15 @@ mod tests {
             write_project_database(&f.source(), project).unwrap();
             f
         }
+
         fn source(&self) -> std::path::PathBuf {
             self.dir.join("source.sqlite")
         }
+
         fn runtime(&self) -> std::path::PathBuf {
             self.dir.join("runtime.sqlite")
         }
+
         fn assert_no_staging_files(&self) {
             assert!(fs::read_dir(&self.dir).unwrap().all(|e| {
                 !e.unwrap()
@@ -353,11 +384,13 @@ mod tests {
             }));
         }
     }
+
     impl Drop for Fixture {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.dir);
         }
     }
+
     #[test]
     fn atmosphere_only_save_changes_generation_and_round_trips_without_changing_cells() {
         let fixture = Fixture::new(&terrain_fixture::mountain_project(1));
@@ -406,10 +439,12 @@ mod tests {
         assert!(second.stats.incremental);
         assert_eq!(second.stats.terrain_cells, 0);
         assert_eq!(second.manifest.content_hash, first.manifest.content_hash);
+
         // The publication is a new generation all the same, so a running game sees it.
         assert_ne!(second.manifest.generation_id, first.manifest.generation_id);
         let reader = RuntimeReader::open_immutable(&fixture.runtime()).unwrap();
         assert_eq!(&*reader.manifest().gameplay_areas, &areas[..]);
+
         // A cook from scratch carries them too, and is the same generation.
         let full = fixture.dir.join("full.sqlite");
         cook_project_fresh(&fixture.source(), &full).unwrap();
@@ -433,14 +468,17 @@ mod tests {
             assert_eq!(actual.gpu_bytes_estimate, expected.gpu_bytes_estimate);
         }
     }
+
     fn collection_project() -> ProjectDocument {
         let mut project = road_demo::document();
+
         for record in &mut project.roads.records {
             if let world_db::RoadSourceRecord::Profile(p) = record {
                 p.relief.road_depth = 0.1;
                 p.relief.track_depth = 0.04;
             }
         }
+
         let id = PresetId([177; 16]);
         project.presets.presets.push(Preset {
             id,
@@ -487,6 +525,7 @@ mod tests {
         });
         project
     }
+
     #[test]
     fn streamed_cook_matches_reference_pages_including_roads_and_collections() {
         let project = collection_project();
@@ -516,6 +555,7 @@ mod tests {
         assert_eq!(report.manifest.content_hash, repeat.manifest.content_hash);
         fixture.assert_no_staging_files();
     }
+
     #[test]
     fn incremental_cook_recompiles_changed_cells_and_matches_a_full_cook() {
         let project = road_demo::document();
@@ -535,6 +575,7 @@ mod tests {
             .unwrap();
         let mut edited = record.clone();
         let n = project.environments[0].mask_resolution as usize;
+
         // Interior samples only: borders are shared with the neighbouring cells.
         for y in n / 3..n / 2 {
             for x in 1..n - 1 {
@@ -542,6 +583,7 @@ mod tests {
                 *sample = 255 - *sample;
             }
         }
+
         assert!(matches!(
             ProjectWriter::open(&fixture.source())
                 .unwrap()
@@ -577,12 +619,14 @@ mod tests {
             .unwrap();
         let n = usize::from(heightfield.resolution);
         let mut heights = heightfield.heights.clone();
+
         for z in 2..n - 2 {
             for x in 2..n - 2 {
                 let h = &mut heights[z * n + x];
                 *h += if *h > 0.0 { -0.25 } else { 0.25 };
             }
         }
+
         let bytes: Vec<u8> = heights.iter().flat_map(|h| h.to_le_bytes()).collect();
         rusqlite::Connection::open(fixture.source())
             .unwrap()
@@ -603,6 +647,7 @@ mod tests {
         );
         fixture.assert_no_staging_files();
     }
+
     #[test]
     fn one_snapshot_ignores_concurrent_edits_and_failed_cook_keeps_previous_runtime() {
         let project = road_demo::document();
@@ -634,6 +679,7 @@ mod tests {
         );
         let updated = cook_project_with_report(&fixture.source(), &fixture.runtime()).unwrap();
         assert_ne!(old.manifest.content_hash, updated.manifest.content_hash);
+
         // Invalid paint beyond the terrain must fail rather than silently disappear.
         let c = rusqlite::Connection::open(fixture.source()).unwrap();
         c.execute(
@@ -661,6 +707,7 @@ mod tests {
         );
         fixture.assert_no_staging_files();
     }
+
     #[test]
     fn source_and_runtime_must_be_distinct_and_catalog_overflow_is_explicit() {
         let project = road_demo::document();
@@ -678,6 +725,7 @@ mod tests {
         assert!(!fixture.runtime().exists());
         fixture.assert_no_staging_files();
     }
+
     #[test]
     fn missing_road_index_membership_is_rejected_before_publishing() {
         let project = road_demo::document();
@@ -689,12 +737,14 @@ mod tests {
         assert!(format!("{error:#}").contains("road spatial index"));
         assert!(!fixture.runtime().exists());
     }
+
     #[test]
     fn oversized_manual_cell_is_an_error_and_staged_writes_roll_back() {
         let project = road_demo::document();
         let fixture = Fixture::new(&project);
         let mut connection = rusqlite::Connection::open(fixture.source()).unwrap();
         let tx = connection.transaction().unwrap();
+
         {
             let mut q = tx
                 .prepare(
@@ -711,6 +761,7 @@ mod tests {
                 .unwrap();
             }
         }
+
         tx.commit().unwrap();
         drop(connection);
         let error = cook_project_with_report(&fixture.source(), &fixture.runtime()).unwrap_err();
@@ -720,6 +771,7 @@ mod tests {
     }
 
     use crate::terrain_fixture::mountain_project;
+
     #[test]
     fn growing_landscape_keeps_source_sample_residency_constant() {
         let mut last = None;
@@ -728,12 +780,15 @@ mod tests {
             let report = cook_project_with_report(&fixture.source(), &fixture.runtime()).unwrap();
             assert_eq!(report.stats.terrain_cells, (half * 2).pow(2) as u64);
             assert_eq!(report.stats.peak_source_height_samples, 9 * 33 * 33);
+
             if let Some(previous) = last {
                 assert_eq!(previous, report.stats.peak_source_height_samples);
             }
+
             last = Some(report.stats.peak_source_height_samples);
         }
     }
+
     #[test]
     #[ignore = "2km acceptance fixture; run after changing the production cook path"]
     fn two_kilometre_mountain_cooks_with_bounded_source_samples() {

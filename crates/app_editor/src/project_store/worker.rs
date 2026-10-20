@@ -33,9 +33,11 @@ pub(super) fn project_worker(
         .map_err(|error| format!("could not open {} for authoring: {error}", path.display()));
     let opened = open_snapshot(&reader, writer.as_ref().err().cloned());
     let failed = opened.is_err();
+
     if results.send(ProjectResult::Opened(opened)).is_err() || failed {
         return;
     }
+
     while let Ok(request) = requests.recv() {
         let result = match request {
             ProjectRequest::Query {
@@ -153,11 +155,13 @@ fn query_window(
         .environment_coverage
         .then(|| {
             let mut core = Vec::new();
+
             for x in window.minimum.x..=window.maximum.x {
                 for z in window.minimum.z..=window.maximum.z {
                     core.push(CellCoord { x, z });
                 }
             }
+
             reader.read_environment_snapshot(
                 window.space,
                 &world_db::environment_dependency_cells(&core)?,

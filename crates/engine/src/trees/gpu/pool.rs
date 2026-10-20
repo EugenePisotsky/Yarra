@@ -6,6 +6,7 @@ use super::super::impostor::ImpostorBatch;
 use super::forms::TreeForms;
 use super::{ALIVE, FORCED_MASK, FORCED_NOTHING, GpuInstance, MAX_INSTANCES};
 use bevy::prelude::*;
+
 use std::{
     collections::HashMap,
     ops::Range,
@@ -87,11 +88,14 @@ impl PoolData {
 
     fn write(&mut self, start: u32, instances: &[GpuInstance], restart: bool) {
         let end = start + instances.len() as u32;
+
         if self.instances.len() < end as usize {
             self.instances.resize(end as usize, GpuInstance::default());
         }
+
         self.instances[start as usize..end as usize].copy_from_slice(instances);
         self.dirty.push(start..end);
+
         if restart {
             self.restart.push(start..end);
         }
@@ -99,9 +103,11 @@ impl PoolData {
 
     fn set_origin(&mut self, slot: u32, origin: [f32; 4]) {
         let slot = slot as usize;
+
         if self.origins.len() <= slot {
             self.origins.resize(slot + 1, [0.0; 4]);
         }
+
         if self.origins[slot] != origin {
             self.origins[slot] = origin;
             self.origins_dirty = true;
@@ -113,12 +119,14 @@ impl PoolData {
 fn merge(mut ranges: Vec<Range<u32>>) -> Vec<Range<u32>> {
     ranges.sort_by_key(|r| r.start);
     let mut merged: Vec<Range<u32>> = Vec::with_capacity(ranges.len());
+
     for range in ranges {
         match merged.last_mut() {
             Some(last) if range.start <= last.end => last.end = last.end.max(range.end),
             _ => merged.push(range),
         }
     }
+
     merged
 }
 
@@ -179,11 +187,14 @@ impl TreePool {
         if let Some(i) = self.free.iter().position(|r| r.end - r.start >= count) {
             let start = self.free[i].start;
             self.free[i].start += count;
+
             if self.free[i].is_empty() {
                 self.free.remove(i);
             }
+
             return Some(start);
         }
+
         // Grow, taking a free range at the end along.
         let start = match self.free.last() {
             Some(last) if last.end == self.len => self.free.pop().unwrap().start,
@@ -255,14 +266,17 @@ pub(super) fn attach(
                 flags,
             })
             .collect();
+
         {
             let mut data = pool.data.lock().unwrap();
             data.write(start, &instances, true);
             data.set_origin(origin, origin_of(transform, visible.get()));
         }
+
         if pool.counts.len() <= form as usize {
             pool.counts.resize(form as usize + 1, 0);
         }
+
         pool.counts[form as usize] += count;
         let roots = batch
             .instances
@@ -338,18 +352,22 @@ pub(super) fn follow(
         let position = origin_of(transform, visible.get());
         let flags = ALIVE | forced.map_or(0, |f| f.flags());
         let mut data = pool.data.lock().unwrap();
+
         if placed.position != position {
             placed.position = position;
             data.set_origin(placed.origin, position);
         }
+
         if placed.flags != flags {
             placed.flags = flags;
             let mut instances =
                 data.instances[placed.range.start as usize..placed.range.end as usize].to_vec();
+
             for (instance, source) in instances.iter_mut().zip(&batch.instances) {
                 instance.flags = (instance.flags & !FORCED_MASK) | (flags & FORCED_MASK);
                 debug_assert_eq!(instance.scale, source.scale);
             }
+
             data.write(placed.range.start, &instances, false);
         }
     }
@@ -367,10 +385,12 @@ mod tests {
         assert_eq!(pool.allocate(5), Some(15));
         pool.release(0..10);
         pool.release(15..20);
+
         // The end's free range grows in place; the first fits a small batch.
         assert_eq!(pool.allocate(8), Some(0));
         assert_eq!(pool.allocate(12), Some(15));
         assert_eq!(pool.len, 27);
+
         // 8..10 stayed free; giving back 0..8 joins them.
         pool.release(0..8);
         assert_eq!(pool.free, std::iter::once(0..10).collect::<Vec<_>>());

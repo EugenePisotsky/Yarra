@@ -10,7 +10,9 @@ use bevy::{
 
 /// Texels per edge and metres per texel: 128 m around the camera at 0.5 m.
 pub const SIZE: u32 = 256;
+
 pub const METRES_PER_TEXEL: f32 = 0.5;
+
 /// Height stored where nothing shelters a texel.
 const OPEN: f32 = -1.0e6;
 
@@ -34,6 +36,7 @@ pub struct RainShelter {
     texels: Vec<[f32; 2]>,
     revision: u64,
 }
+
 impl Default for RainShelter {
     fn default() -> Self {
         Self {
@@ -44,6 +47,7 @@ impl Default for RainShelter {
         }
     }
 }
+
 impl RainShelter {
     /// Centre of the covered square.
     pub fn centre(&self) -> Vec2 {
@@ -61,33 +65,41 @@ impl RainShelter {
         let half = SIZE as f32 * METRES_PER_TEXEL * 0.5;
         self.origin = ((centre - Vec2::splat(half)) / METRES_PER_TEXEL).floor() * METRES_PER_TEXEL;
         self.texels.fill([OPEN, 0.0]);
+
         for disc in discs {
             if !(disc.radius > 0.0 && disc.radius.is_finite() && disc.top.is_finite()) {
                 continue;
             }
+
             let local = (disc.centre - self.origin) / METRES_PER_TEXEL;
             let reach = disc.radius / METRES_PER_TEXEL + 1.0;
             let min = (local - reach).floor().max(Vec2::ZERO);
             let max = (local + reach).ceil().min(Vec2::splat(SIZE as f32 - 1.0));
+
             if min.x > max.x || min.y > max.y {
                 continue;
             }
+
             for y in min.y as u32..=max.y as u32 {
                 for x in min.x as u32..=max.x as u32 {
                     let texel_centre = Vec2::new(x as f32 + 0.5, y as f32 + 0.5);
                     let distance = (texel_centre - local).length() * METRES_PER_TEXEL;
+
                     // Crowns thin out towards the edge; leaves let some rain through.
                     let t = ((distance - disc.radius * 0.6) / (disc.radius * 0.4)).clamp(0.0, 1.0);
                     let coverage = 0.95 * (1.0 - t * t * (3.0 - 2.0 * t));
+
                     if coverage <= 0.01 {
                         continue;
                     }
+
                     let texel = &mut self.texels[(y * SIZE + x) as usize];
                     texel[0] = texel[0].max(disc.top);
                     texel[1] = texel[1].max(coverage);
                 }
             }
         }
+
         self.enabled = true;
         self.revision = self.revision.wrapping_add(1);
     }
@@ -104,10 +116,12 @@ impl RainShelter {
         if !self.enabled {
             return 1.0;
         }
+
         let texel = (Vec2::new(point.x, point.z) - self.origin) / METRES_PER_TEXEL - 0.5;
         let base = texel.floor();
         let f = texel - base;
         let mut cover = 0.0;
+
         for (dx, dy, w) in [
             (0, 0, (1.0 - f.x) * (1.0 - f.y)),
             (1, 0, f.x * (1.0 - f.y)),
@@ -115,14 +129,18 @@ impl RainShelter {
             (1, 1, f.x * f.y),
         ] {
             let (x, y) = (base.x as i32 + dx, base.y as i32 + dy);
+
             if x < 0 || y < 0 || x >= SIZE as i32 || y >= SIZE as i32 {
                 continue;
             }
+
             let [top, coverage] = self.texels[(y as u32 * SIZE + x as u32) as usize];
+
             if point.y < top {
                 cover += coverage * w;
             }
         }
+
         1.0 - cover
     }
 

@@ -15,30 +15,39 @@
 //! core every second or two of game time, and a 13 MB re-upload, dropped frames at that
 //! interval.)
 use crate::{WorldMoon, WorldSun};
+
 use bevy::{
     asset::RenderAssetUsages,
     image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor},
     prelude::*,
     render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages},
 };
+
 use std::sync::Arc;
+
 pub(crate) mod gpu;
 
 /// Longest side of the map; coarser terrain is averaged down to it.
 const MAX_SIDE: usize = 2048;
+
 /// Horizon search: the first sample a texel away, each next this much further, up to
 /// [`HORIZON_REACH`]. Mountains a few kilometres off still shade a valley at sunset. The
 /// shader's constants must match (its GPU test compares it with the reference here).
 #[cfg(test)]
 const HORIZON_GROWTH: f32 = 1.08;
+
 const HORIZON_REACH: f32 = 6000.0;
+
 /// Sky occlusion: compass directions searched and how far. Further terrain hides little sky.
 #[cfg(test)]
 const SKY_DIRECTIONS: usize = 8;
+
 #[cfg(test)]
 const SKY_GROWTH: f32 = 1.15;
+
 #[cfg(test)]
 const SKY_REACH: f32 = 600.0;
+
 /// Search again when the light's compass direction moves further than this: about every 0.8 s
 /// of game time around noon at the default day length. A shadow a kilometre long then shifts
 /// sideways by about 4 m, half a texel.
@@ -80,20 +89,26 @@ impl TerrainRelief {
         let water = sea_level.unwrap_or(if lowest.is_finite() { lowest } else { 0.0 });
         let mut grid: Vec<f32> = heights.iter().map(|v| v.unwrap_or(water)).collect();
         let mut spacing = metres_per_texel;
+
         while w.max(h) > MAX_SIDE {
             let (half_w, half_h) = (w.div_ceil(2), h.div_ceil(2));
             let mut half = vec![0.0; half_w * half_h];
+
             for z in 0..half_h {
                 for x in 0..half_w {
                     let mut sum = 0.0;
+
                     for (dz, dx) in [(0, 0), (0, 1), (1, 0), (1, 1)] {
                         sum += grid[(2 * z + dz).min(h - 1) * w + (2 * x + dx).min(w - 1)];
                     }
+
                     half[z * half_w + x] = sum * 0.25;
                 }
             }
+
             (grid, w, h, spacing) = (half, half_w, half_h, spacing * 2.0);
         }
+
         Self {
             origin,
             size: UVec2::new(w as u32, h as u32),
@@ -218,6 +233,7 @@ pub(crate) fn follow_light(
     if shadow.relief.is_none() {
         return;
     }
+
     let up = |light: Option<(&Transform, &DirectionalLight)>| {
         light
             .map(|(t, l)| (t.back().as_vec3(), l.illuminance))
@@ -227,11 +243,14 @@ pub(crate) fn follow_light(
         return;
     };
     let azimuth = Vec2::new(to_light.x, to_light.z);
+
     if azimuth.length_squared() < 1e-8 {
         return;
     }
+
     let azimuth = azimuth.normalize();
     let moved = |a: Vec2| a.dot(azimuth) < REBUILD_DEGREES.to_radians().cos();
+
     if shadow.azimuth.is_none_or(moved) {
         shadow.azimuth = Some(azimuth);
     }
@@ -247,16 +266,20 @@ pub(crate) fn publish(
     let Some(assets) = assets else {
         return;
     };
+
     if *published == Some(shadow.revision) {
         return;
     }
+
     // The relief's heights, and a map open to light and sky until the searches fill it.
     if let Some(mut map) = images.get_mut(&assets.terrain_shadow) {
         shadow.sized(&mut map, |r| half_floats(&vec![OPEN; r.heights.len()]));
     }
+
     if let Some(mut heights) = images.get_mut(&assets.terrain_heights) {
         shadow.sized(&mut heights, |r| bytemuck::cast_slice(&r.heights).to_vec());
     }
+
     *published = Some(shadow.revision);
 }
 
@@ -302,19 +325,25 @@ pub(crate) mod reference {
         let here = relief.heights[z * relief.size.x as usize + x];
         let (mut best, mut at) = (f32::NEG_INFINITY, reach);
         let mut r = 1.0_f32;
+
         while r * relief.metres_per_texel <= reach {
             let (sx, sz) = (x as f32 + direction.x * r, z as f32 + direction.y * r);
+
             // A thousandth of a texel of slack: an axis direction's near-zero component must
             // not leave the grid at its edge.
             if sx < -1e-3 || sz < -1e-3 || sx > w - 1.0 + 1e-3 || sz > h - 1.0 + 1e-3 {
                 break;
             }
+
             let tangent = (height(relief, sx, sz) - here) / (r * relief.metres_per_texel);
+
             if tangent > best {
                 (best, at) = (tangent, r * relief.metres_per_texel);
             }
+
             r = (r * growth).max(r + 1.0);
         }
+
         if best.is_finite() {
             (best, at)
         } else {
@@ -385,15 +414,19 @@ pub(crate) mod tests {
     #[test]
     fn a_wall_shades_the_ground_on_its_far_side_only() {
         let relief = wall();
+
         // Light from +X: the wall rises east of texels west of it.
         let map = reference::map(&relief, Vec2::X);
         let at = |x: usize| map[62 * 125 + x];
         let west = at(50);
+
         // Ten texels (80 m) from the wall's near face, 200 m up: tangent 2.5.
         assert!((west[0] - 200.0 / 80.0).abs() < 0.05, "{west:?}");
         assert!((west[3] - 80.0).abs() < 1.0);
+
         // East of the wall nothing rises towards the light.
         assert!(at(80)[0] <= 0.0);
+
         // Light from -X shades the east side instead.
         let back = reference::map(&relief, -Vec2::X);
         assert!(back[62 * 125 + 80][0] > 1.0);

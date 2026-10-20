@@ -15,6 +15,7 @@ pub(super) fn surface(space: i64, x: i32, height: f32) -> StreamedTerrainSurface
             .unwrap(),
     }
 }
+
 fn fields(terrain: &StreamedTerrainSurface) -> StreamedVegetationFieldPage {
     StreamedVegetationFieldPage {
         key: PageKey {
@@ -27,6 +28,7 @@ fn fields(terrain: &StreamedTerrainSurface) -> StreamedVegetationFieldPage {
         },
     }
 }
+
 fn app() -> App {
     let (catalog, origin) = test_world_resources(
         WorldSpaceId(1),
@@ -146,11 +148,13 @@ fn only_joined_source_changes_invalidate_the_scene_and_missing_sources_clear_it(
 #[test]
 fn disabled_grass_stays_current_through_rebase_world_change_and_resume() {
     let mut app = app();
+
     for (space, x, height) in [(1, 10, 1.), (2, 0, 9.)] {
         let terrain = surface(space, x, height);
         app.world_mut().spawn(fields(&terrain));
         app.world_mut().spawn(terrain);
     }
+
     app.world_mut()
         .resource_mut::<WorldViewpoint>()
         .set(world::WorldPosition::from_world(
@@ -222,6 +226,7 @@ fn characters_press_grass_along_their_motion_nearest_first() {
     app.world_mut()
         .resource_mut::<VegetationLodFocus>()
         .position = Some(Vec3::ZERO);
+
     for x in 0..vegetation_render::MAX_GRASS_BENDERS + 4 {
         let motion = crate::actor::CharacterMotion {
             displacement: Vec2::new(0.0, 0.05),
@@ -233,6 +238,7 @@ fn characters_press_grass_along_their_motion_nearest_first() {
             motion,
         ));
     }
+
     app.update();
     let benders = &app
         .world()
@@ -250,11 +256,13 @@ fn characters_press_grass_along_their_motion_nearest_first() {
 #[test]
 fn grass_waits_for_its_leaf_and_for_any_ground() {
     let mut app = app();
+
     for x in [0, 1] {
         let terrain = surface(1, x, 1.);
         app.world_mut().spawn(fields(&terrain));
         app.world_mut().spawn(terrain);
     }
+
     app.insert_resource(ClipmapTerrain::test_flat(
         WorldSpaceId(1),
         CellCoord::ZERO,

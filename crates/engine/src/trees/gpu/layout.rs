@@ -66,6 +66,7 @@ pub(super) fn update(
     mut log_in: Local<u32>,
 ) {
     *log_in = log_in.saturating_sub(1);
+
     if *log_in == 0 {
         *log_in = 600;
         debug!(
@@ -83,19 +84,24 @@ pub(super) fn update(
             projection.pixels_per_metre(),
         );
     }
+
     if projection.pixels_per_metre() <= 0.0 {
         return;
     }
+
     let now = Built {
         forms: forms.revision,
         pool: pool.revision,
         projection: Some(*projection),
     };
+
     if *built == now {
         return;
     }
+
     *built = now;
     let next = build(&forms, &pool.counts, &projection);
+
     if *layout.layout != next {
         layout.layout = Arc::new(next);
     }
@@ -111,11 +117,14 @@ pub(super) fn bands(
 ) -> ([f32; MAX_REPRESENTATIONS], [f32; MAX_REPRESENTATIONS]) {
     let mut start = [-1.0; MAX_REPRESENTATIONS];
     let mut end = [-1.0; MAX_REPRESENTATIONS];
+
     for index in 0..thresholds.len().min(MAX_REPRESENTATIONS) {
         let range = projection.range(thresholds, height, index, f32::INFINITY);
+
         if range.end_margin.end <= 0.0 {
             continue;
         }
+
         start[index] = (range.start_margin.start + range.start_margin.end) * 0.5;
         end[index] = if range.end_margin.end >= f32::MAX {
             f32::MAX
@@ -123,21 +132,26 @@ pub(super) fn bands(
             (range.end_margin.start + range.end_margin.end) * 0.5
         };
     }
+
     (start, end)
 }
 
 pub(super) fn build(forms: &TreeForms, counts: &[u32], projection: &LodProjection) -> Layout {
     let mut layout = Layout::default();
+
     for (index, form) in forms.forms.iter().enumerate() {
         let capacity = counts.get(index).copied().unwrap_or(0);
         let meshes = form.spec.meshes.len();
         let representations = meshes + 1;
+
         // A primitive per mesh LOD, then the impostor; all or none of the form's draws.
         let draws = form.lods.iter().flatten().flatten().count() + 1;
         let fits = layout.entries.len() + draws <= DRAWS;
+
         if form.ready && capacity > 0 && !fits {
             warn_once!("GPU trees: more than {DRAWS} draw entries; some forms are not drawn");
         }
+
         let mut gpu = GpuForm {
             representations: representations as u32,
             meshes: meshes as u32,
@@ -145,20 +159,24 @@ pub(super) fn build(forms: &TreeForms, counts: &[u32], projection: &LodProjectio
             height: form.spec.height,
             ..default()
         };
+
         // The impostor takes over where its views have a texel per output pixel.
         let handoff = projection.impostor_threshold(form.spec.height, form.texels_per_metre);
         let thresholds = form.spec.thresholds(handoff);
         let (start, end) = bands(projection, &thresholds, form.spec.height);
+
         for r in 0..MAX_REPRESENTATIONS {
             gpu.band_start[r / 4][r % 4] = start[r];
             gpu.band_end[r / 4][r % 4] = end[r];
         }
+
         if gpu.ready == 1 {
             let mut add =
                 |layout: &mut Layout, r: usize, drawn: Drawn, centre: Vec4, extent: Vec3| {
                     if gpu.buckets[r / 4][r % 4] == 0 {
                         gpu.first_bucket[r / 4][r % 4] = layout.buckets.len() as u32;
                     }
+
                     gpu.buckets[r / 4][r % 4] += 1;
                     layout.buckets.push(GpuBucket {
                         centre: centre.to_array(),
@@ -174,6 +192,7 @@ pub(super) fn build(forms: &TreeForms, counts: &[u32], projection: &LodProjectio
                         representation: r as u32,
                     });
                 };
+
             for (lod, parts) in form.lods.iter().enumerate() {
                 for part in parts.iter().flatten() {
                     let (lo, hi) = part.bounds;
@@ -189,6 +208,7 @@ pub(super) fn build(forms: &TreeForms, counts: &[u32], projection: &LodProjectio
                     );
                 }
             }
+
             if let Some(material) = &form.impostor {
                 let sphere = form.impostor_sphere;
                 add(
@@ -203,7 +223,9 @@ pub(super) fn build(forms: &TreeForms, counts: &[u32], projection: &LodProjectio
                 );
             }
         }
+
         layout.forms.push(gpu);
     }
+
     layout
 }

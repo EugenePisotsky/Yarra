@@ -1,12 +1,16 @@
 #[path = "support/roads.rs"]
 mod road_support;
+
 mod support;
+
 use environment::*;
 use support::*;
 use world::{AssetId, CellCoord, StaticObjectInstance};
 use yarra_environment_compile::{CompilePlan, TerrainSource, TerrainSourceCell};
+
 const COLLECTION: PresetId = PresetId([71; 16]);
 const TREES: LayerId = LayerId([72; 16]);
+
 fn add_collection(d: &mut EnvironmentDefinition, l: &mut PresetLibrary) {
     l.presets.push(Preset {
         id: COLLECTION,
@@ -49,6 +53,7 @@ fn add_collection(d: &mut EnvironmentDefinition, l: &mut PresetLibrary) {
         imported_mask: None,
     });
 }
+
 fn collection(l: &mut PresetLibrary) -> &mut AssetCollection {
     match &mut l
         .presets
@@ -61,6 +66,7 @@ fn collection(l: &mut PresetLibrary) -> &mut AssetCollection {
         _ => unreachable!(),
     }
 }
+
 #[test]
 fn neighbours_negative_coordinates_batch_order_and_density_are_stable() {
     let (mut d, mut l, p, _) = fixture();
@@ -80,6 +86,7 @@ fn neighbours_negative_coordinates_batch_order_and_density_are_stable() {
             .unwrap()
     );
     let mut world = vec![];
+
     for cell in &batch {
         assert_eq!(*cell, plan.compile_cells(&[cell.cell], &c).unwrap()[0]);
         for o in &cell.objects {
@@ -96,13 +103,16 @@ fn neighbours_negative_coordinates_batch_order_and_density_are_stable() {
             ));
         }
     }
+
     assert!(world.len() > 30);
+
     for (i, (id, a)) in world.iter().enumerate() {
         for (other, b) in &world[i + 1..] {
             assert_ne!(id, other);
             assert!((a[0] - b[0]).hypot(a[1] - b[1]) >= 1.0 - 1e-5);
         }
     }
+
     collection(&mut l).density = 0.35;
     let thin = CompilePlan::new(&d, &p, &l, profile())
         .unwrap()
@@ -111,9 +121,11 @@ fn neighbours_negative_coordinates_batch_order_and_density_are_stable() {
     let all: Vec<_> = batch.iter().flat_map(|c| &c.objects).collect();
     let remaining: Vec<_> = thin.iter().flat_map(|c| &c.objects).collect();
     assert!(!remaining.is_empty() && remaining.len() < all.len());
+
     for object in remaining {
         assert!(all.contains(&object));
     }
+
     collection(&mut l).density = 1.0;
     collection(&mut l).assets.reverse();
     assert_eq!(
@@ -124,6 +136,7 @@ fn neighbours_negative_coordinates_batch_order_and_density_are_stable() {
             .unwrap()
     );
 }
+
 #[test]
 fn paint_holes_exclusions_disabling_and_composition_overrides() {
     let (mut d, mut l, p, _) = fixture();
@@ -207,6 +220,7 @@ fn paint_holes_exclusions_disabling_and_composition_overrides() {
             .all(|c| c.objects.is_empty())
     );
 }
+
 fn terrain(cell: CellCoord, slope: f32) -> TerrainSource {
     let loaded_cells: Vec<_> = (-1..=1)
         .flat_map(|x| {
@@ -236,6 +250,7 @@ fn terrain(cell: CellCoord, slope: f32) -> TerrainSource {
         loaded_cells,
     }
 }
+
 #[test]
 fn entire_road_corridor_and_clearance_are_empty_and_roots_follow_final_terrain() {
     let (mut d, mut l, p, _, mut roads) = road_support::cart_tracks();
@@ -248,11 +263,13 @@ fn entire_road_corridor_and_clearance_are_empty_and_roots_follow_final_terrain()
     roads.profiles[0].relief.road_depth = 0.15;
     let c = snapshot(&d, &CELLS, |_, _, _| 1.0);
     let plan = CompilePlan::new(&d, &p, &l, Default::default()).unwrap();
+
     for cell in CELLS {
         let compiled = plan
             .compile_cell_with_terrain(cell, &c, &roads, &terrain(cell, 0.2), Default::default())
             .unwrap();
         assert!(!compiled.objects.is_empty());
+
         for o in &compiled.objects {
             assert!((o.translation[2] - 4.0).abs() >= 3.5 / 2.0 + 1.0);
             let sampled = compiled
@@ -266,6 +283,7 @@ fn entire_road_corridor_and_clearance_are_empty_and_roots_follow_final_terrain()
             );
         }
     }
+
     collection(&mut l).max_slope_degrees = 5.0;
     let plan = CompilePlan::new(&d, &p, &l, Default::default()).unwrap();
     assert!(
@@ -281,6 +299,7 @@ fn entire_road_corridor_and_clearance_are_empty_and_roots_follow_final_terrain()
         .is_empty()
     );
 }
+
 #[test]
 fn invalid_collection_and_excessive_candidate_work_fail_explicitly() {
     let (mut d, mut l, p, _) = fixture();
@@ -298,6 +317,7 @@ fn invalid_collection_and_excessive_candidate_work_fail_explicitly() {
         .unwrap_err();
     assert!(err.to_string().contains("scatter candidates"));
 }
+
 #[test]
 fn weighted_mix_and_variation_are_deterministic() {
     let (mut d, mut l, p, _) = fixture();
@@ -317,6 +337,7 @@ fn weighted_mix_and_variation_are_deterministic() {
         .count() as f32
         / objects.len() as f32;
     assert!((0.68..0.82).contains(&second), "mix {second}");
+
     for o in objects {
         let a = collection(&mut l)
             .assets

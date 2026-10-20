@@ -26,9 +26,11 @@ pub struct WorldGenerationReload {
 impl WorldGenerationReload {
     pub fn request(&mut self, expected_generation: impl Into<String>) -> bool {
         let expected_generation = expected_generation.into();
+
         if expected_generation.is_empty() || self.queued.is_some() || self.in_flight.is_some() {
             return false;
         }
+
         self.completion = None;
         self.last_error = None;
         self.queued = Some(expected_generation);
@@ -55,12 +57,14 @@ fn compatible_candidate(
     let destination = next.world_space(space).ok_or(
         "published generation removes the active world; enter another world before adopting it",
     )?;
+
     if old
         .and_then(|m| m.world_space(space))
         .is_some_and(|s| s.cell_size.to_bits() != destination.cell_size.to_bits())
     {
         return Err("published generation changes the active world's cell size; reopen the world to adopt its new grid".into());
     }
+
     Ok(())
 }
 
@@ -76,9 +80,11 @@ pub(super) fn request_reload(
     {
         reload.failure = Some(error);
     }
+
     if reload.in_flight.is_some() {
         return;
     }
+
     let Some(generation) = reload.queued.take() else {
         return;
     };
@@ -86,6 +92,7 @@ pub(super) fn request_reload(
         reload.queued = Some(generation);
         return;
     };
+
     match worker.send(DatabaseRequest::Reload {
         expected_generation: generation.clone(),
     }) {
@@ -120,16 +127,19 @@ pub(super) fn advance_reload(
     let Some((id, expected)) = reload.in_flight.clone() else {
         return;
     };
+
     // Terrain v2 reads the new generation in place on its own.
     let Some(worker) = worker else {
         return;
     };
+
     if let Some(error) = reload.failure.clone() {
         // Keep the operation single-flight until the candidate's reader is queued
         // for release. A later retry cannot be cleared by this discard's identity.
         if let Err(NotSent::Full) = worker.send(DatabaseRequest::DiscardReload { reload: id }) {
             return;
         }
+
         reload.candidate = None;
         reload.in_flight = None;
         reload.commit = None;
@@ -139,9 +149,11 @@ pub(super) fn advance_reload(
         reload.completion = Some(Err(error));
         return;
     }
+
     if reload.candidate.is_none() {
         return;
     }
+
     if reload.commit.is_none() {
         match worker.send(DatabaseRequest::CommitReload {
             reload: id,
@@ -155,9 +167,11 @@ pub(super) fn advance_reload(
         }
         return;
     }
+
     if !reload.committed {
         return;
     }
+
     // All remaining operations are infallible moves of already-validated data.
     // Deferred entity changes, catalog identity and completion share this Update.
     let candidate = reload.candidate.take().unwrap();
@@ -235,6 +249,7 @@ mod tests {
         replies: Sender<(RequestId, DatabaseResult)>,
         resident: Entity,
     }
+
     impl Harness {
         fn new() -> Self {
             let (worker, receiver, replies) = WorldDatabaseWorker::test_channel_pair(1, 8);
@@ -288,6 +303,7 @@ mod tests {
                 resident,
             }
         }
+
         fn request(&mut self) -> u64 {
             assert!(
                 self.app
@@ -309,12 +325,14 @@ mod tests {
             self.assert_old();
             id
         }
+
         fn prepared(&mut self, id: u64, candidate: RuntimeManifest) {
             self.replies
                 .send((id, DatabaseResult::Reloaded(Ok(candidate))))
                 .unwrap();
             self.app.update();
         }
+
         /// The commit request for the reload `id`.
         fn commit(&mut self, id: u64) -> u64 {
             let (commit, DatabaseRequest::CommitReload { reload, .. }) =
@@ -325,12 +343,14 @@ mod tests {
             assert_eq!(reload, id);
             commit
         }
+
         fn discarded(&mut self, id: u64) -> bool {
             matches!(
                 self.requests.try_recv().unwrap(),
                 (_, DatabaseRequest::DiscardReload { reload }) if reload == id
             )
         }
+
         fn assert_old(&self) {
             let w = self.app.world();
             assert_eq!(w.resource::<WorldCatalog>().generation_id(), "old");
@@ -347,6 +367,7 @@ mod tests {
             assert!(w.get_entity(self.resident).is_ok());
             assert_eq!(w.resource::<SourceResidency>().pages.len(), 1);
         }
+
         fn completion(&mut self) -> Option<Result<String, String>> {
             self.app
                 .world_mut()
@@ -354,6 +375,7 @@ mod tests {
                 .take_completion()
         }
     }
+
     #[test]
     fn publication_changes_live_state_only_after_matching_commit_acknowledgement() {
         let mut h = Harness::new();
@@ -401,6 +423,7 @@ mod tests {
         for fail_commit in [false, true] {
             let mut h = Harness::new();
             let id = h.request();
+
             if fail_commit {
                 h.prepared(id, manifest("next"));
                 let commit = h.commit(id);
@@ -418,6 +441,7 @@ mod tests {
                     ))
                     .unwrap();
             }
+
             h.app.update();
             h.assert_old();
             assert!(h.completion().unwrap().is_err());
@@ -443,6 +467,7 @@ mod tests {
         h.requests.try_recv().unwrap();
         h.app.update();
         let sent = commit(&h).unwrap();
+
         // Leave the commit occupying the queue while reporting its failure.
         h.replies
             .send((
@@ -467,12 +492,14 @@ mod tests {
             let mut h = Harness::new();
             let id = h.request();
             let mut next = manifest("next");
+
             if remove {
                 next.world_spaces[0].id = WorldSpaceId(2);
                 next.default_world_space = WorldSpaceId(2);
             } else {
                 next.world_spaces[0].cell_size = 64.;
             }
+
             h.prepared(id, next);
             h.assert_old();
             let error = h.completion().unwrap().unwrap_err();

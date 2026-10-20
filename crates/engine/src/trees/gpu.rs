@@ -22,6 +22,7 @@ use bevy::{
         render_resource::{BindGroupLayoutDescriptor, BindGroupLayoutEntries, ShaderStages},
     },
 };
+
 use bytemuck::{Pod, Zeroable};
 
 mod forms;
@@ -29,6 +30,7 @@ mod frame;
 mod layout;
 mod pool;
 mod render;
+
 #[cfg(test)]
 mod tests;
 
@@ -37,13 +39,17 @@ pub(crate) use pool::TreeOverride;
 
 /// Shadow views (cascades of every light that casts) the compute pass culls for.
 const MAX_SHADOW_VIEWS: usize = 8;
+
 /// The main view's records and draws, then each shadow view's.
 const VIEWS: usize = 1 + MAX_SHADOW_VIEWS;
+
 /// Representations per form: mesh LODs, then the impostor.
 const MAX_REPRESENTATIONS: usize = 8;
+
 /// Draw entities, one per draw entry (form, representation and primitive); every view
 /// numbers its entries alike.
 const DRAWS: usize = 2048;
+
 /// Instances the pool can address: records hold the index in 24 bits.
 const MAX_INSTANCES: u32 = 1 << 24;
 
@@ -61,6 +67,7 @@ pub struct TreeInstancing {
     /// entities did.
     pub hidden: bool,
 }
+
 impl Default for TreeInstancing {
     fn default() -> Self {
         Self {
@@ -85,9 +92,11 @@ pub(super) struct GpuInstance {
 
 /// A live pool slot; free slots draw nothing.
 const ALIVE: u32 = 16;
+
 /// The forced representation in an instance's flags: 0 the distance picks, 1 + n
 /// representation n, [`FORCED_NOTHING`] none.
 const FORCED_MASK: u32 = 15;
+
 const FORCED_NOTHING: u32 = 15;
 
 /// A form's representations at unit scale (`Form` in `shaders/tree/lod.wesl`).
@@ -190,9 +199,11 @@ pub(super) fn plugin(app: &mut App) {
                 .after(bevy::transform::TransformSystems::Propagate),
         )
         .add_systems(Startup, render::spawn_draws);
+
     if app.get_sub_app(RenderApp).is_none() {
         return;
     }
+
     let shared = app.world().resource::<pool::TreePool>().shared();
     app.add_plugins((
         ExtractResourcePlugin::<TreeInstancing>::default(),

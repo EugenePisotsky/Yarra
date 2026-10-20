@@ -2,6 +2,7 @@
 mod geometry;
 mod junctions;
 mod relief;
+
 use super::*;
 use environment::roads::*;
 use environment::{GRASS_CHANNEL, PresetKind};
@@ -17,6 +18,7 @@ pub struct RoadCompileProfile {
     pub max_sample_work: usize,
     pub max_intersection_work: usize,
 }
+
 impl Default for RoadCompileProfile {
     fn default() -> Self {
         Self {
@@ -28,6 +30,7 @@ impl Default for RoadCompileProfile {
         }
     }
 }
+
 impl RoadCompileProfile {
     /// Shared by the compiler and authoring controls. Round upwards so an f32 value
     /// at the advertised minimum also satisfies the grid's f64 sampling constraint.
@@ -46,6 +49,7 @@ impl RoadCompileProfile {
         {
             return Err(CompileError::InvalidProfile);
         }
+
         let step = f64::from(cell_size)
             / (f64::from(terrain_resolution) - 1.0).min(f64::from(vegetation_resolution));
         let ceil = |v: f64| {
@@ -70,6 +74,7 @@ pub struct RoadDetailLimits {
     pub edge_softness: f32,
     pub patch_size: f32,
 }
+
 impl RoadDetailLimits {
     /// `shape` as these grids can draw it.
     pub fn broaden(&self, mut shape: world::RoadShape) -> world::RoadShape {
@@ -83,6 +88,7 @@ impl RoadDetailLimits {
         shape
     }
 }
+
 struct PlannedRoad {
     source: Road,
     /// The road's style, its relief at the road's traffic (`RoadWear::relief`).
@@ -94,6 +100,7 @@ struct PlannedRoad {
     ground_preset: environment::Preset,
     curves: Vec<Curve>,
 }
+
 pub(crate) struct RoadPlan {
     roads: Vec<PlannedRoad>,
     junctions: Vec<junctions::PlannedJunction>,
@@ -101,9 +108,11 @@ pub(crate) struct RoadPlan {
     size: f32,
     profile: RoadCompileProfile,
 }
+
 fn road_error(message: &'static str) -> CompileError {
     CompileError::Road(message.into())
 }
+
 impl RoadPlan {
     pub(crate) fn new(
         plan: &CompilePlan,
@@ -112,11 +121,13 @@ impl RoadPlan {
         profile: RoadCompileProfile,
     ) -> Result<Self, CompileError> {
         snapshot.validate()?;
+
         if snapshot.space != plan.definition.space
             || snapshot.cell_size != plan.definition.cell_size
         {
             return Err(road_error("road snapshot belongs to another world/grid"));
         }
+
         if !profile.curve_tolerance.is_finite()
             || !(0.0001..=0.05).contains(&profile.curve_tolerance)
             || !(1..=20).contains(&profile.max_subdivision_depth)
@@ -126,18 +137,22 @@ impl RoadPlan {
         {
             return Err(CompileError::InvalidProfile);
         }
+
         if requested.len() > plan.profile.max_cells_per_batch {
             return Err(CompileError::Budget("requested cells"));
         }
+
         for &cell in requested {
             if !snapshot.loaded_bounds.contains(cell) {
                 return Err(CompileError::RoadWindow(cell));
             }
         }
+
         let mut remaining = profile.max_segments;
         let mut roads = vec![];
         let mut sources = snapshot.roads.iter().collect::<Vec<_>>();
         sources.sort_by_key(|r| (r.order, r.id));
+
         for source in sources {
             let cart = snapshot
                 .profiles
@@ -147,15 +162,19 @@ impl RoadPlan {
             let Some(preset) = plan.presets.get(cart.ground) else {
                 return Err(road_error("missing road ground preset"));
             };
+
             // The road wears the natural ground down to what it wears to; its Ground preset sets
             // only how strongly.
             if !matches!(preset.kind, PresetKind::Ground(_)) {
                 return Err(road_error("road surface must reference a Ground preset"));
             }
+
             if !source.enabled {
                 continue;
             }
+
             let mut spans = vec![];
+
             for span in snapshot.spans.iter().filter(|s| s.road == source.id) {
                 let bounds = influence_bounds(span, cart, snapshot.cell_size)?;
                 let junction = snapshot.junctions.iter().any(|j| {
@@ -163,13 +182,16 @@ impl RoadPlan {
                         && j.bounds(snapshot.cell_size)
                             .is_ok_and(|b| requested.iter().any(|c| b.contains(*c)))
                 });
+
                 if junction || requested.iter().any(|c| bounds.contains(*c)) {
                     spans.push(span);
                 }
             }
+
             if spans.is_empty() {
                 continue;
             }
+
             spans.sort_by_key(|s| s.id);
             let wear = RoadWear::at(source.traffic);
             let baked = profile
@@ -180,6 +202,7 @@ impl RoadPlan {
                 )?
                 .broaden(shape(cart, &wear, source.seed));
             let mut curves = vec![];
+
             for span in spans {
                 curves.push(Curve::build(
                     span,
@@ -189,6 +212,7 @@ impl RoadPlan {
                     &mut remaining,
                 )?);
             }
+
             if !curves.is_empty() {
                 roads.push(PlannedRoad {
                     source: source.clone(),
@@ -203,6 +227,7 @@ impl RoadPlan {
                 });
             }
         }
+
         let junctions = junctions::build(snapshot, &roads, requested, snapshot.cell_size)?;
         geometry::validate_joins_and_crossings(
             &roads,
@@ -210,6 +235,7 @@ impl RoadPlan {
             snapshot.cell_size,
             profile.max_intersection_work,
         )?;
+
         // Corner legs join their arms by design, so come after the crossing checks.
         let limits = profile.detail_limits(
             snapshot.cell_size,
@@ -229,8 +255,10 @@ impl RoadPlan {
         let mut work = 0usize;
         let samples = usize::from(plan.profile.terrain_resolution).pow(2)
             + usize::from(plan.profile.vegetation_resolution).pow(2);
+
         for &cell in requested {
             let mut entries = vec![];
+
             for (r, road) in roads.iter().enumerate() {
                 let curves = road
                     .curves
@@ -239,9 +267,11 @@ impl RoadPlan {
                     .filter(|(_, c)| c.bounds.contains(cell))
                     .map(|(i, _)| i)
                     .collect::<Vec<_>>();
+
                 if curves.is_empty() {
                     continue;
                 }
+
                 let segments = curves
                     .iter()
                     .map(|i| road.curves[*i].vertices.len() - 1)
@@ -249,17 +279,21 @@ impl RoadPlan {
                 work = work.saturating_add(samples.saturating_mul(segments.saturating_add(16)));
                 entries.push((r, curves));
             }
+
             cells.insert(cell, entries);
         }
+
         work = work.saturating_add(
             requested
                 .len()
                 .saturating_mul(samples)
                 .saturating_mul(junctions.len().saturating_mul(16)),
         );
+
         if work > profile.max_sample_work {
             return Err(CompileError::Budget("road sample work"));
         }
+
         Ok(Self {
             roads,
             junctions,
@@ -268,6 +302,7 @@ impl RoadPlan {
             profile,
         })
     }
+
     pub(crate) fn scatter_work(&self) -> usize {
         self.roads
             .iter()
@@ -276,6 +311,7 @@ impl RoadPlan {
             .sum::<usize>()
             + self.junctions.len()
     }
+
     pub(crate) fn blocks_scatter(&self, cell: CellCoord, uv: [f64; 2], clearance: f32) -> bool {
         self.roads.iter().any(|road| {
             road.curves.iter().any(|c| {
@@ -317,31 +353,40 @@ impl RoadPlan {
             * z.wear
             * strength(&road.ground_preset)
     }
+
     /// How much road and junction wear clears grass at `uv` (`environment::roads::grass_cleared`):
     /// the most worn ground in the grass channel.
     pub(crate) fn grass_suppression(&self, cell: CellCoord, uv: [f64; 2]) -> f64 {
         let mut worn = 0.0_f64;
+
         for (index, curves) in &self.cells[&cell] {
             let road = &self.roads[*index];
+
             if road.profile.vegetation_channel != GRASS_CHANNEL {
                 continue;
             }
+
             let mut value = self.worn(road, curves, cell, uv);
+
             for j in &self.junctions {
                 if j.roads.contains(&road.source.id) {
                     let blend = j.blend(cell, uv, self.size);
                     value = value * (1.0 - blend) + j.worn(cell, uv, self.size) * blend;
                 }
             }
+
             worn = worn.max(value);
         }
+
         for j in &self.junctions {
             if j.profile.vegetation_channel == GRASS_CHANNEL {
                 worn = worn.max(j.blend(cell, uv, self.size) * j.worn(cell, uv, self.size));
             }
         }
+
         grass_cleared(worn)
     }
+
     pub(crate) fn fingerprint(
         &self,
         cell: CellCoord,
@@ -350,6 +395,7 @@ impl RoadPlan {
         if self.cells[&cell].is_empty() && !self.junctions.iter().any(|j| j.bounds.contains(cell)) {
             return Ok(base);
         }
+
         let dependencies = self.cells[&cell]
             .iter()
             .map(|(index, curves)| {
@@ -384,6 +430,7 @@ impl RoadPlan {
         Ok(*hash.finalize().as_bytes())
     }
 }
+
 impl RoadPlan {
     /// The roads reaching `cell` as its terrain page carries them: each road's drawing and every
     /// tessellated centre-line segment whose corridor touches the page, in page-local metres.
@@ -401,6 +448,7 @@ impl RoadPlan {
             }
         }
     }
+
     /// A plan road as pages draw it.
     fn terrain_road(&self, index: usize) -> world::TerrainRoad {
         let road = &self.roads[index];
@@ -408,6 +456,7 @@ impl RoadPlan {
         let PresetKind::Ground(ground) = &road.ground_preset.kind else {
             unreachable!()
         };
+
         // Pages wear tracks by the road's strength and its centre and shoulders by shares of it.
         let w = &road.wear;
         world::TerrainRoad {
@@ -419,6 +468,7 @@ impl RoadPlan {
             strength: ground.strength * w.tracks,
         }
     }
+
     pub(crate) fn terrain_roads(&self, cell: CellCoord) -> world::TerrainRoads {
         let mut result = world::TerrainRoads::default();
         let entries = self.cells.get(&cell).map_or(&[][..], Vec::as_slice);
@@ -427,23 +477,29 @@ impl RoadPlan {
             .iter()
             .filter(|j| j.bounds.contains(cell))
             .collect();
+
         if entries.is_empty() && junctions.is_empty() {
             return result;
         }
+
         let size = f64::from(self.size);
+
         // A page road per plan road, in the plan's order; a junction's style road joins the
         // page without segments where none of it passes.
         let mut indices = BTreeMap::new();
+
         for (index, _) in entries {
             indices.insert(*index, result.roads.len() as u16);
             result.roads.push(self.terrain_road(*index));
         }
+
         for j in &junctions {
             indices.entry(j.hub).or_insert_with(|| {
                 result.roads.push(self.terrain_road(j.hub));
                 (result.roads.len() - 1) as u16
             });
         }
+
         for j in junctions {
             result.junctions.push(world::TerrainRoadJunction {
                 centre: j.source.position.relative_to(cell, size).map(|v| v as f32),
@@ -459,10 +515,12 @@ impl RoadPlan {
                     .fold(0, |bits, &i| bits | 1 << i),
             });
         }
+
         for (index, curves) in entries {
             let road = &self.roads[*index];
             let p = &road.profile;
             let local = indices[index];
+
             for &curve in curves {
                 let curve = &road.curves[curve];
                 let origin = curve.source.start.position.cell;
@@ -471,6 +529,7 @@ impl RoadPlan {
                     (f64::from(origin.z) - f64::from(cell.z)) * size,
                 ];
                 let reach = f64::from(p.edge_variation + p.edge_softness);
+
                 for pair in curve.vertices.windows(2) {
                     let (a, b) = (&pair[0], &pair[1]);
                     let pa = [a.point[0] + offset[0], a.point[1] + offset[1]];
@@ -478,9 +537,11 @@ impl RoadPlan {
                     let pad = a.width.max(b.width) * 0.5 + reach;
                     let outside =
                         (0..2).any(|i| pa[i].max(pb[i]) < -pad || pa[i].min(pb[i]) > size + pad);
+
                     if outside {
                         continue;
                     }
+
                     result.segments.push(world::TerrainRoadSegment {
                         a: pa.map(|v| v as f32),
                         b: pb.map(|v| v as f32),
@@ -492,6 +553,7 @@ impl RoadPlan {
                 }
             }
         }
+
         result
     }
 }
@@ -510,6 +572,7 @@ fn shape(p: &CartTrackProfile, wear: &RoadWear, seed: u32) -> world::RoadShape {
         breakup_patch_size: p.breakup_patch_size,
     }
 }
+
 /// How strongly a road's Ground preset wears the ground.
 fn strength(preset: &environment::Preset) -> f64 {
     match &preset.kind {
@@ -517,10 +580,12 @@ fn strength(preset: &environment::Preset) -> f64 {
         _ => 1.0,
     }
 }
+
 fn smooth(t: f64) -> f64 {
     let t = t.clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
 }
+
 impl CompilePlan {
     pub fn compile_cells_with_roads(
         &self,
@@ -531,9 +596,11 @@ impl CompilePlan {
     ) -> Result<Vec<CompiledCell>, CompileError> {
         let queried = if self.has_collections() {
             let mut halo = std::collections::BTreeSet::new();
+
             for &cell in requested {
                 halo.extend(crate::coverage::halo(cell)?.into_iter().map(|(_, _, c)| c));
             }
+
             halo.into_iter().collect::<Vec<_>>()
         } else {
             requested.to_vec()

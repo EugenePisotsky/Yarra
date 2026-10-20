@@ -14,8 +14,10 @@ use world_db::{TerrainImportStats, TerrainImportWriter};
 
 const FORMAT: &str = "yarra-heightfield";
 const VERSION: u32 = 2;
+
 /// 1 GiB of samples, e.g. 16k × 16k.
 const MAX_SAMPLES: usize = 1 << 28;
+
 const MAX_MASKS: usize = 32;
 
 #[derive(Deserialize)]
@@ -69,27 +71,34 @@ impl Heightfield {
     fn load(path: &Path) -> Result<Self> {
         let manifest: Manifest = serde_json::from_slice(&fs::read(path)?)
             .with_context(|| format!("invalid heightfield manifest {}", path.display()))?;
+
         if manifest.format != FORMAT || manifest.version != VERSION {
             bail!("expected a {FORMAT} version {VERSION} manifest");
         }
+
         let [nx, nz] = manifest.samples;
+
         if nx < 2 || nz < 2 || nx.saturating_mul(nz) > MAX_SAMPLES {
             bail!(
                 "heightfield sample counts must be at least 2 and at most {MAX_SAMPLES} in total"
             );
         }
+
         let positive = manifest.spacing.is_finite() && manifest.spacing > 0.;
+
         if !positive
             || !manifest.origin.iter().all(|v| v.is_finite())
             || !manifest.sea_level.is_finite()
         {
             bail!("heightfield spacing must be positive; spacing, origin and sea level finite");
         }
+
         let directory = path.parent().unwrap_or(Path::new("."));
         let read = |name: &Path, bytes_per_sample: usize| -> Result<Vec<u8>> {
             let file = directory.join(name);
             let bytes =
                 fs::read(&file).with_context(|| format!("cannot read {}", file.display()))?;
+
             if bytes.len() != nx * nz * bytes_per_sample {
                 bail!(
                     "{} holds {} bytes, expected {nx} × {nz} samples of {bytes_per_sample} bytes",
@@ -97,6 +106,7 @@ impl Heightfield {
                     bytes.len()
                 );
             }
+
             Ok(bytes)
         };
         let bytes = read(&manifest.heights, 4)?;
@@ -106,18 +116,23 @@ impl Heightfield {
             .iter()
             .map(|b| f32::from_le_bytes(*b))
             .collect();
+
         if heights.iter().any(|h| !h.is_finite()) {
             bail!("{} contains non-finite heights", manifest.heights.display());
         }
+
         let range = heights
             .iter()
             .fold([f32::INFINITY, f32::NEG_INFINITY], |[lo, hi], &h| {
                 [lo.min(h), hi.max(h)]
             });
+
         if manifest.masks.len() > MAX_MASKS {
             bail!("a heightfield may have at most {MAX_MASKS} masks");
         }
+
         let mut masks: Vec<(String, Vec<u8>)> = Vec::with_capacity(manifest.masks.len());
+
         for mask in &manifest.masks {
             if !environment::valid_mask_name(&mask.name) {
                 bail!(
@@ -126,14 +141,18 @@ impl Heightfield {
                     mask.name
                 );
             }
+
             if masks.iter().any(|(name, _)| *name == mask.name) {
                 bail!("mask {:?} appears twice", mask.name);
             }
+
             masks.push((mask.name.clone(), read(&mask.file, 1)?));
         }
+
         if let Some(source) = &manifest.source {
             println!("Heightfield from {source}");
         }
+
         Ok(Self {
             samples: manifest.samples,
             spacing: manifest.spacing,
@@ -187,13 +206,17 @@ impl Heightfield {
         let (wx, wz) = (weights(f.x), weights(f.y));
         let (x, z) = (base.x as isize, base.y as isize);
         let mut height = 0.;
+
         for (j, wz) in wz.iter().enumerate() {
             let mut row = 0.;
+
             for (i, wx) in wx.iter().enumerate() {
                 row += wx * self.sample(x + i as isize - 1, z + j as isize - 1);
             }
+
             height += wz * row;
         }
+
         height
     }
 
@@ -249,6 +272,7 @@ pub struct HeightfieldImportReport {
 pub fn import_heightfield(manifest: &Path, project: &Path) -> Result<HeightfieldImportReport> {
     let start = std::time::Instant::now();
     let field = Heightfield::load(manifest)?;
+
     // World settings are part of every cell's cook inputs. Rounding keeps them, and the
     // incremental cook, stable while the terrain is reshaped.
     let bounds = [
@@ -256,6 +280,7 @@ pub fn import_heightfield(manifest: &Path, project: &Path) -> Result<Heightfield
         ((field.range[1].max(field.sea_level) + 100.) / 100.).ceil() * 100.,
     ];
     let created = !project.exists();
+
     if created {
         write_project_database(
             project,
@@ -263,6 +288,7 @@ pub fn import_heightfield(manifest: &Path, project: &Path) -> Result<Heightfield
         )
         .with_context(|| format!("failed to create {}", project.display()))?;
     }
+
     let mut writer = TerrainImportWriter::open(project, bounds, Some(field.sea_level))?;
     let field = &field;
     let samplers: Vec<_> = (0..field.masks.len())
@@ -288,8 +314,10 @@ pub fn import_heightfield(manifest: &Path, project: &Path) -> Result<Heightfield
         }),
     ];
     let mut flat_cells = 0;
+
     // Rows of cells are built on every core and written here in order.
     let rows: Vec<_> = (first.z..=last.z).collect();
+
     for rows in rows.chunks(4) {
         let cells: Vec<_> = rows
             .iter()
@@ -300,6 +328,7 @@ pub fn import_heightfield(manifest: &Path, project: &Path) -> Result<Heightfield
             writer.put(&cell)?;
         }
     }
+
     let views = views(&height, field)?;
     writer.set_start_view(&views[0].1)?;
     let stats = writer.finish()?;
@@ -342,6 +371,7 @@ mod tests {
     use super::*;
 
     struct Output(PathBuf);
+
     impl Output {
         fn new() -> Self {
             static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -354,6 +384,7 @@ mod tests {
             Self(path)
         }
     }
+
     impl Drop for Output {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
@@ -384,10 +415,12 @@ mod tests {
             })
             .collect();
         fs::write(dir.join("height.f32"), heights).unwrap();
+
         for (name, rule) in masks {
             let samples: Vec<u8> = points.iter().map(|&p| rule(p)).collect();
             fs::write(dir.join(format!("{name}.u8")), samples).unwrap();
         }
+
         let masks: Vec<_> = masks
             .iter()
             .map(|(name, _)| format!(r#"{{"name": "{name}", "file": "{name}.u8"}}"#))
@@ -412,6 +445,7 @@ mod tests {
     fn heightfield_is_interpolated_through_its_samples() {
         let output = Output::new();
         let field = Heightfield::load(&write_field(&output.0, 0.)).unwrap();
+
         // Samples are reproduced exactly; between them the surface is smooth.
         let p = Vec2::new(-127. + 2. * 30., -129. + 2. * 70.);
         let expected = 40. * (1. - p.length() / 70.);
@@ -453,6 +487,7 @@ mod tests {
         assert!(first.created);
         assert_eq!(first.stats.cells, 9 * 9);
         assert_eq!(first.stats.added, first.stats.cells);
+
         // Corner cells lie in flat sea and store no heights.
         assert!(first.flat_cells > 0 && first.flat_cells < first.stats.cells);
         assert_eq!(first.bounds, [-100., 200.]);
@@ -536,6 +571,7 @@ mod tests {
             .unwrap()
             .id;
         let cell = CellCoord { x: 1, z: 0 };
+
         // Empty along the border, which neighbouring cells share.
         let side = terrain_world::MASK_SIDE;
         let painted = environment::CoverageTile {
@@ -609,10 +645,12 @@ mod tests {
     fn mask_names_and_sizes_are_checked() {
         let output = Output::new();
         let project = output.0.join("island.project.sqlite");
+
         for name in ["Sand", "sand", "wet ness"] {
             let manifest = write_field_with_masks(&output.0, 0., &[(name, |_| 0), ("sand", |_| 0)]);
             assert!(import_heightfield(&manifest, &project).is_err(), "{name}");
         }
+
         let manifest = write_field_with_masks(&output.0, 0., &[("sand", |_| 0)]);
         fs::write(output.0.join("sand.u8"), [0; 10]).unwrap();
         let error = import_heightfield(&manifest, &project).unwrap_err();

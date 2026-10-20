@@ -1,5 +1,6 @@
 //! Native scene/material transition regression, deliberately without temporal AA.
 use super::*;
+
 use bevy::{
     app::PluginsState,
     asset::AssetPlugin,
@@ -19,6 +20,7 @@ use bevy::{
     window::ExitCondition,
     winit::WinitPlugin,
 };
+
 use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant},
@@ -26,6 +28,7 @@ use std::{
 
 #[derive(Resource, Clone, Default)]
 struct Probe(Arc<Mutex<Snapshot>>);
+
 #[derive(Default, Debug)]
 struct Snapshot {
     wanted: Vec<(Entity, String)>,
@@ -51,6 +54,7 @@ fn track_draws(
     let mut state = probe.0.lock().unwrap();
     state.ready.clear();
     state.missing.clear();
+
     for (e, name) in state.wanted.clone() {
         let e = MainEntity::from(e);
         let material_ready = instances
@@ -65,6 +69,7 @@ fn track_draws(
             .values()
             .filter_map(|v| v.get(&e))
             .any(|(_, p, _)| pipelines.get_render_pipeline(*p).is_some());
+
         if material_ready && pipeline_ready && prepass_ready {
             state.ready.push(name);
         } else {
@@ -114,10 +119,12 @@ fn check_lods(paths: Vec<String>) {
         .insert_resource(probe.clone())
         .add_systems(Render, track_draws.in_set(RenderSystems::Cleanup));
     let deadline = Instant::now() + Duration::from_secs(60);
+
     while app.plugins_state() != PluginsState::Ready {
         assert!(Instant::now() < deadline);
         bevy::tasks::tick_global_task_pools_on_main_thread();
     }
+
     app.finish();
     app.cleanup();
     let target = app
@@ -150,6 +157,7 @@ fn check_lods(paths: Vec<String>) {
         .spawn((WorldAssetRoot(variants[0].clone()), Transform::default()))
         .id();
     let mut stable = 0;
+
     while stable < 20 {
         assert!(
             Instant::now() < deadline,
@@ -166,19 +174,24 @@ fn check_lods(paths: Vec<String>) {
         drop(state);
         std::thread::sleep(Duration::from_millis(10));
     }
+
     let mut gaps = Vec::new();
+
     for lod in (1..=variants.len() * 2).map(|i| i % variants.len()) {
         app.world_mut().get_mut::<WorldAssetRoot>(root).unwrap().0 = variants[lod].clone();
         for frame in 0..16 {
             app.update();
             let state = probe.0.lock().unwrap();
+
             if state.ready.len() != 2 || !state.missing.is_empty() {
                 gaps.push(format!("lod={lod} frame={frame}: {state:?}"));
             }
+
             drop(state);
             std::thread::sleep(Duration::from_millis(10));
         }
     }
+
     assert!(
         gaps.is_empty(),
         "LOD draw gaps without Temporal:\n{}",

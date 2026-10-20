@@ -1,13 +1,16 @@
 //! Orbit camera construction and follow. Device controls live in the input plugin.
 use super::GameplaySystems;
+
 use crate::{
     MsaaColorStorePolicy, WorldEnvironmentCamera, WorldRenderRoot, WorldStartView, WorldViewCamera,
     actor::CameraTarget,
 };
+
 use bevy::{prelude::*, render::view::Msaa};
 
 /// Spawns and follows the gameplay camera. Requires GameplayPlugin; input is optional.
 pub struct GameCameraPlugin;
+
 impl Plugin for GameCameraPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<crate::WorldStartAdopted>()

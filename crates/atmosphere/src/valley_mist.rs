@@ -12,18 +12,23 @@ use bevy::{
     prelude::*,
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
 };
+
 use std::sync::Arc;
 
 /// Radius of the neighbourhood whose lowest ground is the mist floor: about half a valley's
 /// width, so a floor reaches from the valley bottom up both sides.
 const FLOOR_RADIUS: f32 = 256.0;
+
 /// Smoothing of the floor, so its top has no steps where the lowest point changes.
 const FLOOR_BLUR: f32 = 160.0;
+
 /// Ground is a valley where it lies below the average of its surroundings within this
 /// distance, fully so at [`VALLEY_DEPTH`] below.
 const SURROUNDINGS: f32 = 384.0;
+
 const VALLEY_DEPTH: f32 = 30.0;
 const VALLEY_BLUR: f32 = 96.0;
+
 /// Mist thins out over the sea within about this distance of the shore.
 const SHORE_BLUR: f32 = 192.0;
 
@@ -218,6 +223,7 @@ fn smoothstep(t: f32) -> f32 {
 /// The lowest value within `radius` texels along each axis (a square neighbourhood).
 fn minimum(values: &[f32], w: usize, h: usize, radius: usize) -> Vec<f32> {
     let mut rows = vec![0.0; w * h];
+
     for y in 0..h {
         let row = &values[y * w..(y + 1) * w];
         for x in 0..w {
@@ -228,13 +234,16 @@ fn minimum(values: &[f32], w: usize, h: usize, radius: usize) -> Vec<f32> {
                 .fold(f32::INFINITY, f32::min);
         }
     }
+
     let mut out = vec![0.0; w * h];
+
     for x in 0..w {
         for y in 0..h {
             let (low, high) = (y.saturating_sub(radius), (y + radius).min(h - 1));
             out[y * w + x] = (low..=high).fold(f32::INFINITY, |m, v| m.min(rows[v * w + x]));
         }
     }
+
     out
 }
 
@@ -242,10 +251,12 @@ fn minimum(values: &[f32], w: usize, h: usize, radius: usize) -> Vec<f32> {
 /// repeat the outermost texel.
 fn blur(values: &[f32], w: usize, h: usize, radius: usize) -> Vec<f32> {
     let mut out = values.to_vec();
+
     for _ in 0..2 {
         out = box_pass(&out, w, h, radius, true);
         out = box_pass(&out, w, h, radius, false);
     }
+
     out
 }
 
@@ -256,11 +267,13 @@ fn box_pass(values: &[f32], w: usize, h: usize, radius: usize, along_x: bool) ->
     };
     let mut out = vec![0.0; w * h];
     let span = (2 * radius + 1) as f64;
+
     for line in 0..lines {
         let sample = |i: isize| values[at(line, i.clamp(0, length as isize - 1) as usize)];
         let mut sum: f64 = (-(radius as isize)..=radius as isize)
             .map(|i| f64::from(sample(i)))
             .sum();
+
         for i in 0..length {
             out[at(line, i)] = (sum / span) as f32;
             let i = i as isize;
@@ -268,6 +281,7 @@ fn box_pass(values: &[f32], w: usize, h: usize, radius: usize, along_x: bool) ->
                 f64::from(sample(i + radius as isize + 1)) - f64::from(sample(i - radius as isize));
         }
     }
+
     out
 }
 
@@ -286,9 +300,11 @@ pub(crate) fn mist_share(ua: f32, ub: f32) -> f32 {
             u - 0.5
         }
     };
+
     if (ua - ub).abs() < 1e-4 {
         return (0.5 * (ua + ub)).clamp(0.0, 1.0);
     }
+
     (integral(ua) - integral(ub)) / (ua - ub)
 }
 
@@ -305,11 +321,14 @@ pub(crate) fn haze_depth(
     length: f32,
 ) -> f32 {
     let start = density * (-(y - base).max(0.0) / height).exp();
+
     // Climb in thinning heights, stopping where the ray would sink below the base.
     let climb = (dy * length / height).max(-(y - base).max(0.0) / height);
+
     if climb.abs() < 1e-4 {
         return start * length * (1.0 - 0.5 * climb);
     }
+
     start * length * (1.0 - (-climb).exp()) / climb
 }
 
@@ -341,14 +360,18 @@ mod tests {
         let bottom = at(1000.0);
         assert!((bottom[0] - 40.0).abs() < 1.0, "floor {}", bottom[0]);
         assert!(bottom[1] > 0.9, "valley share {}", bottom[1]);
+
         // Halfway up a side the floor still lies near the valley bottom: the top is level.
         let side = at(1160.0);
         assert!(side[2] > 75.0);
         assert!(side[0] < 52.0, "floor {}", side[0]);
+
         // Ridges are not valleys.
         assert!(at(1500.0)[1] < 0.2, "ridge share {}", at(1500.0)[1]);
+
         // The floor never lies above the ground.
         assert!(map.texels.iter().all(|t| t[0] <= t[2]));
+
         // The sea counts at its surface, and holds mist only near the shore.
         assert_eq!(at(1950.0)[2], 0.0);
         assert_eq!(at(1000.0)[3], 1.0);
@@ -399,6 +422,7 @@ mod tests {
     fn haze_depth_matches_its_density_along_the_ray() {
         let (density, base, height) = (4e-4, 0.0, 150.0);
         let at = |y: f32| density * (-(y - base).max(0.0) / height).exp();
+
         for (y, dy, length) in [
             (2.0, 0.0, 5000.0),
             (2.0, 0.05, 8000.0),

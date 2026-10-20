@@ -14,6 +14,7 @@ pub struct TraceEntry {
     pub generation: u64,
     pub events: Vec<GameEvent>,
 }
+
 pub struct Driver {
     session: GameSession,
     step_ms: u64,
@@ -22,6 +23,7 @@ pub struct Driver {
     trace: VecDeque<TraceEntry>,
     trace_capacity: usize,
 }
+
 impl Driver {
     /// A trace capacity of zero keeps no trace.
     pub fn new(session: GameSession, step_ms: u64, trace_capacity: usize) -> Result<Self> {
@@ -37,17 +39,22 @@ impl Driver {
             trace_capacity,
         })
     }
+
     pub fn session(&self) -> &GameSession {
         &self.session
     }
+
     pub fn state(&self) -> &SessionState {
         self.session.state()
     }
+
     pub fn trace(&self) -> &VecDeque<TraceEntry> {
         &self.trace
     }
+
     pub fn submit(&mut self, command: Command) -> Result<CommandOutcome> {
         let outcome = self.session.apply(command)?;
+
         if self.trace_capacity > 0 {
             if self.trace.len() == self.trace_capacity {
                 self.trace.pop_front();
@@ -57,32 +64,39 @@ impl Driver {
                 events: outcome.events.clone(),
             });
         }
+
         Ok(outcome)
     }
+
     pub fn container_contents(
         &self,
         object: game_types::ObjectId,
     ) -> Result<&inventory::Inventory> {
         self.session.container_contents(object)
     }
+
     /// One step of game time.
     pub fn step(&mut self) -> Result<CommandOutcome> {
         self.submit(Command::AdvanceTime {
             millis: self.step_ms,
         })
     }
+
     /// Lets real time pass. Game time moves on in whole steps; what is left over counts
     /// towards the next call. `None` while less than a step has built up.
     pub fn elapse(&mut self, real: Duration) -> Result<Option<CommandOutcome>> {
         self.unspent += real.min(MAX_ELAPSED);
         let steps = (self.unspent.as_millis() / u128::from(self.step_ms)) as u64;
+
         if steps == 0 {
             return Ok(None);
         }
+
         let millis = steps * self.step_ms;
         self.unspent -= Duration::from_millis(millis);
         self.submit(Command::AdvanceTime { millis }).map(Some)
     }
+
     /// Includes a check before stepping. Timeout is an error; accepted steps remain accepted.
     pub fn advance_until(
         &mut self,
@@ -90,6 +104,7 @@ impl Driver {
         predicate: impl Fn(&SessionState) -> bool,
     ) -> Result<usize> {
         require(max_steps <= 100_000, "headless step budget exceeded")?;
+
         for steps in 0..=max_steps {
             if predicate(self.state()) {
                 return Ok(steps);
@@ -98,11 +113,13 @@ impl Driver {
                 self.step()?;
             }
         }
+
         Err(game_types::Invalid(format!(
             "condition not reached in {max_steps} simulation steps"
         ))
         .into())
     }
+
     /// Carries on with another playthrough, e.g. one just loaded. Real time not yet spent
     /// and the trace go with the old one.
     pub fn replace(&mut self, session: GameSession) {

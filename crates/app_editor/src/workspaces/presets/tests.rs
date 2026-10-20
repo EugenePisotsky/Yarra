@@ -1,5 +1,6 @@
 use super::*;
 use environment::fixtures::*;
+
 /// Tufts grow on the dry ground and meadow grass on the green.
 fn plants(green_grows: bool) -> vegetation::VegetationCatalog {
     let grows = |surface: u8, grass: vegetation::GrassType| vegetation::SurfaceGrass {
@@ -10,14 +11,17 @@ fn plants(green_grows: bool) -> vegetation::VegetationCatalog {
         }],
     };
     let mut surfaces = vec![grows(1, vegetation::fixtures::tufts())];
+
     if green_grows {
         surfaces.push(grows(2, vegetation::fixtures::meadow()));
     }
+
     vegetation::VegetationCatalog {
         surfaces,
         ..vegetation::fixtures::reference_catalog()
     }
 }
+
 fn request() -> fixture::Request {
     let dry = TerrainSurfaceId([1; 16]);
     let green = TerrainSurfaceId([2; 16]);
@@ -34,20 +38,24 @@ fn request() -> fixture::Request {
         underlay: None,
     }
 }
+
 #[test]
 fn names_do_not_invalidate_preview_but_apply_still_validates_them() {
     let original = request();
     let mut renamed = original.clone();
     renamed.library.revision += 1;
+
     for preset in &mut renamed.library.presets {
         preset.name.clear(); // A text field can be empty between Select All and typing.
         preset.revision += 1;
+
         if let environment::PresetKind::Composition(uses) = &mut preset.kind {
             for child in uses {
                 child.name.clear();
             }
         }
     }
+
     assert!(visual_changes::same_library(
         &original.library,
         &renamed.library
@@ -143,6 +151,7 @@ fn road_style_renaming_keeps_preview_geometry_and_refreshes_the_authoring_name()
         styles.draft.as_ref().map(|d| &d.value)
     ));
 }
+
 #[test]
 fn production_patch_is_deterministic_and_coverage_controls_ground_and_grass() {
     let r = request();
@@ -174,6 +183,7 @@ fn production_patch_is_deterministic_and_coverage_controls_ground_and_grass() {
     assert_ne!(a.ground, full.ground);
     assert_ne!(a.ground, hole.ground);
 }
+
 #[test]
 fn exclusions_clear_the_grass_of_the_ground_beneath() {
     let r = fixture::Request {
@@ -202,6 +212,7 @@ fn exclusions_clear_the_grass_of_the_ground_beneath() {
         "grass grows around it"
     );
 }
+
 #[test]
 fn preview_rejects_unbounded_patch_and_groundless_underlay() {
     assert!(
@@ -221,6 +232,7 @@ fn preview_rejects_unbounded_patch_and_groundless_underlay() {
         .is_err()
     );
 }
+
 #[test]
 fn preset_workspace_restores_scene_lighting_wind_and_camera_ownership() {
     use bevy::camera::visibility::RenderLayers;
@@ -267,6 +279,7 @@ fn preset_workspace_restores_scene_lighting_wind_and_camera_ownership() {
         .spawn((Camera::default(), super::super::AnimationWorkspaceCamera))
         .id();
     app.update();
+
     for destination in [
         EditorWorkspace::World,
         EditorWorkspace::Animation,
@@ -313,6 +326,7 @@ fn preset_workspace_restores_scene_lighting_wind_and_camera_ownership() {
 pub(super) fn road_request() -> fixture::Request {
     let mut r = request();
     r.base = TerrainSurfaceId([2; 16]);
+
     // Roads wear the green base down to dry ground.
     r.worn = vec![environment::WornGround {
         surface: TerrainSurfaceId([2; 16]),
@@ -322,6 +336,7 @@ pub(super) fn road_request() -> fixture::Request {
         }],
         trampled: None,
     }];
+
     // The hole in the reference ground shows bare base ground.
     r.plants = plants(false);
     r.underlay = Some(DRY_MEADOW);
@@ -350,9 +365,11 @@ fn road_relief_preview_uses_the_same_heightfield_for_mesh_and_grass() {
     assert_eq!(h.resolution, grass.resolution);
     assert_eq!(h.normals_oct, grass.normals_oct);
     let n = usize::from(h.resolution);
+
     for i in 0..n * n {
         assert_eq!(h.height_at(i % n, i / n), grass.heights[i]);
     }
+
     let mesh = terrain_render::build_heightfield_mesh(h, output.size).unwrap();
     let bevy::mesh::VertexAttributeValues::Float32x3(vertices) =
         mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap()
@@ -360,10 +377,12 @@ fn road_relief_preview_uses_the_same_heightfield_for_mesh_and_grass() {
         panic!()
     };
     assert!(vertices.iter().any(|v| v[1] < -0.15));
+
     for (i, v) in vertices.iter().enumerate() {
         assert_eq!(v[1], grass.heights[i]);
     }
 }
+
 #[test]
 fn road_preview_uses_production_wear_and_preserves_unpainted_holes() {
     for size in [8, 16] {
@@ -375,15 +394,18 @@ fn road_preview_uses_production_wear_and_preserves_unpainted_holes() {
             let repeated = r.clone().compile().unwrap();
             assert_eq!(full.scene, repeated.scene);
             assert_eq!(full.ground, repeated.ground);
+
             // A quiet road leaves the strip between its tracks, over the hole, unworn.
             r.footprint = Footprint::Hole;
             r.road.as_mut().unwrap().traffic = 0.1;
             let worn = r.clone().compile().unwrap();
+
             // Keep the exact road fixture and grid, but make it clear no grass.
             let p = &mut r.road.as_mut().unwrap().profile;
             p.vegetation_channel = environment::ChannelId([0; 16]);
             let untouched = r.compile().unwrap();
             assert_ne!(full.scene.pages, worn.scene.pages);
+
             for (w, u) in worn.scene.pages[0]
                 .fields
                 .iter()
@@ -398,6 +420,7 @@ fn road_preview_uses_production_wear_and_preserves_unpainted_holes() {
                     "the center hole must remain empty"
                 );
             }
+
             assert_eq!(
                 worn.ground, untouched.ground,
                 "grass retention must not change the material mixture"
@@ -405,13 +428,16 @@ fn road_preview_uses_production_wear_and_preserves_unpainted_holes() {
         }
     }
 }
+
 #[test]
 fn road_preview_wears_the_ground_and_its_grass_follows() {
     let mut r = road_request();
     r.underlay = None;
     let worn = r.clone().compile().unwrap();
+
     // Only the worn dry ground grows anything over the bare base.
     assert_eq!(worn.scene.pages[0].fields.len(), 1);
+
     // A world whose ground wears to itself shows its road in neither ground nor grass.
     let mut unworn = r.clone();
     unworn.worn.clear();
@@ -421,6 +447,7 @@ fn road_preview_wears_the_ground_and_its_grass_follows() {
     r.road.as_mut().unwrap().width = 1.0;
     assert!(r.compile().is_err());
 }
+
 #[test]
 fn road_style_draft_participates_in_global_save_guard() {
     let mut state = PresetAuthoringState::default();

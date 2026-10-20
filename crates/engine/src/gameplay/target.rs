@@ -1,15 +1,18 @@
 //! Optional visual feedback for a movement destination.
 use super::GameplaySystems;
+
 use crate::{
     StreamedTerrainSurface, WorldOrigin, WorldRenderRoot,
     actor::{MoveIntent, PlayerControlled},
     sample_resident_terrain_surface,
 };
+
 use bevy::prelude::*;
 
 /// Shows a terrain-aligned destination ring. Requires gameplay, Mesh and StandardMaterial assets.
 /// Omission removes both its startup entity/assets and its update system.
 pub struct MovementTargetPlugin;
+
 impl Plugin for MovementTargetPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, setup_indicator).add_systems(
@@ -20,6 +23,7 @@ impl Plugin for MovementTargetPlugin {
 }
 
 const TARGET_INDICATOR_HEIGHT: f32 = 0.025;
+
 #[derive(Component)]
 pub(super) struct TargetIndicator;
 
@@ -56,6 +60,7 @@ fn setup_indicator(
         Name::new("Movement target indicator"),
     ));
 }
+
 fn update_target_indicator(
     intent: Single<&MoveIntent, With<PlayerControlled>>,
     origin: Res<WorldOrigin>,

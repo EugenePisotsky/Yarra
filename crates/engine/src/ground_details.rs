@@ -6,6 +6,7 @@
 //! root while the page lies within that type's distance: the scene's page content keys survive
 //! rebases, which move the roots with the world.
 use crate::world_streaming::WorldRenderRoot;
+
 use bevy::{
     camera::visibility::VisibilityRange,
     ecs::system::SystemParam,
@@ -15,16 +16,20 @@ use bevy::{
     pbr::gltf::standard_material_from_gltf_material,
     prelude::*,
 };
+
 use std::collections::{HashMap, HashSet};
+
 use vegetation::{
     DetailType, GrassField, GrassTypeId, Lattice, VegetationFieldPage, candidate_domain, hash32,
     random01, sample_candidate,
 };
+
 use vegetation_render::{VegetationRenderOrigin, VegetationSceneState, VegetationView};
 
 /// Pages leave this far beyond their farthest type's distance, so moving back and forth across
 /// the edge does not rebuild them.
 const HYSTERESIS: f32 = 16.0;
+
 /// Share of a type's distance over which its objects dissolve out.
 const FADE_SHARE: f32 = 0.2;
 
@@ -96,6 +101,7 @@ fn place_details(
     mut pages: ResMut<DetailPages>,
 ) {
     let catalog = &scene.scene().catalog;
+
     // New looks or types: place every page again.
     if pages.catalog.as_ref() != Some(catalog) {
         for (_, entity) in pages.pages.drain() {
@@ -103,42 +109,53 @@ fn place_details(
         }
         pages.catalog = Some(catalog.clone());
     }
+
     if catalog.details.is_empty() {
         return;
     }
+
     let ready = load_assets(&catalog.details, &mut sources, &mut assets);
     let Some(camera) = cameras.iter().next().map(GlobalTransform::translation) else {
         return;
     };
     let keys = scene.page_keys();
     let mut live = HashSet::new();
+
     for (index, page) in scene.scene().pages.iter().enumerate() {
         let Some(&key) = keys.get(index) else {
             continue;
         };
         let distance = page_distance(page, camera);
+
         for field in &page.fields {
             let Some(detail) = catalog.detail(field.grass) else {
                 continue;
             };
             let group = (key, field.grass);
             let spawned = pages.pages.contains_key(&group);
+
             if distance > detail.distance + if spawned { HYSTERESIS } else { 0. } {
                 continue;
             }
+
             live.insert(group);
+
             if spawned || !ready.contains(detail.key.as_str()) {
                 continue;
             }
+
             let entity = spawn_group(&mut commands, page, field, detail, origin.world_xz, &assets);
             pages.pages.insert(group, entity);
         }
     }
+
     pages.pages.retain(|group, entity| {
         let keep = live.contains(group);
+
         if !keep {
             commands.entity(*entity).despawn();
         }
+
         keep
     });
 }
@@ -150,13 +167,16 @@ fn load_assets<'a>(
     assets: &mut DetailAssets,
 ) -> HashSet<&'a str> {
     let mut ready = HashSet::new();
+
     for detail in details {
         let mut all = true;
+
         for path in &detail.assets {
             let state = assets
                 .0
                 .entry(path.clone())
                 .or_insert_with(|| AssetState::Loading(sources.server.load(path.clone())));
+
             if let AssetState::Loading(handle) = state {
                 let loaded = sources
                     .gltfs
@@ -175,12 +195,15 @@ fn load_assets<'a>(
                     *state = AssetState::Failed;
                 }
             }
+
             all &= matches!(state, AssetState::Ready(_));
         }
+
         if all {
             ready.insert(detail.key.as_str());
         }
     }
+
     ready
 }
 
@@ -202,6 +225,7 @@ fn type_pieces(detail: &DetailType, assets: &DetailAssets) -> Vec<Piece> {
 fn pieces(meshes: &[Handle<GltfMesh>], sources: &mut Sources) -> Option<Vec<Piece>> {
     let mut converted = HashMap::new();
     let mut pieces = Vec::new();
+
     for handle in meshes {
         let Some(primitive) = sources
             .gltf_meshes
@@ -216,6 +240,7 @@ fn pieces(meshes: &[Handle<GltfMesh>], sources: &mut Sources) -> Option<Vec<Piec
         ) else {
             continue;
         };
+
         // Bounds are only kept once a mesh is on the GPU; read the positions while loading.
         let Ok(VertexAttributeValues::Float32x3(positions)) =
             mesh.try_attribute(Mesh::ATTRIBUTE_POSITION)
@@ -252,6 +277,7 @@ fn pieces(meshes: &[Handle<GltfMesh>], sources: &mut Sources) -> Option<Vec<Piec
                 }),
         });
     }
+
     (!pieces.is_empty()).then_some(pieces)
 }
 
@@ -281,14 +307,17 @@ fn spawn_group(
         ))
         .id();
     let pieces = type_pieces(detail, assets);
+
     if pieces.is_empty() {
         return root;
     }
+
     let range = VisibilityRange {
         start_margin: 0.0..0.0,
         end_margin: detail.distance * (1. - FADE_SHARE)..detail.distance,
         use_aabb: false,
     };
+
     for (piece, transform) in place(page, field, detail, origin, &pieces) {
         let mut object = commands.spawn((
             Mesh3d(piece.mesh.clone()),
@@ -300,13 +329,16 @@ fn spawn_group(
             range.clone(),
             ChildOf(root),
         ));
+
         if !detail.shadows {
             object.insert(NotShadowCaster);
         }
+
         if let Some(tags) = &piece.tags {
             object.insert(tags.clone());
         }
     }
+
     root
 }
 
@@ -328,6 +360,7 @@ fn place<'p>(
     };
     let domain = candidate_domain(canonical(page.origin_xz), page.size, detail);
     let mut objects = Vec::new();
+
     for index in 0..domain.candidate_count() {
         let Some(candidate) = sample_candidate(detail, domain, index) else {
             continue;
@@ -336,15 +369,19 @@ fn place<'p>(
             (f64::from(candidate.root_xz[0]) - origin[0]) as f32,
             (f64::from(candidate.root_xz[1]) - origin[1]) as f32,
         ];
+
         if !page.owns(root) {
             continue;
         }
+
         let surface = page.surface.sample(page.origin_xz, page.size, root);
+
         if surface.validity < 0.5
             || candidate.rank >= field.sample_coverage(page, root) * candidate.clump.retention
         {
             continue;
         }
+
         let seed = hash32(candidate.seed ^ detail.seed());
         let piece = &pieces[seed as usize % pieces.len()];
         let scale =
@@ -367,6 +404,7 @@ fn place<'p>(
             },
         ));
     }
+
     objects
 }
 

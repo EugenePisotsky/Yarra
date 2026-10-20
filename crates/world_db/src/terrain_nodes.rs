@@ -5,6 +5,7 @@ use crate::{EncodedPage, RuntimeManifest, RuntimeReader, WorldDbError, WorldSpac
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 use std::io::{Cursor, Read};
 use std::path::Path;
+
 use world::{
     CellCoord, MAX_TERRAIN_NODE_BYTES, PageCodec, PageDomain, PageKey, RUNTIME_SCHEMA_VERSION,
     TerrainNode, TerrainNodeKey, WorldSpaceId, decode_terrain_node, encode_terrain_node,
@@ -24,12 +25,14 @@ pub struct TerrainNodeDescriptor {
     pub gpu_bytes_estimate: u64,
     pub checksum: [u8; 32],
 }
+
 #[derive(Debug, Clone)]
 pub struct EncodedTerrainNode {
     pub descriptor: TerrainNodeDescriptor,
     pub codec: PageCodec,
     pub payload: Vec<u8>,
 }
+
 impl EncodedTerrainNode {
     pub fn decode(self) -> Result<TerrainNode, WorldDbError> {
         if self.descriptor.decoded_bytes > MAX_TERRAIN_NODE_BYTES as u64
@@ -37,6 +40,7 @@ impl EncodedTerrainNode {
         {
             return Err(invalid("terrain node size limit"));
         }
+
         let bytes = match self.codec {
             PageCodec::Raw => self.payload,
             PageCodec::Zstd => {
@@ -47,12 +51,15 @@ impl EncodedTerrainNode {
                 bytes
             }
         };
+
         if bytes.len() as u64 != self.descriptor.decoded_bytes
             || *blake3::hash(&bytes).as_bytes() != self.descriptor.checksum
         {
             return Err(invalid("terrain node size/checksum mismatch"));
         }
+
         let node = decode_terrain_node(&bytes).map_err(|e| invalid(e.to_string()))?;
+
         if node.key != self.descriptor.key
             || node.child_mask != self.descriptor.child_mask
             || node.height_bounds != self.descriptor.height_bounds
@@ -62,6 +69,7 @@ impl EncodedTerrainNode {
         {
             return Err(invalid("terrain descriptor disagrees with payload"));
         }
+
         Ok(node)
     }
 }
@@ -92,6 +100,7 @@ pub struct PreparedTerrainNode {
     checksum: [u8; 32],
     payload: Vec<u8>,
 }
+
 impl PreparedTerrainNode {
     pub fn new(node: &TerrainNode) -> Result<Self, WorldDbError> {
         let bytes = encode_terrain_node(node).map_err(|e| invalid(e.to_string()))?;
@@ -115,6 +124,7 @@ impl PreparedTerrainNode {
             payload,
         })
     }
+
     pub fn leaf(
         key: TerrainNodeKey,
         field: &world::TerrainHeightfield,
@@ -122,6 +132,7 @@ impl PreparedTerrainNode {
     ) -> Result<Self, WorldDbError> {
         Self::new(&TerrainNode::leaf(key, field, resolution).map_err(|e| invalid(e.to_string()))?)
     }
+
     pub fn key(&self) -> TerrainNodeKey {
         self.key
     }
@@ -130,6 +141,7 @@ impl PreparedTerrainNode {
 pub struct TerrainCookStore {
     connection: Connection,
 }
+
 impl TerrainCookStore {
     fn open(path: &Path) -> Result<Connection, WorldDbError> {
         let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
@@ -138,6 +150,7 @@ impl TerrainCookStore {
             .execute_batch("PRAGMA foreign_keys=ON; PRAGMA cache_size=-8192; BEGIN IMMEDIATE;")?;
         Ok(connection)
     }
+
     pub fn open_staging(path: &Path) -> Result<Self, WorldDbError> {
         let connection = Self::open(path)?;
         let count: i64 = connection.query_row(
@@ -146,11 +159,14 @@ impl TerrainCookStore {
             [],
             |r| r.get(0),
         )?;
+
         if count != 0 {
             return Err(invalid("staging hierarchy is already populated"));
         }
+
         Ok(Self { connection })
     }
+
     /// Continues the hierarchy of a copied publication whose terrain cells are the same set:
     /// nodes are replaced in place, so the tree keeps its shape, and `finish` seals it again.
     pub fn open_incremental(path: &Path) -> Result<Self, WorldDbError> {
@@ -159,6 +175,7 @@ impl TerrainCookStore {
             .execute_batch("DELETE FROM terrain_roots; DELETE FROM terrain_hierarchy_spaces;")?;
         Ok(Self { connection })
     }
+
     /// Inserts a new node, or with `replace` overwrites an existing one in place.
     pub fn write(&self, node: &PreparedTerrainNode, replace: bool) -> Result<(), WorldDbError> {
         let key = node.key;
@@ -180,6 +197,7 @@ impl TerrainCookStore {
             node.checksum.as_slice(),
             node.payload,
         ];
+
         if replace {
             let changed = self.connection.execute(
                 "UPDATE terrain_nodes SET parent_x=?5, parent_z=?6, child_mask=?7, minimum_y=?8, \
@@ -201,8 +219,10 @@ impl TerrainCookStore {
                 values,
             )?;
         }
+
         Ok(())
     }
+
     #[cfg(test)]
     pub fn insert_leaf(
         &self,
@@ -211,14 +231,17 @@ impl TerrainCookStore {
         resolution: u16,
     ) -> Result<(), WorldDbError> {
         let node = PreparedTerrainNode::leaf(key, field, resolution)?;
+
         if self
             .leaf_page(key.space, CellCoord { x: key.x, z: key.z })?
             .is_none()
         {
             return Err(invalid("terrain leaf has no source page"));
         }
+
         self.write(&node, false)
     }
+
     /// Children are loaded and released per parent; no whole level of sample data is retained.
     #[cfg(test)]
     pub fn build_parent(&self, key: TerrainNodeKey) -> Result<(), WorldDbError> {
@@ -231,6 +254,7 @@ impl TerrainCookStore {
             .map_err(|e| invalid(e.to_string()))?;
         self.write(&PreparedTerrainNode::new(&node)?, false)
     }
+
     /// The stored children of `key`, in child order.
     pub fn children(
         &self,
@@ -241,11 +265,14 @@ impl TerrainCookStore {
             .map_err(|e| invalid(e.to_string()))?
             .ok_or(invalid("parent level"))?;
         let mut children: [Option<EncodedTerrainNode>; 4] = Default::default();
+
         for (child, key) in children.iter_mut().zip(keys) {
             *child = read_encoded(&self.connection, key)?;
         }
+
         Ok(children)
     }
+
     /// The hierarchy grid: the finest ground page resolution among the world's cells, and
     /// at least three samples, which stitching needs even in flat worlds.
     pub fn grid_resolution(&self, space: WorldSpaceId) -> Result<u16, WorldDbError> {
@@ -256,6 +283,7 @@ impl TerrainCookStore {
         )?;
         Ok(finest.unwrap_or(0).max(3))
     }
+
     /// The grid the stored leaves were built with, if there are any.
     pub fn stored_resolution(&self, space: WorldSpaceId) -> Result<Option<u16>, WorldDbError> {
         Ok(self
@@ -267,6 +295,7 @@ impl TerrainCookStore {
             )
             .optional()?)
     }
+
     pub fn leaf_page(
         &self,
         space: WorldSpaceId,
@@ -282,6 +311,7 @@ impl TerrainCookStore {
             },
         )
     }
+
     pub fn contains(&self, key: TerrainNodeKey) -> Result<bool, WorldDbError> {
         Ok(self.connection.query_row(
             "SELECT EXISTS(SELECT 1 FROM terrain_nodes WHERE world_space_id=?1 AND level=?2 AND \
@@ -290,11 +320,13 @@ impl TerrainCookStore {
             |r| r.get(0),
         )?)
     }
+
     pub fn read(&self, key: TerrainNodeKey) -> Result<Option<TerrainNode>, WorldDbError> {
         read_encoded(&self.connection, key)?
             .map(EncodedTerrainNode::decode)
             .transpose()
     }
+
     /// Keyset pagination returns all matching keys over successive calls; never a spatial truncation.
     pub fn keys(
         &self,
@@ -326,6 +358,7 @@ impl TerrainCookStore {
             )?
             .collect::<Result<_, _>>()?)
     }
+
     /// Up to `limit` ground pages after `after`, in cell order.
     pub fn leaf_pages(
         &self,
@@ -362,6 +395,7 @@ impl TerrainCookStore {
             })
             .collect()
     }
+
     /// Seal a bounded coarse cover and fold all products into the generation's identity.
     pub fn finish(
         self,
@@ -371,12 +405,15 @@ impl TerrainCookStore {
         let supplied: std::collections::BTreeSet<_> = spaces.iter().map(|s| s.id).collect();
         let expected: std::collections::BTreeSet<_> =
             manifest.world_spaces.iter().map(|s| s.id).collect();
+
         if supplied != expected || supplied.len() != spaces.len() {
             return Err(invalid(
                 "hierarchy world-space list disagrees with staged generation",
             ));
         }
+
         let mut summaries = Vec::new();
+
         for space in spaces {
             self.connection.execute(
                 "INSERT INTO terrain_roots(world_space_id, level, node_x, node_z) SELECT \
@@ -395,6 +432,7 @@ impl TerrainCookStore {
                 [space.id.0],
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )?;
+
             if roots > MAX_TERRAIN_COARSE_ROOTS as i64
                 || decoded > 32 * 1024 * 1024
                 || gpu > 128 * 1024 * 1024
@@ -403,6 +441,7 @@ impl TerrainCookStore {
                     "coarse terrain cover exceeds count or memory budget",
                 ));
             }
+
             let (nodes, leaves): (i64, i64) = self.connection.query_row(
                 "SELECT count(*), coalesce(sum(level=0), 0) FROM terrain_nodes \
                  WHERE world_space_id=?1",
@@ -419,9 +458,11 @@ impl TerrainCookStore {
                 [space.id.0],
                 |r| r.get(0),
             )?;
+
             if leaves != expected || leaves != covered {
                 return Err(invalid("terrain hierarchy does not cover staged terrain"));
             }
+
             self.connection.execute(
                 "INSERT INTO terrain_hierarchy_spaces( \
                      world_space_id, node_count, leaf_count, root_count \
@@ -437,18 +478,22 @@ impl TerrainCookStore {
                 root_gpu_bytes: gpu as u64,
             });
         }
+
         let mut hasher = blake3::Hasher::new();
         hasher.update(b"terrain-hierarchy-v1");
         hasher.update(&read_runtime_manifest(&self.connection)?.content_hash);
+
         {
             let mut query = self.connection.prepare(
                 "SELECT checksum FROM terrain_nodes ORDER BY world_space_id, level, node_x, node_z",
             )?;
             let mut rows = query.query([])?;
+
             while let Some(row) = rows.next()? {
                 hasher.update(row.get_ref(0)?.as_blob().map_err(rusqlite::Error::from)?);
             }
         }
+
         let hash = hasher.finalize();
         let generation = crate::gameplay_areas::generation_id(&self.connection, hash.as_bytes())?;
         self.connection.execute(
@@ -475,9 +520,11 @@ impl RuntimeReader {
             )
             .optional()?;
         let expected = expected.ok_or(invalid("terrain hierarchy has not been cooked"))?;
+
         if expected < 0 || expected > MAX_TERRAIN_COARSE_ROOTS as i64 {
             return Err(invalid("terrain root count limit"));
         }
+
         let mut query=self.connection.prepare_cached("SELECT level, node_x, node_z FROM terrain_roots WHERE world_space_id=?1 ORDER BY level, \
              node_x, node_z LIMIT ?2")?;
         let keys = query
@@ -490,23 +537,28 @@ impl RuntimeReader {
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
+
         if keys.len() as i64 != expected {
             return Err(invalid("terrain root index mismatch"));
         }
+
         let roots: Vec<_> = keys
             .into_iter()
             .map(|key| {
                 read_descriptor(&self.connection, key)?.ok_or(invalid("missing terrain root"))
             })
             .collect::<Result<_, _>>()?;
+
         if roots.iter().any(|r| r.resolution.is_none())
             || roots.iter().map(|r| r.decoded_bytes).sum::<u64>() > 32 * 1024 * 1024
             || roots.iter().map(|r| r.gpu_bytes_estimate).sum::<u64>() > 128 * 1024 * 1024
         {
             return Err(invalid("terrain root memory/coverage limit"));
         }
+
         Ok(roots)
     }
+
     pub fn read_terrain_node_descriptors(
         &self,
         keys: &[TerrainNodeKey],
@@ -518,6 +570,7 @@ impl RuntimeReader {
             .map(|&key| read_descriptor(&self.connection, key))
             .collect()
     }
+
     pub fn read_terrain_node(
         &self,
         key: TerrainNodeKey,
@@ -551,6 +604,7 @@ fn read_descriptor(
             },
         )
         .optional()?;
+
     if let Some(d) = &descriptor {
         let expected_gpu = if let Some(n) = d.resolution {
             if !(2..=world::MAX_TERRAIN_HEIGHTFIELD_RESOLUTION).contains(&n)
@@ -558,6 +612,7 @@ fn read_descriptor(
             {
                 return Err(invalid("terrain descriptor resolution"));
             }
+
             let n = u64::from(n);
             n * n * 48 + (n - 1) * (n - 1) * 6 * 4
         } else {
@@ -579,8 +634,10 @@ fn read_descriptor(
             return Err(invalid("terrain descriptor bounds/size"));
         }
     }
+
     Ok(descriptor)
 }
+
 fn read_encoded(
     c: &Connection,
     key: TerrainNodeKey,
@@ -594,9 +651,11 @@ fn read_encoded(
         params![key.space.0, key.level, key.x, key.z],
         |r| {
             let bytes = r.get_ref(1)?.as_blob()?;
+
             if bytes.len() > MAX_TERRAIN_NODE_BYTES {
                 return Err(rusqlite::Error::InvalidQuery);
             }
+
             let codec = PageCodec::try_from(r.get::<_, i64>(0)?)
                 .map_err(|_| rusqlite::Error::InvalidQuery)?;
             Ok((codec, bytes.to_vec()))
@@ -608,6 +667,7 @@ fn read_encoded(
         payload,
     }))
 }
+
 fn invalid(message: impl Into<String>) -> WorldDbError {
     WorldDbError::TerrainHierarchy(message.into())
 }
@@ -625,6 +685,7 @@ mod tests {
         build: RuntimeBuild,
         field: TerrainHeightfield,
     }
+
     impl Fixture {
         fn new(count: i32) -> Self {
             static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -702,10 +763,12 @@ mod tests {
             write_runtime_database(&path, &build).unwrap();
             Self { path, build, field }
         }
+
         fn key(x: i32) -> TerrainNodeKey {
             TerrainNodeKey::leaf(WorldSpaceId(1), CellCoord { x, z: 0 })
         }
     }
+
     impl Drop for Fixture {
         fn drop(&mut self) {
             let _ = fs::remove_file(&self.path);
@@ -716,11 +779,13 @@ mod tests {
     fn node_reads_are_bounded_and_reject_corruption() {
         let fixture = Fixture::new(2);
         let store = TerrainCookStore::open_staging(&fixture.path).unwrap();
+
         for x in 0..2 {
             store
                 .insert_leaf(Fixture::key(x), &fixture.field, 33)
                 .unwrap();
         }
+
         let parent = Fixture::key(0).parent().unwrap().unwrap();
         store.build_parent(parent).unwrap();
         assert!(store.read(parent).unwrap().unwrap().heightfield.is_none());
@@ -764,12 +829,14 @@ mod tests {
     #[test]
     fn interrupted_or_incomplete_cook_does_not_seal_or_change_generation() {
         let fixture = Fixture::new(2);
+
         {
             let store = TerrainCookStore::open_staging(&fixture.path).unwrap();
             store
                 .insert_leaf(Fixture::key(0), &fixture.field, 2)
                 .unwrap();
         }
+
         let store = TerrainCookStore::open_staging(&fixture.path).unwrap();
         assert!(
             store
@@ -790,22 +857,28 @@ mod tests {
     fn paginated_keys_do_not_silently_drop_terrain_and_coarse_cover_is_limited() {
         let fixture = Fixture::new(257);
         let store = TerrainCookStore::open_staging(&fixture.path).unwrap();
+
         for x in 0..257 {
             store
                 .insert_leaf(Fixture::key(x), &fixture.field, 2)
                 .unwrap();
         }
+
         let mut cursor = None;
         let mut count = 0;
+
         loop {
             let keys = store.keys(WorldSpaceId(1), 0, cursor).unwrap();
+
             if keys.is_empty() {
                 break;
             }
+
             assert!(keys.len() <= MAX_TERRAIN_NODE_QUERY);
             count += keys.len();
             cursor = keys.last().map(|k| CellCoord { x: k.x, z: k.z });
         }
+
         assert_eq!(count, 257);
         assert!(
             store

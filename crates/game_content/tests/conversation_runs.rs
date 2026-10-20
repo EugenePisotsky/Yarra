@@ -1,25 +1,34 @@
 use game_types::*;
 use gameplay::dialogue::{ArgumentSource, Dialogue, HistoryEvent, Node, Repeat, Role, Token};
 use gameplay::quests::Transition;
+
 use gameplay::{
     Action, Command, Condition, ConversationKey, GameEvent, Participant, Test, Value,
     VariableDefinition, VariableKey, VariableScope,
     fixtures::{COMPANION, HERO, MERCHANT, key},
 };
+
 use gameplay::{dialogue, inventory};
 use save::{SaveDirectory, SaveSlot};
 use yarra_game_content::*;
+
 mod support;
+
 use support::{Temp, read, write};
+
 const REWARD: DialogueId = DialogueId::named("guard/reward");
 const DUTY: DialogueId = DialogueId::named("guard/duty");
 const A: DialogueId = DialogueId::named("guard/welcome_a");
 const B: DialogueId = DialogueId::named("guard/welcome_b");
+
 /// The reward the guard's own script gives once.
 const REWARDED: VariableId = VariableId::named("guard/rewarded");
+
 /// The reward `reward_source` gives once, for the playthrough or for each player.
 const THANKED: VariableId = VariableId::named("guard/thanked");
+
 const GATE: QuestId = QuestId::named("guard/gate");
+
 fn pair(dialogue: DialogueId) -> ConversationKey {
     ConversationKey {
         dialogue,
@@ -27,6 +36,7 @@ fn pair(dialogue: DialogueId) -> ConversationKey {
         speaker: MERCHANT,
     }
 }
+
 /// The merchant built from the guard's template, so it has the guard's conversations.
 fn merchant_as_guard(root: &std::path::Path) {
     let path = root.join("packages/core/characters.ron");
@@ -35,11 +45,13 @@ fn merchant_as_guard(root: &std::path::Path) {
     merchant.template = ActorTemplateId::named("gate_guard");
     write(path, &characters);
 }
+
 fn load(temp: &Temp, root: &std::path::Path) -> (LoadedProject, gameplay::GameSession) {
     let project = LoadedProject::load_directory(root).unwrap();
     let session = support::runtime(temp, &project);
     (project, session)
 }
+
 fn start(session: &mut gameplay::GameSession, key: ConversationKey) {
     session
         .apply(Command::StartDialogue {
@@ -50,12 +62,15 @@ fn start(session: &mut gameplay::GameSession, key: ConversationKey) {
         })
         .unwrap();
 }
+
 fn read_lines(session: &mut gameplay::GameSession, key: ConversationKey) {
     for _ in 0..64 {
         let view = session.conversation_view(key).unwrap();
+
         if view.line.is_none() {
             return;
         }
+
         session
             .apply(Command::AdvanceLine {
                 key,
@@ -65,6 +80,7 @@ fn read_lines(session: &mut gameplay::GameSession, key: ConversationKey) {
     }
     panic!("line budget exhausted");
 }
+
 fn choose(
     session: &mut gameplay::GameSession,
     key: ConversationKey,
@@ -82,9 +98,11 @@ fn choose(
         })
         .unwrap()
 }
+
 fn key_fn(s: &str) -> Key {
     key(s)
 }
+
 fn history(
     session: &mut gameplay::GameSession,
     project: &LoadedProject,
@@ -97,13 +115,16 @@ fn history(
         .history_key(key.participant, key.speaker);
     session.state().history(key).clone()
 }
+
 fn given(session: &gameplay::GameSession, variable: VariableId, actor: Option<ActorId>) -> bool {
     let key = VariableKey { variable, actor };
     session.state().variable(session.content(), key).unwrap() == Value::Bool(true)
 }
+
 fn node<'a>(graph: &'a mut Dialogue, id: &str) -> &'a mut Node {
     graph.nodes.iter_mut().find(|n| n.id == key(id)).unwrap()
 }
+
 /// A reward given once, whether for the playthrough or for each player, however often the
 /// choice that gives it is picked.
 fn reward_source(root: &std::path::Path, scope: VariableScope) {
@@ -149,6 +170,7 @@ fn reward_source(root: &std::path::Path, scope: VariableScope) {
     }];
     let reward = reward.clone();
     write(graph_path, &graph);
+
     // The same variable can guard a reward offered by another graph or NPC.
     let second = root.join("packages/guard/conversations/duty.dialogue.ron");
     let mut duty: dialogue::Dialogue = read(&second);
@@ -165,6 +187,7 @@ fn a_reward_given_once_stays_given_across_graphs_npcs_and_a_restore() {
     let root = temp.source();
     reward_source(&root, VariableScope::Playthrough);
     let (project, mut session) = load(&temp, &root);
+
     for k in [
         pair(REWARD),
         pair(REWARD),
@@ -178,6 +201,7 @@ fn a_reward_given_once_stays_given_across_graphs_npcs_and_a_restore() {
         read_lines(&mut session, k);
         choose(&mut session, k, "return-key");
     }
+
     assert!(given(&session, THANKED, None));
     assert_eq!(session.state().party.experience, 10);
     assert_eq!(
@@ -212,6 +236,7 @@ fn a_reward_given_once_per_player_is_still_there_for_the_next() {
     let root = temp.source();
     reward_source(&root, VariableScope::Actor);
     let (_, mut session) = load(&temp, &root);
+
     for (rewards, player) in [(1, HERO), (2, COMPANION)] {
         let k = ConversationKey {
             participant: player,
@@ -221,6 +246,7 @@ fn a_reward_given_once_per_player_is_still_there_for_the_next() {
         read_lines(&mut session, k);
         choose(&mut session, k, "return-key");
         assert!(given(&session, THANKED, Some(player)));
+
         // Each of them earns it; the experience goes to the party either way.
         assert_eq!(session.state().party.experience, 10 * rewards);
     }
@@ -338,6 +364,7 @@ fn three_roles_bind_localized_names_and_numeric_attributes_and_restore() {
         },
     );
     write(graph_path, &graph);
+
     // Using it in the English text is what gives the message the argument.
     for locale in ["en", "uk"] {
         let p = root.join(format!("packages/guard/{locale}.ftl"));
@@ -354,6 +381,7 @@ fn three_roles_bind_localized_names_and_numeric_attributes_and_restore() {
             .collect();
         std::fs::write(p, lines.join("\n") + "\n").unwrap();
     }
+
     let mut scenario: Scenario = read(root.join("scenario.ron"));
     scenario
         .actors
@@ -388,11 +416,13 @@ fn three_roles_bind_localized_names_and_numeric_attributes_and_restore() {
     let view = session.conversation_view(k).unwrap();
     let text = &view.line.as_ref().unwrap().text;
     assert_eq!(text.arguments["strength"], BoundArgument::Number(10));
+
     for locale in ["en", "uk"] {
         let formatted = project.localization().format_bound(locale, text).unwrap();
         assert!(formatted.value.contains("Ada") && formatted.value.contains("10"));
         assert_eq!(formatted.locale.as_deref(), Some(locale));
     }
+
     assert_eq!(session.header(), before);
     session
         .apply(Command::AdvanceLine {
@@ -424,6 +454,7 @@ fn hub_choices_repeat_per_run_or_history_and_npc_instances_stay_independent() {
     let root = temp.source();
     let path = root.join("packages/guard/conversations/welcome-a.dialogue.ron");
     let mut graph: dialogue::Dialogue = read(&path);
+
     for (id, repeat) in [("run", Repeat::OncePerRun), ("ever", Repeat::OnceEver)] {
         let mut choice = node(&mut graph, "leave").clone();
         choice.id = key(id);
@@ -434,6 +465,7 @@ fn hub_choices_repeat_per_run_or_history_and_npc_instances_stay_independent() {
             .push(choice.id.clone());
         graph.nodes.push(choice);
     }
+
     write(path, &graph);
     let (project, mut session) = load(&temp, &root);
     let k = pair(A);
@@ -480,6 +512,7 @@ fn hub_choices_repeat_per_run_or_history_and_npc_instances_stay_independent() {
 fn repeat_contracts_filter_variants_and_cooldowns_use_saved_logical_time() {
     let temp = Temp::new();
     let root = temp.source();
+
     for (name, repeat) in [
         ("welcome-a", dialogue::RepeatPolicy::OnceCompleted),
         (
@@ -492,16 +525,19 @@ fn repeat_contracts_filter_variants_and_cooldowns_use_saved_logical_time() {
         graph.repeat = repeat;
         write(path, &graph);
     }
+
     merchant_as_guard(&root);
     let mut source: Scenario = read(root.join("scenario.ron"));
     source.steps.clear();
     write(root.join("scenario.ron"), &source);
     let (_, mut session) = load(&temp, &root);
+
     for d in [A, B] {
         start(&mut session, pair(d));
         read_lines(&mut session, pair(d));
         choose(&mut session, pair(d), "leave");
     }
+
     assert!(
         session
             .preview_interaction(HERO, MERCHANT)
@@ -551,8 +587,10 @@ fn invalid_speakers_message_bindings_and_history_references_fail_publication() {
     let root = temp.source();
     let path = root.join("packages/guard/conversations/reward.dialogue.ron");
     let original: dialogue::Dialogue = read(&path);
+
     for change in 0..4 {
         let mut graph = original.clone();
+
         match change {
             0 => node(&mut graph, "greeting").speaker = key("unknown"),
             1 => {
@@ -566,9 +604,11 @@ fn invalid_speakers_message_bindings_and_history_references_fail_publication() {
             }
             _ => graph.nodes[1].id = graph.nodes[0].id.clone(),
         }
+
         write(&path, &graph);
         assert!(LoadedProject::load_directory(&root).is_err());
     }
+
     write(path, &original);
     let path = root.join("packages/guard/guard.profile.ron");
     let mut profile: gameplay::InteractionProfile = read(&path);
@@ -595,9 +635,11 @@ fn authored_refusal_exercise_runs_through_the_indexed_session() {
     manifest.scenario = "scenarios/guard-refusal.ron".into();
     write(root.join("project.ron"), &manifest);
     let (project, mut session) = load(&temp, &root);
+
     for step in &project.scenario().steps {
         step.apply(&mut session).unwrap();
     }
+
     let with_guard = ConversationKey {
         speaker: ActorId::named("guard"),
         ..pair(REWARD)

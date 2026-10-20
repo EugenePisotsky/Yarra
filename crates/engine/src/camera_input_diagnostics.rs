@@ -3,6 +3,7 @@ use bevy::{
     input::mouse::{MouseScrollUnit, MouseWheel},
     prelude::*,
 };
+
 use std::time::Instant;
 
 /// Insert only while tracing. This does not change input routing or smoothing.
@@ -29,10 +30,12 @@ impl CameraInputDiagnostics {
     pub(crate) fn record_wheel(&mut self, event: &MouseWheel, limit: f32) {
         self.wheel_events += 1;
         let delta = Vec2::new(event.x, event.y);
+
         match event.unit {
             MouseScrollUnit::Pixel => self.pixel_delta += delta,
             MouseScrollUnit::Line => self.line_delta += delta,
         }
+
         self.clipped_events += usize::from(delta.abs().max_element() > limit);
     }
 }

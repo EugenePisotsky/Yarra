@@ -9,6 +9,7 @@ pub(crate) fn kind_name(kind: &PresetKind) -> &'static str {
         PresetKind::AssetCollection(_) => "Asset collection",
     }
 }
+
 pub(crate) fn preset_selector(
     ui: &mut egui::Ui,
     salt: impl std::hash::Hash + std::fmt::Debug,
@@ -34,6 +35,7 @@ pub(crate) fn preset_selector(
             }
         });
 }
+
 pub(crate) fn quick_controls(
     ui: &mut egui::Ui,
     library: &PresetLibrary,
@@ -44,15 +46,19 @@ pub(crate) fn quick_controls(
         Ok(uses) => uses,
         Err(e) => {
             ui.colored_label(egui::Color32::LIGHT_RED, e.to_string());
+
             if !overrides.is_empty() && ui.small_button("Reset all overrides").clicked() {
                 overrides.clear();
             }
+
             return;
         }
     };
+
     if uses.is_empty() {
         ui.weak("This composition has no outputs yet.");
     }
+
     for leaf in uses {
         ui.push_id(&leaf.path, |ui| {
             let name = if leaf.names.is_empty() {
@@ -97,6 +103,7 @@ pub(crate) fn quick_controls(
                                         .add(egui::Slider::new(v, 0.0..=1.0).text(label))
                                         .changed(),
                                 };
+
                                 if changed {
                                     if let Some(i) = index {
                                         overrides[i].value = value;
@@ -107,6 +114,7 @@ pub(crate) fn quick_controls(
                                         });
                                     }
                                 }
+
                                 if let Some(index) = index {
                                     if ui
                                         .small_button("Reset")

@@ -11,6 +11,7 @@ use crate::{
     clouds::{CloudPipelines, CloudQuality, CloudTarget, CloudView, refresh_clouds},
     environment::{EnvironmentAssets, EnvironmentParams},
 };
+
 use bevy::{
     camera::MainPassResolutionOverride,
     core_pipeline::{
@@ -65,11 +66,13 @@ pub(crate) struct SkyCompositeView;
 pub struct BevySkyPassReplaced;
 
 pub(crate) struct SkyCompositePlugin;
+
 impl Plugin for SkyCompositePlugin {
     fn build(&self, app: &mut App) {
         if app.get_sub_app(RenderApp).is_none() {
             return;
         }
+
         app.add_plugins((
             ExtractComponentPlugin::<SkyCompositeView>::default(),
             ExtractResourcePlugin::<AtmospherePresentation>::default(),
@@ -97,6 +100,7 @@ impl Plugin for SkyCompositePlugin {
         let schedule = schedules
             .get_mut(Core3d)
             .expect("Core3d plugin is required");
+
         if replace_bevy_sky_pass(schedule) {
             world.insert_resource(BevySkyPassReplaced);
         } else {
@@ -191,21 +195,27 @@ impl SpecializedRenderPipeline for SkyPipelines {
 
     fn specialize(&self, key: SkyKey) -> RenderPipelineDescriptor {
         let mut shader_defs = vec![crate::environment::mist_noise_period_def()];
+
         if key.multisampled {
             shader_defs.push("MULTISAMPLED".into());
         }
+
         if key.atmosphere {
             shader_defs.push("ATMOSPHERE".into());
         }
+
         if key.clouds != Clouds::None {
             shader_defs.push("CLOUDS".into());
         }
+
         if key.clouds == Clouds::Cached {
             shader_defs.push("CACHED_CLOUDS".into());
         }
+
         if self.dual_source_blending {
             shader_defs.push("DUAL_SOURCE_BLENDING".into());
         }
+
         RenderPipelineDescriptor {
             label: Some("sky composite".into()),
             layout: vec![
@@ -371,6 +381,7 @@ fn queue(
         return;
     };
     let sky = presentation.is_none_or(|p| p.sky_and_haze);
+
     for (entity, msaa, atmosphere, clouds) in &views {
         let key = SkyKey {
             multisampled: msaa.samples() > 1,
@@ -439,9 +450,11 @@ fn draw(
     let entity = view.entity();
     let (pipeline, target, depth, view_offset, resolution, bindings, shafts, sun, rays) =
         view.into_inner();
+
     if target.main_texture_format() != TextureFormat::Rgba16Float {
         return;
     }
+
     let (Some(render), Some(view_binding), Some(assets)) = (
         cache.get_render_pipeline(pipeline.id),
         uniforms.uniforms.binding(),
@@ -471,6 +484,7 @@ fn draw(
         Some(display) if key.clouds != Clouds::None => display,
         _ => (&fallback.d2.texture_view, &fallback.d2.texture_view, 0.0),
     };
+
     // x: cloud cross-fade; y: light shafts drawn; z: main-pass pixels per shaft texel; w: sun
     // rays drawn.
     // One small buffer per view, kept across frames.
@@ -647,7 +661,9 @@ mod tests {
     struct Probe;
 
     fn private_sky() {}
+
     fn after_opaque_only() {}
+
     fn also_before_transmissive() {}
 
     #[test]
@@ -689,6 +705,7 @@ mod tests {
             system_type(&schedule, candidates[0]),
             IntoSystem::into_system(skip_bevy_sky).system_type()
         );
+
         // Ordering edges survive the swap.
         assert_eq!(bevy_sky_pass_candidates(&schedule), candidates);
 

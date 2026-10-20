@@ -3,16 +3,21 @@ use yarra_gameplay::dialogue;
 use yarra_gameplay::inventory::{fixtures::*, *};
 use yarra_gameplay::rules::Use;
 use yarra_gameplay::{fixtures::*, *};
+
 type Result<T> = yarra_gameplay::Result<T>;
+
 fn new(content: GameContent, state: SessionState) -> Result<GameSession> {
     GameSession::new(ToolContent::new(content)?, state)
 }
+
 fn session() -> GameSession {
     new(content(), state()).unwrap()
 }
+
 fn snapshot(session: &GameSession) -> SessionState {
     session.state().clone()
 }
+
 fn item(session: &GameSession, bag: InventoryId, definition: ItemDefinitionId) -> ItemId {
     session
         .state()
@@ -24,6 +29,7 @@ fn item(session: &GameSession, bag: InventoryId, definition: ItemDefinitionId) -
         .unwrap()
         .id
 }
+
 fn choose() -> Command {
     Command::Choose {
         expected: dialogue::Token { run: 1, step: 1 },
@@ -33,6 +39,7 @@ fn choose() -> Command {
         choice: key("return-key"),
     }
 }
+
 fn start(session: &mut GameSession) {
     session
         .apply(Command::StartDialogue {
@@ -132,6 +139,7 @@ fn use_equipment_transfer_and_trade_are_coordinated() {
     let again = session.apply(Command::Trade(quote)).unwrap_err();
     assert_eq!(again.rejection(), Some(&Rejection::QuoteStale));
     assert_eq!(snapshot(&session), before);
+
     // What a player runs into when trading comes back as refusals a UI can match on.
     let refusal = |purchases, sales| {
         let offer = TradeOffer { purchases, sales };
@@ -147,6 +155,7 @@ fn use_equipment_transfer_and_trade_are_coordinated() {
     let key = line(item(&session, HERO_BAG, KEY), 1);
     assert_eq!(refusal(vec![], key), Some(Rejection::ItemRestricted));
 }
+
 #[test]
 fn rejected_use_restores_health_and_consumption() {
     let source = session();
@@ -165,6 +174,7 @@ fn rejected_use_restores_health_and_consumption() {
     );
     assert_eq!(snapshot(&session), before);
 }
+
 #[test]
 fn dialogue_rewards_once_and_preview_does_not_roll() {
     let mut session = session();
@@ -214,10 +224,12 @@ fn dialogue_rewards_once_and_preview_does_not_roll() {
             .is_err()
     );
 }
+
 #[test]
 fn failure_after_roll_restores_all_domains_and_rng() {
     let source = session();
     let mut content = content();
+
     if let Action::Check { success, .. } = persuade(&mut content) {
         success.insert(
             0,
@@ -227,19 +239,23 @@ fn failure_after_roll_restores_all_domains_and_rng() {
             },
         );
     }
+
     let mut session = new(content, snapshot(&source)).unwrap();
     start(&mut session);
     let before = snapshot(&session);
     assert!(session.apply(choose()).is_err());
     assert_eq!(snapshot(&session), before);
 }
+
 #[test]
 fn failed_skill_roll_is_a_committed_outcome() {
     let source = session();
     let mut content = content();
+
     if let Action::Check { difficulty, .. } = persuade(&mut content) {
         *difficulty = 100;
     }
+
     let mut session = new(content, snapshot(&source)).unwrap();
     start(&mut session);
     let random = snapshot(&session).random;
@@ -263,6 +279,7 @@ fn failed_skill_roll_is_a_committed_outcome() {
     );
     assert!(session.state().variables.is_empty());
 }
+
 #[test]
 fn timed_effects_derive_from_explicit_time() {
     let source = session();
@@ -293,6 +310,7 @@ fn timed_effects_derive_from_explicit_time() {
     assert_eq!(session.stat(HERO, &key("strength")).unwrap(), 10);
     assert!(snapshot(&session).actor(HERO).unwrap().effects.is_empty());
 }
+
 #[test]
 fn cross_domain_validation_rejects_bad_ownership_equipment_and_content() {
     let source = session();
@@ -315,6 +333,7 @@ fn cross_domain_validation_rejects_bad_ownership_equipment_and_content() {
     };
     assert!(content.validate().is_err());
 }
+
 #[test]
 fn the_fingerprint_does_not_depend_on_which_names_were_parsed() {
     // Named in code only, so nothing has told the process this name yet.
@@ -339,12 +358,14 @@ fn conversations_keep_their_turns_through_a_save_and_hold_the_world_still() {
         participant,
         speaker: MERCHANT,
     };
+
     // Started in the opposite order to the one their keys sort in.
     let (first, second) = if talk(HERO) > talk(COMPANION) {
         (HERO, COMPANION)
     } else {
         (COMPANION, HERO)
     };
+
     for participant in [first, second] {
         session
             .apply(Command::StartDialogue {
@@ -355,14 +376,17 @@ fn conversations_keep_their_turns_through_a_save_and_hold_the_world_still() {
             })
             .unwrap();
     }
+
     let floor = session.state().floor.blocking.clone();
     assert_eq!(floor, [talk(first), talk(second)]);
+
     // The world waits while a conversation is on screen.
     let time = session.state().time;
     session
         .apply(Command::AdvanceTime { millis: 1000 })
         .unwrap();
     assert_eq!(session.state().time, time);
+
     // A save keeps whose turn it is, and a save that loses a turn is refused.
     let json = serde_json::to_string(session.state()).unwrap();
     let saved: SessionState = serde_json::from_str(&json).unwrap();
@@ -371,6 +395,7 @@ fn conversations_keep_their_turns_through_a_save_and_hold_the_world_still() {
     assert!(new(content(), lost).is_err());
     let mut session = new(content(), saved).unwrap();
     assert_eq!(session.state().floor.blocking, floor);
+
     // Leaving one hands the floor to the next; with both over, time moves on.
     for (key, next) in [(talk(first), Some(talk(second))), (talk(second), None)] {
         let expected = session.conversation_view(key).unwrap().token;
@@ -382,6 +407,7 @@ fn conversations_keep_their_turns_through_a_save_and_hold_the_world_still() {
             next
         );
     }
+
     session
         .apply(Command::AdvanceTime { millis: 1000 })
         .unwrap();
@@ -413,18 +439,22 @@ struct Counting {
     inner: ToolContent,
     graphs: std::rc::Rc<std::cell::Cell<usize>>,
 }
+
 impl ContentSource for Counting {
     fn identity(&self) -> ContentIdentity {
         self.inner.identity()
     }
+
     fn core(&mut self) -> Result<GameContent> {
         self.inner.core()
     }
+
     fn dialogue(&mut self, id: DialogueId) -> Result<dialogue::Dialogue> {
         self.graphs.set(self.graphs.get() + 1);
         self.inner.dialogue(id)
     }
 }
+
 #[test]
 fn dialogue_graphs_load_on_first_use_and_stay_cached() {
     let graphs = std::rc::Rc::new(std::cell::Cell::new(0));
@@ -454,6 +484,7 @@ fn dialogue_graphs_load_on_first_use_and_stay_cached() {
         .available_choices(GATE_DIALOGUE, HERO, MERCHANT)
         .unwrap();
     assert_eq!(graphs.get(), 1);
+
     // A restored playthrough reloads the graph of its active conversation only.
     let saved = serde_json::to_vec(session.state()).unwrap();
     let restored: SessionState = serde_json::from_slice(&saved).unwrap();
@@ -466,6 +497,7 @@ fn dialogue_graphs_load_on_first_use_and_stay_cached() {
     GameSession::new(source, restored).unwrap();
     assert_eq!(again.get(), 1);
 }
+
 #[test]
 fn untouched_records_stay_absent_and_read_as_defaults() {
     let mut session = session();
@@ -494,10 +526,12 @@ fn untouched_records_stay_absent_and_read_as_defaults() {
     );
     assert_eq!(snapshot(&session), before);
 }
+
 #[test]
 fn command_cost_does_not_grow_with_the_population() {
     let content = content();
     let mut state = state();
+
     for n in 0..20_000u32 {
         let mut id = [7u8; 16];
         id[..4].copy_from_slice(&n.to_le_bytes());
@@ -507,9 +541,11 @@ fn command_cost_does_not_grow_with_the_population() {
         bag.grant(&content.items, POTION, 5).unwrap();
         state.add_inventory(bag);
     }
+
     let mut session = new(content, state).unwrap();
     let potion = item(&session, HERO_BAG, POTION);
     let started = std::time::Instant::now();
+
     for _ in 0..2 {
         session
             .apply(Command::UseItem {
@@ -518,6 +554,7 @@ fn command_cost_does_not_grow_with_the_population() {
             })
             .unwrap();
     }
+
     let mut elapsed = started.elapsed();
     let before = snapshot(&session);
     let started = std::time::Instant::now();
@@ -531,6 +568,7 @@ fn command_cost_does_not_grow_with_the_population() {
     );
     elapsed += started.elapsed();
     assert_eq!(snapshot(&session), before);
+
     // Generous bound: a whole-state copy or check per command would take far longer in
     // this unoptimised test build. Three commands normally finish in well under 1 ms.
     assert!(elapsed.as_millis() < 20, "commands took {elapsed:?}");
@@ -542,6 +580,7 @@ mod party {
 
     const BANTER: DialogueId = DialogueId([9; 16]);
     const STRANGER: ActorId = ActorId([77; 16]);
+
     fn node(id: &str, kind: NodeKind, speaker: &str, children: &[&str]) -> Node {
         Node {
             id: key(id),
@@ -555,6 +594,7 @@ mod party {
             children: children.iter().map(|c| key(c)).collect(),
         }
     }
+
     /// The merchant greets; whoever travels with the hero may cut in before the hero answers.
     /// Two named characters together get a line neither has alone, and the merchant answers
     /// a companion directly.
@@ -597,6 +637,7 @@ mod party {
             ],
         }
     }
+
     fn session(party: &[ActorId], stranger: bool) -> GameSession {
         let mut content = content();
         let graph = banter();
@@ -606,6 +647,7 @@ mod party {
         character.id = STRANGER;
         content.game.characters.add(character);
         let mut state = state();
+
         if stranger {
             let mut actor = state.actors[&COMPANION].clone();
             actor.id = STRANGER;
@@ -614,7 +656,9 @@ mod party {
             state.add_actor(actor);
             state.add_inventory(bag);
         }
+
         let mut session = new(content, state).unwrap();
+
         for actor in party {
             session
                 .apply(Command::Party {
@@ -623,13 +667,16 @@ mod party {
                 })
                 .unwrap();
         }
+
         session
     }
+
     const KEY: ConversationKey = ConversationKey {
         dialogue: BANTER,
         participant: HERO,
         speaker: MERCHANT,
     };
+
     fn start(session: &mut GameSession, bindings: &[(&str, ActorId)]) {
         session
             .apply(Command::StartDialogue {
@@ -640,6 +687,7 @@ mod party {
             })
             .unwrap();
     }
+
     /// Acknowledges lines until the player has to choose; returns who said what.
     fn listen(session: &mut GameSession) -> Vec<(ActorId, String)> {
         let mut heard = Vec::new();
@@ -657,6 +705,7 @@ mod party {
                 .unwrap();
         }
     }
+
     fn choices(session: &mut GameSession) -> Vec<String> {
         let view = session.conversation_view(KEY).unwrap();
         view.choices
@@ -664,6 +713,7 @@ mod party {
             .map(|c| c.id.as_str().to_owned())
             .collect()
     }
+
     fn pick(session: &mut GameSession, choice: &str) {
         let expected = session.conversation_view(KEY).unwrap().token;
         session
@@ -676,6 +726,7 @@ mod party {
             })
             .unwrap();
     }
+
     fn said(lines: &[(ActorId, &str)]) -> Vec<(ActorId, String)> {
         lines.iter().map(|(a, l)| (*a, l.to_string())).collect()
     }
@@ -687,6 +738,7 @@ mod party {
         assert_eq!(listen(&mut session), said(&[(MERCHANT, "greeting")]));
         assert_eq!(choices(&mut session), ["ask", "bye"]);
     }
+
     #[test]
     fn a_companion_in_the_party_reacts_and_the_speaker_answers_them() {
         let mut session = session(&[HERO, COMPANION], false);
@@ -701,6 +753,7 @@ mod party {
         );
         assert_eq!(choices(&mut session), ["ask", "bye"]);
     }
+
     #[test]
     fn two_companions_together_get_their_own_exchange() {
         let mut session = session(&[HERO, COMPANION, STRANGER], true);
@@ -714,11 +767,13 @@ mod party {
                 (MERCHANT, "reply")
             ])
         );
+
         // The stranger alone has no line of their own here.
         let mut session = self::session(&[HERO, STRANGER], true);
         start(&mut session, &[]);
         assert_eq!(listen(&mut session), said(&[(MERCHANT, "greeting")]));
     }
+
     #[test]
     fn a_bystander_bound_for_this_conversation_speaks_without_joining_the_party() {
         let mut session = session(&[], true);
@@ -728,6 +783,7 @@ mod party {
             said(&[(MERCHANT, "greeting"), (STRANGER, "overheard")])
         );
         assert_eq!(session.state().party.members, [HERO].into());
+
         // A named character cannot be supplied under someone else's role.
         let mut other = self::session(&[], true);
         assert!(
@@ -741,6 +797,7 @@ mod party {
                 .is_err()
         );
     }
+
     #[test]
     fn hubs_loop_and_per_run_choices_disappear_once_taken() {
         let mut session = session(&[], false);
@@ -754,6 +811,7 @@ mod party {
             session.state().conversation(KEY).unwrap().status,
             dialogue::RunStatus::Completed
         );
+
         // Every acknowledged line and picked choice is remembered for later conditions.
         let history = session.state().histories.values().next().unwrap().clone();
         assert_eq!(history.completed, 1);
@@ -768,6 +826,7 @@ mod party {
         listen(&mut session);
         assert_eq!(choices(&mut session), ["counted", "ask", "bye"]);
     }
+
     #[test]
     fn leaving_the_party_mid_game_removes_the_reaction_and_a_failed_command_keeps_the_party() {
         let mut session = session(&[HERO, COMPANION], false);
@@ -794,7 +853,9 @@ mod party {
 
 mod variables {
     use super::*;
+
     const VISITS: VariableId = VariableId::named("old_gate/visits");
+
     fn with_counter(actions: Vec<Action>) -> GameContent {
         let mut content = content();
         content.game.variables.add(VariableDefinition {
@@ -806,6 +867,7 @@ mod variables {
         choice.actions = actions;
         content
     }
+
     fn add(amount: i64) -> Action {
         Action::Add {
             variable: VISITS,
@@ -813,6 +875,7 @@ mod variables {
             amount,
         }
     }
+
     fn holds(session: &GameSession, test: Test) -> bool {
         let condition = Condition::Variable {
             variable: VISITS,
@@ -825,6 +888,7 @@ mod variables {
             .unwrap()
             .matched
     }
+
     #[test]
     fn an_unset_variable_reads_as_its_initial_value_and_counts_from_there() {
         let mut session = new(with_counter(vec![add(2), add(-5)]), state()).unwrap();
@@ -834,6 +898,7 @@ mod variables {
         session.apply(choose()).unwrap();
         assert_eq!(session.state().variables[&VISITS.into()], Value::Int(-3));
         assert!(holds(&session, Test::AtMost(-3)) && !holds(&session, Test::AtLeast(0)));
+
         // The untouched flag is still absent and still reads as false.
         assert_eq!(session.state().variables.len(), 1);
         assert_eq!(
@@ -844,6 +909,7 @@ mod variables {
             Value::Bool(false)
         );
     }
+
     #[test]
     fn a_later_failure_undoes_earlier_variable_changes() {
         let failing = Action::ConsumeItem {
@@ -856,6 +922,7 @@ mod variables {
         assert!(session.apply(choose()).is_err());
         assert_eq!(snapshot(&session), before);
     }
+
     #[test]
     fn tests_and_values_must_fit_the_variable_type() {
         let wrong_value = Action::Set {
@@ -877,12 +944,15 @@ mod variables {
             test: Test::AtLeast(1),
         };
         assert!(content.validate_condition(&at_least).is_err());
+
         // Saved state with a value of the wrong type is rejected when loaded.
         let mut state = state();
         state.variables.insert(VISITS.into(), Value::Bool(true));
         assert!(new(content, state).is_err());
     }
+
     const INSULTED: VariableId = VariableId::named("old_gate/insulted");
+
     /// The gate choice insults whoever is spoken to, and is only offered to those not yet
     /// insulted.
     fn insulting() -> GameContent {
@@ -907,6 +977,7 @@ mod variables {
         refresh_contracts(&mut content);
         content
     }
+
     fn offered(session: &mut GameSession, speaker: ActorId) -> bool {
         let key = ConversationKey {
             dialogue: GATE_DIALOGUE,
@@ -940,10 +1011,12 @@ mod variables {
             .unwrap();
         true
     }
+
     #[test]
     fn each_actor_has_its_own_value_of_a_per_actor_variable() {
         let mut session = new(insulting(), state()).unwrap();
         assert!(offered(&mut session, MERCHANT));
+
         // The merchant remembers; the companion was never insulted.
         assert!(!offered(&mut session, MERCHANT));
         assert!(offered(&mut session, COMPANION));
@@ -956,12 +1029,14 @@ mod variables {
         let value = |actor| state.variable(session.content(), of(actor)).unwrap();
         assert_eq!(value(MERCHANT), Value::Bool(true));
         assert_eq!(value(HERO), Value::Bool(false));
+
         // The values survive a save.
         let saved = serde_json::to_vec(state).unwrap();
         assert_eq!(
             &serde_json::from_slice::<SessionState>(&saved).unwrap(),
             state
         );
+
         // A per-actor variable cannot be read without saying whose.
         assert!(state.variable(session.content(), INSULTED).is_err());
         assert!(
@@ -970,6 +1045,7 @@ mod variables {
                 .is_err()
         );
     }
+
     #[test]
     fn content_must_name_an_actor_exactly_for_per_actor_variables() {
         let mut content = insulting();

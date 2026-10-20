@@ -1,5 +1,6 @@
 use super::*;
 use environment_compile::{CompilePlan, CompileProfile};
+
 use world_db::{
     EnvironmentCellWrite, EnvironmentCellWriteResult, ProjectReader, ProjectWriter,
     SourceEnvironmentCellRecord,
@@ -82,12 +83,14 @@ fn stroke_save_reload_compile_and_cancel_preserve_borders() {
     apply_segment(&mut stroke, &definition, &cells, to, &mut dense).unwrap();
     assert!(!stroke.before.is_empty());
     let mut snapshot = original.coverage.clone();
+
     for cell in &mut snapshot.cells {
         *cell = dense
             .environment_record(definition.space, cell.cell)
             .unwrap()
             .coverage();
     }
+
     let painted = plan.compile_cells(&cells, &snapshot).unwrap(); // Also validates every shared edge.
     assert!(
         baseline
@@ -124,10 +127,12 @@ fn stroke_save_reload_compile_and_cancel_preserve_borders() {
         .read_environment_snapshot(definition.space, &halo)
         .unwrap();
     let compiled = plan.compile_cells(&cells, &reloaded.coverage).unwrap();
+
     for (live, saved) in painted.iter().zip(&compiled) {
         assert_eq!(live.ground, saved.ground);
         assert_eq!(live.vegetation, saved.vegetation);
     }
+
     // An unsaved undo must override the newer database even when it equals the runtime baseline.
     let undo_preview = super::preview::compile_source_cells(
         &reader,
@@ -139,10 +144,12 @@ fn stroke_save_reload_compile_and_cancel_preserve_borders() {
         &records,
     )
     .unwrap();
+
     for (before, undone) in baseline.iter().zip(&undo_preview) {
         assert_eq!(before.ground, undone.ground);
         assert_eq!(before.vegetation, undone.vegetation);
     }
+
     // Escape restores just the active gesture and creates no new history entry.
     let before_cancel = dense.current_records();
     let mut stroke = Stroke {

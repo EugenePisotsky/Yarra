@@ -5,6 +5,7 @@
 //! it imported before and leaves other roads alone. The editor edits imported roads as any other.
 use crate::terrain_pack::TerrainPack;
 use anyhow::{Context, Result, bail};
+
 use environment::{
     GRASS_CHANNEL, GroundTreatment, OutputId, Preset, PresetId, PresetKind, SurfaceWeight,
     roads::{
@@ -12,9 +13,11 @@ use environment::{
         RoadPoint, RoadProfileId, RoadRelief, RoadSpanId, RoadTravelMode, TravelDirection,
     },
 };
+
 use serde::Deserialize;
 use std::path::Path;
 use world::CellCoord;
+
 use world_db::{
     RoadRecordKey, RoadSourceRecord, RoadSourceWrite, RoadSourceWriteResult, SourceRoad,
     SourceRoadJunction, SourceRoadKnot, SourceRoadSpan,
@@ -90,6 +93,7 @@ pub fn import_roads(text: &str, project: &Path) -> Result<RoadImportReport> {
     let (_, mut library, _) = reader.read_environment_catalog()?;
     let terrain = TerrainPack::baltic();
     let mut profiles = Vec::new();
+
     for style in &import.styles {
         let ground = PresetId(crate::stable_id(&format!(
             "road-style/{}/ground",
@@ -123,6 +127,7 @@ pub fn import_roads(text: &str, project: &Path) -> Result<RoadImportReport> {
                 surfaces,
             }),
         };
+
         match library.presets.iter_mut().find(|p| p.id == ground) {
             Some(existing) => {
                 *existing = Preset {
@@ -132,6 +137,7 @@ pub fn import_roads(text: &str, project: &Path) -> Result<RoadImportReport> {
             }
             None => library.presets.push(preset),
         }
+
         profiles.push(CartTrackProfile {
             id: profile_id(&style.name),
             revision: 1,
@@ -150,6 +156,7 @@ pub fn import_roads(text: &str, project: &Path) -> Result<RoadImportReport> {
             relief: style.relief.clone(),
         });
     }
+
     drop(reader);
 
     // Styles and their ground presets first, in one transaction. A style widened beyond the
@@ -159,6 +166,7 @@ pub fn import_roads(text: &str, project: &Path) -> Result<RoadImportReport> {
 
     // Then each road on its own, replacing any knots and spans a longer earlier import left.
     let mut knots_total = 0;
+
     for (index, imported) in import.roads.iter().enumerate() {
         // A branch's first point is the point of the road it leaves.
         let mut route = RouteImport {
@@ -185,6 +193,7 @@ pub fn import_roads(text: &str, project: &Path) -> Result<RoadImportReport> {
             }
         };
         let route = &route;
+
         if !(2..=MAX_ROUTE_KNOTS).contains(&route.points.len()) {
             bail!(
                 "road {}: {} points; a road takes 2 to {MAX_ROUTE_KNOTS}",
@@ -192,9 +201,11 @@ pub fn import_roads(text: &str, project: &Path) -> Result<RoadImportReport> {
                 route.points.len()
             );
         }
+
         if !import.styles.iter().any(|s| s.name == route.style) {
             bail!("road {}: no style {}", route.name, route.style);
         }
+
         let road = RoadId(crate::stable_id(&format!("road/{}", route.name)));
         let knot_id =
             |i: usize| RoadKnotId(crate::stable_id(&format!("road/{}/knot/{i}", route.name)));
@@ -237,6 +248,7 @@ pub fn import_roads(text: &str, project: &Path) -> Result<RoadImportReport> {
         }));
         let junction_id =
             RoadJunctionId(crate::stable_id(&format!("road/{}/junction", route.name)));
+
         if let Some((main, point)) = joined {
             let main_knot = RoadKnotId(crate::stable_id(&format!(
                 "road/{}/knot/{point}",
@@ -259,6 +271,7 @@ pub fn import_roads(text: &str, project: &Path) -> Result<RoadImportReport> {
                 },
             }));
         }
+
         // Stale knots, spans and a junction past this import's end are removed with it.
         let mut keys: Vec<_> = records.iter().map(RoadSourceRecord::key).collect();
         let stale: Vec<_> = (knots.len()..MAX_ROUTE_KNOTS)
@@ -291,13 +304,16 @@ pub fn import_roads(text: &str, project: &Path) -> Result<RoadImportReport> {
                     record: None,
                 }),
         );
+
         // The styles the road is read with, and the point it leaves, are checked against their
         // current revisions.
         let mut read = vec![RoadRecordKey::Profile(profile_id(&route.style))];
+
         if let Some((main, point)) = joined {
             if main.style != route.style {
                 read.push(RoadRecordKey::Profile(profile_id(&main.style)));
             }
+
             read.push(RoadRecordKey::Road(RoadId(crate::stable_id(&format!(
                 "road/{}",
                 main.name
@@ -307,6 +323,7 @@ pub fn import_roads(text: &str, project: &Path) -> Result<RoadImportReport> {
                 main.name
             )))));
         }
+
         // Junctions of branches already leaving this road, from an earlier import.
         read.extend(
             import
@@ -331,15 +348,19 @@ pub fn import_roads(text: &str, project: &Path) -> Result<RoadImportReport> {
             })
             .collect();
         let library_revision = writer.road_library_revision()?;
+
         match writer.apply_road_source_transaction(library_revision, &writes, &dependencies)? {
             RoadSourceWriteResult::Committed(_) => {}
             other => bail!("road {} was not saved: {other:?}", route.name),
         }
+
         knots_total += knots.len();
     }
+
     if styles_first.is_err() {
         write_styles(&mut writer, &profiles, &library)?;
     }
+
     Ok(RoadImportReport {
         styles: import.styles.len(),
         roads: import.roads.len(),
@@ -375,12 +396,14 @@ fn write_styles(
         &writes,
         &[],
     )?;
+
     if !matches!(
         committed,
         world_db::EnvironmentSourceWriteResult::Committed(_)
     ) {
         bail!("road styles were not saved: {committed:?}");
     }
+
     Ok(())
 }
 
@@ -389,6 +412,7 @@ fn main_point(main: &RouteImport, index: usize) -> Result<[f64; 2]> {
     if main.from.is_some() && index == 0 {
         bail!("road {}: its first point is a junction already", main.name);
     }
+
     let offset = usize::from(main.from.is_some());
     index
         .checked_sub(offset)

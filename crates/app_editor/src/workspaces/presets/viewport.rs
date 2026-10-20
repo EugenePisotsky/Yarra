@@ -2,27 +2,34 @@ use super::fixture::{Product, Request};
 use super::*;
 use crate::{grass::GrassPreview, workspaces::SavedDaylight};
 use bevy::world_serialization::WorldInstanceReady;
+
 use bevy::{
     camera::{Exposure, RenderTarget, visibility::RenderLayers},
     render::{render_resource::TextureFormat, view::Msaa},
     tasks::{AsyncComputeTaskPool, Task, block_on, poll_once},
 };
+
 use bevy_egui::{EguiTextureHandle, EguiUserTextures};
 use engine::WorldSun;
 use std::time::{Duration, Instant};
+
 use terrain_render::{
     PrepareTerrainMaterialContext, TerrainMacroVariation, TerrainMaterial, TerrainSurfaceLayer,
     prepare_terrain_material,
 };
+
 use vegetation_render::{
     VegetationLighting, VegetationSceneState, VegetationSettings, VegetationWind,
 };
 
 const LAYER: usize = 30;
+
 #[derive(Component)]
 pub(crate) struct PresetWorkspaceCamera;
+
 #[derive(Component)]
 struct PreviewGround;
+
 struct SavedWorld {
     scene: VegetationSceneState,
     settings: VegetationSettings,
@@ -31,6 +38,7 @@ struct SavedWorld {
     daylight: SavedDaylight,
     sun_layers: Option<RenderLayers>,
 }
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct Key {
     source_epoch: u64,
@@ -44,12 +52,14 @@ struct Key {
     footprint: Footprint,
     underlay: Option<PresetId>,
 }
+
 struct GroundAssets {
     entity: Entity,
     mesh: Handle<Mesh>,
     material: Handle<TerrainMaterial>,
     weights: Handle<Image>,
 }
+
 #[derive(Resource, Default)]
 pub(super) struct PreviewState {
     saved: Option<SavedWorld>,
@@ -66,6 +76,7 @@ pub(super) struct PreviewState {
     pub current: bool,
     pending_since: Option<Instant>,
 }
+
 impl PreviewState {
     pub(super) fn matches(&self, state: &PresetAuthoringState) -> bool {
         self.current
@@ -80,9 +91,11 @@ impl PreviewState {
                     && Some(k.space) == state.space
             })
     }
+
     pub(super) fn has_image(&self) -> bool {
         self.ground.is_some()
     }
+
     pub(super) fn slow_update(&self, now: Instant) -> bool {
         !self.current
             && self.error.is_none()
@@ -91,6 +104,7 @@ impl PreviewState {
             })
     }
 }
+
 pub(super) fn setup(
     mut commands: Commands,
     mut state: ResMut<PresetAuthoringState>,
@@ -128,6 +142,7 @@ pub(super) fn setup(
         Name::new("Environment preset viewport"),
     ));
 }
+
 #[derive(bevy::ecs::system::SystemParam)]
 pub(super) struct SharedRender<'w, 's> {
     scene: ResMut<'w, VegetationSceneState>,
@@ -147,6 +162,7 @@ pub(super) struct SharedRender<'w, 's> {
         With<WorldSun>,
     >,
 }
+
 pub(super) fn enter(
     mut commands: Commands,
     mut preview: ResMut<PreviewState>,
@@ -173,6 +189,7 @@ pub(super) fn enter(
     *shared.wind = VegetationWind::default();
     shared.wind.externally_driven = true;
     shared.wind.set_phase_seconds(state.phase);
+
     // The render resources are exclusively owned until this workspace exits.
     let _ = shared.scene.replace(vegetation::VegetationScene {
         catalog: vegetation::VegetationCatalog::default(),
@@ -185,6 +202,7 @@ pub(super) fn enter(
     preview.error = None;
     preview.pending_since = None;
 }
+
 pub(super) fn leave(
     mut commands: Commands,
     mut preview: ResMut<PreviewState>,
@@ -204,12 +222,14 @@ pub(super) fn leave(
             .daylight
             .restore(transform, light, &mut shared.ambient);
         let mut sun = commands.entity(*entity);
+
         if let Some(layers) = saved.sun_layers {
             sun.insert(layers);
         } else {
             sun.remove::<RenderLayers>();
         }
     }
+
     remove_ground(
         &mut commands,
         &mut preview,
@@ -221,6 +241,7 @@ pub(super) fn leave(
     preview.pending_since = None;
     state.playing = false;
 }
+
 fn remove_ground(
     commands: &mut Commands,
     preview: &mut PreviewState,
@@ -238,6 +259,7 @@ fn remove_ground(
         images.remove(old.weights.id());
     }
 }
+
 #[derive(bevy::ecs::system::SystemParam)]
 pub(super) struct PreviewAssets<'w> {
     server: Res<'w, AssetServer>,
@@ -245,6 +267,7 @@ pub(super) struct PreviewAssets<'w> {
     materials: ResMut<'w, Assets<TerrainMaterial>>,
     meshes: ResMut<'w, Assets<Mesh>>,
 }
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn update(
     mut commands: Commands,
@@ -261,12 +284,15 @@ pub(super) fn update(
     mut cameras: Query<&mut Transform, With<PresetWorkspaceCamera>>,
 ) {
     state.refresh(&dense, &project);
+
     for mut camera in &mut cameras {
         *camera = state.camera();
     }
+
     if state.playing {
         state.phase = (state.phase + time.delta_secs().min(0.1)).rem_euclid(4096.0);
     }
+
     wind.set_phase_seconds(state.phase);
     let revision = grass.revision();
     let Some(catalog) = grass.catalog() else {
@@ -282,6 +308,7 @@ pub(super) fn update(
             preview.current = false;
             preview.desired = None;
             preview.submitted = None;
+
             // Drop pending work so an empty selection cannot wedge the next preview.
             preview.task = None;
             preview.error = Some("Choose or create a road style".into());
@@ -299,6 +326,7 @@ pub(super) fn update(
     } else {
         None
     };
+
     if road.is_none() && state.selected.is_none() {
         preview.current = false;
         preview.desired = None;
@@ -307,6 +335,7 @@ pub(super) fn update(
         preview.error = Some("Choose or create a preset".into());
         return;
     }
+
     let key = Key {
         source_epoch: project.source_epoch(),
         draft: state.revision,
@@ -319,16 +348,19 @@ pub(super) fn update(
         footprint: state.footprint,
         underlay: state.preview_underlay(),
     };
+
     if preview.desired != Some(key) {
         preview.desired = Some(key);
         preview.current = false;
         preview.error = None;
         preview.pending_since.get_or_insert_with(Instant::now);
     }
+
     let complete = preview
         .task
         .as_mut()
         .and_then(|(key, task)| block_on(poll_once(task)).map(|r| (*key, r)));
+
     if let Some((completed, result)) = complete {
         preview.task = None;
         if preview.desired == Some(completed) {
@@ -425,10 +457,12 @@ pub(super) fn update(
                 let framing = (key.preset, key.mode, key.size, !product.objects.is_empty());
                 state.focus_height = (height * 0.5).max(0.25);
                 state.fit_distance = (product.size * 1.375).max(height * 1.8).min(80.0);
+
                 if preview.framed != Some(framing) {
                     state.distance = state.fit_distance;
                     preview.framed = Some(framing);
                 }
+
                 for object in &product.objects {
                     let asset = product
                         .assets
@@ -453,18 +487,22 @@ pub(super) fn update(
                         .id();
                     preview.object_entities.push(entity);
                 }
+
                 preview.objects = product.objects.len();
                 preview.assets = product.assets;
                 preview.candidates = product.candidates;
                 Ok(())
             });
+
             match result {
                 Ok(()) => preview.current = true,
                 Err(e) => preview.error = Some(e),
             }
+
             preview.pending_since = None;
         }
     }
+
     if preview.task.is_none() && preview.submitted != Some(key) {
         let Some(definition) = dense.definition(space) else {
             return;

@@ -11,15 +11,18 @@ use super::{
         DatabaseRequest, NotSent, RequestId, TerrainQuery, TerrainReply, WorldDatabaseWorker,
     },
 };
+
 use atmosphere::{
     shore::{Shore, ShoreMap},
     terrain_shadow::{TerrainRelief, TerrainShadow},
     valley_mist::{MistMap, ValleyMist},
 };
+
 use bevy::{
     prelude::*,
     tasks::{AsyncComputeTaskPool, Task, block_on, poll_once},
 };
+
 use std::{collections::HashMap, sync::Arc};
 use world::{TerrainNodeKey, WorldSpaceId};
 use world_db::{EncodedTerrainNode, TerrainNodeDescriptor};
@@ -27,6 +30,7 @@ use world_db::{EncodedTerrainNode, TerrainNodeDescriptor};
 /// Terrain level the maps sample: 8 m apart with 32 m cells and 33-sample nodes. The mist and
 /// shore maps take every other sample.
 const LEVEL: u8 = 3;
+
 /// Node requests in flight at once; the terrain LOD keeps up to 12.
 const IN_FLIGHT: usize = 4;
 
@@ -60,6 +64,7 @@ impl MistTerrain {
             (TerrainQuery::Roots(_), Ok(TerrainReply::Metadata(roots))) => {
                 self.queue = level_keys(&roots);
                 self.expected = self.queue.len();
+
                 if self.expected == 0 {
                     self.done = true;
                 }
@@ -148,6 +153,7 @@ pub(super) fn update(
         return;
     };
     let identity = (catalog.generation_id().to_owned(), space);
+
     if mist.identity.as_ref() != Some(&identity) {
         *mist = MistTerrain {
             identity: Some(identity),
@@ -158,12 +164,15 @@ pub(super) fn update(
         published.disable();
         shore.disable();
         terrain.disable();
+
         if !mist.request(&worker, TerrainQuery::Roots(space)) {
             // Try again next frame.
             mist.identity = None;
         }
+
         return;
     }
+
     while mist.pending.len() < IN_FLIGHT {
         let Some(key) = mist.queue.pop() else {
             break;
@@ -173,6 +182,7 @@ pub(super) fn update(
             break;
         }
     }
+
     if !mist.done
         && mist.build.is_none()
         && mist.expected > 0
@@ -184,11 +194,13 @@ pub(super) fn update(
             AsyncComputeTaskPool::get().spawn(async move { build(nodes, cell_size, sea_level) }),
         );
     }
+
     if let Some(task) = &mut mist.build
         && let Some(result) = block_on(poll_once(task))
     {
         mist.build = None;
         mist.done = true;
+
         match result {
             Ok((map, shore_map, relief)) => {
                 info!(
@@ -201,9 +213,11 @@ pub(super) fn update(
                     relief.metres_per_texel
                 );
                 published.publish(Arc::new(map));
+
                 if let Some(shore_map) = shore_map {
                     shore.publish(Arc::new(shore_map));
                 }
+
                 terrain.set_relief(Arc::new(relief));
             }
             Err(e) => mist.fail(&e),
@@ -230,12 +244,14 @@ fn build(
         .collect::<Option<_>>()
         .ok_or("a terrain node holds no heights")?;
     let n = fields[0].1.resolution;
+
     if fields
         .iter()
         .any(|(key, field)| key.level != level || field.resolution != n)
     {
         return Err("terrain nodes differ in level or resolution".into());
     }
+
     let intervals = usize::from(n - 1);
     let (min_x, max_x, min_z, max_z) = fields.iter().fold(
         (i32::MAX, i32::MIN, i32::MAX, i32::MIN),
@@ -244,6 +260,7 @@ fn build(
     let width = (max_x - min_x + 1) as usize * intervals + 1;
     let depth = (max_z - min_z + 1) as usize * intervals + 1;
     let mut heights = vec![None; width * depth];
+
     for (key, field) in &fields {
         let (x0, z0) = (
             (key.x - min_x) as usize * intervals,
@@ -255,8 +272,10 @@ fn build(
             }
         }
     }
+
     let node_metres = f64::from(cell_size) * f64::from(1_u32 << level);
     let spacing = node_metres / intervals as f64;
+
     // Samples sit on texel centres, half a spacing in from the map's corner.
     let corner = |spacing: f64| {
         [
@@ -267,6 +286,7 @@ fn build(
     let size = UVec2::new(width as u32, depth as u32);
     let relief =
         TerrainRelief::from_heights(corner(spacing), size, spacing as f32, &heights, sea_level);
+
     // Mist and shore at twice the spacing: every other sample, the next level's own samples.
     let (mist_width, mist_depth) = (width.div_ceil(2), depth.div_ceil(2));
     let coarse: Vec<_> = (0..mist_depth)
@@ -328,6 +348,7 @@ mod tests {
             z: -9,
             ..keys[0]
         }));
+
         // A root below the level sets it.
         let keys = level_keys(&[root(2, 0, 0), root(3, 1, 1)]);
         assert_eq!(keys.len(), 1 + 4);

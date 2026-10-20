@@ -3,12 +3,14 @@ use crate::{
     editing::{EditorHistory, EditorObjectWorkingSet, EditorSelection},
     project_store::ProjectEditorStore,
 };
+
 use bevy::{
     gizmos::transform_gizmo::{TransformGizmoFocus, TransformGizmoState},
     gltf::GltfAssetLabel,
     prelude::*,
     world_serialization::WorldInstance,
 };
+
 use engine::{StreamedVisualObject, WorldCatalog, WorldOrigin, WorldViewpoint};
 use std::collections::HashSet;
 use uuid::Uuid;
@@ -31,6 +33,7 @@ pub(crate) struct PromotedEditorObject {
 
 #[derive(Component, Debug, Clone, Copy)]
 pub(crate) struct EditorHiddenCookedVisual(Visibility);
+
 pub(crate) fn reconcile_editor_selection(
     project: Res<ProjectEditorStore>,
     mut objects: ResMut<EditorObjectWorkingSet>,
@@ -86,17 +89,20 @@ pub(crate) fn sync_promoted_editor_object(
     desired.truncate(MAX_AUTHORING_PROXIES);
 
     let mut retained = HashSet::new();
+
     for (entity, mut proxy, mut current_transform, focused) in &mut proxies {
         if let Some(record) = desired.iter().find(|record| record.object.id == proxy.id)
             && retained.insert(proxy.id)
         {
             proxy.source_revision = record.object.source_revision;
+
             if !(gizmo.active && selected_id == Some(proxy.id))
                 && let Some(space) = catalog.world_space(record.object.space)
             {
                 *current_transform =
                     source_object_transform(record, origin.cell(), space.cell_size);
             }
+
             if selected_id == Some(proxy.id) && focused.is_none() {
                 commands.entity(entity).insert(TransformGizmoFocus);
             } else if selected_id != Some(proxy.id) && focused.is_some() {
@@ -127,9 +133,11 @@ pub(crate) fn sync_promoted_editor_object(
                 short_object_id(record.object.id)
             )),
         ));
+
         if selected_id == Some(record.object.id) {
             proxy.insert(TransformGizmoFocus);
         }
+
         if let Some(uri) = &record.visual_uri {
             proxy.insert(WorldAssetRoot(
                 asset_server.load(GltfAssetLabel::Scene(0).from_asset(uri.clone())),

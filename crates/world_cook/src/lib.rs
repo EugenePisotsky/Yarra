@@ -1,5 +1,6 @@
 #[cfg(test)]
 use world_db::write_runtime_database;
+
 mod control_cook;
 mod environment_cook;
 mod parallel;
@@ -7,17 +8,23 @@ mod runtime_build;
 mod streaming_cook;
 mod terrain_cook;
 mod terrain_preview;
+
 pub use terrain_preview::{
     MAX_PREVIEW_LEAVES, preview_terrain, published_terrain_control, published_terrain_leaf,
 };
+
 #[cfg(test)]
 mod terrain_fixture;
+
 use environment_cook::{
     CookedEnvironment, TerrainSlot, TerrainWeights, compile_environment, demo_environment,
 };
+
 pub use streaming_cook::{CookReport, CookStats, cook_project_fresh, cook_project_with_report};
+
 mod heightfield_import;
 mod terrain_world;
+
 pub use heightfield_import::{HeightfieldImportReport, import_heightfield};
 use runtime_build::build_compiled_runtime;
 
@@ -30,6 +37,7 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 use glam::Vec2;
+
 use world::{
     AssetId, CellCoord, DEFAULT_CELL_SIZE, GameplayObjectInstance, GameplayObjectsPage,
     MAX_TERRAIN_HEIGHTFIELD_RESOLUTION, MAX_TERRAIN_SURFACES_PER_CELL, MAX_TERRAIN_WEIGHT_PAGES,
@@ -38,6 +46,7 @@ use world::{
     StaticObjectsPage, TerrainHeightfieldPage, TerrainProfile, TerrainSurface, TerrainSurfaceId,
     TerrainTextureSet, TerrainTextureSetId, TerrainWeightPage, WorldSpaceId, encode_page_payload,
 };
+
 use world_db::{
     AssetVariantRecord, EncodedPage, PageDependencyRecord, PageObjectDefinitionRecord,
     PageTerrainSurfaceRecord, ProjectDocument, RuntimeBuild, RuntimeCellRecord, RuntimeManifest,
@@ -50,6 +59,7 @@ use world_db::{
 /// kit, three mesh LODs and an impostor, as the island's trees are drawn. Its runtime files live
 /// under `assets/local/yarra_bay`.
 const DEMO_TREE_KEY: &str = "yarra_bay/bay_upright";
+
 const DEMO_TREE_CATALOG: &str = include_str!("../../../assets/packs/yarra_bay/bay.catalog.ron");
 const DEMO_WORLD_CELL_RANGE: std::ops::Range<i32> = -8..8;
 // Half-metre source masks and endpoint-inclusive compiled ground weights.
@@ -62,6 +72,7 @@ mod grass_pack;
 mod road_demo;
 mod road_import;
 mod terrain_pack;
+
 pub use road_demo::create_road_demo_project;
 use terrain_pack::TerrainPack;
 
@@ -92,6 +103,7 @@ pub fn build_runtime(project: ProjectDocument) -> Result<RuntimeBuild> {
 struct RuntimeStaging {
     path: std::path::PathBuf,
 }
+
 impl RuntimeStaging {
     fn new(runtime_path: &Path) -> Result<Self> {
         static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -111,6 +123,7 @@ impl RuntimeStaging {
         })
     }
 }
+
 impl Drop for RuntimeStaging {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.path);
@@ -119,6 +132,7 @@ impl Drop for RuntimeStaging {
         let _ = fs::remove_file(std::path::PathBuf::from(journal));
     }
 }
+
 #[cfg(test)]
 fn publish_runtime_database(runtime_path: &Path, build: &RuntimeBuild) -> Result<RuntimeManifest> {
     let staging = RuntimeStaging::new(runtime_path)?;
@@ -126,6 +140,7 @@ fn publish_runtime_database(runtime_path: &Path, build: &RuntimeBuild) -> Result
     write_runtime_database(temporary_path, build)?;
     finish_runtime_publication(runtime_path, temporary_path, &build.manifest.world_spaces)
 }
+
 #[cfg(test)]
 fn finish_runtime_publication(
     runtime_path: &Path,
@@ -134,6 +149,7 @@ fn finish_runtime_publication(
 ) -> Result<RuntimeManifest> {
     publish_staged_runtime(runtime_path, temporary_path, spaces, None).map(|(manifest, _)| manifest)
 }
+
 /// Builds the staged runtime's terrain hierarchy (only above `changed` cells when given) and
 /// control tiles, validates its roots and publishes it; also returns the hierarchy's seconds.
 fn publish_staged_runtime(
@@ -148,6 +164,7 @@ fn publish_staged_runtime(
     control_cook::cook(temporary_path, spaces)?;
     let reader = world_db::RuntimeReader::open_immutable(temporary_path)
         .context("cooked runtime database did not pass validation")?;
+
     for space in &manifest.world_spaces {
         // The roots are the minimum fallback cover: validate their actual payloads
         // before replacing a previously working generation.
@@ -158,6 +175,7 @@ fn publish_staged_runtime(
                 .decode()?;
         }
     }
+
     drop(reader);
     fs::rename(temporary_path, runtime_path).with_context(|| {
         format!(
@@ -215,6 +233,7 @@ fn demo_project_document() -> ProjectDocument {
     let mut cells = Vec::new();
     let mut objects = Vec::new();
     let mut terrain_cell_heightfields = Vec::new();
+
     for x in DEMO_WORLD_CELL_RANGE {
         for z in DEMO_WORLD_CELL_RANGE {
             cells.push(SourceCellRecord {
@@ -231,6 +250,7 @@ fn demo_project_document() -> ProjectDocument {
                 source_revision: 1,
             });
             let lod_test_line = x == z && (-3..=-1).contains(&x);
+
             if lod_test_line || (x.rem_euclid(5) == 2 && z.rem_euclid(5) == 2) {
                 let hash = blake3::hash(format!("demo-tree:{x}:{z}").as_bytes());
                 let mut object_id = [0; 16];
@@ -255,6 +275,7 @@ fn demo_project_document() -> ProjectDocument {
             }
         }
     }
+
     for x in -4_i32..=4 {
         for z in -4_i32..=4 {
             cells.push(SourceCellRecord {
@@ -265,6 +286,7 @@ fn demo_project_document() -> ProjectDocument {
             });
         }
     }
+
     objects.push(SourceObjectRecord {
         id: StableObjectId(proximity_marker_definition.0),
         space: interior.id,
@@ -355,6 +377,7 @@ fn demo_terrain_heights(cell: CellCoord) -> Vec<f32> {
     let resolution = usize::from(DEMO_TERRAIN_HEIGHTFIELD_RESOLUTION);
     let intervals = (resolution - 1) as f32;
     let mut heights = Vec::with_capacity(resolution * resolution);
+
     for z in 0..resolution {
         for x in 0..resolution {
             let world = Vec2::new(
@@ -364,6 +387,7 @@ fn demo_terrain_heights(cell: CellCoord) -> Vec<f32> {
             heights.push(demo_terrain_height(world));
         }
     }
+
     heights
 }
 
@@ -437,6 +461,7 @@ fn demo_terrain_mix_signal(world: Vec2) -> f32 {
         / (1.0 + medium_strength + small_strength);
     let green_mottling =
         (smoothstep(0.05, 0.75, hole_field) - 0.35) * DEMO_TERRAIN_VARIANT_MOTTLING * 0.42;
+
     // Flat terrain has the same neutral feature response as the legacy
     // sampler: moisture 0.65, slope 0.0.
     let flat_terrain_bias = (0.65 - 0.5) * -0.55 * 0.2 + (0.0 - 0.35) * 0.2 * 0.14;
@@ -473,6 +498,7 @@ fn demo_terrain_mix_offset() -> f32 {
         let amplitude = demo_terrain_mix_amplitude();
         let mut lower = -(amplitude * 2.0 + 1.0);
         let mut upper = amplitude * 2.0 + 1.0;
+
         for _ in 0..24 {
             let offset = (lower + upper) * 0.5;
             let average = signals
@@ -480,12 +506,14 @@ fn demo_terrain_mix_offset() -> f32 {
                 .map(|signal| (offset + signal * amplitude).clamp(0.0, 1.0))
                 .sum::<f32>()
                 / signals.len() as f32;
+
             if average < DEMO_DRY_COVERAGE {
                 lower = offset;
             } else {
                 upper = offset;
             }
         }
+
         (lower + upper) * 0.5
     })
 }
@@ -534,6 +562,7 @@ fn terrain_fbm(mut point: Vec2, seed: u32) -> f32 {
     let mut sum = 0.0;
     let mut amplitude = 0.55;
     let mut normalization = 0.0;
+
     for octave in 0..5_u32 {
         sum += terrain_value_noise(point, seed ^ octave.wrapping_mul(0x9e37_79b9)) * amplitude;
         normalization += amplitude;
@@ -543,6 +572,7 @@ fn terrain_fbm(mut point: Vec2, seed: u32) -> f32 {
         );
         amplitude *= 0.5;
     }
+
     sum / normalization
 }
 
@@ -642,6 +672,7 @@ mod tests {
             panic!("demo overworld terrain must cook to heightfields");
         };
         let resolution = usize::from(left.heightfield.resolution);
+
         for z in 0..resolution {
             let left_index = z * resolution + resolution - 1;
             let right_index = z * resolution;
@@ -654,6 +685,7 @@ mod tests {
                 right.heightfield.normals_oct[right_index]
             );
         }
+
         assert_eq!(build.definitions.len(), 2);
         let vegetation_pages = build
             .pages
@@ -661,6 +693,7 @@ mod tests {
             .filter(|page| page.key.domain == PageDomain::Vegetation)
             .collect::<Vec<_>>();
         assert!(!vegetation_pages.is_empty());
+
         // Grass grows on every cell's ground: the overworld's 16×16 and the interior's 9×9.
         assert!(vegetation_pages.len() <= 16 * 16 + 9 * 9);
         assert_eq!(vegetation_pages[0].key.cell, CellCoord { x: -8, z: -8 });
@@ -692,16 +725,21 @@ mod tests {
     fn tracked_pack_catalogs_import() {
         let packs = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/packs");
         let mut checked = 0;
+
         for pack in fs::read_dir(packs).unwrap() {
             let pack = pack.unwrap().path();
+
             if !pack.is_dir() {
                 continue;
             }
+
             for file in fs::read_dir(pack).unwrap() {
                 let path = file.unwrap().path();
+
                 if !path.to_string_lossy().ends_with(".catalog.ron") {
                     continue;
                 }
+
                 let catalog: world_db::AssetImportCatalog =
                     ron::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
                 catalog
@@ -710,6 +748,7 @@ mod tests {
                 checked += 1;
             }
         }
+
         assert!(checked > 0);
     }
 

@@ -4,11 +4,13 @@ use super::{
     report,
     telemetry::{self, PendingPipelines, Telemetry},
 };
+
 use crate::{
     frame_pacing::FramePacing,
     render_audit::{AuditPanel, Control, font, timing},
     runtime_settings::{RuntimeSettings, RuntimeSettingsInit},
 };
+
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use bevy::{ui::Pressed, ui_widgets::Button};
@@ -24,6 +26,7 @@ enum Tab {
     Weather,
     Wind,
 }
+
 impl Tab {
     fn label(self) -> &'static str {
         match self {
@@ -37,22 +40,31 @@ impl Tab {
         }
     }
 }
+
 #[derive(Component)]
 struct PanelRoot;
+
 #[derive(Component)]
 struct Page(Tab);
+
 #[derive(Component)]
 struct Summary;
+
 #[derive(Component)]
 struct Details;
+
 #[derive(Component)]
 struct Comparison;
+
 #[derive(Component)]
 struct PassTimes;
+
 #[derive(Component)]
 struct Notice;
+
 #[derive(Component)]
 struct Bar(usize);
+
 #[derive(Component, Clone, Copy)]
 enum Action {
     Toggle,
@@ -67,6 +79,7 @@ pub(crate) struct PanelState {
     open: bool,
     tab: Tab,
 }
+
 impl Default for PanelState {
     fn default() -> Self {
         Self {
@@ -75,6 +88,7 @@ impl Default for PanelState {
         }
     }
 }
+
 pub(super) fn install(app: &mut App) {
     let open = app
         .world()
@@ -143,6 +157,7 @@ fn initialize(
             page.spawn((Text::new(""), font(13.0), Details));
             page.spawn((Text::new("GPU elapsed uses asynchronous hardware timestamps around render commands, excluding presentation. CPU work sums measured systems; parallel jobs can overlap. Acquisition and submission may block. These numbers are not added into one frame total."), font(12.0)));
         });
+
         for (tab, note, controls) in [
             (Tab::Features, "Grass Disabled skips its render preparation, compute and draws; source streaming remains. Terrain/object draw switches keep streaming, animation and collision. Sky + haze keeps authored illumination. Cloud Off skips cloud passes; shared material bookkeeping remains. Fog & mist hides ground haze and valley mist; weather fog stays. Ambient particles hides dust motes, seed fluff and falling leaves. Light shafts and sun rays skips the sunbeam passes; the sun's glare stays.", &[Control::Clouds, Control::GrassEnabled, Control::Sky, Control::Bloom, Control::AutoExposure, Control::Fog, Control::Particles, Control::LightShafts, Control::Terrain, Control::Objects, Control::Shadows, Control::ShadowMap, Control::Wind][..]),
             (Tab::Quality, "Click to cycle. Object LOD size below 1 selects coarser available assets. Lower resolution affects the 3D scene only.", &[Control::Scale, Control::Upscaler, Control::TemporalDebug, Control::Antialiasing, Control::ObjectDetail][..]),
@@ -158,6 +173,7 @@ fn initialize(
                 });
             });
         }
+
         panel.spawn((Page(Tab::Weather), page_node())).with_children(|page| {
             super::weather::spawn(page, || (button_node(), BackgroundColor(button_color())));
         });
@@ -176,6 +192,7 @@ fn initialize(
         panel.spawn((Button, Control::Reset, button_node(), BackgroundColor(button_color()))).with_child((Text::new("Reset launch settings"), font(13.0)));
     });
 }
+
 fn page_node() -> Node {
     Node {
         flex_direction: FlexDirection::Column,
@@ -183,6 +200,7 @@ fn page_node() -> Node {
         ..default()
     }
 }
+
 fn button_node() -> Node {
     Node {
         min_height: px(32),
@@ -191,6 +209,7 @@ fn button_node() -> Node {
         ..default()
     }
 }
+
 fn button_color() -> Color {
     Color::srgb(0.10, 0.17, 0.22)
 }
@@ -212,12 +231,15 @@ fn actions(
             pos.y = (pos.y - wheel.delta.y * 24.0).max(0.0);
         }
     }
+
     let mut actions: Vec<_> = clicks.iter().copied().collect();
+
     if keys.just_pressed(KeyCode::F1)
         || (keys.just_pressed(KeyCode::Escape) && (state.open || session.recording()))
     {
         actions.push(Action::Toggle);
     }
+
     for action in actions {
         if matches!(action, Action::Toggle) {
             if session.cancel(&mut settings, "Capture cancelled; previous results kept.") {
@@ -227,9 +249,11 @@ fn actions(
             }
             continue;
         }
+
         if session.recording() {
             continue;
         }
+
         match action {
             Action::Tab(tab) => {
                 state.tab = tab;
@@ -298,14 +322,18 @@ fn refresh(
     if time.elapsed_secs_f64() - t.refreshed < 0.25 {
         return;
     }
+
     t.refreshed = time.elapsed_secs_f64();
+
     if t.graph.len() == 60 {
         t.graph.pop_front();
     }
+
     let peak = t.peak_ms;
     t.graph.push_back(peak);
     t.peak_ms = 0.0;
     let power = crate::render_audit::logging::power_state();
+
     for mut text in &mut texts.p3() {
         let value = session.progress(time.elapsed_secs_f64()).map_or_else(
             || "Performance  |  F1".into(),
@@ -326,12 +354,15 @@ fn refresh(
             text.0 = value;
         }
     }
+
     if !state.open {
         return;
     }
+
     for mut text in &mut passes {
         text.0 = report::timing_details(&timings, *stamp);
     }
+
     let gpu_fresh = window.focused
         && timings
             .gpu_received
@@ -358,10 +389,13 @@ fn refresh(
     } else {
         format!("{}\n", timings.status)
     };
+
     if let Ok(status) = upscaler.single() {
         timing_line += &status.description();
     }
+
     let s = report::stats(t.frames.iter().copied());
+
     for mut text in &mut texts.p0() {
         **text = format!(
             "{:.1} FPS | {:.2} ms median | p95 {:.2} ms\nThermal: {} | low power: {}\n{}",
@@ -373,6 +407,7 @@ fn refresh(
             timing_line
         );
     }
+
     let grass = vegetation.snapshot();
     let source_info = format!(
         "Source memory: {:.2} MiB decoded / {:.2} MiB estimated GPU\nGrass: {} source pages | {} work items | {} repacks\nGrass source buffers: {:.2} MiB | high detail within {:.0} m | dropped: {:?} ({} GPU samples)",
@@ -386,6 +421,7 @@ fn refresh(
         grass.capacity_dropped_instances,
         grass.gpu_samples
     );
+
     for mut text in &mut texts.p1() {
         **text = format!(
             "3D: {}x{} | display: {}x{}\nMain-app elapsed median: {:.2} ms\nPipelines compiling: {} | loading pages: {}\nResident pages: {} | failed: {}\nTerrain: {} triangles / {} patches | pending: {}\nObject LOD counts: {:?}\n{source_info}\n{}",
@@ -405,9 +441,11 @@ fn refresh(
             session.message
         );
     }
+
     for mut text in &mut texts.p2() {
         **text = report::comparison(&session);
     }
+
     for (bar, mut node, mut color) in &mut bars {
         let value = t.graph.iter().rev().nth(59 - bar.0).copied().unwrap_or(0.0);
         node.height = px((value as f32 / 33.33 * 64.0).clamp(1.0, 64.0));
@@ -420,6 +458,7 @@ fn refresh(
         };
     }
 }
+
 #[allow(clippy::type_complexity)] // Root and page nodes in one disjoint query.
 fn visibility(
     state: Res<PanelState>,

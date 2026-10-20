@@ -11,6 +11,7 @@ pub struct ContentIdentity {
     pub manifest: ContentManifest,
     pub fingerprint: [u8; 32],
 }
+
 /// Summary of a playthrough's position, returned by commands and stored beside saves.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -21,6 +22,7 @@ pub struct SessionHeader {
     pub random: RandomState,
     pub narrative_random: RandomState,
 }
+
 impl SessionHeader {
     pub fn capture(state: &SessionState) -> Self {
         Self {
@@ -32,12 +34,14 @@ impl SessionHeader {
         }
     }
 }
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ConversationKey {
     pub dialogue: DialogueId,
     pub participant: ActorId,
     pub speaker: ActorId,
 }
+
 impl ConversationKey {
     pub fn of(c: &dialogue::Conversation) -> Self {
         Self {
@@ -47,11 +51,14 @@ impl ConversationKey {
         }
     }
 }
+
 /// Published content. `core` is read once per session; dialogue graphs are read when a
 /// conversation needs them, so opening a game never loads every conversation.
 pub trait ContentSource {
     fn identity(&self) -> ContentIdentity;
+
     /// Every definition except dialogue graphs and text contracts.
     fn core(&mut self) -> Result<GameContent>;
+
     fn dialogue(&mut self, id: DialogueId) -> Result<dialogue::Dialogue>;
 }

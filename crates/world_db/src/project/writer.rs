@@ -1,13 +1,16 @@
 use crate::catalog::{
     VEGETATION_CATALOG_FORMAT_VERSION, encode_vegetation_catalog, read_vegetation_catalog,
 };
+
 use crate::project::query::source_object_from_row;
 use crate::storage::ensure_schema_version;
+
 use crate::{
     MAX_OBJECT_WRITES_PER_TRANSACTION, ObjectWriteTransactionResult, SourceObjectTransform,
     SourceObjectWrite, SourceObjectWriteCommit, VegetationCatalogWriteResult, WorldDbError,
     environment_store,
 };
+
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 use std::collections::HashSet;
 use std::path::Path;
@@ -68,6 +71,7 @@ impl ProjectWriter {
             .connection
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let actual = read_vegetation_catalog(&transaction)?;
+
         if actual.as_ref() != expected {
             return Ok(VegetationCatalogWriteResult::Conflict { actual });
         }
@@ -92,13 +96,16 @@ impl ProjectWriter {
         if writes.is_empty() || writes.len() > MAX_OBJECT_WRITES_PER_TRANSACTION {
             return Err(WorldDbError::InvalidObjectTransaction);
         }
+
         let mut objects = HashSet::with_capacity(writes.len());
+
         if writes.iter().any(|write| !objects.insert(write.object())) {
             return Err(WorldDbError::InvalidObjectTransaction);
         }
 
         let transaction = self.connection.transaction()?;
         let mut commits = Vec::with_capacity(writes.len());
+
         for write in writes {
             let (object, updated) = match write {
                 SourceObjectWrite::Create { object } => {
@@ -113,6 +120,7 @@ impl ProjectWriter {
                             source_object_from_row,
                         )
                         .optional()?;
+
                     if actual.is_some() {
                         transaction.rollback()?;
                         return Ok(ObjectWriteTransactionResult::Conflict {
@@ -120,6 +128,7 @@ impl ProjectWriter {
                             actual,
                         });
                     }
+
                     let source_revision = object.source_revision.saturating_add(1);
                     let updated = transaction.execute(
                         "INSERT INTO object_placements( \
@@ -181,6 +190,7 @@ impl ProjectWriter {
                     (*object, updated)
                 }
             };
+
             if updated == 0 {
                 let actual = transaction
                     .query_row(
@@ -217,6 +227,7 @@ impl ProjectWriter {
                 }
             }
         }
+
         transaction.commit()?;
         Ok(ObjectWriteTransactionResult::Committed(commits))
     }

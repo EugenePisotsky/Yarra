@@ -10,15 +10,18 @@
 use super::forest_shadow::NoForestShadow;
 use super::gpu::{TreeForms, TreeOverride};
 use super::impostor::{ImpostorBatch, ImpostorDescriptor, ImpostorInstance, TreeFormSpec};
+
 use crate::object_lod::{
     ForcedLod, LodProjection, ScreenSpaceLod, ScreenSpaceLodVariant, TimedLod, crossfade,
 };
+
 use crate::{ActiveWorldView, WorldRenderRoot};
 use bevy::prelude::*;
 use std::{ops::Range, path::Path, sync::Arc};
 
 /// Updates lab trees after the user's changes and before object LODs are ranged.
 pub struct LodLabPlugin;
+
 impl Plugin for LodLabPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
@@ -56,19 +59,24 @@ impl LabAsset {
         let folder = packs.join(pack);
         let entries = std::fs::read_dir(&folder)
             .map_err(|e| format!("cannot read {}: {e}", folder.display()))?;
+
         for entry in entries.flatten() {
             let path = entry.path();
+
             if !path.to_string_lossy().ends_with(".catalog.ron") {
                 continue;
             }
+
             let text = std::fs::read_to_string(&path)
                 .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
             let catalog: world_db::AssetImportCatalog = ron::from_str(&text)
                 .map_err(|e| format!("cannot parse {}: {e}", path.display()))?;
+
             if let Some(asset) = catalog.assets.into_iter().find(|a| a.key == key) {
                 return Self::from_import(asset);
             }
         }
+
         Err(format!(
             "no catalog in {} has asset {key:?}",
             folder.display()
@@ -88,6 +96,7 @@ impl LabAsset {
             .iter()
             .filter(|v| !world::is_impostor_uri(&v.uri))
             .count();
+
         if meshes == 0
             || variants[..meshes]
                 .iter()
@@ -102,6 +111,7 @@ impl LabAsset {
                 asset.key
             ));
         }
+
         let bounds = asset.variants.iter().fold([0.0_f32; 3], |b, v| {
             std::array::from_fn(|i| b[i].max(v.bounds[i]))
         });
@@ -226,6 +236,7 @@ pub fn spawn_lab_tree(
         return id;
     };
     let tree = entity.id();
+
     // The batch sits at the root without its rotation or scale, which its instance applies,
     // as in far-object blocks.
     let (scale, translation) = (transform.scale, transform.translation);
@@ -297,6 +308,7 @@ fn apply_representation(
             Some(usize::MAX) => ForcedLod::Nothing,
             Some(index) => ForcedLod::Only(index),
         };
+
         if let Some(batch) = tree.batch {
             commands.entity(batch).insert(TreeOverride(index));
             // A hidden tree leaves the forest shadows too, so a frame without it is the
@@ -335,6 +347,7 @@ fn report(
         let height = tree.asset.bounds[1] * scale;
         let batch = tree.batch.and_then(|batch| batches.get(batch).ok());
         let descriptor = batch.and_then(|batch| descriptors.get(&batch.descriptor));
+
         // The GPU trees hand off where the impostor has a texel per output pixel and keep
         // meshes as far as that says; entities follow the catalog to their own farthest
         // switch.
@@ -351,12 +364,15 @@ fn report(
         };
         let farthest = lod.map_or(f32::INFINITY, ScreenSpaceLod::farthest_switch);
         let mut bands = Vec::new();
+
         if projection.pixels_per_metre() > 0.0 && !projection.orthographic() {
             for index in 0..tree.asset.meshes() {
                 let range = projection.range(&thresholds, height, index, farthest);
+
                 if range.end_margin.end <= 0.0 {
                     continue; // skipped: the LOD before it extends to its switch
                 }
+
                 bands.push(LabBand {
                     representation: LabRepresentation::Mesh(index),
                     fade_in: range.start_margin,
@@ -372,6 +388,7 @@ fn report(
                 });
             }
         }
+
         let (ready, fading) = match (lod, fades) {
             (Some(lod), _) => {
                 let scenes = children.map_or(0, |c| c.len());
@@ -386,13 +403,16 @@ fn report(
                 // Its bands need the impostor's texel density.
                 if projection.pixels_per_metre() > 0.0 && descriptor.is_some() {
                     let fades = &mut fades.0;
+
                     if projection.is_changed() || !fades.has_bands() {
                         fades.set_bands(&projection, &thresholds, height, f32::INFINITY);
                     }
+
                     let distance =
                         eye.map_or(f32::MAX, |eye| eye.distance(transform.translation()));
                     fades.step(*forced, distance, thresholds.len() - 1, time.delta_secs());
                 }
+
                 let ready = forms
                     .as_ref()
                     .zip(tree.asset.impostor())
@@ -401,6 +421,7 @@ fn report(
             }
             (None, None) => (false, false),
         };
+
         // The atlas holds each view's crop: its tile width over the crop's share of the view.
         let impostor_view = descriptor.and_then(|descriptor| {
             let width = images.get(&descriptor.albedo)?.width() as f32;
@@ -410,6 +431,7 @@ fn report(
                 descriptor.radius,
             ))
         });
+
         if tree.bands != bands
             || tree.ready != ready
             || tree.pixels_per_metre != projection.pixels_per_metre()

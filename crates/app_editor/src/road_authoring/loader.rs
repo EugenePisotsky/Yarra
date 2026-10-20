@@ -1,5 +1,6 @@
 use super::*;
 use crate::project_store::ProjectDatabasePath;
+
 #[derive(Clone, PartialEq)]
 struct Key {
     space: WorldSpaceId,
@@ -23,7 +24,9 @@ impl Key {
                 .all(|pin| self.pins.binary_search(pin).is_ok())
     }
 }
+
 type Worker = crate::worker::Worker<Key, (Key, Result<world_db::RoadAuthoringSnapshot, String>)>;
+
 fn start_worker(path: std::path::PathBuf) -> Result<Worker, String> {
     Worker::project_reader("road-authoring", path, |reader, key: &Key| {
         reader
@@ -31,6 +34,7 @@ fn start_worker(path: std::path::PathBuf) -> Result<Worker, String> {
             .map_err(|e| e.to_string())
     })
 }
+
 #[derive(Resource, Default)]
 pub(super) struct RoadLoader {
     worker: Option<Worker>,
@@ -39,6 +43,7 @@ pub(super) struct RoadLoader {
     submitted: Option<Key>,
     desired: Option<Key>,
 }
+
 #[allow(clippy::too_many_arguments)] // Bevy system parameters.
 pub(super) fn update(
     path: Res<ProjectDatabasePath>,
@@ -56,15 +61,19 @@ pub(super) fn update(
             && tools
                 .active(EditorWorkspace::World)
                 .is_some_and(|t| t.id == ROAD_TOOL.id));
+
     if !needed || dense.gesture_active || dense.saving() {
         return;
     }
+
     let Some(position) = view.position() else {
         return;
     };
+
     if dense.definition(position.space).is_none() {
         return;
     }
+
     let center = state
         .hover
         .filter(|_| state.space == Some(position.space))
@@ -80,15 +89,19 @@ pub(super) fn update(
         },
     };
     let mut pins = history.road_keys();
+
     if let Some(id) = state.road {
         pins.insert(RoadRecordKey::Road(id));
     }
+
     if let Some(id) = state.knot {
         pins.insert(RoadRecordKey::Knot(id));
     }
+
     if let Some(id) = state.span {
         pins.insert(RoadRecordKey::Span(id));
     }
+
     let pins = dense.roads.pins(&pins);
     let key = Key {
         space: position.space,
@@ -97,11 +110,13 @@ pub(super) fn update(
         pins: pins.iter().copied().collect(),
         refresh: state.refresh,
     };
+
     if loader.desired.as_ref() != Some(&key) {
         loader.desired = Some(key.clone());
         loader.submitted = None;
         state.load_error = None;
     }
+
     if let Some((finished, result)) = loader.worker.as_ref().and_then(|w| w.try_recv().ok()) {
         loader.in_flight = false;
         if finished == key {
@@ -116,6 +131,7 @@ pub(super) fn update(
             }
         }
     }
+
     state.ready = loader
         .accepted
         .as_ref()
@@ -126,12 +142,14 @@ pub(super) fn update(
         .as_ref()
         .filter(|_| state.ready)
         .map(|loaded| (loaded.space, loaded.bounds));
+
     if loader.in_flight
         || loader.accepted.as_ref() == Some(&key)
         || loader.submitted.as_ref() == Some(&key)
     {
         return;
     }
+
     if loader.worker.is_none() {
         match start_worker(path.0.clone()) {
             Ok(w) => loader.worker = Some(w),
@@ -141,6 +159,7 @@ pub(super) fn update(
             }
         }
     }
+
     if loader
         .worker
         .as_ref()

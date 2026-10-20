@@ -3,6 +3,7 @@ use super::{
     buffers::VegetationBuffers,
     gpu_types::{DRAW_ARGS_SIZE, GPU_TELEMETRY_SIZE},
 };
+
 #[cfg(not(target_os = "ios"))]
 use super::{
     gpu_types::{
@@ -11,17 +12,21 @@ use super::{
     },
     topology::{HIGH_INDEX_COUNT, HIGH_ROWS, LOW_INDEX_COUNT, LOW_ROWS},
 };
+
 #[cfg(not(target_os = "ios"))]
 use crate::{VegetationDiagnostics, VegetationSceneState, VegetationSettings};
+
 #[cfg(not(target_os = "ios"))]
 use bevy::render::{
     render_resource::{BufferDescriptor, BufferUsages, MapMode},
     renderer::RenderDevice,
 };
+
 use bevy::{
     prelude::*,
     render::{render_resource::Buffer, renderer::RenderContext},
 };
+
 #[cfg(not(target_os = "ios"))]
 use std::mem::size_of;
 
@@ -48,13 +53,16 @@ pub(super) fn prepare_telemetry_staging(
         staging.frames_until_capture = 0;
         return;
     }
+
     if staging.buffer.is_some() {
         return;
     }
+
     if staging.frames_until_capture > 0 {
         staging.frames_until_capture -= 1;
         return;
     }
+
     staging.buffer = Some(render_device.create_buffer(&BufferDescriptor {
         label: Some("vegetation telemetry readback"),
         size: TELEMETRY_READBACK_SIZE,
@@ -95,6 +103,7 @@ pub(super) fn begin_telemetry_readback(
                 };
                 let words: &[u32] = bytemuck::cast_slice(&mapped);
                 let required_words = (TELEMETRY_READBACK_SIZE / size_of::<u32>() as u64) as usize;
+
                 if words.len() >= required_words {
                     let args_offset = GPU_TELEMETRY_WORD_COUNT as usize;
                     let emitted_instances = std::array::from_fn(|bin| {
@@ -126,6 +135,7 @@ pub(super) fn begin_telemetry_readback(
                     });
                 }
             }
+
             buffer.unmap();
         });
 }

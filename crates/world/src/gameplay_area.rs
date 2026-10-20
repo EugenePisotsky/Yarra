@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 pub const MAX_GAMEPLAY_AREAS: usize = 4096;
 pub const MAX_GAMEPLAY_AREA_POINTS: usize = 64;
+
 /// How far past an edge an actor already inside still counts as inside, so standing on a
 /// boundary does not enter and leave every frame.
 pub const GAMEPLAY_AREA_EXIT_MARGIN: f64 = 0.25;
@@ -37,9 +38,11 @@ impl GameplayArea {
         if !valid_gameplay_area_name(&self.name) {
             return Err("an area name is 1-96 lowercase letters, digits or _ - / . characters");
         }
+
         if !(3..=MAX_GAMEPLAY_AREA_POINTS).contains(&self.points.len()) {
             return Err("an area has between 3 and 64 corners");
         }
+
         if self
             .points
             .iter()
@@ -48,11 +51,13 @@ impl GameplayArea {
         {
             return Err("an area corner is outside the world");
         }
+
         if self.height.is_some_and(|[low, high]| {
             !low.is_finite() || !high.is_finite() || low > high || low.abs().max(high.abs()) > 1e6
         }) {
             return Err("an area's height range is invalid");
         }
+
         Ok(())
     }
 
@@ -122,9 +127,11 @@ impl GameplayArea {
             .iter()
             .fold([0.; 2], |sum, p| [sum[0] + p[0], sum[1] + p[1]])
             .map(|v| v / count);
+
         if self.covers(middle[0], middle[1]) {
             return middle;
         }
+
         let z = middle[1];
         let mut crossings: Vec<f64> = self
             .edges()
@@ -146,13 +153,16 @@ pub fn validate_gameplay_areas(areas: &[GameplayArea]) -> Result<(), &'static st
     if areas.len() > MAX_GAMEPLAY_AREAS {
         return Err("too many gameplay areas");
     }
+
     let mut names = std::collections::HashSet::new();
+
     for area in areas {
         area.validate()?;
         if !names.insert(area.name.as_str()) {
             return Err("two gameplay areas share a name");
         }
     }
+
     Ok(())
 }
 
@@ -237,6 +247,7 @@ mod tests {
     fn a_walk_target_is_inside_even_when_the_middle_is_not() {
         let square = area("square", &[[0., 0.], [4., 0.], [4., 4.], [0., 4.]]);
         assert_eq!(square.interior_point(), [2., 2.]);
+
         // A U shape: the middle of its corners lies in the gap between the arms.
         let u = area(
             "u",
@@ -262,6 +273,7 @@ mod tests {
         let good = area("camp/fire", &[[0., 0.], [1., 0.], [0., 1.]]);
         assert_eq!(validate_gameplay_areas(std::slice::from_ref(&good)), Ok(()));
         assert!(validate_gameplay_areas(&[good.clone(), good.clone()]).is_err());
+
         for broken in [
             area("Camp Fire", &good.points),
             area("", &good.points),

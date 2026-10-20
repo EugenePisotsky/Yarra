@@ -18,6 +18,7 @@ pub struct WorldDefinitions {
     #[serde(with = "crate::keyed::list")]
     pub triggers: BTreeMap<TriggerId, TriggerDefinition>,
 }
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ObjectKind {
     Door,
@@ -28,6 +29,7 @@ pub enum ObjectKind {
         loot: Option<LootId>,
     },
 }
+
 /// Stable placed-object identity, independent of whether its region is currently loaded.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -37,6 +39,7 @@ pub struct ObjectDefinition {
     pub kind: ObjectKind,
     pub locked: bool,
 }
+
 /// Something that happened, which triggers can listen for.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum WorldSignal {
@@ -68,6 +71,7 @@ pub enum WorldSignal {
     VariableChanged(VariableId),
     DialogueCompleted(DialogueId),
 }
+
 impl WorldSignal {
     fn validate(&self, content: &GameContent) -> Result<()> {
         match self {
@@ -97,6 +101,7 @@ impl WorldSignal {
         Ok(())
     }
 }
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TriggerRepeat {
     #[default]
@@ -106,6 +111,7 @@ pub enum TriggerRepeat {
         millis: u64,
     },
 }
+
 /// When any of `on` happens and the condition holds, the actions run as one unit: either
 /// all of them take effect or none do.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -124,10 +130,12 @@ pub struct TriggerDefinition {
     #[serde(default)]
     pub repeat: TriggerRepeat,
 }
+
 impl TriggerDefinition {
     pub fn speaker(&self) -> ActorId {
         self.speaker.unwrap_or(self.player)
     }
+
     pub fn validate(&self) -> Result<()> {
         require(
             self.speaker != Some(self.player),
@@ -135,15 +143,18 @@ impl TriggerDefinition {
         )?;
         require(!self.on.is_empty(), "a trigger listens for something")?;
         require(!self.actions.is_empty(), "a trigger does something")?;
+
         if let TriggerRepeat::Cooldown { millis } = self.repeat {
             require(
                 millis > 0 && millis <= i64::MAX as u64,
                 "invalid trigger cooldown",
             )?;
         }
+
         Ok(())
     }
 }
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ObjectState {
@@ -152,6 +163,7 @@ pub struct ObjectState {
     pub open: bool,
     pub destroyed: bool,
 }
+
 impl ObjectState {
     pub fn initial(d: &ObjectDefinition) -> Self {
         Self {
@@ -162,6 +174,7 @@ impl ObjectState {
         }
     }
 }
+
 /// The areas an actor was last reported inside. Kept so that loading a save does not
 /// announce entering them again.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -170,6 +183,7 @@ pub struct LocationState {
     pub actor: ActorId,
     pub areas: BTreeSet<AreaId>,
 }
+
 /// A request for the engine to walk an actor into an area. It ends when the actor is
 /// reported inside that area, when the engine gives up, or when its time runs out.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -181,6 +195,7 @@ pub struct Movement {
     pub request: u64,
     pub deadline: Option<GameTime>,
 }
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TriggerState {
@@ -188,6 +203,7 @@ pub struct TriggerState {
     pub fired: u64,
     pub last_fired: Option<GameTime>,
 }
+
 impl TriggerState {
     pub fn initial(id: TriggerId) -> Self {
         Self {
@@ -196,6 +212,7 @@ impl TriggerState {
             last_fired: None,
         }
     }
+
     pub fn eligible(&self, d: &TriggerDefinition, now: GameTime) -> bool {
         match d.repeat {
             TriggerRepeat::Once => self.fired == 0,
@@ -206,6 +223,7 @@ impl TriggerState {
         }
     }
 }
+
 /// Work a command gave rise to, carried out straight after it, each piece on its own.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Pending {
@@ -217,6 +235,7 @@ pub enum Pending {
         speaker: ActorId,
     },
 }
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorldState {
@@ -231,6 +250,7 @@ pub struct WorldState {
     /// Oldest first.
     pub pending: VecDeque<Pending>,
 }
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WorldCommand {
     /// The engine reports where an actor is and which areas contain it.
@@ -263,6 +283,7 @@ pub enum WorldCommand {
         object: ObjectId,
     },
 }
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorldEvent {
     Entered {
@@ -297,6 +318,7 @@ pub enum WorldEvent {
         reason: String,
     },
 }
+
 impl GameContent {
     pub fn object(&self, id: ObjectId) -> Result<&ObjectDefinition> {
         self.game
@@ -305,6 +327,7 @@ impl GameContent {
             .get(&id)
             .ok_or_else(|| Invalid("unknown object".into()).into())
     }
+
     /// Checks that the content declares the area.
     pub fn area(&self, id: AreaId) -> Result<()> {
         require(
@@ -313,6 +336,7 @@ impl GameContent {
         )
         .map_err(Into::into)
     }
+
     pub fn trigger(&self, id: TriggerId) -> Result<&TriggerDefinition> {
         self.game
             .world
@@ -320,35 +344,46 @@ impl GameContent {
             .get(&id)
             .ok_or_else(|| Invalid("unknown trigger".into()).into())
     }
+
     pub(crate) fn validate_world(&self) -> Result<()> {
         let w = &self.game.world;
         crate::content::filed(&w.objects, "objects")?;
+
         for d in w.objects.values() {
             d.name.validate()?;
         }
+
         crate::content::filed(&w.triggers, "triggers")?;
+
         for d in w.triggers.values() {
             crate::content::within(format!("trigger {}", d.id), || {
                 d.validate()?;
                 self.character(d.player)?;
+
                 if let Some(speaker) = d.speaker {
                     self.character(speaker)?;
                 }
+
                 for signal in &d.on {
                     signal.validate(self)?;
                 }
+
                 if let Some(condition) = &d.condition {
                     self.validate_condition(condition)?;
                 }
+
                 for action in &d.actions {
                     self.validate_action(action, 0)?;
                 }
+
                 Ok(())
             })?;
         }
+
         Ok(())
     }
 }
+
 /// Which triggers listen for which signal, built once from the loaded definitions.
 #[derive(Debug, Default)]
 pub struct TriggerIndex {
@@ -356,9 +391,11 @@ pub struct TriggerIndex {
     /// Actors whose comings and goings some trigger listens for.
     watched: BTreeSet<ActorId>,
 }
+
 impl TriggerIndex {
     pub fn build(content: &GameContent) -> Self {
         let mut index = Self::default();
+
         for d in content.game.world.triggers.values() {
             for signal in &d.on {
                 if let WorldSignal::Entered { actor, .. } | WorldSignal::Exited { actor, .. } =
@@ -373,19 +410,24 @@ impl TriggerIndex {
                     .insert(d.id);
             }
         }
+
         index
     }
+
     pub fn subscribed(&self, signal: &WorldSignal) -> bool {
         self.subscribers.contains_key(signal)
     }
+
     /// In identity order, so the same event always runs its triggers in the same order.
     pub fn subscribers(&self, signal: &WorldSignal) -> impl Iterator<Item = TriggerId> + '_ {
         self.subscribers.get(signal).into_iter().flatten().copied()
     }
+
     pub fn watches(&self, actor: ActorId) -> bool {
         self.watched.contains(&actor)
     }
 }
+
 impl WorldState {
     pub(crate) fn validate(&self, content: &GameContent, state: &SessionState) -> Result<()> {
         for work in &self.pending {
@@ -402,18 +444,23 @@ impl WorldState {
                 }
             }
         }
+
         for o in self.objects.values() {
             state.check_object(content, o)?;
         }
+
         for l in self.locations.values() {
             state.check_location(content, l)?;
         }
+
         for t in self.triggers.values() {
             state.check_trigger(content, t)?;
         }
+
         for m in self.movements.values() {
             state.check_movement(content, m)?;
         }
+
         Ok(())
     }
 }

@@ -3,6 +3,7 @@
 use super::layout::bands;
 use super::*;
 use crate::object_lod::{ForcedLod, LodProjection, TimedLod};
+
 use bevy::render::{
     render_resource::{
         BindGroupDescriptor, BindGroupEntry, Buffer, BufferDescriptor, BufferInitDescriptor,
@@ -12,11 +13,14 @@ use bevy::render::{
     renderer::{RenderDevice, RenderQueue, initialize_renderer},
     settings::{Backends, WgpuSettings},
 };
+
 use bevy::shape::ViewFrustum;
 
 /// A spruce's chain: LOD0, LOD1 and LOD2 (too close to LOD1 for a band), then the impostor.
 const SPRUCE: [f32; 4] = [480.0, 240.0, 200.0, 0.0];
+
 const SPRUCE_HEIGHT: f32 = 14.05;
+
 /// A fullscreen MacBook window: 1084 logical pixels high, 45 degrees.
 const PIXELS_PER_METRE: f32 = 1308.5;
 
@@ -28,10 +32,12 @@ fn bands_skip_crowded_lods_and_are_not_limited_by_residency() {
     assert_eq!(start[0], 0.0);
     assert!((end[0] - switch(480.0)).abs() < 1e-3);
     assert_eq!(start[1], end[0]);
+
     // LOD2 has no band: LOD1 reaches the impostor's switch.
     assert_eq!((start[2], end[2]), (-1.0, -1.0));
     assert!((end[1] - switch(200.0)).abs() < 1e-3);
     assert_eq!((start[3], end[3]), (end[1], f32::MAX));
+
     // A tall tree's meshes reach past the cells' 166 m hand-off.
     let (start, _) = bands(&projection, &SPRUCE, 30.0);
     assert!(start[3] > 190.0);
@@ -57,6 +63,7 @@ fn impostors_take_over_at_a_texel_per_output_pixel() {
     assert_eq!(thresholds[..2], [480.0, 240.0]);
     assert_eq!(thresholds[3], 0.0);
     let (start, end) = bands(&projection, &thresholds, SPRUCE_HEIGHT);
+
     // At the switch, a metre of the spruce covers as many output pixels as its views hold
     // texels; LOD2 draws from LOD1's switch to there.
     let output_pixels_per_metre = |d: f32| PIXELS_PER_METRE * 2.0 / d;
@@ -64,6 +71,7 @@ fn impostors_take_over_at_a_texel_per_output_pixel() {
     assert!((end[2] - 171.6).abs() < 0.5, "{}", end[2]);
     assert!((start[2] - SPRUCE_HEIGHT * PIXELS_PER_METRE / 240.0).abs() < 1e-3);
     assert_eq!(start[3], end[2]);
+
     // Twice the texels: the impostor is sharp enough too soon after LOD1's switch for LOD2
     // to fit a band, and LOD1 reaches it.
     let handoff = projection.impostor_threshold(SPRUCE_HEIGHT, 2.0 * texels_per_metre);
@@ -81,21 +89,26 @@ fn gpu_casters_shadowing_nothing_in_view_are_not_drawn() {
         let drawn = harness.frame(camera);
         drawn.views[1].iter().any(|r| !r.is_empty())
     };
+
     // 30 m ahead under a high sun, its shadow is in view.
     let ahead = Vec3::new(0.0, 7.0, 30.0);
     assert!(casts(&camera(ahead, 0.016, 0, 1, &form, 1)));
+
     // 30 m behind, its shadow falls behind too.
     let behind = Vec3::new(0.0, 7.0, -30.0);
     assert!(!casts(&camera(behind, 0.016, 0, 1, &form, 1)));
+
     // 45 m ahead, past the 20 m this cascade covers: a high sun keeps its shadow out there...
     let far = Vec3::new(0.0, 7.0, 45.0);
     let mut high = camera(far, 0.016, 0, 1, &form, 1);
     receive(&mut high, far, 0.0..20.0, Vec3::NEG_Y);
     assert!(!casts(&high));
+
     // ...and a low sun behind it, shining toward the camera, draws it into the cascade's depths.
     let mut low = high;
     receive(&mut low, far, 0.0..20.0, Vec3::new(0.0, -0.25, 1.0));
     assert!(casts(&low));
+
     // A cascade's depths start where the one before blends into it: nearer is not its own.
     let mut later = camera(ahead, 0.016, 0, 1, &form, 1);
     receive(&mut later, ahead, 60.0..120.0, Vec3::NEG_Y);
@@ -285,6 +298,7 @@ impl Harness {
             .device
             .create_command_encoder(&CommandEncoderDescriptor::default());
         encoder.clear_buffer(&self.counters, 0, None);
+
         {
             let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
             pass.set_pipeline(&self.lod);
@@ -298,6 +312,7 @@ impl Harness {
                 1,
             );
         }
+
         self.queue.submit([encoder.finish()]);
         let counters = self.read(&self.counters);
         let records = self.read(&self.records);
@@ -400,11 +415,14 @@ fn spruce_form(capacity: u32) -> (GpuForm, Vec<GpuBucket>) {
         ready: 1,
         ..default()
     };
+
     for r in 0..MAX_REPRESENTATIONS {
         form.band_start[r / 4][r % 4] = start[r];
         form.band_end[r / 4][r % 4] = end[r];
     }
+
     let mut buckets = Vec::new();
+
     for r in 0..4 {
         form.first_bucket[0][r] = r as u32;
         form.buckets[0][r] = 1;
@@ -421,6 +439,7 @@ fn spruce_form(capacity: u32) -> (GpuForm, Vec<GpuBucket>) {
             ..default()
         });
     }
+
     (form, buckets)
 }
 
@@ -446,6 +465,7 @@ fn gpu_fades_match_the_cpu_timed_lod() {
     path.push((10.0, 0.05));
     path.extend([(10.0, 0.13); 3]);
     path.extend([(120.0, 0.13); 7]);
+
     for (step, &(distance, dt)) in path.iter().enumerate() {
         let eye = Vec3::new(0.0, 7.0, distance);
         let drawn = harness.frame(&camera(eye, dt, 0, 3, &form, 3));
@@ -468,6 +488,7 @@ fn gpu_fades_match_the_cpu_timed_lod() {
             })
             .collect();
         assert_eq!(gpu, expected, "step {step}, {distance} m");
+
         // The instance behind the camera never draws in the main view.
         assert!(
             drawn.views[0]
@@ -475,8 +496,10 @@ fn gpu_fades_match_the_cpu_timed_lod() {
                 .flatten()
                 .all(|(index, _)| *index != 1)
         );
+
         // The forced spruce draws LOD2 whole wherever the camera is.
         assert!(drawn.views[0][2].contains(&(2, 0)), "step {step}");
+
         // Each draw's instance count is its bucket's.
         for r in 0..4 {
             assert_eq!(drawn.counts[r] as usize, drawn.views[0][r].len());
@@ -489,12 +512,14 @@ fn gpu_fades_match_the_cpu_timed_lod() {
 fn gpu_shadows_cast_from_coarser_lods_and_merge_mid_fade() {
     let (form, buckets) = spruce_form(1);
     let harness = Harness::new(&[instance(Vec3::ZERO, None)], form, &buckets);
+
     // Shown at LOD0, it casts LOD1's shadow with a bias of one.
     let near = Vec3::new(0.0, 7.0, 10.0);
     let drawn = harness.frame(&camera(near, 0.016, 1, 1, &form, 1));
     assert_eq!(drawn.views[0][0], [(0, 0)]);
     assert_eq!(drawn.views[1][1], [(0, 0)]);
     assert!(drawn.views[1][0].is_empty());
+
     // Dissolving from LOD0 into LOD1, each casts from the next LOD, with its level.
     let middle = Vec3::new(0.0, 7.0, 45.0);
     harness.frame(&camera(middle, 0.016, 1, 1, &form, 1));
@@ -503,15 +528,19 @@ fn gpu_shadows_cast_from_coarser_lods_and_merge_mid_fade() {
     assert_eq!(drawn.views[0][1], [(0, -8)]);
     assert_eq!(drawn.views[1][1], [(0, 8)]);
     assert_eq!(drawn.views[1][2], [(0, -8)]);
+
     // Two LODs on, both cast from LOD2 (the last mesh): whole, mid-dissolve.
     let drawn = harness.frame(&camera(middle, 0.0, 2, 1, &form, 1));
     assert_eq!(drawn.views[1][2], [(0, 0)]);
     assert!(drawn.views[1][0].is_empty() && drawn.views[1][1].is_empty());
+
     // Impostors cast nothing.
     let far = Vec3::new(0.0, 7.0, 300.0);
+
     for _ in 0..10 {
         harness.frame(&camera(far, 0.1, 0, 1, &form, 1));
     }
+
     let drawn = harness.frame(&camera(far, 0.1, 0, 1, &form, 1));
     assert_eq!(drawn.views[0][3], [(0, 0)]);
     assert!(drawn.views[1].iter().all(Vec::is_empty));

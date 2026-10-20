@@ -8,8 +8,11 @@ pub mod brush;
 pub mod fixtures;
 mod presets;
 mod scatter;
+
 pub use scatter::*;
+
 pub mod roads;
+
 pub use presets::*;
 
 use std::collections::BTreeSet;
@@ -26,10 +29,15 @@ macro_rules! id {
         pub struct $name(pub [u8; 16]);
     };
 }
+
 id!(PresetId);
+
 id!(PresetUseId);
+
 id!(LayerId);
+
 id!(OutputId);
+
 id!(ChannelId);
 
 /// The channel whose exclusions and road wear clear grass.
@@ -142,6 +150,7 @@ impl EnvironmentDefinition {
         library.validate()?;
         self.validate_layers(library)
     }
+
     /// Used after validating the shared library once in a project snapshot.
     pub fn validate_layers(&self, library: &PresetLibrary) -> Result<(), ValidationError> {
         if !self.cell_size.is_finite()
@@ -152,11 +161,15 @@ impl EnvironmentDefinition {
         {
             return Err(ValidationError::Invalid("world grid or definition budget"));
         }
+
         let surfaces: BTreeSet<_> = self.surfaces.iter().copied().collect();
+
         if surfaces.len() != self.surfaces.len() || !surfaces.contains(&self.base_surface) {
             return Err(ValidationError::Invalid("surface catalog or base surface"));
         }
+
         let mut worn = BTreeSet::new();
+
         for w in &self.worn {
             if !worn.insert(w.surface)
                 || !surfaces.contains(&w.surface)
@@ -170,7 +183,9 @@ impl EnvironmentDefinition {
                 return Err(ValidationError::Invalid("worn ground"));
             }
         }
+
         let mut ids = BTreeSet::new();
+
         for layer in &self.layers {
             if !ids.insert(layer.id)
                 || layer.name.trim().is_empty()
@@ -183,7 +198,9 @@ impl EnvironmentDefinition {
             {
                 return Err(ValidationError::Invalid("layer"));
             }
+
             let resolved = library.resolve(layer.preset, &layer.overrides)?;
+
             if resolved
                 .collections
                 .iter()
@@ -193,6 +210,7 @@ impl EnvironmentDefinition {
                     "collection road clearance exceeds cell size",
                 ));
             }
+
             if let Some(ground) = resolved.ground {
                 for item in ground.surfaces {
                     if !surfaces.contains(&item.surface) {
@@ -201,6 +219,7 @@ impl EnvironmentDefinition {
                 }
             }
         }
+
         Ok(())
     }
 }

@@ -21,16 +21,20 @@ pub(crate) fn install(app: &mut App) {
         "DIAGNOSTICS mode={:?} gpu_timing_off={} grass_counters={}",
         options.diagnostics, options.gpu_off, options.counters
     );
+
     if options.audit_log {
         app.add_systems(
             PostUpdate,
             logging::log_status.after(TransformSystems::Propagate),
         );
     }
+
     if options.diagnostics == crate::launch::DiagnosticsMode::Off {
         return;
     }
+
     app.add_plugins(PerformancePanelPlugin);
+
     if options.diagnostics == crate::launch::DiagnosticsMode::Full {
         // Bevy's recorder is separate from our frame timestamps. Keep both optional.
         #[cfg(not(target_os = "ios"))]
@@ -47,6 +51,7 @@ pub(crate) fn install(app: &mut App) {
 }
 
 pub(crate) struct PerformancePanelPlugin;
+
 impl Plugin for PerformancePanelPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<timing::History>()
@@ -72,6 +77,7 @@ fn update_stamp(
 ) {
     stamp.frame = frame.0;
     stamp.detailed = settings.gpu_pass_timings;
+
     if settings.is_changed() || pacing.is_changed() {
         stamp.epoch = stamp.epoch.wrapping_add(1);
     }
@@ -351,9 +357,11 @@ fn route_input(
         })
     };
     let mouse_over_panel = window.cursor_position().is_some_and(over_panel);
+
     if mouse.any_just_pressed([MouseButton::Left, MouseButton::Right]) && mouse_over_panel {
         *mouse_captured = true;
     }
+
     // Include released touches and their initial positions: a HUD tap must never turn into a
     // world destination on release, even if the finger slid outside the panel in the meantime.
     let touch_over_panel = touches
@@ -362,6 +370,7 @@ fn route_input(
         .chain(touches.iter_just_canceled())
         .any(|touch| over_panel(touch.start_position()) || over_panel(touch.position()));
     pointer_blocked.0 = mouse_over_panel || *mouse_captured || touch_over_panel;
+
     if !mouse.any_pressed([MouseButton::Left, MouseButton::Right]) {
         *mouse_captured = false;
     }
@@ -477,6 +486,7 @@ mod tests {
                 app.world().contains_resource::<performance::PanelState>(),
                 mode == DiagnosticsMode::Panel
             );
+
             {
                 let mut settings = app.world_mut().resource_mut::<RuntimeSettings>();
                 settings.controls_locked = true;
@@ -484,6 +494,7 @@ mod tests {
                 settings.grass = VegetationProfileMode::Disabled;
                 settings.clouds = engine::CloudQuality::High;
             }
+
             app.update();
             assert!(!app.world().resource::<GameInputEnabled>().0);
             assert!(
@@ -499,6 +510,7 @@ mod tests {
                 *app.world().resource::<engine::CloudQuality>(),
                 engine::CloudQuality::High
             );
+
             if mode == DiagnosticsMode::Panel {
                 // Baseline must be captured after runtime initialization, not before it.
                 app.world_mut().spawn((Pressed, Control::Reset));
@@ -590,6 +602,7 @@ mod tests {
             .insert(Pressed);
         app.update();
         assert_eq!(app.world().resource::<FramePacing>().rate.fps(), 45);
+
         // Profiling must retain the launch rate even if a user presses the control.
         app.world_mut().resource_mut::<FramePacing>().profile_locked = true;
         app.world_mut()
@@ -608,6 +621,7 @@ mod tests {
                 .contains("profile locked")
         );
     }
+
     use bevy::{
         input::{
             InputPlugin,
@@ -634,6 +648,7 @@ mod tests {
                 PrimaryWindow,
             ))
             .id();
+
         // Physical UI rectangle corresponds to logical x=200..400, y=200..300 at 3x DPI.
         app.world_mut().spawn((
             AuditPanel,

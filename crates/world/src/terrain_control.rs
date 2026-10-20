@@ -15,10 +15,13 @@ pub const TERRAIN_BLEND_SURFACES: usize = 3;
 
 /// Samples per tile side.
 pub const CONTROL_SAMPLES: usize = 65;
+
 /// Intervals per tile side.
 pub const CONTROL_INTERVALS: usize = CONTROL_SAMPLES - 1;
+
 /// Texture array layers a control sample can name.
 pub const MAX_CONTROL_LAYERS: u16 = 32;
+
 /// The coarsest level with control tiles: terrain v2's top clipmap level.
 pub const CONTROL_TOP_LEVEL: u8 = 5;
 
@@ -35,9 +38,11 @@ pub struct TerrainControlTile {
 pub fn pack_control(top: [(u16, f32); TERRAIN_BLEND_SURFACES]) -> u32 {
     let sum: f32 = top.iter().map(|t| t.1.max(0.0)).sum();
     let first = top[0].0.min(MAX_CONTROL_LAYERS - 1);
+
     if sum <= 0.0 {
         return u32::from(first) | u32::from(first) << 5 | u32::from(first) << 10 | 255 << 16;
     }
+
     let share = |i: usize| top[i].1.max(0.0) / sum;
     let a = (share(0) * 255.0).round().clamp(0.0, 255.0) as u32;
     let b = ((share(1) * 255.0).round() as u32).min(255 - a);
@@ -98,6 +103,7 @@ impl ControlMix {
     /// The three heaviest; ties keep the lower layer, so the result does not depend on order.
     pub fn top(&self) -> [(u16, f32); TERRAIN_BLEND_SURFACES] {
         let mut best = [(0_u16, 0.0_f32); TERRAIN_BLEND_SURFACES];
+
         for &(layer, weight) in &self.entries[..self.len] {
             let heavier = |b: &(u16, f32)| weight > b.1 || (weight == b.1 && layer < b.0);
             if let Some(rank) = best.iter().position(heavier) {
@@ -105,6 +111,7 @@ impl ControlMix {
                 best[rank] = (layer, weight);
             }
         }
+
         best
     }
 
@@ -122,22 +129,27 @@ pub fn leaf_control(
     cell_size: f32,
 ) -> Result<Vec<u32>, String> {
     let count = page.surfaces.len();
+
     if count == 0 || count > MAX_TERRAIN_SURFACES_PER_CELL || slot_layers.len() != count {
         return Err(format!(
             "terrain pages have one to {MAX_TERRAIN_SURFACES_PER_CELL} surfaces with layers"
         ));
     }
+
     if count > 1 && page.weight_pages.len() != count.div_ceil(4) {
         return Err("terrain page weights do not match its surfaces".into());
     }
+
     let mut samples = Vec::with_capacity(CONTROL_SAMPLES * CONTROL_SAMPLES);
     let mut ground = vec![0.0_f64; count];
+
     for j in 0..CONTROL_SAMPLES {
         for i in 0..CONTROL_SAMPLES {
             let uv = [
                 i as f64 / CONTROL_INTERVALS as f64,
                 j as f64 / CONTROL_INTERVALS as f64,
             ];
+
             if count == 1 {
                 ground[0] = 1.0;
             } else {
@@ -151,13 +163,17 @@ pub fn leaf_control(
                     wear.lay(&mut ground, w, bare_share(w, world));
                 }
             }
+
             let mut mix = ControlMix::default();
+
             for (&layer, &weight) in slot_layers.iter().zip(&ground) {
                 mix.add(layer, weight as f32);
             }
+
             samples.push(mix.pack());
         }
     }
+
     Ok(samples)
 }
 
@@ -168,20 +184,26 @@ fn page_weights(pages: &[TerrainWeightPage], uv: [f64; 2], result: &mut [f64]) {
     let p = uv.map(|x| x * (n - 1) as f64);
     let a = p.map(|x| (x.floor() as usize).min(n - 1));
     let f = [p[0] - a[0] as f64, p[1] - a[1] as f64];
+
     for y in 0..2 {
         for x in 0..2 {
             let w =
                 (if x == 0 { 1. - f[0] } else { f[0] }) * (if y == 0 { 1. - f[1] } else { f[1] });
+
             if w <= 0.0 {
                 continue;
             }
+
             let i = ((a[1] + y).min(n - 1) * n + (a[0] + x).min(n - 1)) * 4;
+
             for (surface, value) in result.iter_mut().enumerate() {
                 *value += f64::from(pages[surface / 4].rgba[i + surface % 4]) / 255. * w;
             }
         }
     }
+
     let sum = result.iter().sum::<f64>().max(1e-9);
+
     for value in result {
         *value /= sum;
     }
@@ -208,9 +230,11 @@ pub fn filter_control_parent(children: [Option<&[u32]>; 4]) -> Vec<u32> {
         }
     };
     let mut out = Vec::with_capacity(CONTROL_SAMPLES * CONTROL_SAMPLES);
+
     for j in 0..CONTROL_SAMPLES {
         for i in 0..CONTROL_SAMPLES {
             let mut mix = ControlMix::default();
+
             for (z, wz) in taps(j) {
                 for &(x, wx) in &taps(i) {
                     if let Some(sample) = at(x, z) {
@@ -218,9 +242,11 @@ pub fn filter_control_parent(children: [Option<&[u32]>; 4]) -> Vec<u32> {
                     }
                 }
             }
+
             out.push(mix.pack());
         }
     }
+
     out
 }
 
@@ -235,6 +261,7 @@ mod tests {
         assert_eq!((a.0, b.0, c.0), (7, 3, 24));
         assert!((a.1 - 0.5).abs() < 0.003 && (b.1 - 0.3).abs() < 0.003);
         assert!((a.1 + b.1 + c.1 - 1.0).abs() < 1e-6);
+
         // One surface: the others repeat it with no share.
         let [a, b, c] = unpack_control(pack_control([(5, 2.0), (0, 0.0), (0, 0.0)]));
         assert_eq!((a, b.0, b.1, c.0, c.1), ((5, 1.0), 5, 0.0, 5, 0.0));
@@ -243,9 +270,11 @@ mod tests {
     #[test]
     fn mixes_merge_layers_and_rank_ties_by_layer() {
         let mut mix = ControlMix::default();
+
         for (layer, w) in [(9, 0.2), (4, 0.2), (9, 0.3), (1, 0.1), (2, 0.05)] {
             mix.add(layer, w);
         }
+
         let top = mix.top();
         assert_eq!(top.map(|t| t.0), [9, 4, 1]);
         assert!((top[0].1 - 0.5).abs() < 1e-6);
@@ -255,21 +284,26 @@ mod tests {
     fn parents_filter_shares_and_agree_on_shared_edges() {
         let uniform = |layer| vec![pack_control([(layer, 1.0), (0, 0.0), (0, 0.0)]); 65 * 65];
         let (grass, rock) = (uniform(2), uniform(11));
+
         // Left children grass, right children rock.
         let parent = filter_control_parent([Some(&grass), Some(&rock), Some(&grass), Some(&rock)]);
         let sample = |x: usize, z: usize| unpack_control(parent[z * 65 + x]);
         assert_eq!(sample(10, 30)[0], (2, 1.0));
         assert_eq!(sample(50, 30)[0], (11, 1.0));
+
         // On the seam between the children the right child holds the shared column.
         let seam = sample(32, 30);
         assert_eq!((seam[0].0, seam[1].0), (11, 2));
         assert!((seam[0].1 - 0.75).abs() < 0.01);
+
         // The right edge filters only along itself: the parent to the right, made of rock
         // children, has the same samples on its left edge.
         let next = filter_control_parent([Some(&rock), Some(&rock), Some(&rock), Some(&rock)]);
+
         for z in 0..65 {
             assert_eq!(parent[z * 65 + 64], next[z * 65]);
         }
+
         // Missing children add nothing.
         let half = filter_control_parent([Some(&grass), None, None, None]);
         assert_eq!(unpack_control(half[10 * 65 + 10])[0], (2, 1.0));

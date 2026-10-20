@@ -1,4 +1,5 @@
 use super::*;
+
 use bevy::{
     app::PluginsState,
     camera::{ClearColorConfig, RenderTarget},
@@ -12,6 +13,7 @@ use bevy::{
     window::ExitCondition,
     winit::WinitPlugin,
 };
+
 use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant},
@@ -41,15 +43,18 @@ fn direct_output_matches_standard_postprocessing() {
     )
     .add_plugins(crate::UpscalingPlugin);
     let deadline = Instant::now() + Duration::from_secs(30);
+
     while app.plugins_state() != PluginsState::Ready {
         assert!(Instant::now() < deadline);
         bevy::tasks::tick_global_task_pools_on_main_thread();
     }
+
     app.finish();
     app.cleanup();
     let pixels = Arc::new(Mutex::new([Vec::<u8>::new(), Vec::<u8>::new()]));
     let mut cameras = Vec::new();
     let mut targets = Vec::new();
+
     for index in 0..2 {
         let mut image = Image::new_target_texture(64, 64, TextureFormat::Rgba8UnormSrgb, None);
         image.texture_descriptor.usage |= TextureUsages::COPY_SRC;
@@ -75,12 +80,15 @@ fn direct_output_matches_standard_postprocessing() {
             },
             Bloom::default(),
         ));
+
         if index == 1 {
             camera.insert(DirectTonemapOutput);
         }
+
         cameras.push(camera.id());
         targets.push(target);
     }
+
     for case in 0..4 {
         let (colour, tone) = match case {
             0 => (Color::linear_rgb(8., 1.2, 0.25), Tonemapping::TonyMcMapface),
@@ -90,22 +98,26 @@ fn direct_output_matches_standard_postprocessing() {
             ),
             _ => (Color::linear_rgb(0.4, 0.7, 0.2), Tonemapping::AgX),
         };
+
         for &camera in &cameras {
             app.world_mut()
                 .get_mut::<Camera>(camera)
                 .unwrap()
                 .clear_color = ClearColorConfig::Custom(colour);
             let mut grade = ColorGrading::default();
+
             if case > 0 {
                 grade.global.exposure = 0.4;
                 grade.global.hue = 0.07;
                 grade.global.temperature = 0.02;
                 grade.midtones.saturation = 0.7;
             }
+
             app.world_mut()
                 .entity_mut(camera)
                 .insert((tone, grade, DebandDither::Enabled));
         }
+
         if case == 2 {
             for target in &targets {
                 app.world_mut()
@@ -119,18 +131,22 @@ fn direct_output_matches_standard_postprocessing() {
                     });
             }
         }
+
         if case == 3 {
             app.world_mut()
                 .entity_mut(cameras[1])
                 .remove::<DirectTonemapOutput>();
         }
+
         *pixels.lock().unwrap() = default();
         let mut previous = [Vec::new(), Vec::new()];
         let mut stable = 0;
+
         for frame in 0.. {
             assert!(Instant::now() < deadline, "output comparison timed out");
             app.update();
             let render = app.sub_app(RenderApp).world();
+
             for pipeline in render.resource::<PipelineCache>().pipelines() {
                 if let CachedPipelineState::Err(e) = &pipeline.state
                     && !matches!(
@@ -142,19 +158,25 @@ fn direct_output_matches_standard_postprocessing() {
                     panic!("output pipeline: {e}");
                 }
             }
+
             let result = pixels.lock().unwrap().clone();
             let expected_len = 64 * (if case < 2 { 64 } else { 33 }) * 4;
+
             if result.iter().all(|v| v.len() == expected_len) && result == previous {
                 stable += 1;
             } else {
                 stable = 0;
             }
+
             previous = result;
+
             if frame >= 20 && stable >= 5 {
                 break;
             }
+
             std::thread::sleep(Duration::from_millis(5));
         }
+
         let render = app.sub_app_mut(RenderApp).world_mut();
         assert_eq!(
             render.query::<&Ready>().iter(render).count(),

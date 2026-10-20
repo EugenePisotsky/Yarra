@@ -1,6 +1,7 @@
 //! Editor-only raw coverage overlay. It shares the resident terrain mesh, owns only a small
 //! mask texture/material, and never changes the compiled ground or persistent paint data.
 use super::*;
+
 use bevy::{
     asset::RenderAssetUsages,
     image::{ImageFilterMode, ImageSampler, ImageSamplerDescriptor},
@@ -8,6 +9,7 @@ use bevy::{
     render::render_resource::{AsBindGroup, Extent3d, TextureDimension, TextureFormat},
     shader::ShaderRef,
 };
+
 use engine::{StreamedTerrainSurface, WorldOrigin};
 use std::collections::HashMap;
 
@@ -21,29 +23,36 @@ pub(super) struct CoverageMaterial {
     #[sampler(3)]
     mask: Handle<Image>,
 }
+
 impl Material for CoverageMaterial {
     fn fragment_shader() -> ShaderRef {
         "shaders/environment_coverage.wesl".into()
     }
+
     fn alpha_mode(&self) -> AlphaMode {
         AlphaMode::Blend
     }
+
     fn depth_bias(&self) -> f32 {
         5.0
     }
 }
+
 #[derive(Component)]
 pub(super) struct CoverageOverlay;
+
 struct Tile {
     entity: Entity,
     material: Handle<CoverageMaterial>,
     image: Handle<Image>,
     signature: ([u8; 32], CellCoord, LayerId),
 }
+
 #[derive(Resource, Default)]
 pub(super) struct CoverageOverlays {
     tiles: HashMap<Entity, Tile>,
 }
+
 #[derive(SystemParam)]
 pub(super) struct CoverageSource<'w, 's> {
     project: Res<'w, ProjectEditorStore>,
@@ -63,6 +72,7 @@ pub(super) struct CoverageSource<'w, 's> {
         Without<CoverageOverlay>,
     >,
 }
+
 pub(super) fn update_coverage(
     source: CoverageSource,
     mut paint: ResMut<EnvironmentPaintState>,
@@ -84,6 +94,7 @@ pub(super) fn update_coverage(
         .and_then(|space| source.dense.definition(space));
     let selected = paint.selected;
     let mut retained = std::collections::HashSet::new();
+
     if let (true, Some(definition), Some(layer)) = (active, definition, selected)
         && definition.layers.iter().any(|l| l.id == layer)
     {
@@ -91,6 +102,7 @@ pub(super) fn update_coverage(
             if surface.key.space != definition.space {
                 continue;
             }
+
             let local = source
                 .dense
                 .environment_record(definition.space, surface.key.cell);
@@ -113,15 +125,18 @@ pub(super) fn update_coverage(
                 .iter()
                 .find(|tile| tile.layer == layer)
                 .map(|tile| tile.samples.as_slice());
+
             if samples.is_some_and(|samples| samples.len() != resolution * resolution) {
                 continue;
             }
+
             retained.insert(entity);
             let signature = (
                 *blake3::hash(samples.unwrap_or(&[])).as_bytes(),
                 source.origin.cell(),
                 layer,
             );
+
             if owned
                 .tiles
                 .get(&entity)
@@ -129,11 +144,13 @@ pub(super) fn update_coverage(
             {
                 continue;
             }
+
             if let Some(old) = owned.tiles.remove(&entity) {
                 commands.entity(old.entity).despawn();
                 materials.remove(old.material.id());
                 images.remove(old.image.id());
             }
+
             let mut image = Image::new(
                 Extent3d {
                     width: resolution as u32,
@@ -192,6 +209,7 @@ pub(super) fn update_coverage(
             );
         }
     }
+
     owned.tiles.retain(|entity, tile| {
         if retained.contains(entity) {
             true

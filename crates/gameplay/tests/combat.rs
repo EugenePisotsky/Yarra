@@ -8,9 +8,11 @@ type Result<T> = yarra_gameplay::Result<T>;
 fn open(state: SessionState) -> GameSession {
     GameSession::new(ToolContent::new(content()).unwrap(), state).unwrap()
 }
+
 fn session() -> GameSession {
     open(state())
 }
+
 fn intent(ability: &str, target: Option<ActorId>, repeat: bool) -> Intent {
     Intent {
         ability: key(ability),
@@ -18,6 +20,7 @@ fn intent(ability: &str, target: Option<ActorId>, repeat: bool) -> Intent {
         repeat,
     }
 }
+
 fn intend(session: &mut GameSession, actor: ActorId, intent: Intent) -> Result<CommandOutcome> {
     session.apply(Command::Intend {
         actor,
@@ -25,18 +28,22 @@ fn intend(session: &mut GameSession, actor: ActorId, intent: Intent) -> Result<C
         clear: false,
     })
 }
+
 fn strike(target: ActorId) -> Intent {
     intent("strike", Some(target), false)
 }
+
 fn pass(session: &mut GameSession, millis: u64) -> Vec<GameEvent> {
     session
         .apply(Command::AdvanceTime { millis })
         .unwrap()
         .events
 }
+
 fn stat(session: &GameSession, actor: ActorId, name: &str) -> i32 {
     session.stat(actor, &key(name)).unwrap()
 }
+
 fn resolved(events: &[GameEvent]) -> Vec<(ActorId, &str)> {
     events
         .iter()
@@ -46,12 +53,14 @@ fn resolved(events: &[GameEvent]) -> Vec<(ActorId, &str)> {
         })
         .collect()
 }
+
 fn rejected(result: Result<CommandOutcome>) -> Rejection {
     match result {
         Err(GameplayError::Rejected(rejection)) => rejection,
         other => panic!("expected a rejection, got {other:?}"),
     }
 }
+
 fn with_health(actor: ActorId, health: i32) -> SessionState {
     let mut state = state();
     let resources = &mut state.actors.get_mut(&actor).unwrap().resources;
@@ -74,6 +83,7 @@ fn an_action_takes_its_time_and_then_takes_effect() {
     assert!(resolved(&pass(&mut session, 1499)).is_empty());
     assert_eq!(stat(&session, MERCHANT, "health"), 100);
     assert_eq!(resolved(&pass(&mut session, 1)), [(HERO, "strike")]);
+
     // Attack 10 plus a d6.
     assert!((84..=89).contains(&stat(&session, MERCHANT, "health")));
     assert!(session.state().actor(HERO).unwrap().acting.is_none());
@@ -93,6 +103,7 @@ fn what_is_lined_up_is_done_in_order_and_a_repeating_strike_resumes() {
     let mut session = session();
     intend(&mut session, HERO, intent("strike", Some(MERCHANT), true)).unwrap();
     assert_eq!(resolved(&pass(&mut session, 3000)).len(), 2);
+
     // Asked for in the middle of the third strike: it is done next, then the strikes go on.
     intend(
         &mut session,
@@ -101,6 +112,7 @@ fn what_is_lined_up_is_done_in_order_and_a_repeating_strike_resumes() {
     )
     .unwrap();
     let mut done = Vec::new();
+
     for _ in 0..45 {
         let events = pass(&mut session, 100);
         done.extend(
@@ -109,7 +121,9 @@ fn what_is_lined_up_is_done_in_order_and_a_repeating_strike_resumes() {
                 .map(|(_, name)| name.to_owned()),
         );
     }
+
     assert_eq!(done, ["strike", "power-strike", "strike"]);
+
     // Two strikes, one more, the power strike for twice the attack, and another strike.
     let lost = 100 - stat(&session, MERCHANT, "health");
     assert!((4 * 11 + 20..=4 * 16 + 20).contains(&lost), "{lost}");
@@ -126,6 +140,7 @@ fn what_is_lined_up_is_done_in_order_and_a_repeating_strike_resumes() {
 #[test]
 fn a_cooldown_makes_a_character_wait_and_costs_are_paid_on_beginning() {
     let mut session = session();
+
     for _ in 0..3 {
         intend(
             &mut session,
@@ -134,9 +149,11 @@ fn a_cooldown_makes_a_character_wait_and_costs_are_paid_on_beginning() {
         )
         .unwrap();
     }
+
     assert_eq!(stat(&session, HERO, "stamina"), 10);
     pass(&mut session, 1500);
     assert_eq!(stat(&session, MERCHANT, "health"), 80);
+
     // Ready again six seconds after it took effect; until then the hero only waits.
     let hero = session.state().actor(HERO).unwrap();
     assert!(hero.acting.is_none() && hero.intents.len() == 2);
@@ -154,6 +171,7 @@ fn a_cooldown_makes_a_character_wait_and_costs_are_paid_on_beginning() {
             .any(|e| matches!(e, GameEvent::AbilityBegun { .. }))
     );
     assert_eq!(stat(&session, HERO, "stamina"), 0);
+
     // The third cannot be paid for, so it is dropped as soon as its turn comes.
     let events = pass(&mut session, 1500);
     assert!(events.contains(&GameEvent::IntentDropped {
@@ -173,10 +191,12 @@ fn the_dead_stop_and_stop_being_targets() {
     intend(&mut session, HERO, strike(MERCHANT)).unwrap();
     let events = pass(&mut session, 1500);
     assert!(events.contains(&GameEvent::Died { actor: MERCHANT }));
+
     // The merchant's own strike landed only if his turn came first at that moment.
     assert!(stat(&session, HERO, "health") <= 50);
     let merchant = session.state().actor(MERCHANT).unwrap();
     assert!(merchant.acting.is_none() && merchant.intents.is_empty());
+
     // The hero's repeating strike is not lined up again and the queued one is dropped.
     assert!(events.contains(&GameEvent::IntentDropped {
         actor: HERO,
@@ -238,11 +258,14 @@ fn what_cannot_be_asked_for_is_refused_with_a_reason() {
     assert!(intend(&mut session, HERO, intent("fireball", None, false)).is_err());
     assert!(intend(&mut session, HERO, strike(ActorId([9; 16]))).is_err());
     assert_eq!(session.state(), &before);
+
     // One in hand and eight lined up is as much as a character holds.
     for _ in 0..9 {
         intend(&mut session, HERO, strike(MERCHANT)).unwrap();
     }
+
     assert_eq!(ask(&mut session, strike(MERCHANT)), Rejection::QueueFull);
+
     // Asking for something instead of the queue replaces it; the strike in hand goes on.
     session
         .apply(Command::Intend {
@@ -269,6 +292,7 @@ fn a_fight_carries_on_from_a_save_exactly_as_it_would_have() {
             intent("power-strike", Some(MERCHANT), false),
         )
         .unwrap();
+
         for tick in 0..120 {
             if save_at == Some(tick) {
                 let saved = serde_json::to_string(session.state()).unwrap();
@@ -276,10 +300,12 @@ fn a_fight_carries_on_from_a_save_exactly_as_it_would_have() {
             }
             pass(&mut session, 100);
         }
+
         session.into_state()
     };
     let straight = fight(None);
     assert!(fight(Some(43)) == straight && fight(Some(15)) == straight);
+
     // Somebody lost: twelve seconds of trading blows is more than fifty health.
     let rules = &content().game.rules;
     assert!(!straight.actors[&HERO].alive(rules) || !straight.actors[&MERCHANT].alive(rules));
@@ -296,21 +322,27 @@ fn a_skirmish_costs_what_happens_in_it_not_the_size_of_the_world() {
         id[..4].copy_from_slice(&n.to_le_bytes());
         ActorId(id)
     };
+
     for n in 0..FIGHTERS + BYSTANDERS {
         state.spawn(&content, TRAVELLER, id(n)).unwrap();
     }
+
     let mut session = GameSession::new(ToolContent::new(content).unwrap(), state).unwrap();
+
     for n in 0..FIGHTERS {
         // Pairs trading blows.
         let intent = intent("strike", Some(id(n ^ 1)), true);
         intend(&mut session, id(n), intent).unwrap();
     }
+
     assert_eq!(session.state().timed.len(), FIGHTERS as usize);
     let started = std::time::Instant::now();
     let mut blows = 0;
+
     for _ in 0..100 {
         blows += resolved(&pass(&mut session, 100)).len();
     }
+
     let elapsed = started.elapsed();
     println!(
         "{FIGHTERS} fighting among {BYSTANDERS}: ten seconds in 100 steps took {elapsed:?}, \
@@ -318,6 +350,7 @@ fn a_skirmish_costs_what_happens_in_it_not_the_size_of_the_world() {
         elapsed / 100
     );
     assert!(blows >= 600, "{blows}");
+
     // An unoptimised build; the bound only guards against cost growing with the world.
     assert!(elapsed.as_millis() < 3000, "{elapsed:?}");
 }

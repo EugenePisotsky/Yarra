@@ -1,13 +1,17 @@
 use super::*;
+
 fn add(a: [f64; 2], b: [f64; 2]) -> [f64; 2] {
     [a[0] + b[0], a[1] + b[1]]
 }
+
 fn sub(a: [f64; 2], b: [f64; 2]) -> [f64; 2] {
     [a[0] - b[0], a[1] - b[1]]
 }
+
 fn lerp(a: [f64; 2], b: [f64; 2], t: f64) -> [f64; 2] {
     [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]
 }
+
 impl RoadSpan {
     pub fn control_points(&self, origin: CellCoord, size: f32) -> [[f64; 2]; 4] {
         let a = self.start.position.relative_to(origin, f64::from(size));
@@ -15,6 +19,7 @@ impl RoadSpan {
         [a, add(a, self.start.outgoing), add(b, self.end.incoming), b]
     }
 }
+
 /// Conservative cubic-hull bounds, expanded for full corridor, edge noise and feathering.
 pub fn influence_bounds(
     span: &RoadSpan,
@@ -22,6 +27,7 @@ pub fn influence_bounds(
     size: f32,
 ) -> Result<RoadCellBounds, ValidationError> {
     profile.validate()?;
+
     if !size.is_finite()
         || size <= 0.0
         || !span.start.width.is_finite()
@@ -29,6 +35,7 @@ pub fn influence_bounds(
     {
         return Err(invalid("cell size or width"));
     }
+
     let points = span.control_points(span.start.position.cell, size);
     let radius = f64::from(
         span.start.width.max(span.end.width) * 0.5 + profile.edge_variation + profile.edge_softness,
@@ -47,6 +54,7 @@ pub fn influence_bounds(
         maximum: RoadPoint::from_relative(span.start.position.cell, max, f64::from(size))?.cell,
     })
 }
+
 /// Exact de Casteljau split. Caller allocates stable IDs and writes both spans plus any
 /// neighboring copies of their shared endpoint knots atomically. Noise never uses these IDs.
 pub fn split_span(
@@ -64,6 +72,7 @@ pub fn split_span(
     {
         return Err(invalid("split identity or parameter"));
     }
+
     let [p0, p1, p2, p3] = span.control_points(span.start.position.cell, size);
     let a = lerp(p0, p1, t);
     let b = lerp(p1, p2, t);

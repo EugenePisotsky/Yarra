@@ -1,10 +1,13 @@
 //! Shared source row conversion, catalog queries and bounded-query validation.
 use crate::storage::blob_array;
+
 use crate::{
     SourceAssetRecord, SourceAssetVariantRecord, SourceCellRecord, SourceObjectDefinitionRecord,
     SourceObjectPaletteRecord, SourceObjectRecord, SourceObjectViewRecord, WorldDbError,
 };
+
 use rusqlite::Connection;
+
 use world::{
     AssetId, CellCoord, ObjectActivationPolicy, ObjectDefinitionId, StableObjectId, WorldSpaceId,
 };
@@ -14,6 +17,7 @@ type SourceCatalogRecords = (
     Vec<SourceAssetVariantRecord>,
     Vec<SourceObjectDefinitionRecord>,
 );
+
 pub(crate) fn query_source_catalog(
     connection: &Connection,
 ) -> Result<SourceCatalogRecords, WorldDbError> {
@@ -188,9 +192,11 @@ pub(crate) fn validate_spatial_query(
     if minimum.x > maximum.x || minimum.z > maximum.z {
         return Err(WorldDbError::InvalidSpatialQueryBounds { minimum, maximum });
     }
+
     if maximum_records == 0 {
         return Err(WorldDbError::InvalidQueryLimit);
     }
+
     Ok(())
 }
 

@@ -3,21 +3,27 @@
 //!          --road-width metres --seed integer --straight
 #[path = "../tests/support/roads.rs"]
 mod road_support;
+
 #[path = "../tests/support/mod.rs"]
 mod support;
+
 use road_support::*;
 use std::fmt::Write;
 use support::*;
 use yarra_environment_compile::{CompilePlan, CompiledCell};
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (definition, library, plants, coverage, mut roads) = cart_tracks();
     let mut args = std::env::args().skip(1);
+
     while let Some(arg) = args.next() {
         if arg == "--straight" {
             straight(&mut roads);
             continue;
         }
+
         let value = args.next().ok_or("expected an option value")?;
+
         match arg.as_str() {
             "--breakup" => roads.profiles[0].breakup = value.parse()?,
             "--spacing" => roads.profiles[0].track_spacing = value.parse()?,
@@ -32,6 +38,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             _ => return Err(format!("unknown option {arg}").into()),
         }
     }
+
     let plan = CompilePlan::new(&definition, &plants, &library, Default::default())?;
     let baseline = plan.compile_cells(&CELLS, &coverage)?;
     let cells = plan.compile_cells_with_roads(&CELLS, &coverage, &roads, Default::default())?;
@@ -47,6 +54,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 "##,
     );
     paint(&mut svg, &cells, 40.0, 138.0, 1200.0, false)?;
+
     for root in &placements {
         let x = 40.0 + f64::from(root.root[0]) * 75.0;
         let y = 138.0 + f64::from(root.root[2]) * 60.0;
@@ -55,6 +63,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             r##"<path d="M {x:.2} {y:.2} l -1.2 -3.2" stroke="#a3c775" stroke-width="1.1" opacity=".85"/>"##
         )?;
     }
+
     writeln!(
         svg,
         r##"<path d="M 640 138 V 618" stroke="#fff" stroke-dasharray="6 6" opacity=".65"/>
@@ -64,12 +73,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     paint(&mut svg, &cells, 40.0, 703.0, 580.0, false)?;
     paint(&mut svg, &cells, 660.0, 703.0, 580.0, true)?;
+
     for x in [330, 950] {
         writeln!(
             svg,
             r##"<path d="M {x} 703 V 935" stroke="#fff" stroke-dasharray="5 5" opacity=".6"/>"##
         )?;
     }
+
     let p = &roads.profiles[0];
     writeln!(
         svg,
@@ -92,6 +103,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     Ok(())
 }
+
 fn roots(
     plan: &CompilePlan,
     cells: &[CompiledCell],
@@ -109,6 +121,7 @@ fn roots(
             .collect(),
     })
 }
+
 fn paint(
     svg: &mut String,
     cells: &[CompiledCell],
@@ -119,6 +132,7 @@ fn paint(
 ) -> Result<(), std::fmt::Error> {
     let step = width / 128.0;
     let height_step = step * 0.8;
+
     for (i, c) in cells.iter().enumerate() {
         for z in 0..64 {
             for x in 0..64 {
@@ -161,8 +175,10 @@ fn paint(
             }
         }
     }
+
     Ok(())
 }
+
 fn mix(a: [u8; 3], b: [u8; 3], w: f64) -> [u8; 3] {
     std::array::from_fn(|i| (f64::from(a[i]) * (1.0 - w) + f64::from(b[i]) * w).round() as u8)
 }

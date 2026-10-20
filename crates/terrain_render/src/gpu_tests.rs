@@ -1,6 +1,7 @@
 //! Explicit GPU smoke test: compile and draw every terrain diagnostic with real Bevy imports.
 use super::*;
 use bevy::image::ImageAddressMode;
+
 use bevy::{
     app::PluginsState,
     camera::RenderTarget,
@@ -17,6 +18,7 @@ use bevy::{
     window::ExitCondition,
     winit::WinitPlugin,
 };
+
 use std::sync::{Arc, Mutex};
 
 #[derive(Resource, Default, Clone)]
@@ -48,6 +50,7 @@ fn terrain_variants_compile_and_render() {
     .init_resource::<Pixels>()
     .add_systems(Startup, setup);
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+
     while app.plugins_state() != PluginsState::Ready {
         assert!(
             std::time::Instant::now() < deadline,
@@ -55,10 +58,12 @@ fn terrain_variants_compile_and_render() {
         );
         bevy::tasks::tick_global_task_pools_on_main_thread();
     }
+
     app.finish();
     app.cleanup();
     let shader: Handle<Shader> = app.world().resource::<AssetServer>().load(TERRAIN_SHADER);
     let mut consecutive_ready = 0;
+
     loop {
         assert!(
             std::time::Instant::now() < deadline,
@@ -67,6 +72,7 @@ fn terrain_variants_compile_and_render() {
         app.update();
         let cache = app.sub_app(RenderApp).world().resource::<PipelineCache>();
         let mut ready = 0;
+
         for pipeline in cache.pipelines() {
             if let PipelineDescriptor::RenderPipelineDescriptor(descriptor) = &pipeline.descriptor
                 && descriptor
@@ -81,23 +87,29 @@ fn terrain_variants_compile_and_render() {
                 }
             }
         }
+
         consecutive_ready = if ready >= 4 { consecutive_ready + 1 } else { 0 };
+
         // Keep drawing after all variants compile to also exercise their bind groups.
         if consecutive_ready >= 5 {
             break;
         }
+
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
+
     // Repeat rates, macro variation and MSAA change at draw time; a stationary view must
     // keep its pixels across frames, including on negative coordinates.
     for variant in 0..3 {
         if variant == 2 {
             let world = app.world_mut();
             let mut cameras = world.query_filtered::<&mut Msaa, With<Camera3d>>();
+
             for mut msaa in cameras.iter_mut(world) {
                 *msaa = Msaa::Sample4;
             }
         }
+
         if variant > 0 {
             for (_, material) in app
                 .world_mut()
@@ -108,6 +120,7 @@ fn terrain_variants_compile_and_render() {
                 material.settings.macro_settings.y = if variant == 1 { 0.0 } else { 1.0 };
             }
         }
+
         let first = settled_pixels(&mut app);
         assert!(
             first.as_chunks::<4>().0.iter().any(|p| p[0] != p[1]),
@@ -124,6 +137,7 @@ fn terrain_variants_compile_and_render() {
 fn settled_pixels(app: &mut App) -> Vec<u8> {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
     let mut settled = 0;
+
     loop {
         assert!(
             std::time::Instant::now() < deadline,
@@ -137,12 +151,14 @@ fn settled_pixels(app: &mut App) -> Vec<u8> {
             .waiting_pipelines()
             .count();
         settled = if pending == 0 { settled + 1 } else { 0 };
+
         if settled >= 20 {
             let pixels = app.world().resource::<Pixels>().0.lock().unwrap().clone();
             if !pixels.is_empty() {
                 return pixels;
             }
         }
+
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
 }
@@ -214,6 +230,7 @@ fn setup(
     let mut plane = Plane3d::default().mesh().size(1.5, 1.5).build();
     plane.generate_tangents().unwrap();
     let mesh = meshes.add(plane);
+
     for (i, mode) in [
         TerrainShadingMode::Production,
         TerrainShadingMode::SurfaceUnlit,

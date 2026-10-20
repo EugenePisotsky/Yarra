@@ -2,22 +2,27 @@
 use crate::actors::ActorTemplate;
 use crate::dialogue::{Dialogue, Node, NodeKind, Repeat, RepeatPolicy, Role, ScopeSelector};
 use crate::inventory::{Inventory, InventoryRole, Money, Wallet, fixtures::*};
+
 use crate::rules::{
     Ability, Class, Grants, Modifier, Operation, Periodic, Rules, Sheet, Skill, Stat, StatKind,
     StatusEffect, Use,
 };
+
 use crate::{
     ActScope, Action, Condition, ContentManifest, GameContent, GameDefinitions, KeyedMap,
     ReadScope, ScriptEngine, ScriptModule, ScriptName, Scripts, SessionState, Test, Value,
     VariableDefinition, keyed_map,
 };
+
 use game_types::*;
 use std::collections::BTreeMap;
 
 pub const HERO: ActorId = ActorId::named("hero");
 pub const MERCHANT: ActorId = ActorId::named("merchant");
+
 /// The one template every fixture character is made from.
 pub const TRAVELLER: ActorTemplateId = ActorTemplateId::named("traveller");
+
 pub const COMPANION: ActorId = ActorId::named("mira");
 pub const HERO_BAG: InventoryId = InventoryId::named("hero");
 pub const MERCHANT_BAG: InventoryId = InventoryId::named("merchant");
@@ -27,9 +32,11 @@ pub const PARTY_WALLET: WalletId = WalletId::named("party");
 pub const MERCHANT_WALLET: WalletId = WalletId::named("merchant");
 pub const REWARDED: VariableId = VariableId::named("old_gate/rewarded");
 pub const GATE_DIALOGUE: DialogueId = DialogueId::named("old_gate/gate");
+
 pub fn key(s: &str) -> Key {
     Key::new(s).unwrap()
 }
+
 fn text(s: &str) -> TextRef {
     TextRef::message(TextResourceId::named("core/text"), s).unwrap()
 }
@@ -54,6 +61,7 @@ end
 
 return rules
 "#;
+
 /// What the fixture's abilities do. The user is the scene's player, the target its speaker.
 pub const ABILITIES_LUAU: &str = r#"
 local abilities = {}
@@ -73,7 +81,9 @@ end
 
 return abilities
 "#;
+
 pub struct FixtureFormulas;
+
 impl ScriptEngine for FixtureFormulas {
     fn exports(&self, name: &ScriptName) -> bool {
         let functions: &[&str] = match name.module.as_str() {
@@ -83,9 +93,11 @@ impl ScriptEngine for FixtureFormulas {
         };
         functions.contains(&name.function.as_str())
     }
+
     fn condition(&self, name: &ScriptName, _: &ReadScope) -> crate::Result<bool> {
         Err(Invalid(format!("{name} is not a condition")).into())
     }
+
     fn action(&self, name: &ScriptName, scope: &mut ActScope) -> crate::Result<()> {
         let (user, target) = (scope.player, scope.speaker);
         let health = |amount| Action::ChangeResource {
@@ -94,6 +106,7 @@ impl ScriptEngine for FixtureFormulas {
             amount,
         };
         let attack = scope.read().stat(user, &key("attack"))?;
+
         match name.function.as_str() {
             "strike" => {
                 let damage = attack + scope.random(6)? as i32;
@@ -104,6 +117,7 @@ impl ScriptEngine for FixtureFormulas {
             _ => Err(Invalid(format!("{name} is not an action")).into()),
         }
     }
+
     fn derive(&self, _: &ScriptName, c: &Sheet) -> crate::Result<BTreeMap<String, f64>> {
         let health = 40 + c.stats[&key("vitality")] * 5 + c.level as i32 * 10;
         let swordsmanship = i32::from(c.skills.get(&key("swordsmanship")).copied().unwrap_or(0));
@@ -117,6 +131,7 @@ impl ScriptEngine for FixtureFormulas {
         .map(|(stat, value)| (stat.to_owned(), f64::from(value)))
         .into())
     }
+
     fn check(
         &self,
         _: &ScriptName,
@@ -133,13 +148,16 @@ impl ScriptEngine for FixtureFormulas {
 
 pub fn content() -> GameContent {
     let mut items = example_catalog();
+
     for category in items.categories.values_mut() {
         category.name = text(&format!("category-{}", category.id));
     }
+
     for item in items.items.values_mut() {
         item.name = text(&format!("item-{}", item.id));
         item.description = text(&format!("item-{}-description", item.id));
     }
+
     items.items.get_mut(&POTION).unwrap().mechanics.on_use = vec![Use::Restore {
         resource: key("health"),
         amount: 25,
@@ -413,32 +431,40 @@ pub fn content() -> GameContent {
     });
     content
 }
+
 pub fn state() -> SessionState {
     let content = content();
     let mut state = SessionState::empty(42);
+
     for (id, bag) in [
         (HERO, HERO_BAG),
         (MERCHANT, MERCHANT_BAG),
         (COMPANION, COMPANION_BAG),
     ] {
         let actor = state.spawn(&content, TRAVELLER, id).unwrap();
+
         if id == HERO {
             actor.resources.insert(key("health"), 50);
         } else if id == MERCHANT {
             actor.position.millimetres = [100000000, 0, 100000000];
         }
+
         let mut inventory = Inventory::new(OwnerRef::actor(id), InventoryRole::Carried);
         inventory.id = bag;
+
         if id == HERO {
             inventory.grant(&content.items, POTION, 3).unwrap();
             inventory.grant(&content.items, SWORD, 1).unwrap();
             inventory.grant(&content.items, KEY, 1).unwrap();
         }
+
         if id == MERCHANT {
             inventory.grant(&content.items, POTION, 10).unwrap();
         }
+
         state.add_inventory(inventory);
     }
+
     // The hero travels alone at first, with the party's purse.
     state.party.members.insert(HERO);
     state.party.controlled = Some(HERO);
@@ -452,6 +478,7 @@ pub fn state() -> SessionState {
     let mut inventory = Inventory::new(chest, InventoryRole::Contents);
     inventory.id = CHEST;
     state.add_inventory(inventory);
+
     for (id, owner) in [
         (PARTY_WALLET, party),
         (MERCHANT_WALLET, OwnerRef::actor(MERCHANT)),
@@ -461,6 +488,7 @@ pub fn state() -> SessionState {
         wallet.credit(Money::new(100).unwrap()).unwrap();
         state.add_wallet(wallet);
     }
+
     state.validate(&content).unwrap();
     state
 }
@@ -469,11 +497,13 @@ pub fn state() -> SessionState {
 pub fn persuade(content: &mut GameContent) -> &mut Action {
     &mut gate(content).nodes[1].actions[1]
 }
+
 /// The gate conversation's graph, to change for a test. Its contract follows on its own
 /// only through `refresh_contracts`.
 pub fn gate(content: &mut GameContent) -> &mut Dialogue {
     content.game.dialogues.get_mut(&GATE_DIALOGUE).unwrap()
 }
+
 /// Contracts made again from the graphs, after a test changed one.
 pub fn refresh_contracts(content: &mut GameContent) {
     content.game.dialogue_contracts =

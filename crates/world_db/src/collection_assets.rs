@@ -4,15 +4,18 @@ use rusqlite::{Connection, OptionalExtension};
 use world::AssetId;
 
 pub const MAX_COLLECTION_ASSET_READS: usize = 256;
+
 #[derive(Debug, Clone)]
 pub struct CollectionAssetView {
     pub id: AssetId,
     pub name: String,
     pub variants: Vec<SourceAssetVariantRecord>,
 }
+
 fn invalid(message: &str) -> WorldDbError {
     WorldDbError::Environment(message.into())
 }
+
 pub(crate) fn read_asset(
     connection: &Connection,
     id: AssetId,
@@ -25,9 +28,11 @@ pub(crate) fn read_asset(
         )
         .optional()?
         .ok_or_else(|| invalid("collection references an unknown asset"))?;
+
     if kind != "gltf-scene" {
         return Err(invalid("collections require glTF scene assets"));
     }
+
     let mut statement = connection.prepare("SELECT lod,uri,bounds_x,bounds_y,bounds_z,gpu_bytes_estimate,shadow_policy,minimum_screen_height FROM source_asset_variants WHERE asset_id=?1 ORDER BY lod LIMIT 17")?;
     let variants = statement
         .query_map([id.0.as_slice()], |r| {
@@ -43,6 +48,7 @@ pub(crate) fn read_asset(
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
+
     if variants.is_empty()
         || variants.len() > 16
         || variants[0].lod != 0
@@ -62,8 +68,10 @@ pub(crate) fn read_asset(
             "collection asset has invalid or missing LOD variants",
         ));
     }
+
     Ok(CollectionAssetView { id, name, variants })
 }
+
 impl ProjectReader {
     pub fn read_collection_assets(
         &self,
@@ -72,6 +80,7 @@ impl ProjectReader {
         if ids.len() > MAX_COLLECTION_ASSET_READS {
             return Err(invalid("collection asset read budget"));
         }
+
         let tx = self.connection.unchecked_transaction()?;
         ids.iter()
             .copied()

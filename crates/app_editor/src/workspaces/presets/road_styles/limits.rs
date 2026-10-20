@@ -9,6 +9,7 @@ pub(super) struct GeometryLimits {
     pub corridor: Option<f32>,
     pub height_step: f32,
 }
+
 impl GeometryLimits {
     pub fn in_project(
         p: &CartTrackProfile,
@@ -17,6 +18,7 @@ impl GeometryLimits {
         preview_space: Option<WorldSpaceId>,
     ) -> Result<Self, String> {
         let mut height_step = 0.25_f32;
+
         for space in dependent_spaces(p, &dense.roads, preview_space) {
             height_step = height_step.max(
                 project
@@ -24,6 +26,7 @@ impl GeometryLimits {
                     .ok_or("Terrain height grid is loading")?,
             );
         }
+
         Ok(Self {
             corridor: minimum_corridor(p, &dense.roads),
             height_step,
@@ -78,12 +81,14 @@ impl GeometryLimits {
             EdgePatch | BreakupPatch => (0.25, 64.0),
             WanderLength => (0.5, 64.0),
         };
+
         // Inverse formulae can round outwards. Check their endpoints using the exact
         // forward constraints, without letting an unrelated invalid field prevent repair.
         let accepts = |v: f32| {
             let mut candidate = p.clone();
             *field.value(&mut candidate) = v;
             let width_fits = candidate.minimum_width() <= corridor;
+
             match field {
                 Spacing => v > p.track_width && width_fits,
                 TrackWidth => {
@@ -99,22 +104,26 @@ impl GeometryLimits {
                 EdgePatch | BreakupPatch | WanderLength => true,
             }
         };
+
         for _ in 0..8 {
             if accepts(min) {
                 break;
             }
             min = min.next_up();
         }
+
         for _ in 0..8 {
             if accepts(max) {
                 break;
             }
             max = max.next_down();
         }
+
         // A value squeezed to its last valid setting can leave rounded ends crossed.
         if max < min && accepts(min) {
             max = min;
         }
+
         (min.is_finite() && max.is_finite() && min <= max && accepts(min) && accepts(max))
             .then_some(min..=max)
     }
@@ -156,6 +165,7 @@ pub(super) enum GeometryField {
     Wander,
     WanderLength,
 }
+
 impl GeometryField {
     pub fn value(self, p: &mut CartTrackProfile) -> &mut f32 {
         match self {
@@ -169,6 +179,7 @@ impl GeometryField {
             Self::WanderLength => &mut p.track_wander_length,
         }
     }
+
     pub fn control(self, ui: &mut egui::Ui, p: &mut CartTrackProfile, limits: GeometryLimits) {
         let label = match self {
             Self::Spacing => "Wheel spacing",
@@ -213,6 +224,7 @@ pub(in crate::workspaces::presets) fn bounded_metres(
             .speed(speed)
             .suffix(" m"),
     );
+
     // DragValue clamps text and pointer edits, but keyboard increments can exceed
     // its range. Clamp only explicit edits; merely showing a draft must not edit it.
     if response.changed() {
@@ -222,6 +234,7 @@ pub(in crate::workspaces::presets) fn bounded_metres(
             before
         };
     }
+
     response
 }
 
@@ -240,6 +253,7 @@ mod tests {
         GeometryField::Wander,
         GeometryField::WanderLength,
     ];
+
     fn limits() -> GeometryLimits {
         GeometryLimits {
             corridor: Some(3.5),
@@ -291,6 +305,7 @@ mod tests {
     fn repeated_extreme_edits_preserve_other_values_and_all_geometry_constraints() {
         let mut p = road_request().road.unwrap().profile;
         let l = limits();
+
         for iteration in 0..100 {
             for field in FIELDS {
                 let range = l

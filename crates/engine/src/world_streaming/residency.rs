@@ -2,25 +2,32 @@
 //! The world coordinator supplies demand and invalidates pages on world/generation changes.
 //! All systems remain in the coordinator's ordered WorldStreamingSystems chain.
 pub(super) mod attachment;
+
 #[cfg(test)]
 pub(super) mod tests;
 
 use super::database::{DatabaseRequest, FetchedPage, NotSent, RequestId, WorldDatabaseWorker};
+
 use super::{
     ActiveWorldSpace, StreamPhase, WorldGenerationReload, WorldOrigin, WorldStream, source_demand,
 };
+
 use crate::object_lod::ScreenSpaceLod;
+
 use attachment::{
     AssetVariantKey, PageAttachment, attach_page, despawn_attachment, page_asset_variants,
 };
+
 use bevy::{
     prelude::*,
     tasks::{AsyncComputeTaskPool, Task, futures::check_ready},
 };
+
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     time::Duration,
 };
+
 use world::{ObjectDefinitionId, PageDomain, PageKey};
 use world_db::{DecodedPage, PageDependency, RuntimeObjectDefinition, TerrainRenderResources};
 
@@ -100,6 +107,7 @@ impl SourceResidency {
             .map(|(&k, &p)| (k, p))
             .collect();
         missing.sort_by(source_demand::compare);
+
         for (key, _) in missing
             .into_iter()
             .take(MAX_PENDING_SOURCE_PAGES.saturating_sub(in_flight))
@@ -117,6 +125,7 @@ impl SourceResidency {
                 }
             }
         }
+
         Ok(())
     }
 
@@ -130,13 +139,16 @@ impl SourceResidency {
             self.pages.get(&key),
             Some(PageState::Loading { request_id: current }) if *current == request_id
         );
+
         if !request_is_current {
             return;
         }
+
         if !self.desired.contains(&key) {
             self.pages.remove(&key);
             return;
         }
+
         match result {
             Ok(Some(fetched)) => {
                 let task = AsyncComputeTaskPool::get().spawn(async move {
@@ -183,6 +195,7 @@ impl SourceResidency {
                 _ => {}
             }
         }
+
         self.decode_tasks.clear();
         self.desired.clear();
         self.priorities.clear();
@@ -191,24 +204,29 @@ impl SourceResidency {
 
 pub(super) fn receive_decode_results(mut stream: ResMut<SourceResidency>) {
     let mut completed = Vec::new();
+
     for (index, decode) in stream.decode_tasks.iter_mut().enumerate() {
         if let Some(result) = check_ready(&mut decode.task) {
             completed.push((index, decode.request_id, decode.key, result));
         }
     }
+
     for (index, request_id, key, result) in completed.into_iter().rev() {
         stream.decode_tasks.swap_remove(index);
         let request_is_current = matches!(
             stream.pages.get(&key),
             Some(PageState::Decoding { request_id: current }) if *current == request_id
         );
+
         if !request_is_current {
             continue;
         }
+
         if !stream.desired.contains(&key) {
             stream.pages.remove(&key);
             continue;
         }
+
         match result {
             Ok(prepared) => {
                 for definition in &prepared.definitions {
@@ -251,6 +269,7 @@ pub(super) fn attach_prepared_pages(
             &(*b, stream.priorities.get(b).copied().unwrap_or((3, 0.))),
         )
     });
+
     // Admission checks are cheap and the prepared queue is bounded. A page that
     // cannot fit must not consume an attachment slot and starve smaller pages.
     let mut attachment_attempts = 0;
@@ -262,6 +281,7 @@ pub(super) fn attach_prepared_pages(
         if attachment_attempts == MAX_ATTACHMENTS_PER_FRAME {
             break;
         }
+
         let Some(cell_size) = world
             .manifest
             .as_ref()
@@ -277,9 +297,11 @@ pub(super) fn attach_prepared_pages(
         let Some(PageState::Prepared(prepared)) = stream.pages.remove(&key) else {
             continue;
         };
+
         if !stream.desired.contains(&key) {
             continue;
         }
+
         let page_decoded_bytes = prepared.decoded.decoded_bytes;
         let page_asset_variants = page_asset_variants(&prepared.dependencies, gpu_trees);
         let page_gpu_bytes = prepared.decoded.gpu_bytes_estimate
@@ -288,6 +310,7 @@ pub(super) fn attach_prepared_pages(
                 .filter(|(key, _)| !admitted_asset_variants.contains(key))
                 .map(|(_, bytes)| bytes)
                 .sum::<u64>();
+
         if page_decoded_bytes > MAX_RESIDENT_DECODED_BYTES
             || page_gpu_bytes > MAX_RESIDENT_GPU_BYTES_ESTIMATE
         {
@@ -300,6 +323,7 @@ pub(super) fn attach_prepared_pages(
             );
             continue;
         }
+
         if admitted_decoded_bytes.saturating_add(page_decoded_bytes) > MAX_RESIDENT_DECODED_BYTES
             || admitted_gpu_bytes.saturating_add(page_gpu_bytes) > MAX_RESIDENT_GPU_BYTES_ESTIMATE
         {
@@ -307,7 +331,9 @@ pub(super) fn attach_prepared_pages(
             stream.pages.insert(key, PageState::Prepared(prepared));
             continue;
         }
+
         attachment_attempts += 1;
+
         match attach_page(
             &mut commands,
             &asset_server,
@@ -322,11 +348,13 @@ pub(super) fn attach_prepared_pages(
                     admitted_decoded_bytes.saturating_add(attachment.decoded_bytes);
                 admitted_gpu_bytes =
                     admitted_gpu_bytes.saturating_add(attachment.gpu_bytes_estimate);
+
                 for &(key, bytes) in &attachment.asset_variants {
                     if admitted_asset_variants.insert(key) {
                         admitted_gpu_bytes = admitted_gpu_bytes.saturating_add(bytes);
                     }
                 }
+
                 stream.pages.insert(key, PageState::Resident(attachment));
             }
             Err(error) => {
@@ -343,11 +371,13 @@ pub(super) fn cool_and_remove_pages(
 ) {
     let now = time.elapsed();
     let keys: Vec<_> = stream.pages.keys().copied().collect();
+
     for key in keys {
         let demanded = stream.desired.contains(&key);
         let Some(state) = stream.pages.remove(&key) else {
             continue;
         };
+
         match state {
             PageState::Resident(attachment) if !demanded => {
                 stream.pages.insert(
@@ -422,6 +452,7 @@ pub(super) fn update_streaming_stats(
         StreamPhase::Failed(error) => format!("failed: {error}"),
     };
     stats.indexed_cells = world.descriptors.len();
+
     if reload.active() {
         stats.status.push_str(if reload.commit.is_some() {
             " | committing published generation"
@@ -429,27 +460,34 @@ pub(super) fn update_streaming_stats(
             " | preparing published generation"
         });
     }
+
     if let Some(error) = &reload.last_error {
         stats
             .status
             .push_str(&format!(" | publication adoption failed: {error}"));
     }
+
     if active_space.requested.is_some() {
         stats.status.push_str(" | preparing world entry");
     }
+
     if let Some(error) = &active_space.transition_error {
         stats
             .status
             .push_str(&format!(" | entry rejected: {error}"));
     }
+
     stats.source_demand_error = world.demand_error.clone();
     stats.budget_waiting = stream.admission_blocked;
+
     if stream.admission_blocked > 0 {
         stats.status.push_str(" | source residency budget full");
     }
+
     if let Some(error) = &world.demand_error {
         stats.status = format!("source demand limited: {error}");
     }
+
     stats.terrain_source_pages = 0;
     stats.demanded = stream.desired.len();
     stats.loading = 0;
@@ -465,9 +503,11 @@ pub(super) fn update_streaming_stats(
     stats.vegetation_pages = 0;
     stats.asset_variants.clear();
     stats.lod_counts.clear();
+
     for lod in &lod_objects {
         *stats.lod_counts.entry(lod.current_lod()).or_default() += 1;
     }
+
     for state in stream.pages.values() {
         match state {
             PageState::Loading { .. } | PageState::Decoding { .. } => stats.loading += 1,

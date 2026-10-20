@@ -43,6 +43,7 @@ fn traversal_uses_canonical_position_and_exact_demand_instead_of_a_fixed_cell_ra
         &desired,
         [nearby, camera_source],
     );
+
     for bad in [key(1, 0), key(2, 105)] {
         assert!(
             std::panic::catch_unwind(|| assert_traversal_sources(
@@ -55,6 +56,7 @@ fn traversal_uses_canonical_position_and_exact_demand_instead_of_a_fixed_cell_ra
             .is_err()
         );
     }
+
     let wrong_position = WorldPosition {
         cell: CellCoord::ZERO,
         ..position
@@ -123,6 +125,7 @@ fn opt_in_smoke_transitions_after_streaming_and_emits_success_only_once() {
         .init_resource::<StreamingStats>()
         .add_message::<AppExit>()
         .add_plugins(StreamingSmokePlugin);
+
     {
         let mut stats = app.world_mut().resource_mut::<StreamingStats>();
         stats.status = "ready".into();
@@ -130,6 +133,7 @@ fn opt_in_smoke_transitions_after_streaming_and_emits_success_only_once() {
         stats.resident = 1;
         stats.owned_entities = 1;
     }
+
     app.world_mut()
         .spawn((WorldStreamFocus, Transform::default()));
     let page = key(1, 110);
@@ -165,6 +169,7 @@ fn opt_in_smoke_transitions_after_streaming_and_emits_success_only_once() {
         active.requested = None;
         stats.gameplay_objects = 1;
         stats.cached_definitions = 1;
+
         for mut page in &mut pages {
             page.0.space = WorldSpaceId(2);
         }

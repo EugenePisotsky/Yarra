@@ -15,9 +15,11 @@ pub(crate) fn refresh(content: &GameContent, tx: &mut Tx, actor: ActorId) -> Res
     tx.actor_mut(actor)?.set_stats(stats, &content.game.rules);
     Ok(())
 }
+
 /// Keeps the list of characters with something pending in step with this character.
 pub(crate) fn sync_timed(tx: &mut Tx, actor: ActorId) -> Result<()> {
     let timed = tx.actor(actor)?.next_event().is_some();
+
     if tx.timed.contains(&actor) != timed {
         if timed {
             tx.timed_mut().insert(actor);
@@ -25,22 +27,28 @@ pub(crate) fn sync_timed(tx: &mut Tx, actor: ActorId) -> Result<()> {
             tx.timed_mut().remove(&actor);
         }
     }
+
     Ok(())
 }
+
 /// The actor's carried inventory, made now if nothing needed it before: what its template
 /// wears, equipped, and what its loot table yields.
 pub(crate) fn carried(content: &GameContent, tx: &mut Tx, actor: ActorId) -> Result<InventoryId> {
     if let Some(id) = tx.carried.get(&actor) {
         return Ok(*id);
     }
+
     let (inventory, equipment) = tx.unopened_inventory(content, tx.actor(actor)?)?;
     let id = inventory.id;
     tx.put_inventory(inventory);
+
     if !equipment.is_empty() {
         tx.actor_mut(actor)?.equipment = equipment;
     }
+
     Ok(id)
 }
+
 /// Makes a container's contents the first time it is opened.
 pub(crate) fn fill_container(content: &GameContent, tx: &mut Tx, object: ObjectId) -> Result<()> {
     if let crate::ObjectKind::Container { inventory, .. } = content.object(object)?.kind
@@ -51,6 +59,7 @@ pub(crate) fn fill_container(content: &GameContent, tx: &mut Tx, object: ObjectI
     }
     Ok(())
 }
+
 pub(crate) fn require_alive(content: &GameContent, actor: &Actor) -> Result<()> {
     if actor.alive(&content.game.rules) {
         Ok(())
@@ -58,6 +67,7 @@ pub(crate) fn require_alive(content: &GameContent, actor: &Actor) -> Result<()> 
         Err(Rejection::Dead(actor.id).into())
     }
 }
+
 /// Adds to a resource, or takes from it, within zero and its cap. Losing the last of the
 /// life resource is death.
 pub(crate) fn change_resource(
@@ -73,9 +83,11 @@ pub(crate) fn change_resource(
     let character = tx.actor(actor)?;
     let (old, cap) = (character.resources[resource], character.stats[maximum]);
     let now = (i64::from(old) + amount).clamp(0, i64::from(cap.max(0))) as i32;
+
     if now == old {
         return Ok(());
     }
+
     tx.actor_mut(actor)?.resources.insert(resource.clone(), now);
     events.push(GameEvent::ResourceChanged {
         actor,
@@ -83,6 +95,7 @@ pub(crate) fn change_resource(
         change: now - old,
         now,
     });
+
     if resource == &rules.life && now == 0 {
         // Nothing lingers on the dead, and the dead do nothing.
         let character = tx.actor_mut(actor)?;
@@ -93,8 +106,10 @@ pub(crate) fn change_resource(
         sync_timed(tx, actor)?;
         events.push(GameEvent::Died { actor });
     }
+
     Ok(())
 }
+
 /// Puts an effect on a character. One it already has starts over.
 pub(crate) fn apply_effect(
     content: &GameContent,
@@ -119,6 +134,7 @@ pub(crate) fn apply_effect(
     let character = tx.actor_mut(actor)?;
     character.effects.retain(|e| &e.effect != effect);
     character.effects.push(active);
+
     // Kept in one order, so two characters with the same effects compare equal.
     character.effects.sort_by(|a, b| a.effect.cmp(&b.effect));
     refresh(content, tx, actor)?;
@@ -129,6 +145,7 @@ pub(crate) fn apply_effect(
     });
     Ok(())
 }
+
 /// Takes an effect off a character, if it is there.
 pub(crate) fn remove_effect(
     content: &GameContent,
@@ -138,9 +155,11 @@ pub(crate) fn remove_effect(
     events: &mut Vec<GameEvent>,
 ) -> Result<()> {
     content.game.rules.effect(effect)?;
+
     if !tx.actor(actor)?.effects.iter().any(|e| &e.effect == effect) {
         return Ok(());
     }
+
     tx.actor_mut(actor)?.effects.retain(|e| &e.effect != effect);
     refresh(content, tx, actor)?;
     sync_timed(tx, actor)?;
@@ -150,6 +169,7 @@ pub(crate) fn remove_effect(
     });
     Ok(())
 }
+
 /// Moves the clock, carrying out in order of time whatever falls due on the way: effects
 /// tick and end, actions take effect and the next ones begin. Only characters with
 /// something pending are looked at.
@@ -164,6 +184,7 @@ pub(crate) fn advance_time(
         target.0 <= i64::MAX as u64,
         "logical time exceeds storage range",
     )?;
+
     // Everything due takes time to happen again, so this ends.
     loop {
         let due = tx
@@ -181,6 +202,7 @@ pub(crate) fn advance_time(
         happen(content, tx, actor, events)?;
     }
 }
+
 /// Carries out what is due for one character at the current time.
 fn happen(
     content: &GameContent,
@@ -190,6 +212,7 @@ fn happen(
 ) -> Result<()> {
     let now = tx.time;
     let rules = &content.game.rules;
+
     // An effect that ticks at the moment it ends still ticks.
     let ticking: Vec<Key> = tx
         .actor(actor)?
@@ -198,10 +221,12 @@ fn happen(
         .filter(|e| e.next_tick.is_some_and(|t| t <= now))
         .map(|e| e.effect.clone())
         .collect();
+
     for effect in ticking {
         let Some(periodic) = &rules.effect(&effect)?.periodic else {
             continue;
         };
+
         // Death clears the effects, the rest of this list included.
         let Some(active) = tx
             .actor_mut(actor)?
@@ -221,6 +246,7 @@ fn happen(
             events,
         )?;
     }
+
     let ended: Vec<Key> = tx
         .actor(actor)?
         .effects
@@ -228,12 +254,15 @@ fn happen(
         .filter(|e| e.expires_at.is_some_and(|t| t <= now))
         .map(|e| e.effect.clone())
         .collect();
+
     for effect in ended {
         remove_effect(content, tx, actor, &effect, events)?;
     }
+
     crate::combat::proceed(content, tx, actor, events)?;
     sync_timed(tx, actor)
 }
+
 /// Adds to the party's shared experience; every member gains the levels it has earned.
 pub(crate) fn award_experience(
     content: &GameContent,
@@ -251,11 +280,14 @@ pub(crate) fn award_experience(
         amount,
         total: party.experience,
     });
+
     for member in tx.party.members.clone() {
         catch_up(content, tx, member, events)?;
     }
+
     Ok(())
 }
+
 /// Brings a party member to the level the party's experience has earned.
 pub(crate) fn catch_up(
     content: &GameContent,
@@ -265,9 +297,11 @@ pub(crate) fn catch_up(
 ) -> Result<()> {
     let rules = &content.game.rules;
     let earned = rules.level_for(tx.party.experience);
+
     if tx.actor(actor)?.level >= earned {
         return Ok(());
     }
+
     while tx.actor(actor)?.level < earned {
         let character = tx.actor_mut(actor)?;
         character.gain_level(rules)?;
@@ -276,8 +310,10 @@ pub(crate) fn catch_up(
             level: character.level,
         });
     }
+
     refresh(content, tx, actor)
 }
+
 fn member(tx: &Tx, actor: ActorId) -> Result<()> {
     if tx.party.members.contains(&actor) {
         Ok(())
@@ -285,6 +321,7 @@ fn member(tx: &Tx, actor: ActorId) -> Result<()> {
         Err(Rejection::NotInParty(actor).into())
     }
 }
+
 pub(crate) fn spend_attribute_point(
     content: &GameContent,
     tx: &mut Tx,
@@ -295,12 +332,15 @@ pub(crate) fn spend_attribute_point(
     member(tx, actor)?;
     let (_, maximum) = content.game.rules.primary(stat)?;
     let character = tx.actor(actor)?;
+
     if character.attribute_points == 0 {
         return Err(Rejection::NoAttributePoints.into());
     }
+
     if character.base[stat] >= maximum {
         return Err(Rejection::StatAtMaximum(stat.clone()).into());
     }
+
     let character = tx.actor_mut(actor)?;
     character.attribute_points -= 1;
     *character.base.get_mut(stat).expect("checked primary stat") += 1;
@@ -311,6 +351,7 @@ pub(crate) fn spend_attribute_point(
     });
     Ok(())
 }
+
 /// The rank a trainer could teach this character next and the learning points it costs,
 /// or why not.
 pub fn teachable(
@@ -340,6 +381,7 @@ pub fn teachable(
         }
     })
 }
+
 pub(crate) fn teach(
     content: &GameContent,
     tx: &mut Tx,
@@ -359,6 +401,7 @@ pub(crate) fn teach(
     });
     Ok(())
 }
+
 /// Takes gold from the party's shared purse.
 pub(crate) fn pay(tx: &mut Tx, amount: u64, events: &mut Vec<GameEvent>) -> Result<()> {
     let wallet = tx
@@ -366,6 +409,7 @@ pub(crate) fn pay(tx: &mut Tx, amount: u64, events: &mut Vec<GameEvent>) -> Resu
         .wallet
         .ok_or_else(|| Invalid("the party has no purse".into()))?;
     let amount = Money::new(amount)?;
+
     if tx.wallet(wallet)?.balance < amount {
         return Err(Rejection::NotEnoughGold {
             needed: amount.units(),
@@ -373,12 +417,14 @@ pub(crate) fn pay(tx: &mut Tx, amount: u64, events: &mut Vec<GameEvent>) -> Resu
         }
         .into());
     }
+
     tx.wallet_mut(wallet)?.debit(amount)?;
     events.push(GameEvent::Paid {
         amount: amount.units(),
     });
     Ok(())
 }
+
 /// Asks the rules' formula whether a check passes. Whatever it rolls comes from the saved
 /// random stream and is reported with the outcome.
 pub(crate) fn check(

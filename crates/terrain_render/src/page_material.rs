@@ -1,5 +1,6 @@
 //! Builds a page's terrain material from its surfaces, weights and texture set.
 use crate::{TerrainMacroVariation, TerrainMaterial, TerrainMaterialUniform, TerrainShadingMode};
+
 use bevy::{
     asset::RenderAssetUsages,
     image::{
@@ -9,6 +10,7 @@ use bevy::{
     prelude::*,
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
 };
+
 use world::{
     CellCoord, TerrainProfile, TerrainSurface, TerrainSurfaceId, TerrainTextureSet,
     TerrainWeightPage,
@@ -61,6 +63,7 @@ pub fn prepare_terrain_material(
             context.surfaces.len()
         ));
     }
+
     if context.cell_size <= 0.0 || !context.cell_size.is_finite() {
         return Err("terrain cell size must be finite and positive".into());
     }
@@ -147,9 +150,11 @@ pub(crate) fn make_weight_image(
             return Err("blended terrain page has no weight map".into());
         };
         let expected = usize::from(weights.resolution).pow(2) * 4;
+
         if weights.resolution < 2 || weights.rgba.len() != expected {
             return Err("terrain weight map has invalid dimensions".into());
         }
+
         (u32::from(weights.resolution), weights.rgba.clone())
     };
     let mut image = Image::new(

@@ -2,10 +2,12 @@
 use crate::{ProjectWriter, WorldDbError, collection_assets};
 use rusqlite::{OptionalExtension, params};
 use serde::Deserialize;
+
 use std::{
     collections::HashSet,
     path::{Component, Path},
 };
+
 use world::AssetId;
 
 #[derive(Debug, Deserialize)]
@@ -37,6 +39,7 @@ pub struct AssetImportVariant {
 fn invalid(message: &str) -> WorldDbError {
     WorldDbError::Environment(format!("asset import: {message}"))
 }
+
 fn valid_uri(uri: &str) -> bool {
     !uri.is_empty()
         && uri.len() <= 4096
@@ -51,7 +54,9 @@ impl AssetImportCatalog {
         if self.schema_version != 1 || self.assets.is_empty() || self.assets.len() > 256 {
             return Err(invalid("expected version 1 with 1–256 assets"));
         }
+
         let mut keys = HashSet::new();
+
         for asset in &self.assets {
             if !valid_uri(&asset.key)
                 || !keys.insert(&asset.key)
@@ -67,6 +72,7 @@ impl AssetImportCatalog {
                     .any(|v| v[0].minimum_screen_height < v[1].minimum_screen_height)
                 || asset.variants.iter().enumerate().any(|(i, v)| {
                     let last = i + 1 == asset.variants.len();
+
                     // Mesh LODs are glTF; only the last may be an impostor, after a mesh.
                     let kind_ok = v.uri.ends_with(".gltf")
                         || (last && i > 0 && world::is_impostor_uri(&v.uri));
@@ -84,6 +90,7 @@ impl AssetImportCatalog {
                 )));
             }
         }
+
         Ok(())
     }
 }
@@ -96,6 +103,7 @@ impl ProjectWriter {
         let tx = self
             .connection
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+
         for asset in &catalog.assets {
             let id = AssetId(*blake3::hash(asset.key.as_bytes()).as_bytes());
             let existing: Option<Vec<u8>> = tx
@@ -105,9 +113,11 @@ impl ProjectWriter {
                     |r| r.get(0),
                 )
                 .optional()?;
+
             if existing.as_deref().is_some_and(|value| value != id.0) {
                 return Err(invalid("asset key already has a different stable ID"));
             }
+
             tx.execute(
                 "INSERT INTO source_assets(asset_id,asset_key,kind,source_uri) VALUES (?1,?2,'gltf-scene',?3) \
                  ON CONFLICT(asset_id) DO UPDATE SET source_uri=excluded.source_uri \
@@ -118,6 +128,7 @@ impl ProjectWriter {
                 "DELETE FROM source_asset_variants WHERE asset_id=?1",
                 [id.0.as_slice()],
             )?;
+
             for (lod, v) in asset.variants.iter().enumerate() {
                 tx.execute(
                     "INSERT INTO source_asset_variants(asset_id,lod,uri,bounds_x,bounds_y,bounds_z,gpu_bytes_estimate,shadow_policy,minimum_screen_height) \
@@ -126,6 +137,7 @@ impl ProjectWriter {
                             v.gpu_bytes_estimate as i64, v.minimum_screen_height],
                 )?;
             }
+
             collection_assets::read_asset(&tx, id)?;
             let key = format!("asset/{}", asset.key);
             let hash = blake3::hash(key.as_bytes());
@@ -136,10 +148,12 @@ impl ProjectWriter {
                    AND object_definitions.visual_asset_id=excluded.visual_asset_id AND object_definitions.activation_policy=0",
                 params![&hash.as_bytes()[..16], key, asset.display_name, id.0.as_slice()],
             )?;
+
             if changed != 1 {
                 return Err(invalid("definition identity conflict"));
             }
         }
+
         tx.commit()?;
         Ok(())
     }
@@ -148,6 +162,7 @@ impl ProjectWriter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     fn catalog() -> AssetImportCatalog {
         AssetImportCatalog {
             schema_version: 1,
@@ -164,11 +179,13 @@ mod tests {
             }],
         }
     }
+
     fn writer() -> ProjectWriter {
         let connection = rusqlite::Connection::open_in_memory().unwrap();
         crate::schema::create_project_schema(&connection).unwrap();
         ProjectWriter { connection }
     }
+
     #[test]
     fn repeated_import_keeps_stable_identity_and_unrelated_definitions() {
         let mut w = writer();
@@ -196,6 +213,7 @@ mod tests {
             1
         );
     }
+
     #[test]
     fn later_identity_conflict_rolls_back_earlier_imports() {
         let mut w = writer();
@@ -212,6 +230,7 @@ mod tests {
             .unwrap();
         assert_eq!(count, 1);
     }
+
     #[test]
     fn rejects_missing_final_lod_and_paths_outside_asset_root() {
         let mut c = catalog();
@@ -221,6 +240,7 @@ mod tests {
         c.assets[0].variants[0].uri = "../tree.gltf".into();
         assert!(c.validate().is_err());
     }
+
     #[test]
     fn only_the_last_variant_may_be_an_impostor_after_a_mesh() {
         let variant = |uri: &str, minimum| AssetImportVariant {

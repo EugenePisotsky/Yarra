@@ -66,18 +66,22 @@ pub fn sample_resident_terrain_surface<'a>(
 ) -> Option<world::TerrainSurfaceSample> {
     let active_space = origin.space()?;
     let mut selected: Option<(&StreamedTerrainSurface, [f32; 2])> = None;
+
     for surface in surfaces {
         if surface.key.space != active_space {
             continue;
         }
+
         let render_origin = origin.cell.origin(surface.cell_size);
         let world_xz = [
             render_xz[0] + render_origin[0] as f32,
             render_xz[1] + render_origin[1] as f32,
         ];
+
         if !surface.contains_world(world_xz) {
             continue;
         }
+
         if selected
             .as_ref()
             .is_none_or(|(current, _)| surface.key < current.key)
@@ -85,6 +89,7 @@ pub fn sample_resident_terrain_surface<'a>(
             selected = Some((surface, world_xz));
         }
     }
+
     selected.map(|(surface, world_xz)| surface.sample_world(world_xz))
 }
 

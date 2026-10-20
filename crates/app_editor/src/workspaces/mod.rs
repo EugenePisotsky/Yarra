@@ -7,7 +7,9 @@
 
 mod animation;
 pub(crate) mod presets;
+
 pub(crate) use presets::{PresetWorkspaceCamera, PresetWorkspacePlugin};
+
 pub(crate) mod world;
 
 use std::collections::HashSet;

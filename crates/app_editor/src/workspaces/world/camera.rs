@@ -3,6 +3,7 @@ use crate::{
     shell::EditorInputCapture,
     workspaces::world::input::{control_pressed, shift_pressed},
 };
+
 use bevy::{
     core_pipeline::prepass::DepthPrepass,
     gizmos::transform_gizmo::TransformGizmoCamera,
@@ -13,19 +14,23 @@ use bevy::{
     prelude::*,
     render::view::Msaa,
 };
+
 use engine::{
     WorldCatalog, WorldDetailDemand, WorldEnvironmentCamera, WorldOrigin, WorldViewCamera,
     WorldViewpoint,
 };
+
 use std::f32::consts::FRAC_PI_4;
 use world::{CellCoord, WorldPosition};
 
 const MIN_CAMERA_DISTANCE: f32 = 1.0;
 const MAX_CAMERA_DISTANCE: f32 = 4_000.0;
 const MIN_CAMERA_NAVIGATION_SCALE: f32 = 6.0;
+
 /// Beyond this distance the camera keeps only the local preload ring, not detailed frustum
 /// demand across the whole view; it returns below the exit distance.
 const DETAIL_DEMAND_EXIT_DISTANCE: f32 = 768.0;
+
 const DETAIL_DEMAND_RETURN_DISTANCE: f32 = 576.0;
 
 #[derive(Component, Debug)]
@@ -45,6 +50,7 @@ pub(crate) struct EditorCameraDrag {
 
 #[derive(Resource, Default)]
 pub(crate) struct EditorCameraFocusRequest(pub(crate) Option<WorldPosition>);
+
 pub(crate) fn setup_world_workspace(
     mut commands: Commands,
     start_view: Option<Res<engine::WorldStartView>>,
@@ -55,15 +61,18 @@ pub(crate) fn setup_world_workspace(
         yaw: FRAC_PI_4,
         pitch: 0.58,
     };
+
     // Haze visibility comes from the world's atmosphere profile, not the view.
     let environment = WorldEnvironmentCamera::default();
     let mut transform = Transform::from_xyz(24.0, 26.0, 24.0).looking_at(Vec3::ZERO, Vec3::Y);
+
     if let Some(view) = start_view.as_ref().and_then(|s| s.0.as_ref()) {
         controller.distance = view.distance;
         controller.yaw = view.yaw_degrees.to_radians();
         controller.pitch = view.pitch_degrees.to_radians();
         transform = engine::WorldStartView::camera_at(view, Vec3::from_array(view.position));
     }
+
     commands.spawn((
         Camera3d::default(),
         engine::WORLD_TONEMAPPING,
@@ -101,7 +110,9 @@ pub(crate) fn update_editor_camera(
     if let Some(requested_focus) = focus_request.0.take() {
         camera.0.focus = Some(requested_focus);
     }
+
     let incoming = viewpoint.position();
+
     if camera.0.focus.is_none()
         || incoming.is_some_and(|position| {
             camera
@@ -112,6 +123,7 @@ pub(crate) fn update_editor_camera(
     {
         camera.0.focus = incoming;
     }
+
     let Some(mut focus) = camera.0.focus else {
         return;
     };
@@ -124,11 +136,13 @@ pub(crate) fn update_editor_camera(
         drag.panning = shift_pressed(&keys);
         drag.dollying = false;
     }
+
     if mouse_buttons.just_pressed(MouseButton::Middle) && !capture.wants_pointer {
         drag.dollying = control_pressed(&keys);
         drag.panning = !drag.dollying && shift_pressed(&keys);
         drag.orbiting = !drag.dollying && !drag.panning;
     }
+
     if mouse_buttons.just_released(MouseButton::Right) {
         drag.orbiting = false;
         if !mouse_buttons.pressed(MouseButton::Middle) {
@@ -136,6 +150,7 @@ pub(crate) fn update_editor_camera(
             drag.dollying = false;
         }
     }
+
     if mouse_buttons.just_released(MouseButton::Middle)
         && !mouse_buttons.pressed(MouseButton::Right)
     {
@@ -148,12 +163,14 @@ pub(crate) fn update_editor_camera(
         camera.0.yaw -= mouse_motion.delta.x * 0.006;
         camera.0.pitch = (camera.0.pitch + mouse_motion.delta.y * 0.006).clamp(0.08, 1.48);
     }
+
     if drag.panning {
         let scale = camera_navigation_scale(camera.0.distance) * 0.0018;
         let delta = *camera.1.right() * (-mouse_motion.delta.x * scale)
             + *camera.1.up() * (mouse_motion.delta.y * scale);
         focus = focus.translated(delta.to_array(), space.cell_size);
     }
+
     if drag.dollying {
         let forward = *camera.1.forward();
         zoom_editor_camera(
@@ -200,7 +217,9 @@ pub(crate) fn update_editor_camera(
             }
             _ => {}
         }
+
         let pinch: f32 = pinch_gestures.read().map(|gesture| gesture.0).sum();
+
         if pinch != 0.0 {
             let forward = *camera.1.forward();
             zoom_editor_camera(
@@ -217,24 +236,31 @@ pub(crate) fn update_editor_camera(
 
     if mouse_buttons.pressed(MouseButton::Right) && !capture.wants_keyboard {
         let mut movement = Vec3::ZERO;
+
         if keys.pressed(KeyCode::KeyW) {
             movement.z -= 1.0;
         }
+
         if keys.pressed(KeyCode::KeyS) {
             movement.z += 1.0;
         }
+
         if keys.pressed(KeyCode::KeyA) {
             movement.x -= 1.0;
         }
+
         if keys.pressed(KeyCode::KeyD) {
             movement.x += 1.0;
         }
+
         if keys.pressed(KeyCode::KeyE) {
             movement.y += 1.0;
         }
+
         if keys.pressed(KeyCode::KeyQ) {
             movement.y -= 1.0;
         }
+
         if movement != Vec3::ZERO {
             let speed = camera_navigation_scale(camera.0.distance) * time.delta_secs() * 0.8;
             let delta = (*camera.1.right() * movement.x
@@ -285,6 +311,7 @@ fn camera_zoom_step(distance: f32, amount: f32) -> (f32, f32) {
     let amount = amount.clamp(-4.0, 4.0);
     let scale = camera_navigation_scale(distance);
     let requested = distance + scale * ((-amount).exp() - 1.0);
+
     if requested < MIN_CAMERA_DISTANCE {
         (MIN_CAMERA_DISTANCE, MIN_CAMERA_DISTANCE - requested)
     } else {
@@ -301,6 +328,7 @@ fn zoom_editor_camera(
 ) {
     let (distance, forward_travel) = camera_zoom_step(camera.distance, amount);
     camera.distance = distance;
+
     if forward_travel > 0.0 {
         *focus = focus.translated((forward * forward_travel).to_array(), cell_size);
     }
@@ -323,6 +351,7 @@ fn editor_camera_transform(
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use crate::{
         shell::{
             AUTHORING_FRAME_RATE, EditorUiCamera, editor_ui_camera, editor_winit_settings,
@@ -333,6 +362,7 @@ mod tests {
             animation::setup_animation_workspace,
         },
     };
+
     use bevy::{camera::CameraOutputMode, render::view::Msaa, winit::UpdateMode};
     use engine::WorldViewCamera;
     use std::time::Duration;
@@ -354,6 +384,7 @@ mod tests {
         };
         assert_eq!(anticipated_render_origin(CellCoord::ZERO, far), far);
     }
+
     #[test]
     fn editor_frame_pacing_is_reactive_and_input_driven() {
         let UpdateMode::Reactive {
@@ -371,6 +402,7 @@ mod tests {
         assert!(react_to_user_events);
         assert!(react_to_window_events);
     }
+
     #[test]
     fn workspace_switch_activates_only_its_viewport_camera() {
         let mut app = App::new();
@@ -407,6 +439,7 @@ mod tests {
                 .is_active
         );
     }
+
     #[test]
     fn editor_ui_camera_clears_only_its_transparent_intermediate_target() {
         let camera = editor_ui_camera();
@@ -422,6 +455,7 @@ mod tests {
             }
         ));
     }
+
     #[test]
     fn workspace_camera_stack_uses_one_msaa_mode() {
         let mut app = App::new();
@@ -454,6 +488,7 @@ mod tests {
         assert_eq!(fallback_msaa, world_msaa);
         assert_eq!(ui_msaa, world_msaa);
     }
+
     #[test]
     fn close_camera_zoom_advances_instead_of_stalling_at_the_clamp() {
         let (distance, forward_travel) = camera_zoom_step(MIN_CAMERA_DISTANCE, 0.12);
@@ -464,6 +499,7 @@ mod tests {
         assert!(distance > MIN_CAMERA_DISTANCE);
         assert_eq!(forward_travel, 0.0);
     }
+
     #[test]
     fn navigation_sensitivity_has_a_close_range_floor() {
         assert_eq!(camera_navigation_scale(1.0), MIN_CAMERA_NAVIGATION_SCALE);

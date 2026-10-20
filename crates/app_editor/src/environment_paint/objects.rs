@@ -12,6 +12,7 @@ pub(super) struct GeneratedPreview {
     id: StableObjectId,
     asset: world::AssetId,
 }
+
 #[derive(Component)]
 pub(super) struct HiddenGenerated(Visibility);
 
@@ -41,17 +42,21 @@ pub(super) fn sync(
 ) {
     let mut desired = BTreeMap::new();
     let mut ready = BTreeSet::<(WorldSpaceId, CellCoord)>::new();
+
     if *workspace.get() == EditorWorkspace::World {
         for (key, (_, cell)) in preview.visible_cells() {
             if origin.space() != Some(cell.space) {
                 continue;
             }
+
             ready.insert(*key);
+
             for o in &cell.objects {
                 desired.insert(o.id, (*key, o));
             }
         }
     }
+
     let mut retained = BTreeSet::new();
     let transform = |key: (WorldSpaceId, CellCoord), o: &world::StaticObjectInstance| {
         let cell_size = catalog.world_space(key.0).map_or(0.0, |s| s.cell_size);
@@ -66,15 +71,19 @@ pub(super) fn sync(
         .with_rotation(Quat::from_rotation_y(o.yaw))
         .with_scale(Vec3::splat(o.scale))
     };
+
     for (entity, proxy, mut current, instance) in &mut proxies {
         if let Some(&(key, o)) = desired.get(&proxy.id)
             && o.asset == proxy.asset
         {
             let next = transform(key, o);
+
             if *current != next {
                 *current = next;
             }
+
             retained.insert(proxy.id);
+
             if instance.is_none() {
                 ready.remove(&key);
             }
@@ -82,15 +91,20 @@ pub(super) fn sync(
             commands.entity(entity).despawn();
         }
     }
+
     let mut spawned = 0;
+
     for (id, &(key, o)) in &desired {
         if retained.contains(id) {
             continue;
         }
+
         ready.remove(&key);
+
         if spawned >= 64 {
             continue;
         }
+
         let Some(asset) = preview.assets.get(&o.asset) else {
             continue;
         };
@@ -102,6 +116,7 @@ pub(super) fn sync(
         });
         spawned += 1;
     }
+
     for (entity, generated, mut visibility, hidden) in &mut cooked {
         if ready.contains(&(generated.space, generated.cell)) {
             if hidden.is_none() {

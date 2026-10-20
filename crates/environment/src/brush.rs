@@ -44,6 +44,7 @@ impl CoverageBrush {
         {
             return Err("Invalid brush or world position");
         }
+
         let size = f64::from(cell_size);
         let minimum = [
             (from[0].min(to[0]) - self.radius) / size,
@@ -55,6 +56,7 @@ impl CoverageBrush {
             (from[1].max(to[1]) + self.radius) / size,
         ]
         .map(f64::floor);
+
         if minimum
             .into_iter()
             .chain(maximum)
@@ -62,15 +64,19 @@ impl CoverageBrush {
         {
             return Err("Brush is outside the supported world coordinates");
         }
+
         if (maximum[0] - minimum[0] + 1.0) * (maximum[1] - minimum[1] + 1.0) > 64.0 {
             return Err("Move the brush a shorter distance");
         }
+
         let mut cells = Vec::new();
+
         for x in minimum[0] as i32..=maximum[0] as i32 {
             for z in minimum[1] as i32..=maximum[1] as i32 {
                 cells.push(CellCoord { x, z });
             }
         }
+
         Ok(cells)
     }
 
@@ -96,6 +102,7 @@ impl CoverageBrush {
         {
             return Err("Invalid coverage stroke");
         }
+
         let n = usize::from(definition.mask_resolution);
         let original = before
             .tiles
@@ -103,19 +110,24 @@ impl CoverageBrush {
             .find(|t| t.layer == layer)
             .map(|t| t.samples.as_slice());
         let mut result = current.clone();
+
         if !result.tiles.iter().any(|t| t.layer == layer) {
             result.tiles.push(CoverageTile {
                 layer,
                 samples: vec![0; n * n],
             });
         }
+
         let tile = result.tiles.iter_mut().find(|t| t.layer == layer).unwrap();
+
         if tile.samples.len() != n * n || original.is_some_and(|s| s.len() != n * n) {
             return Err("Coverage tile dimensions differ from the layer grid");
         }
+
         let size = f64::from(definition.cell_size);
         let delta = [to[0] - from[0], to[1] - from[1]];
         let length_squared = delta[0] * delta[0] + delta[1] * delta[1];
+
         for (i, value) in tile.samples.iter_mut().enumerate() {
             // Form a global integer grid index first: both owners of a shared sample use
             // identical arithmetic, including at distant cells and non-integer cell sizes.
@@ -134,9 +146,11 @@ impl CoverageBrush {
             };
             let distance =
                 (point[0] - from[0] - t * delta[0]).hypot(point[1] - from[1] - t * delta[1]);
+
             if distance >= self.radius {
                 continue;
             }
+
             let edge = if self.falloff == 0.0 {
                 1.0
             } else {
@@ -151,6 +165,7 @@ impl CoverageBrush {
                 BrushOperation::Erase => (*value).min((base * (1.0 - amount)).round() as u8),
             };
         }
+
         result.tiles.retain(|t| t.samples.iter().any(|&v| v != 0));
         result.tiles.sort_by_key(|t| t.layer);
         Ok(result)

@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use environment::{
     CoverageCell, CoverageSnapshot, CoverageTile, EnvironmentDefinition, PresetLibrary,
 };
+
 use environment_compile::{CompilePlan, CompileProfile};
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
@@ -141,9 +142,11 @@ pub(crate) fn read_definition(
             [space.0],
             |row| {
                 let payload = row.get_ref(1)?.as_blob().map_err(rusqlite::Error::from)?;
+
                 if payload.len() > MAX_DEFINITION_BYTES {
                     return Err(rusqlite::Error::InvalidQuery);
                 }
+
                 Ok((row.get::<_, i64>(0)?, payload.to_vec()))
             },
         )
@@ -157,6 +160,7 @@ pub(crate) fn read_definition(
                     .with_fixed_int_encoding()
                     .with_limit::<MAX_DEFINITION_BYTES>(),
             )?;
+
         if consumed != bytes.len()
             || definition.space != space
             || revision <= 0
@@ -166,6 +170,7 @@ pub(crate) fn read_definition(
                 "definition payload does not match its database header",
             ));
         }
+
         Ok(definition)
     })
     .transpose()
@@ -182,9 +187,11 @@ pub(crate) fn read_definitions(
             Ok(WorldSpaceId(row.get(0)?))
         })?
         .collect::<Result<Vec<_>, _>>()?;
+
     if spaces.len() > MAX_ENVIRONMENT_DEFINITIONS {
         return Err(invalid("too many environment definitions"));
     }
+
     spaces
         .into_iter()
         .map(|space| {
@@ -202,25 +209,31 @@ fn validate_definition_references(
         [definition.space.0],
         |row| row.get(0),
     )?;
+
     if definition.cell_size != cell_size {
         return Err(invalid("environment and world grids differ"));
     }
+
     for surface in &definition.surfaces {
         let exists: bool = connection.query_row(
             "SELECT EXISTS(SELECT 1 FROM terrain_surfaces WHERE surface_id = ?1)",
             [surface.0.as_slice()],
             |row| row.get(0),
         )?;
+
         if !exists {
             return Err(invalid("environment references a missing terrain surface"));
         }
+
         let unavailable: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM world_space_terrain_profiles p WHERE p.world_space_id = ?1 AND NOT EXISTS(SELECT 1 FROM terrain_texture_set_layers l WHERE l.texture_set_id = p.texture_set_id AND l.surface_id = ?2))", params![definition.space.0, surface.0.as_slice()], |row| row.get(0))?;
+
         if unavailable {
             return Err(invalid(
                 "environment surface is unavailable in the world's terrain texture set",
             ));
         }
     }
+
     Ok(())
 }
 
@@ -235,14 +248,17 @@ fn store_definition(
             .with_little_endian()
             .with_fixed_int_encoding(),
     )?;
+
     if bytes.len() > MAX_DEFINITION_BYTES || revision <= 0 {
         return Err(invalid("definition size or revision is invalid"));
     }
+
     connection.execute("INSERT INTO environment_definitions(world_space_id, revision, payload) VALUES (?1, ?2, ?3) ON CONFLICT(world_space_id) DO UPDATE SET revision = excluded.revision, payload = excluded.payload", params![definition.space.0, revision, bytes])?;
     connection.execute(
         "DELETE FROM environment_layer_presets WHERE world_space_id=?1",
         [definition.space.0],
     )?;
+
     for layer in &definition.layers {
         connection.execute("INSERT INTO environment_layer_presets(world_space_id,layer_id,preset_id) VALUES (?1,?2,?3)",params![definition.space.0,layer.id.0.as_slice(),layer.preset.0.as_slice()])?;
     }
@@ -263,8 +279,10 @@ pub(crate) fn read_cell(
     let mut query = connection.prepare_cached("SELECT layer_id, samples FROM environment_coverage WHERE world_space_id = ?1 AND cell_x = ?2 AND cell_z = ?3 ORDER BY layer_id")?;
     let mut rows = query.query(params![definition.space.0, cell.x, cell.z])?;
     let mut tiles = Vec::new();
+
     while let Some(row) = rows.next()? {
         let samples = row.get_ref(1)?.as_blob().map_err(rusqlite::Error::from)?;
+
         if tiles.len() >= definition.layers.len()
             || samples.len() != usize::from(definition.mask_resolution).pow(2)
             || samples.len() > *remaining_bytes
@@ -273,19 +291,23 @@ pub(crate) fn read_cell(
                 "coverage read exceeded its byte budget or contains malformed tiles",
             ));
         }
+
         let layer = environment::LayerId(crate::storage::blob_array(
             row.get_ref(0)?.as_blob().map_err(rusqlite::Error::from)?,
             "layer_id",
         )?);
+
         if !definition.layers.iter().any(|l| l.id == layer) {
             return Err(invalid("coverage references an unknown layer"));
         }
+
         *remaining_bytes -= samples.len();
         tiles.push(CoverageTile {
             layer,
             samples: samples.to_vec(),
         });
     }
+
     Ok(Some(SourceEnvironmentCellRecord {
         space: definition.space,
         cell,
@@ -309,6 +331,7 @@ pub(crate) fn read_coverage(
             "coverage read requires unique coordinates within the cell budget",
         ));
     }
+
     let mut remaining = MAX_ENVIRONMENT_MASK_BYTES;
     let cells = cells
         .iter()
@@ -336,7 +359,9 @@ pub fn environment_dependency_cells(cells: &[CellCoord]) -> Result<Vec<CellCoord
     if cells.len() > crate::MAX_DENSE_DOMAIN_WRITES_PER_TRANSACTION {
         return Err(invalid("too many environment cells in one job"));
     }
+
     let mut result = BTreeSet::new();
+
     for cell in cells {
         for dx in -1..=1 {
             for dz in -1..=1 {
@@ -353,6 +378,7 @@ pub fn environment_dependency_cells(cells: &[CellCoord]) -> Result<Vec<CellCoord
             }
         }
     }
+
     Ok(result.into_iter().collect())
 }
 
@@ -373,9 +399,11 @@ impl ProjectReader {
         let definitions = read_definitions(&transaction)?;
         let empty = VegetationCatalog::default();
         validate_library_references(&transaction, &presets)?;
+
         for definition in &definitions {
             checked_definition(definition, plants.as_ref().unwrap_or(&empty), &presets)?;
         }
+
         Ok((plants, presets, definitions))
     }
 
@@ -390,19 +418,23 @@ impl ProjectReader {
         if maximum_records == 0 || maximum_records > MAX_ENVIRONMENT_READ_CELLS {
             return Err(invalid("layer dependency query exceeds the cell budget"));
         }
+
         let transaction = self.connection.unchecked_transaction()?;
         let definition = read_definition(&transaction, space)?
             .ok_or_else(|| invalid("world has no environment definition"))?;
+
         if !definition.layers.iter().any(|l| l.id == layer) {
             return Err(invalid(
                 "layer dependency query references an unknown layer",
             ));
         }
+
         let mut query = transaction.prepare("SELECT cell_x, cell_z FROM environment_coverage WHERE world_space_id = ?1 AND layer_id = ?2 AND (cell_x, cell_z) >= (?3, ?4) ORDER BY cell_x, cell_z LIMIT ?5")?;
         let minimum = after.unwrap_or(CellCoord {
             x: i32::MIN,
             z: i32::MIN,
         });
+
         // Include the cursor row in the index range, then skip it; it may have been erased since
         // the previous page. The definition revision lets the caller reject obsolete work.
         let mut cells = query
@@ -422,9 +454,11 @@ impl ProjectReader {
                 },
             )?
             .collect::<Result<Vec<_>, _>>()?;
+
         if let Some(after) = after {
             cells.retain(|&cell| cell != after);
         }
+
         let truncated = cells.len() > maximum_records;
         cells.truncate(maximum_records);
         let next_cursor = if truncated {
@@ -462,17 +496,21 @@ impl ProjectReader {
         maximum_records: usize,
     ) -> Result<SourceEnvironmentCellQuery, WorldDbError> {
         crate::project::query::validate_spatial_query(minimum, maximum, maximum_records)?;
+
         if maximum_records > MAX_ENVIRONMENT_READ_CELLS {
             return Err(invalid("environment query exceeds the cell budget"));
         }
+
         let width = i64::from(maximum.x) - i64::from(minimum.x) + 1;
         let height = i64::from(maximum.z) - i64::from(minimum.z) + 1;
+
         if width
             .checked_mul(height)
             .is_none_or(|area| area > MAX_ENVIRONMENT_READ_CELLS as i64)
         {
             return Err(invalid("environment query exceeds the spatial area budget"));
         }
+
         let transaction = self.connection.unchecked_transaction()?;
         let Some(definition) = read_definition(&transaction, space)? else {
             return Ok(SourceEnvironmentCellQuery {
@@ -514,13 +552,19 @@ impl ProjectReader {
 }
 
 mod presence;
+
 pub use presence::{EnvironmentLayerPresence, MAX_ENVIRONMENT_PRESENCE_ROWS};
+
 mod presets;
+
 #[cfg(test)]
 pub use presets::EnvironmentPresetLayers;
+
 pub(crate) use presets::read_library;
 use presets::{revisioned_library, store_library, validate_library_references};
+
 mod transaction;
+
 pub use transaction::{
     EnvironmentDefinitionWrite, EnvironmentSourceCommit, EnvironmentSourceWriteResult,
 };
@@ -537,6 +581,7 @@ fn validate_cell(
     record: &SourceEnvironmentCellRecord,
 ) -> Result<(), WorldDbError> {
     let mut layers = BTreeSet::new();
+
     if record.space != definition.space
         || record.definition_revision != definition.revision
         || record.source_revision < 0
@@ -548,6 +593,7 @@ fn validate_cell(
     {
         return Err(WorldDbError::InvalidEnvironmentCellRecord);
     }
+
     Ok(())
 }
 
@@ -557,12 +603,14 @@ pub(crate) fn store_cell(
 ) -> Result<(), WorldDbError> {
     connection.execute("INSERT INTO environment_cells(world_space_id, cell_x, cell_z, revision) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(world_space_id, cell_x, cell_z) DO UPDATE SET revision = excluded.revision", params![record.space.0, record.cell.x, record.cell.z, record.source_revision])?;
     connection.execute("DELETE FROM environment_coverage WHERE world_space_id = ?1 AND cell_x = ?2 AND cell_z = ?3", params![record.space.0, record.cell.x, record.cell.z])?;
+
     for tile in &record.tiles {
         if tile.samples.iter().all(|&s| s == 0) {
             continue;
         }
         connection.execute("INSERT INTO environment_coverage(world_space_id, cell_x, cell_z, layer_id, samples) VALUES (?1, ?2, ?3, ?4, ?5)", params![record.space.0, record.cell.x, record.cell.z, tile.layer.0.as_slice(), tile.samples])?;
     }
+
     Ok(())
 }
 
@@ -572,9 +620,11 @@ pub(crate) fn validate_catalog_dependencies(
 ) -> Result<(), WorldDbError> {
     let presets = read_library(connection)?;
     presets.validate().map_err(|e| invalid(e.to_string()))?;
+
     for definition in read_definitions(connection)? {
         checked_definition(&definition, plants, &presets)?;
     }
+
     Ok(())
 }
 
@@ -587,27 +637,33 @@ pub(crate) fn write_environment_document(
     validate_library_references(transaction, presets)?;
     store_library(transaction, presets)?;
     let definitions: BTreeMap<_, _> = document.environments.iter().map(|d| (d.space, d)).collect();
+
     if definitions.len() != document.environments.len()
         || definitions.len() > MAX_ENVIRONMENT_DEFINITIONS
     {
         return Err(invalid("duplicate or excessive environment definitions"));
     }
+
     for definition in definitions.values() {
         checked_definition(definition, &plants, presets)?;
         validate_definition_references(transaction, definition)?;
         store_definition(transaction, definition)?;
     }
+
     let mut keys = BTreeSet::new();
+
     for record in &document.environment_cells {
         if !keys.insert((record.space, record.cell)) {
             return Err(invalid("duplicate environment cell"));
         }
+
         let definition = definitions
             .get(&record.space)
             .ok_or_else(|| invalid("coverage has no definition"))?;
         validate_cell(definition, record)?;
         store_cell(transaction, record)?;
     }
+
     for (&space, definition) in &definitions {
         let plan = CompilePlan::new(definition, &plants, presets, CompileProfile::default())?;
         let cells = document
@@ -616,6 +672,7 @@ pub(crate) fn write_environment_document(
             .filter(|r| r.space == space)
             .map(|r| r.cell)
             .collect::<Vec<_>>();
+
         // Small chunks also bound the worst-case layer-mask input, not only the output cell count.
         for batch in cells.chunks(1) {
             let coverage = read_coverage(
@@ -626,6 +683,7 @@ pub(crate) fn write_environment_document(
             plan.validate_coverage(batch, &coverage)?;
         }
     }
+
     Ok(())
 }
 
@@ -641,9 +699,11 @@ pub(crate) fn read_environment_document(
 > {
     let definitions = read_definitions(connection)?;
     let mut records = Vec::new();
+
     for definition in &definitions {
         let mut query = connection.prepare("SELECT cell_x, cell_z FROM environment_cells WHERE world_space_id = ?1 ORDER BY cell_x, cell_z")?;
         let mut rows = query.query([definition.space.0])?;
+
         while let Some(row) = rows.next()? {
             let cell = CellCoord {
                 x: row.get(0)?,
@@ -656,6 +716,7 @@ pub(crate) fn read_environment_document(
             );
         }
     }
+
     Ok((read_library(connection)?, definitions, records))
 }
 
@@ -678,9 +739,11 @@ impl ProjectReader {
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
+
         if surfaces.len() > 64 {
             return Err(invalid("terrain preview pack exceeds the surface budget"));
         }
+
         Ok(crate::TerrainRenderResources {
             profile,
             texture_set,

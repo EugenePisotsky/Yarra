@@ -5,7 +5,9 @@ mod material;
 mod publish;
 mod surface;
 mod sync;
+
 use crate::ApplyAtmosphere;
+
 use bevy::{
     asset::RenderAssetUsages,
     image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor},
@@ -16,10 +18,13 @@ use bevy::{
         storage::ShaderBuffer,
     },
 };
+
 use bytemuck::{Pod, Zeroable};
+
 pub use material::{
     EnvironmentExtension, EnvironmentMaterial, EnvironmentMaterialOptIn, EnvironmentMaterialSystems,
 };
+
 use publish::ForestSkyLevels;
 pub use surface::{EnvironmentSurfaceGpu, surface_layout};
 
@@ -27,6 +32,7 @@ pub use surface::{EnvironmentSurfaceGpu, surface_layout};
 /// mist noise, shore and mist maps, surface patterns) are wrapped around.
 #[derive(Resource, Default)]
 pub struct EnvironmentOrigin(pub [f64; 2]);
+
 /// The environment's GPU inputs: the parameter buffer and the maps it places.
 #[derive(Resource, Clone, ExtractResource)]
 #[extract_app(bevy::render::RenderApp)]
@@ -47,6 +53,7 @@ pub struct EnvironmentAssets {
     /// How waves come ashore; see `crate::shore`.
     pub shore: Handle<Image>,
 }
+
 /// Everything the environment's passes and lit materials read, in one storage buffer
 /// (`shaders/environment/params.wesl`).
 #[derive(Resource, Clone, Copy, Default, ExtractResource, Pod, Zeroable)]
@@ -129,16 +136,21 @@ pub(crate) struct EnvironmentParams {
     /// The channel's segments, ends in pairs (xyz, width): `crate::lightning::channel`.
     pub lightning_segments: [[f32; 4]; 2 * crate::lightning::SEGMENTS],
 }
+
 /// Seconds after which the wave clock wraps; every wave completes whole cycles in it
 /// (`shaders/water/waves.wesl`).
 pub(crate) const WAVE_PERIOD: f64 = 3600.;
+
 /// Mist noise tile, metres: a whole number, which the mist's shaders read as
 /// `constants::MIST_NOISE_PERIOD` (`shaders/sky/air.wesl`).
 pub(crate) const MIST_NOISE_PERIOD: f64 = 2048.;
+
 pub(crate) fn mist_noise_period_def() -> bevy::shader::ShaderDefVal {
     bevy::shader::ShaderDefVal::UInt("MIST_NOISE_PERIOD".into(), MIST_NOISE_PERIOD as u32)
 }
+
 pub(crate) struct EnvironmentPlugin;
+
 impl Plugin for EnvironmentPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<crate::shelter::RainShelter>()
@@ -150,10 +162,12 @@ impl Plugin for EnvironmentPlugin {
             .init_resource::<EnvironmentOrigin>()
             .init_resource::<EnvironmentParams>()
             .init_resource::<ForestSkyLevels>();
+
         // Pure ECS atmosphere tests/tools do not install GPU or asset services.
         if app.get_sub_app(bevy::render::RenderApp).is_none() {
             return;
         }
+
         app.add_plugins((
             ExtractResourcePlugin::<EnvironmentAssets>::default(),
             ExtractResourcePlugin::<EnvironmentParams>::default(),
@@ -181,6 +195,7 @@ impl Plugin for EnvironmentPlugin {
         crate::terrain_shadow::gpu::install(app);
     }
 }
+
 fn repeat() -> ImageSampler {
     ImageSampler::Descriptor(ImageSamplerDescriptor {
         address_mode_u: ImageAddressMode::Repeat,
@@ -191,6 +206,7 @@ fn repeat() -> ImageSampler {
         ..default()
     })
 }
+
 fn setup(
     mut commands: Commands,
     mut images: ResMut<Assets<Image>>,
@@ -236,10 +252,12 @@ fn setup(
         )),
     });
 }
+
 /// Stable zero-density binding for isolated materials and renderer tests.
 pub fn fallback_parameters() -> Handle<ShaderBuffer> {
     bevy::asset::uuid_handle!("59e29465-cc65-47d8-92a0-fc10a8e13a20")
 }
+
 pub fn init_fallback(mut buffers: ResMut<Assets<ShaderBuffer>>) {
     buffers
         .insert(

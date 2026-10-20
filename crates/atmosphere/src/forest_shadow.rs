@@ -14,12 +14,16 @@ use bevy::{
 
 /// Texels per edge and metres per texel: 4,096 m around the camera, the far-object range.
 pub const SIZE: u32 = 1024;
+
 pub const METRES_PER_TEXEL: f32 = 4.0;
+
 /// Texels around each texel whose crowns its local canopy top covers: a shadow march starting
 /// there ends above them, and a point with no crown this near above it skips the march.
 const NEIGHBOURHOOD: usize = 24;
+
 /// Crown heights stored where no crown reaches a texel.
 const OPEN: f32 = -1.0e4;
+
 /// Mip levels above the map (8, 16 and 32 m texels) for the sky light under the crowns: each
 /// holds the highest crown top, lowest crown base, the average share of the sky level 0's
 /// crowns let through (`exp(-density)`, not density) and the highest canopy top.
@@ -55,6 +59,7 @@ impl ForestShadowMap {
         let origin = ((centre - Vec2::splat(half)) / METRES_PER_TEXEL).floor() * METRES_PER_TEXEL;
         let mut texels = vec![[OPEN, -OPEN, 0.0, OPEN]; (SIZE * SIZE) as usize];
         let mut tallest = OPEN;
+
         for crown in crowns {
             if !(crown.radius > 0.0
                 && crown.radius.is_finite()
@@ -65,25 +70,31 @@ impl ForestShadowMap {
             {
                 continue;
             }
+
             let local = (crown.centre - origin) / METRES_PER_TEXEL;
             let reach = crown.radius / METRES_PER_TEXEL + 1.0;
             let min = (local - reach).floor().max(Vec2::ZERO);
             let max = (local + reach).ceil().min(Vec2::splat(SIZE as f32 - 1.0));
+
             if min.x > max.x || min.y > max.y {
                 continue;
             }
+
             let (middle, half_height) = (
                 (crown.top + crown.bottom) * 0.5,
                 (crown.top - crown.bottom) * 0.5,
             );
             let opacity = crown.opacity.min(1.0);
+
             for y in min.y as u32..=max.y as u32 {
                 for x in min.x as u32..=max.x as u32 {
                     let texel_centre = Vec2::new(x as f32 + 0.5, y as f32 + 0.5);
                     let d = (texel_centre - local).length() * METRES_PER_TEXEL / crown.radius;
+
                     if d >= 1.0 {
                         continue;
                     }
+
                     // The share of a texel a crown smaller than it covers, then an ellipsoid
                     // profile: full height at the trunk, thinning to the drip line.
                     let area = (std::f32::consts::PI * crown.radius * crown.radius
@@ -94,21 +105,26 @@ impl ForestShadowMap {
                     let texel = &mut texels[(y * SIZE + x) as usize];
                     texel[0] = texel[0].max(middle + half_height * profile);
                     texel[1] = texel[1].min(middle - half_height * profile);
+
                     // Overlapping crowns add their foliage: a dense stand dims more than one tree.
                     texel[2] += coverage;
                     tallest = tallest.max(texel[0]);
                 }
             }
         }
+
         // Filtered lookups blend neighbouring texels: give empty texels next to crowns their
         // neighbours' heights (density stays 0), so an edge sample sees a sane crown layer.
         let source = texels.clone();
+
         for y in 0..SIZE as i32 {
             for x in 0..SIZE as i32 {
                 let index = (y as u32 * SIZE + x as u32) as usize;
+
                 if source[index][2] > 0.0 {
                     continue;
                 }
+
                 for (dx, dy) in [
                     (-1, 0),
                     (1, 0),
@@ -120,10 +136,13 @@ impl ForestShadowMap {
                     (1, 1),
                 ] {
                     let (nx, ny) = (x + dx, y + dy);
+
                     if nx < 0 || ny < 0 || nx >= SIZE as i32 || ny >= SIZE as i32 {
                         continue;
                     }
+
                     let neighbour = source[(ny as u32 * SIZE + nx as u32) as usize];
+
                     if neighbour[2] > 0.0 {
                         let texel = &mut texels[index];
                         texel[0] = texel[0].max(neighbour[0]);
@@ -132,9 +151,11 @@ impl ForestShadowMap {
                 }
             }
         }
+
         // Local canopy top: a separable maximum over the neighbourhood.
         let size = SIZE as usize;
         let mut rows = vec![OPEN; size * size];
+
         for y in 0..size {
             let row = &texels[y * size..(y + 1) * size];
             for x in 0..size {
@@ -148,6 +169,7 @@ impl ForestShadowMap {
                     .fold(OPEN, |top, t| top.max(t[0]));
             }
         }
+
         for x in 0..size {
             for y in 0..size {
                 let (low, high) = (
@@ -158,6 +180,7 @@ impl ForestShadowMap {
                     (low..=high).fold(OPEN, |top, v| top.max(rows[v * size + x]));
             }
         }
+
         let levels = sky_levels(&texels);
         Self {
             origin,
@@ -172,11 +195,14 @@ impl ForestShadowMap {
     /// march closely enough for tests and CPU queries.
     pub(crate) fn density_at(&self, point: Vec3) -> f32 {
         let texel = ((Vec2::new(point.x, point.z) - self.origin) / METRES_PER_TEXEL).floor();
+
         if texel.x < 0.0 || texel.y < 0.0 || texel.x >= SIZE as f32 || texel.y >= SIZE as f32 {
             return 0.0;
         }
+
         let [top, bottom, density, _] =
             self.texels[(texel.y as u32 * SIZE + texel.x as u32) as usize];
+
         if point.y > bottom && point.y < top {
             density
         } else {
@@ -189,6 +215,7 @@ impl ForestShadowMap {
 /// (`forest_sky_visibility` in the shader): 1 as their foliage does, 0 none.
 #[derive(Resource, Clone, Copy, Debug, PartialEq)]
 pub struct ForestSkyOcclusion(pub f32);
+
 impl Default for ForestSkyOcclusion {
     fn default() -> Self {
         Self(1.0)
@@ -259,6 +286,7 @@ impl ForestShadow {
             TextureFormat::Rgba16Float,
             RenderAssetUsages::RENDER_WORLD,
         );
+
         // Bevy checks the data against level 0; the mip levels follow it.
         image.texture_descriptor.mip_level_count = 1 + SKY_LEVELS;
         image.data = Some(half_floats(&texels));
@@ -308,6 +336,7 @@ fn half_floats(texels: &[[f32; 4]]) -> Vec<u8> {
 /// average share of sky the crowns let through.
 fn sky_levels(texels: &[[f32; 4]]) -> Vec<Vec<[f32; 4]>> {
     let mut levels: Vec<Vec<[f32; 4]>> = Vec::new();
+
     for level in 1..=SKY_LEVELS {
         let (side, finer) = ((SIZE >> level) as usize, (SIZE >> (level - 1)) as usize);
         let source = levels.last().map_or(texels, Vec::as_slice);
@@ -320,6 +349,7 @@ fn sky_levels(texels: &[[f32; 4]]) -> Vec<Vec<[f32; 4]>> {
                     source[(y + 1) * finer + x],
                     source[(y + 1) * finer + x + 1],
                 ];
+
                 // Level 0 holds foliage density; finer sky levels already hold the sky share.
                 let sky = |t: &[f32; 4]| if level == 1 { (-t[2]).exp() } else { t[2] };
                 [
@@ -332,6 +362,7 @@ fn sky_levels(texels: &[[f32; 4]]) -> Vec<Vec<[f32; 4]>> {
             .collect();
         levels.push(level_texels);
     }
+
     levels
 }
 

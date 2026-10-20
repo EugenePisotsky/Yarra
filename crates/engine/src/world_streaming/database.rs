@@ -1,12 +1,15 @@
 //! Bevy startup and bounded transport for immutable runtime database IO.
 mod protocol;
 mod reader;
+
 use bevy::prelude::*;
 use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, bounded};
+
 pub(super) use protocol::{
     DatabaseRequest, DatabaseResult, FarObjectPayloads, FetchedPage, RequestId, TerrainQuery,
     TerrainReply,
 };
+
 use std::{
     path::PathBuf,
     sync::atomic::{AtomicU64, Ordering},
@@ -17,12 +20,14 @@ const REQUEST_CAPACITY: usize = 16;
 const RESULT_CAPACITY: usize = 32;
 
 pub(super) struct WorldDatabasePlugin(pub PathBuf);
+
 impl Plugin for WorldDatabasePlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(WorldDatabasePath(self.0.clone()))
             .add_systems(Startup, start_database_worker);
     }
 }
+
 #[derive(Resource)]
 struct WorldDatabasePath(PathBuf);
 
@@ -44,10 +49,12 @@ pub(super) enum NotSent {
     Full,
     Stopped,
 }
+
 impl WorldDatabaseWorker {
     fn spawn(path: PathBuf) -> Self {
         Self::spawn_with_capacity(path, REQUEST_CAPACITY, RESULT_CAPACITY)
     }
+
     fn spawn_with_capacity(path: PathBuf, requests: usize, results: usize) -> Self {
         let (requests, input) = bounded(requests);
         let (output, results) = bounded(results);
@@ -64,6 +71,7 @@ impl WorldDatabaseWorker {
             thread: Some(thread),
         }
     }
+
     /// Queues a request without blocking and returns the id its reply will carry.
     pub(super) fn send(&self, request: DatabaseRequest) -> Result<RequestId, NotSent> {
         let id = self.last_id.fetch_add(1, Ordering::Relaxed) + 1;
@@ -73,9 +81,11 @@ impl WorldDatabaseWorker {
             Err(TrySendError::Disconnected(_)) => Err(NotSent::Stopped),
         }
     }
+
     pub(super) fn try_recv(&self) -> Result<(RequestId, DatabaseResult), TryRecvError> {
         self.results.try_recv()
     }
+
     #[cfg(test)]
     #[allow(clippy::type_complexity)] // The worker's two channel ends, as the thread sees them.
     pub(super) fn test_channel_pair(
@@ -101,6 +111,7 @@ impl WorldDatabaseWorker {
         )
     }
 }
+
 impl Drop for WorldDatabaseWorker {
     fn drop(&mut self) {
         // Disconnect first: wake either channel wait without enqueuing a shutdown command.
@@ -111,6 +122,7 @@ impl Drop for WorldDatabaseWorker {
         }
     }
 }
+
 fn start_database_worker(mut commands: Commands, path: Res<WorldDatabasePath>) {
     commands.insert_resource(WorldDatabaseWorker::spawn(path.0.clone()));
 }

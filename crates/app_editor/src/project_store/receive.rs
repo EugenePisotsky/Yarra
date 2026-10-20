@@ -12,10 +12,13 @@ pub(super) fn receive_project_results(
         match worker.try_recv() {
             Ok(ProjectResult::SaveAtmospheres(id, result)) => {
                 let result = *result;
+
                 if store.atmosphere_save_in_flight != Some(id) {
                     continue;
                 }
+
                 store.atmosphere_save_in_flight = None;
+
                 if let Ok(world_db::AtmosphereWriteResult::Committed(records)) = &result {
                     store.source_epoch = store.source_epoch.wrapping_add(1).max(1);
                     if let Some(manifest) = &mut store.manifest {
@@ -29,6 +32,7 @@ pub(super) fn receive_project_results(
                         }
                     }
                 }
+
                 store.atmosphere_completion = Some((id, result));
             }
 
@@ -36,12 +40,15 @@ pub(super) fn receive_project_results(
                 if store.area_save_in_flight != Some(id) {
                     continue;
                 }
+
                 store.area_save_in_flight = None;
+
                 if let Ok(world_db::GameplayAreasWriteResult::Committed(record)) = &result {
                     // Publishing compares epochs to know the source moved on.
                     store.source_epoch = store.source_epoch.wrapping_add(1).max(1);
                     store.gameplay_areas = Some(record.clone());
                 }
+
                 store.area_completion = Some((id, result));
             }
 
@@ -71,15 +78,18 @@ pub(super) fn receive_project_results(
                 }) {
                     store.in_flight = None;
                 }
+
                 if store.desired_window != Some(window) || store.desired_domains != domains {
                     store.stale_results = store.stale_results.saturating_add(1);
                     continue;
                 }
+
                 match result {
                     Ok(snapshot) => {
                         store.cells = snapshot.cells;
                         store.objects = snapshot.objects;
                         store.environment_cells = snapshot.environment_cells;
+
                         if let Some(snapshot) = &snapshot.environment_snapshot
                             && let Some(definition) = store
                                 .environments
@@ -88,9 +98,11 @@ pub(super) fn receive_project_results(
                         {
                             *definition = snapshot.definition.clone();
                         }
+
                         if let Some(environment) = &snapshot.environment_snapshot {
                             store.presets = Some(environment.presets.clone());
                         }
+
                         store.environment_snapshot = snapshot.environment_snapshot;
                         store.cells_truncated = snapshot.cells_truncated;
                         store.objects_truncated = snapshot.objects_truncated;
@@ -114,6 +126,7 @@ pub(super) fn receive_project_results(
                 if store.save_in_flight == Some(request_id) {
                     store.save_in_flight = None;
                 }
+
                 let outcome = match result {
                     Ok(ObjectWriteTransactionResult::Committed(commits)) => {
                         store.source_epoch = store.source_epoch.wrapping_add(1).max(1);
@@ -136,11 +149,13 @@ pub(super) fn receive_project_results(
                 if store.dense_save_in_flight == Some(request_id) {
                     store.dense_save_in_flight = None;
                 }
+
                 let outcome = match result {
                     Ok(EnvironmentSourceWriteResult::Committed(commits)) => {
                         if let Some(presets) = &commits.presets {
                             store.presets = Some(presets.clone());
                         }
+
                         for definition in &commits.definitions {
                             if let Some(old) = store
                                 .environments
@@ -150,6 +165,7 @@ pub(super) fn receive_project_results(
                                 *old = definition.clone();
                             }
                         }
+
                         store.source_epoch = store.source_epoch.wrapping_add(1).max(1);
                         store.loaded_window = None;
                         store.environment_cells.clear();

@@ -161,11 +161,14 @@ mod tests {
     fn the_tracked_pack_seeds_surfaces_in_array_order() {
         let pack = TerrainPack::baltic();
         assert!(pack.surfaces.len() >= 8);
+
         for (i, layer) in pack.layers.iter().enumerate() {
             assert_eq!(layer.layer as usize, i);
             assert_eq!(layer.surface, pack.surfaces[i].id);
         }
+
         assert_ne!(pack.surface("beach-sand"), pack.surface("rock"));
+
         // compile_terrain_textures.py's mip chain, which reported 43,341,131 universal bytes
         // for fifteen 1024² layers.
         assert_eq!(mip_texels(1024), 1_398_101);

@@ -15,6 +15,7 @@ pub struct GameDayClock {
     /// Clock multiplier for watching the day go by.
     pub time_scale: f32,
 }
+
 impl GameDayClock {
     pub fn new(start: Option<f32>, running: bool) -> Self {
         assert!(
@@ -29,6 +30,7 @@ impl GameDayClock {
             time_scale: 1.0,
         }
     }
+
     /// Whether time passes now.
     pub fn ticking(&self) -> bool {
         self.running && !self.paused && self.time_scale > 0.0
@@ -42,6 +44,7 @@ pub fn clock_time(phase: f32) -> (u32, u32) {
 }
 
 pub struct GameDayClockPlugin;
+
 impl Plugin for GameDayClockPlugin {
     fn build(&self, app: &mut App) {
         if !app.world().contains_resource::<GameDayClock>() {
@@ -65,20 +68,26 @@ fn advance_day(
     if atmosphere.owner != AtmosphereOwner::Game {
         return;
     }
+
     // The authored phase arrives with the first active world space.
     if !clock.started {
         if active.is_none_or(|a| a.current().is_none()) {
             return;
         }
+
         clock.started = true;
+
         if let Some(phase) = clock.start {
             atmosphere.phase = phase;
         }
+
         return;
     }
+
     if !clock.ticking() || !atmosphere.profile.outdoor {
         return;
     }
+
     let days = time.delta_secs() * clock.time_scale.min(10_000.0) / atmosphere.profile.day_seconds;
     atmosphere.advance(days);
 }
@@ -124,9 +133,11 @@ mod tests {
             let mut app = app(clock);
             app.world_mut().resource_mut::<AtmosphereState>().owner = owner;
             app.world_mut().resource_mut::<AtmosphereState>().phase = 0.3;
+
             for _ in 0..4 {
                 app.update();
             }
+
             app.world().resource::<AtmosphereState>().phase == 0.3
         };
         assert!(held(GameDayClock::new(None, false), AtmosphereOwner::Game));

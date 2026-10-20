@@ -1,6 +1,7 @@
 //! Source compilation for the editor's live ground and vegetation preview. Ground and
 //! vegetation share the same accepted product.
 pub(crate) mod live;
+
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::Arc,
@@ -20,6 +21,7 @@ use crate::{
 
 const MAX_PREVIEW_CELLS: usize = 256;
 const MAX_PREVIEW_BYTES: usize = 32 * 1024 * 1024;
+
 type Key = (WorldSpaceId, CellCoord);
 type Stamp = [u8; 32];
 
@@ -44,6 +46,7 @@ pub(super) fn compile_source_cells(
         &[],
     )
 }
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn compile_source_cells_with_roads(
     reader: &ProjectReader,
@@ -56,8 +59,10 @@ pub(crate) fn compile_source_cells_with_roads(
     roads: &[crate::road_authoring::working::RoadChange],
 ) -> Result<Vec<CompiledCell>, String> {
     let halo = environment_dependency_cells(cells).map_err(|e| e.to_string())?;
+
     if cells.len() > 1 {
         let mut result = vec![];
+
         for cell in cells {
             result.extend(compile_source_cells_with_roads(
                 reader,
@@ -70,8 +75,10 @@ pub(crate) fn compile_source_cells_with_roads(
                 roads,
             )?);
         }
+
         return Ok(result);
     }
+
     let Some(&cell) = cells.first() else {
         return Ok(vec![]);
     };
@@ -89,11 +96,14 @@ pub(crate) fn compile_source_cells_with_roads(
         .read_road_terrain_source(space, &halo, bounds)
         .map_err(|e| e.to_string())?;
     let source = input.source;
+
     if source.roads.roads.truncated {
         return Err("Road preview query is incomplete".into());
     }
+
     let mut snapshot = source.environment;
     let mut records = world_db::road_snapshot_records(&source.roads.roads);
+
     for change in roads {
         if let Some(r) = &change.record {
             records.insert(change.key, r.clone());
@@ -101,6 +111,7 @@ pub(crate) fn compile_source_cells_with_roads(
             records.remove(&change.key);
         }
     }
+
     let roads = world_db::road_snapshot_from_records(
         space,
         snapshot.definition.cell_size,
@@ -108,14 +119,17 @@ pub(crate) fn compile_source_cells_with_roads(
         &records,
     )
     .map_err(|e| e.to_string())?;
+
     if snapshot.presets.revision != library_revision {
         return Err(
             "Shared presets changed in the database. Resolve or reload before previewing.".into(),
         );
     }
+
     if snapshot.definition.revision != definition_revision {
         return Err("The layer definition changed. Reload the project before painting.".into());
     }
+
     for record in overrides {
         if record.definition_revision != definition_revision {
             return Err("A painted cell belongs to a different layer definition.".into());
@@ -129,6 +143,7 @@ pub(crate) fn compile_source_cells_with_roads(
             *cell = record.coverage();
         }
     }
+
     plan.compile_cell_with_terrain(
         cell,
         &snapshot.coverage,
@@ -151,22 +166,27 @@ pub(crate) struct EnvironmentPreview {
     pub(crate) revision: u64,
     pub(crate) error: Option<String>,
 }
+
 impl EnvironmentPreview {
     pub(crate) fn cell(&self, space: WorldSpaceId, cell: CellCoord) -> Option<&CompiledCell> {
         self.accepted.get(&(space, cell)).map(|(_, cell)| cell)
     }
+
     pub(crate) fn catalog(&self) -> Option<&vegetation::VegetationCatalog> {
         self.active_catalog.as_ref()
     }
+
     pub(super) fn visible_cells(&self) -> &BTreeMap<Key, (Stamp, CompiledCell)> {
         &self.accepted
     }
+
     pub(crate) fn pending(&self) -> usize {
         self.desired
             .iter()
             .filter(|(key, stamp)| self.accepted.get(key).map(|(s, _)| s) != Some(stamp))
             .count()
     }
+
     fn bump(&mut self) {
         self.revision = self.revision.wrapping_add(1).max(1);
     }
@@ -186,6 +206,7 @@ fn dependency_stamp(
     hash.update(generation.as_bytes());
     hash.update(&cell.x.to_le_bytes());
     hash.update(&cell.z.to_le_bytes());
+
     for (neighbor, stamp) in overrides {
         if (i64::from(neighbor.x) - i64::from(cell.x)).abs() <= 1
             && (i64::from(neighbor.z) - i64::from(cell.z)).abs() <= 1
@@ -195,18 +216,22 @@ fn dependency_stamp(
             hash.update(stamp);
         }
     }
+
     *hash.finalize().as_bytes()
 }
+
 fn override_stamp(record: &SourceEnvironmentCellRecord) -> Stamp {
     let mut hash = blake3::Hasher::new();
     hash.update(&record.definition_revision.to_le_bytes());
     let mut tiles = record.tiles.iter().collect::<Vec<_>>();
     tiles.sort_by_key(|tile| tile.layer);
+
     for tile in tiles {
         hash.update(&tile.layer.0);
         hash.update(&(tile.samples.len() as u64).to_le_bytes());
         hash.update(&tile.samples);
     }
+
     *hash.finalize().as_bytes()
 }
 
@@ -244,6 +269,7 @@ fn compiled_bytes(cell: &CompiledCell) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn preview_stamp_tracks_halo_but_not_unrelated_strokes() {
         let cell = CellCoord { x: 0, z: 0 };

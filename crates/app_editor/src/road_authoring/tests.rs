@@ -3,9 +3,11 @@ use crate::editing::EditorObjectWorkingSet;
 use crate::environment_paint::preview::compile_source_cells_with_roads;
 use std::collections::BTreeSet;
 use world_db::*;
+
 struct Fixture {
     path: std::path::PathBuf,
 }
+
 impl Fixture {
     fn new() -> Self {
         let path =
@@ -13,9 +15,11 @@ impl Fixture {
         world_cook::create_road_demo_project(&path).unwrap();
         Self { path }
     }
+
     fn reader(&self) -> ProjectReader {
         ProjectReader::open_read_only(&self.path).unwrap()
     }
+
     fn load(&self) -> SourceWorkingSets {
         let mut dense = SourceWorkingSets::default();
         dense.roads.reconcile(
@@ -34,11 +38,13 @@ impl Fixture {
         dense
     }
 }
+
 impl Drop for Fixture {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(&self.path);
     }
 }
+
 fn keys(d: &SourceWorkingSets) -> (RoadSpanId, RoadKnotId) {
     let s = d
         .roads
@@ -54,6 +60,7 @@ fn keys(d: &SourceWorkingSets) -> (RoadSpanId, RoadKnotId) {
         .unwrap();
     (s, commands::span(&d.roads, s).unwrap().end.id)
 }
+
 fn checkpoint(f: &Fixture, d: &mut SourceWorkingSets) {
     let mut writer = ProjectWriter::open(&f.path).unwrap();
     let result = writer
@@ -75,6 +82,7 @@ fn checkpoint(f: &Fixture, d: &mut SourceWorkingSets) {
         &crate::project_store::DenseSaveOutcome::Committed(commit),
     );
 }
+
 #[test]
 fn split_undo_redo_across_save_keeps_shared_knots_and_new_revisions() {
     let f = Fixture::new();
@@ -121,15 +129,18 @@ fn split_undo_redo_across_save_keeps_shared_knots_and_new_revisions() {
         2
     );
 }
+
 #[test]
 fn recovery_retains_reference_dependencies_and_detects_a_changed_database() {
     let f = Fixture::new();
     let mut dense = f.load();
     let (_, knot) = keys(&dense);
     let mut record = dense.roads.get(RoadRecordKey::Knot(knot)).unwrap().clone();
+
     if let RoadSourceRecord::Knot(k) = &mut record {
         k.knot.width += 0.5;
     }
+
     dense
         .roads
         .apply(&[RoadChange {
@@ -160,6 +171,7 @@ fn recovery_retains_reference_dependencies_and_detects_a_changed_database() {
     assert!(restored.roads.conflict);
     assert_eq!(restored.roads.dirty_count(), 1);
 }
+
 #[test]
 fn saved_and_unsaved_roads_preview_identically_and_removal_restores_the_painted_grass() {
     let f = Fixture::new();
@@ -300,6 +312,7 @@ fn road_relief_preview_save_cook_and_undo_share_heights_without_modifying_base_t
     assert!(history.redo(&mut objects, &mut dense));
     assert_eq!(compile(&dense.roads.overrides()).terrain, shaped.terrain);
 }
+
 #[test]
 fn extension_is_tangent_continuous_and_undo_removes_all_new_records() {
     let f = Fixture::new();
@@ -319,6 +332,7 @@ fn extension_is_tangent_continuous_and_undo_removes_all_new_records() {
     assert!(history.undo(&mut objects, &mut dense));
     assert_eq!(dense.roads.dirty_count(), 0);
 }
+
 #[test]
 fn creation_undo_is_clean_and_record_budget_does_not_partially_apply() {
     let mut dense = SourceWorkingSets::default();
@@ -348,16 +362,19 @@ fn creation_undo_is_clean_and_record_budget_does_not_partially_apply() {
     assert!(history.undo(&mut objects, &mut dense));
     assert_eq!(dense.roads.dirty_count(), 0);
     assert!(history.redo(&mut objects, &mut dense));
+
     for i in 0..30 {
         let (_, _, changes) =
             commands::create(&dense.roads, WorldSpaceId(1), 8.0, style.id, start, end).unwrap();
         let before = dense.roads.writes();
+
         if dense.roads.apply(&changes).is_err() {
             assert_eq!(dense.roads.writes(), before);
             assert!(i > 5);
             return;
         }
     }
+
     panic!("expected bounded editing budget");
 }
 
@@ -401,6 +418,7 @@ fn road_creation_uses_the_chosen_style_even_when_material_and_channel_match() {
     let mut b = a.clone();
     b.id = RoadProfileId([200; 16]);
     b.breakup = 0.1;
+
     for p in [&a, &b] {
         w.apply(&[RoadChange {
             key: RoadRecordKey::Profile(p.id),
@@ -408,7 +426,9 @@ fn road_creation_uses_the_chosen_style_even_when_material_and_channel_match() {
         }])
         .unwrap();
     }
+
     let point = |x| RoadPoint::from_relative(CellCoord::ZERO, [x, 1.0], 8.0).unwrap();
+
     for p in [&a, &b] {
         let (_, _, changes) =
             commands::create(&w, WorldSpaceId(1), 8.0, p.id, point(0.0), point(12.0)).unwrap();
@@ -419,6 +439,7 @@ fn road_creation_uses_the_chosen_style_even_when_material_and_channel_match() {
             )
         );
     }
+
     w.route_minimum_widths.insert(RoadId([1; 16]), Some(2.0));
     assert!(validate_route_style(&w, RoadId([1; 16]), &a).is_err());
 }
@@ -639,6 +660,7 @@ fn junction_connections_reject_self_links_style_mismatches_and_excess_arms() {
     let (_, _, changes) = junctions::branch(&d.roads, center, 8.0, point(0.0, -16.0)).unwrap();
     d.roads.apply(&changes).unwrap();
     assert!(junctions::branch(&d.roads, center, 8.0, point(16.0, 16.0)).is_err());
+
     // Detaching is explicit, preserves geometry, and does not delete the remaining junction.
     let branch = junctions::at(&d.roads, center)
         .unwrap()

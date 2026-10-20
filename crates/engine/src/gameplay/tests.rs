@@ -1,11 +1,13 @@
 use super::camera::MainCamera;
 use super::*;
 use crate::actor::PlayerControlled;
+
 use crate::{
     StreamedTerrainSurface,
     actor::{CharacterGait, CharacterMotorConfig, MoveIntent},
     world_streaming::{ClipmapTerrain, test_world_resources},
 };
+
 use target::TargetIndicator;
 
 fn headless_game(input: bool, camera: bool, marker: bool) -> App {
@@ -31,21 +33,26 @@ fn headless_game(input: bool, camera: bool, marker: bool) -> App {
         route: vec![],
     })));
     let mut plugins = GameplayPlugins.build();
+
     if input {
         app.add_plugins(bevy::input::InputPlugin);
     } else {
         plugins = plugins.disable::<GameInputPlugin>();
     }
+
     if !camera {
         plugins = plugins.disable::<GameCameraPlugin>();
     }
+
     if marker {
         app.init_resource::<Assets<Mesh>>()
             .init_resource::<Assets<StandardMaterial>>();
     } else {
         plugins = plugins.disable::<MovementTargetPlugin>();
     }
+
     app.add_plugins(plugins);
+
     // Terrain v2's resident leaves ground actors; the CPU source places pointer targets.
     ground_at(app.world_mut(), 5.);
     app.world_mut().spawn(StreamedTerrainSurface {
@@ -189,6 +196,7 @@ fn freeze_applies_before_movement_while_grounding_and_camera_follow_continue() {
         })
         .before(GameplaySystems::CameraInput),
     );
+
     // Streaming replaces contact data before gameplay, even during an input lock.
     app.add_systems(
         Update,
@@ -258,10 +266,12 @@ fn keyboard_overrides_a_pointer_destination_and_remains_active_during_ui_capture
             .distance(before)
             > 0.
     );
+
     // The motor turns gradually toward camera-relative input; it must not snap on frame one.
     for _ in 0..60 {
         tick(&mut app);
     }
+
     let movement = app.world().get::<Transform>(actor).unwrap().translation - before;
     assert!(
         movement.dot(forward) > 0.,
@@ -300,6 +310,7 @@ fn launch_bookmark_spawns_actor_and_camera_at_the_elevated_view() {
     assert!(camera.translation.distance(expected.translation) < 0.001);
     assert!(camera.forward().distance(*expected.forward()) < 0.0001);
     assert!(camera.up().distance(*expected.up()) < 0.0001);
+
     // A hazy 2.5 km bookmark still culls at the shared world view distance.
     assert!(
         matches!(projection, Projection::Perspective(p) if p.far == crate::WORLD_VIEW_DISTANCE)
@@ -337,10 +348,13 @@ fn a_player_route_steers_through_its_points_at_the_requested_speed() {
         crate::PlayerRoute::new(vec![[12., 0., 4.], [12., 0., 12.]]).with_speed(8.),
     );
     let player = player(&mut app);
+
     for _ in 0..240 {
         tick(&mut app);
     }
+
     let at = app.world().get::<Transform>(player).unwrap().translation;
+
     // Four seconds at up to 8 m/s covers both 8 m legs; the last point is within reach.
     assert!(Vec2::new(at.x - 12., at.z - 12.).length() < 3., "{at}");
     assert_eq!(app.world().resource::<crate::PlayerRoute>().remaining(), 0);

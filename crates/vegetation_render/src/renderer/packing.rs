@@ -13,6 +13,7 @@ const MAX_HIGH_DETAIL_RADIUS: f32 = 96.0;
 /// Farthest a blade reaches sideways from its root at rest, as a share of its height: full
 /// tilt plus its arch.
 const REST_REACH: f32 = 1.25;
+
 /// Bounds wind displacement per metre of blade height at unit wind strength, as the shaders'
 /// `WIND_REACH`.
 const WIND_REACH: f32 = 1.65;
@@ -32,6 +33,7 @@ pub(super) fn pack_lod_focus(focus: Option<Vec3>, camera: Vec3, forward: Vec3) -
     let Some(focus) = focus.filter(|v| v.is_finite()) else {
         return [camera.x, camera.z, 0.0, 0.0];
     };
+
     // A vertical view has no preferred ground direction and keeps a circular footprint.
     let horizontal = forward.xz();
     let direction = if horizontal.length_squared() > 1e-4 {
@@ -60,9 +62,11 @@ fn high_detail_radius(scene: &vegetation::VegetationScene) -> f32 {
                 .sum::<f32>()
         })
         .fold(0.0_f32, f32::max);
+
     if density <= f32::EPSILON {
         return MAX_HIGH_DETAIL_RADIUS;
     }
+
     ((HIGH_CAPACITY as f32 * HIGH_DETAIL_BUDGET_UTILIZATION) / (std::f32::consts::PI * density))
         .sqrt()
         .min(MAX_HIGH_DETAIL_RADIUS)
@@ -229,17 +233,20 @@ pub(super) fn pack_items(
     let types = scene.catalog.grass.iter().map(pack_type).collect();
     let mut work_items = Vec::new();
     let mut maximum_candidate_count = 0;
+
     for (page, layout) in scene.pages.iter().zip(layouts) {
         debug_assert_eq!(layout.coverage.len(), page.fields.len());
         let (minimum_height, maximum_height) = page.surface.heights.iter().fold(
             (f32::INFINITY, f32::NEG_INFINITY),
             |(minimum, maximum), height| (minimum.min(*height), maximum.max(*height)),
         );
+
         for (field, &coverage_offset) in page.fields.iter().zip(&layout.coverage) {
             // Ground-detail fields share the page; their objects are drawn elsewhere.
             let Some(index) = scene.catalog.index(field.grass) else {
                 continue;
             };
+
             // Lattices are world-aligned in canonical coordinates, independent of the render
             // origin the page is drawn relative to.
             let domain = candidate_domain(
@@ -274,6 +281,7 @@ pub(super) fn pack_items(
             });
         }
     }
+
     apply_terrain_gate(&mut work_items, gate);
     PackedItems {
         work_items,
@@ -290,6 +298,7 @@ pub(super) fn apply_terrain_gate(
     gate: &crate::VegetationTerrainGate,
 ) -> bool {
     let mut changed = false;
+
     for item in items {
         let id = [
             item.page[0].to_bits(),
@@ -304,6 +313,7 @@ pub(super) fn apply_terrain_gate(
         changed |= item.page[3] != blocked;
         item.page[3] = blocked;
     }
+
     changed
 }
 
@@ -350,6 +360,7 @@ mod tests {
         assert_eq!(packed.surfaces.len(), scene.pages.len() * 4);
         assert_eq!(packed.coverage.len(), scene.pages.len() * 2 * 16 * 16);
         assert!(packed.work_items.iter().all(|i| i.field[3] < 2));
+
         // Densest point: full meadow (48/m²) plus the 20% of it left under the tuft band's
         // peak, beside the band's tufts (24/m²); the radius is what the high bin holds there.
         assert!((8.0..96.0).contains(&packed.high_detail_radius));

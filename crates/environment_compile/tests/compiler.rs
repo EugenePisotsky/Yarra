@@ -5,6 +5,7 @@ use std::collections::HashSet;
 use environment::fixtures::{
     CLEAR_GRASS, CLEAR_USE, CLEARING, DRY_GROUND, GREEN_GROUND, GROUND_USE,
 };
+
 use environment::*;
 use support::*;
 use vegetation::{GrassTypeId, VegetationFieldPage, VegetationSurfaceField, fixtures};
@@ -14,9 +15,11 @@ use yarra_environment_compile::{CompileError, CompilePlan, CompiledCell};
 fn meadow() -> GrassTypeId {
     fixtures::meadow().id()
 }
+
 fn tufts() -> GrassTypeId {
     fixtures::tufts().id()
 }
+
 /// A grass type's coverage at vegetation sample (x, z), zero where it does not grow.
 fn coverage(cell: &CompiledCell, grass: GrassTypeId, x: usize, z: usize) -> u8 {
     cell.vegetation
@@ -31,9 +34,11 @@ fn local_and_batch_compilation_match_with_canonical_order_and_seamless_ground() 
     let (definition, library, plants, source) = fixture();
     let plan = CompilePlan::new(&definition, &plants, &library, profile()).unwrap();
     let batch = plan.compile_cells(&CELLS, &source).unwrap();
+
     for (cell, expected) in CELLS.iter().zip(&batch) {
         let local = plan.compile_cells(&[*cell], &source).unwrap();
         assert_eq!(&local[0], expected);
+
         for z in 0..17 {
             for x in 0..17 {
                 assert_eq!(
@@ -46,27 +51,33 @@ fn local_and_batch_compilation_match_with_canonical_order_and_seamless_ground() 
             }
         }
     }
+
     for z in 0..17 {
         assert_eq!(
             ground_weights(&batch[0].ground, 16, z),
             ground_weights(&batch[1].ground, 0, z)
         );
     }
+
     let mut reordered_definition = definition.clone();
     reordered_definition.layers.reverse();
     let mut reordered_library = library.clone();
     reordered_library.presets.reverse();
+
     for p in &mut reordered_library.presets {
         if let PresetKind::Composition(c) = &mut p.kind {
             c.reverse();
         }
     }
+
     reordered_definition.surfaces.reverse();
     let mut reordered_source = source.clone();
     reordered_source.cells.reverse();
+
     for cell in &mut reordered_source.cells {
         cell.tiles.reverse();
     }
+
     let mut reordered_plants = plants.clone();
     reordered_plants.surfaces.reverse();
     let other = CompilePlan::new(
@@ -90,12 +101,15 @@ fn grass_grows_on_its_surfaces_and_clearings_remove_it() {
     let (mut definition, library, plants, source) = fixture();
     let plan = CompilePlan::new(&definition, &plants, &library, profile()).unwrap();
     let cells = plan.compile_cells(&CELLS, &source).unwrap();
+
     // The unpainted patch shows the dry base ground, and its tufts.
     assert_eq!(coverage(&cells[0], tufts(), 3, 3), 255);
     assert_eq!(coverage(&cells[0], meadow(), 3, 3), 0);
+
     // Green meadow ground at the far side of the gradient grows meadow grass only.
     assert_eq!(coverage(&cells[1], meadow(), 15, 15), 255);
     assert_eq!(coverage(&cells[1], tufts(), 15, 15), 0);
+
     // Inside the winding clearing at x=8.25, z=4.25 nothing grows.
     assert!(
         cells[1]
@@ -161,6 +175,7 @@ fn ground_borders_match_even_when_cells_have_different_palettes() {
         .unwrap();
     assert_eq!(cells[0].ground.surfaces, vec![SOIL, GREEN_SOIL]);
     assert_eq!(cells[1].ground.surfaces, vec![GREEN_SOIL]);
+
     for z in 0..17 {
         assert_eq!(
             ground_weights(&cells[0].ground, 16, z),
@@ -198,10 +213,12 @@ fn only_grass_channel_exclusions_clear_grass_and_none_repaint_ground() {
             .compile_cells(&CELLS, &source)
             .unwrap()
     };
+
     for cell in compile(&library) {
         assert_eq!(cell.ground.surfaces, vec![SOIL]);
         assert!(cell.vegetation.fields.is_empty());
     }
+
     let PresetKind::Exclusion(exclusion) = &mut library
         .presets
         .iter_mut()
@@ -212,6 +229,7 @@ fn only_grass_channel_exclusions_clear_grass_and_none_repaint_ground() {
         panic!()
     };
     exclusion.channel = FLOWERS;
+
     for cell in compile(&library) {
         assert_eq!(cell.ground.surfaces, vec![SOIL]);
         assert_eq!(cell.vegetation.fields.len(), 1);
@@ -337,10 +355,13 @@ fn unloaded_cells_corrupt_borders_and_invalid_tiles_fail_without_partial_results
 #[test]
 fn absent_tiles_in_loaded_cells_mean_empty_but_unknown_cells_never_do() {
     let (definition, library, plants, mut source) = fixture();
+
     for cell in &mut source.cells {
         cell.tiles.clear();
     }
+
     let plan = CompilePlan::new(&definition, &plants, &library, profile()).unwrap();
+
     for cell in plan.compile_cells(&CELLS, &source).unwrap() {
         // Unpainted ground is the base surface, with what grows on it.
         assert_eq!(cell.ground.surfaces, vec![SOIL]);
@@ -384,6 +405,7 @@ fn unsupported_material_counts_and_work_budgets_are_errors() {
         PresetId([99; 16]),
         PresetKind::Ground(ground(third)),
     );
+
     // Eight surfaces fit one cell, four per RGBA weight page.
     let plan = CompilePlan::new(&definition, &plants, &library, profile()).unwrap();
     let cells = plan.compile_cells(&CELLS, &source).unwrap();
@@ -392,10 +414,12 @@ fn unsupported_material_counts_and_work_budgets_are_errors() {
             .iter()
             .any(|c| c.ground.surfaces.len() == 3 && c.ground.weight_pages.len() == 1)
     );
+
     // Past the budget a cell keeps its heaviest surfaces, with weights shared among them.
     let mut two = profile();
     two.max_surfaces_per_cell = 2;
     let plan = CompilePlan::new(&definition, &plants, &library, two).unwrap();
+
     for (narrow, full) in plan
         .compile_cells(&CELLS, &source)
         .unwrap()
@@ -410,6 +434,7 @@ fn unsupported_material_counts_and_work_budgets_are_errors() {
                 .iter()
                 .all(|s| full.ground.surfaces.contains(s))
         );
+
         if let [page] = &narrow.ground.weight_pages[..] {
             assert!(
                 page.rgba
@@ -418,20 +443,24 @@ fn unsupported_material_counts_and_work_budgets_are_errors() {
             );
         }
     }
+
     for restriction in 0..4 {
         let mut limits = profile();
+
         match restriction {
             0 => limits.max_output_bytes = 1,
             1 => limits.max_sample_work = 1,
             2 => limits.max_mask_samples = 1,
             _ => limits.max_cells_per_batch = 1,
         }
+
         let plan = CompilePlan::new(&definition, &plants, &library, limits).unwrap();
         assert!(matches!(
             plan.compile_cells(&CELLS, &source),
             Err(CompileError::Budget(_))
         ));
     }
+
     let mut limits = profile();
     limits.max_grass_types = 1;
     assert!(matches!(
@@ -468,6 +497,7 @@ fn logical_negative_and_large_cell_coordinates_do_not_affect_sampling() {
     let (definition, library, plants, _) = fixture();
     let plan = CompilePlan::new(&definition, &plants, &library, profile()).unwrap();
     let mut reference = None;
+
     for cell in [
         CellCoord { x: -20, z: -3 },
         CellCoord {
@@ -482,12 +512,14 @@ fn logical_negative_and_large_cell_coordinates_do_not_affect_sampling() {
         );
         let compiled = plan.compile_cells(&[cell], &source).unwrap().remove(0);
         let result = (compiled.ground, compiled.vegetation);
+
         if let Some(reference) = &reference {
             assert_eq!(reference, &result);
         } else {
             reference = Some(result);
         }
     }
+
     let empty = CoverageSnapshot {
         space: definition.space,
         cells: vec![],
@@ -547,6 +579,7 @@ fn plan_fingerprints_follow_reachable_presets_and_growth_but_not_looks() {
         .revision += 1;
     let after = fingerprint(&library, &plants);
     assert_ne!(before, after);
+
     // A look changes no coverage; what grows where does.
     let mut looks = plants.clone();
     looks.grass[0].colors.tip = [0.5, 0.4, 0.1];

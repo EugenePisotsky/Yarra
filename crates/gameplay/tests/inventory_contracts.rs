@@ -3,12 +3,15 @@ use yarra_gameplay::inventory::{fixtures::*, *};
 fn owner() -> OwnerRef {
     OwnerRef::actor(ActorId::random())
 }
+
 fn bag() -> Inventory {
     Inventory::new(owner(), InventoryRole::Carried)
 }
+
 fn money(n: u64) -> Money {
     Money::new(n).unwrap()
 }
+
 fn count(bag: &Inventory, definition: ItemDefinitionId) -> u32 {
     bag.entries
         .iter()
@@ -16,6 +19,7 @@ fn count(bag: &Inventory, definition: ItemDefinitionId) -> u32 {
         .map(|e| e.quantity)
         .sum()
 }
+
 fn wallet(balance: u64) -> Wallet {
     let mut wallet = Wallet::new(owner());
     wallet.credit(money(balance)).unwrap();
@@ -77,6 +81,7 @@ fn partial_transfers_conserve_quantity_and_stack_limits_for_every_split() {
         assert_eq!(count(&source, POTION) + count(&destination, POTION), 17);
         source.validate(&catalog).unwrap();
         destination.validate(&catalog).unwrap();
+
         if quantity < 10 {
             assert_eq!(source.entries[0].id, source_id);
         }
@@ -157,6 +162,7 @@ fn failed_transfers_and_grants_do_not_lose_items() {
         Err(InventoryError::Capacity)
     );
     assert_eq!(source, before.0);
+
     for bad in [0, 11] {
         assert_eq!(
             source.remove(&catalog, id, bad),
@@ -195,6 +201,7 @@ fn quest_items_can_be_transferred_but_not_discarded_or_sold() {
         ),
         Err(InventoryError::Restricted)
     );
+
     // Quest completion can explicitly consume it.
     destination.remove(&catalog, key, 1).unwrap();
 }
@@ -228,6 +235,7 @@ struct TradeFixture {
     customer_wallet: Wallet,
     offer: TradeOffer,
 }
+
 impl TradeFixture {
     fn new() -> Self {
         let catalog = example_catalog();
@@ -253,6 +261,7 @@ impl TradeFixture {
             },
         }
     }
+
     fn quote(&self) -> Result<TradeQuote> {
         quote_trade(
             &self.catalog,
@@ -263,6 +272,7 @@ impl TradeFixture {
             &self.offer,
         )
     }
+
     fn commit(&mut self, quote: &TradeQuote) -> Result<()> {
         commit_trade(
             &self.catalog,
@@ -318,6 +328,7 @@ fn stale_inventory_wallet_or_catalog_rejects_quote_without_mutation() {
     for changed in 0..3 {
         let mut fixture = TradeFixture::new();
         let quote = fixture.quote().unwrap();
+
         match changed {
             0 => {
                 fixture.merchant.grant(&fixture.catalog, KEY, 1).unwrap();
@@ -331,6 +342,7 @@ fn stale_inventory_wallet_or_catalog_rejects_quote_without_mutation() {
                 })
                 .unwrap(),
         }
+
         let before = (
             fixture.merchant.clone(),
             fixture.customer.clone(),

@@ -11,13 +11,16 @@ use bevy::{
 
 pub const CARD_PIVOT: MeshVertexAttribute =
     MeshVertexAttribute::new("Card_Pivot", 0x5952_5241_4341_0001, VertexFormat::Float32x3);
+
 pub const CARD_AXIS: MeshVertexAttribute =
     MeshVertexAttribute::new("Card_Axis", 0x5952_5241_4341_0002, VertexFormat::Float32x3);
+
 pub const CARD_NORMAL: MeshVertexAttribute = MeshVertexAttribute::new(
     "Card_Normal",
     0x5952_5241_4341_0003,
     VertexFormat::Float32x3,
 );
+
 pub const CARD_FACING: MeshVertexAttribute = MeshVertexAttribute::new(
     "Card_Facing",
     0x5952_5241_4341_0004,
@@ -26,6 +29,7 @@ pub const CARD_FACING: MeshVertexAttribute = MeshVertexAttribute::new(
 
 pub const WIND_PIVOT: MeshVertexAttribute =
     MeshVertexAttribute::new("Wind_Pivot", 0x5952_5241_4341_0005, VertexFormat::Float32x4);
+
 pub const WIND_AXIS: MeshVertexAttribute =
     MeshVertexAttribute::new("Wind_Axis", 0x5952_5241_4341_0006, VertexFormat::Float32x4);
 
@@ -41,6 +45,7 @@ pub(super) fn structural_padding(mesh: &bevy::mesh::Mesh) -> f32 {
     if !structural(mesh) {
         return 0.;
     }
+
     let Some(VertexAttributeValues::Float32x3(positions)) =
         mesh.attribute(bevy::mesh::Mesh::ATTRIBUTE_POSITION)
     else {
@@ -105,9 +110,11 @@ pub(super) fn max_card_swing(mesh: &bevy::mesh::Mesh) -> f32 {
         .enumerate()
         .map(|(i, ((p, pivot), axis))| {
             let axis = Vec3::from_array(*axis);
+
             if axis.length_squared() < 0.25 {
                 return 0.;
             }
+
             let d = Vec3::from_array(*p) - Vec3::from_array(*pivot);
             let radius = if settings.is_some_and(|s| s[i][0] > 0.5) {
                 d.length()
@@ -139,6 +146,7 @@ pub(super) fn specialize(
     layout: &MeshVertexBufferLayoutRef,
 ) -> Result<(), SpecializedMeshPipelineError> {
     let mesh = &layout.0;
+
     if mesh.contains(WIND_PIVOT) && mesh.contains(WIND_AXIS) {
         let attrs = mesh.get_layout(&[
             WIND_PIVOT.at_shader_location(14),
@@ -149,9 +157,11 @@ pub(super) fn specialize(
             descriptor.vertex.shader_defs.push("TREE_HIERARCHY".into());
         }
     }
+
     if !(mesh.contains(CARD_PIVOT) && mesh.contains(CARD_AXIS) && mesh.contains(CARD_NORMAL)) {
         return Ok(());
     }
+
     let cards = mesh.get_layout(&[
         CARD_PIVOT.at_shader_location(FIRST_LOCATION),
         CARD_AXIS.at_shader_location(FIRST_LOCATION + 1),
@@ -161,6 +171,7 @@ pub(super) fn specialize(
         return Ok(());
     };
     buffer.attributes.extend(cards.attributes);
+
     if mesh.contains(CARD_FACING) {
         buffer.attributes.extend(
             mesh.get_layout(&[CARD_FACING.at_shader_location(FIRST_LOCATION + 3)])?
@@ -171,6 +182,7 @@ pub(super) fn specialize(
             .shader_defs
             .push("TREE_CARD_FACING".into());
     }
+
     descriptor
         .vertex
         .shader_defs
@@ -181,6 +193,7 @@ pub(super) fn specialize(
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use bevy::{
         asset::RenderAssetUsages,
         mesh::{Mesh, MeshVertexBufferLayouts, PrimitiveTopology},
@@ -209,9 +222,11 @@ mod tests {
             RenderAssetUsages::default(),
         )
         .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, vec![[0.0f32; 3]; 3]);
+
         if !cards {
             return mesh;
         }
+
         mesh.with_inserted_attribute(CARD_PIVOT, vec![[0.0f32; 3]; 3])
             .with_inserted_attribute(CARD_AXIS, vec![[0.0f32, 1.0, 0.0]; 3])
             .with_inserted_attribute(CARD_NORMAL, vec![[0.0f32, 0.0, 1.0]; 3])
@@ -234,6 +249,7 @@ mod tests {
             .map(|a| a.shader_location)
             .collect();
         assert_eq!(locations, [0, 10, 11, 12]);
+
         // Offsets index the mesh's interleaved vertex, so every attribute is distinct.
         let mut offsets: Vec<_> = buffer.attributes.iter().map(|a| a.offset).collect();
         offsets.sort();

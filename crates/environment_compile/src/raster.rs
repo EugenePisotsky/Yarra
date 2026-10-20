@@ -29,25 +29,32 @@ impl CompilePlan {
         if requested.len() > self.profile.max_cells_per_batch {
             return Err(CompileError::Budget("requested cells"));
         }
+
         let mut cells = BTreeSet::new();
+
         for cell in requested {
             if !cells.insert(*cell) {
                 return Err(CompileError::DuplicateCell(*cell));
             }
         }
+
         self.check_raster_budget(cells.len())?;
         let coverage = Coverage::new(self, source)?;
+
         // Check the entire halo before any allocation/rasterization, including each target itself.
         for cell in &cells {
             coverage.check_halo(self, *cell)?;
         }
+
         cells
             .into_iter()
             .map(|cell| {
                 let mut page_roads = roads.map(|r| r.terrain_roads(cell)).unwrap_or_default();
+
                 if let (Some(roads), Some(step)) = (roads, height_step) {
                     roads.clear_carved_ruts(cell, step, &mut page_roads);
                 }
+
                 let (ground, wear) = self.ground(cell, &coverage, &page_roads)?;
                 Ok(CompiledCell {
                     terrain: None,
@@ -71,9 +78,11 @@ impl CompilePlan {
                             if self.has_collections() {
                                 let mut hash = blake3::Hasher::new();
                                 hash.update(&base);
+
                                 for (_, _, neighbour) in crate::coverage::halo(cell)? {
                                     hash.update(&roads.fingerprint(neighbour, [0; 32])?);
                                 }
+
                                 *hash.finalize().as_bytes()
                             } else {
                                 base
@@ -98,9 +107,11 @@ impl CompilePlan {
             .saturating_add(plant_work.saturating_mul(2))
             .saturating_add(self.scatter_bytes_per_cell())
             .saturating_mul(cells);
+
         if bytes > self.profile.max_output_bytes {
             return Err(CompileError::Budget("raster bytes"));
         }
+
         // A layer may contain many exclusion rules. Count them explicitly so an exclusion-heavy
         // stack cannot evade this estimate.
         let rules = self.layers.iter().fold(0usize, |total, layer| {
@@ -117,9 +128,11 @@ impl CompilePlan {
                     .saturating_mul(8),
             )
             .saturating_mul(cells);
+
         if work > self.profile.max_sample_work {
             return Err(CompileError::Budget("sample work"));
         }
+
         Ok(())
     }
 
@@ -141,10 +154,12 @@ impl CompilePlan {
         let mut samples = Vec::with_capacity(resolution * resolution * surface_count);
         let mut used = vec![false; surface_count];
         let mut worn = vec![false; surface_count];
+
         // How much each surface shows, worn where roads wear the ground, samples on the cell's
         // edge counting EDGE_PRIORITY times: where more surfaces meet than a page holds, those
         // a neighbour shares along the edge are kept, so the pages agree there.
         let mut score = vec![0.0; surface_count];
+
         for z in 0..resolution {
             for x in 0..resolution {
                 let uv = [
@@ -154,12 +169,14 @@ impl CompilePlan {
                 let natural = self.surface_weights(cell, coverage, uv, base);
                 let edge = x == 0 || z == 0 || x + 1 == resolution || z + 1 == resolution;
                 let priority = if edge { EDGE_PRIORITY } else { 1.0 };
+
                 if wearing {
                     let local = uv.map(|v| v * size);
                     let laid = roads.ground(origin, local);
                     let bare =
                         world::bare_share(laid, [origin[0] + local[0], origin[1] + local[1]]);
                     let full = self.worn_ground(&natural, laid, bare);
+
                     for (i, (full, natural)) in full.iter().zip(&natural).enumerate() {
                         worn[i] |= full - natural > 0.5 / 255.0;
                         score[i] += full * priority;
@@ -169,14 +186,18 @@ impl CompilePlan {
                         *s += w * priority;
                     }
                 }
+
                 let quantized = quantize(&natural);
+
                 for (index, value) in quantized.into_iter().enumerate() {
                     used[index] |= value != 0;
                     samples.push(value);
                 }
             }
         }
+
         let mut palette: Vec<_> = (0..surface_count).filter(|&i| used[i] || worn[i]).collect();
+
         if palette.len() > self.profile.max_surfaces_per_cell {
             palette = keep_heaviest(
                 &mut samples,
@@ -186,21 +207,26 @@ impl CompilePlan {
                 self.profile.max_surfaces_per_cell,
             );
         }
+
         let mut weight_pages = Vec::new();
+
         if palette.len() > 1 {
             for slots in palette.chunks(4) {
                 let mut rgba = vec![0; resolution * resolution * 4];
+
                 for (pixel, weights) in samples.chunks(surface_count).enumerate() {
                     for (slot, &surface) in slots.iter().enumerate() {
                         rgba[pixel * 4 + slot] = weights[surface];
                     }
                 }
+
                 weight_pages.push(TerrainWeightPage {
                     resolution: self.profile.terrain_resolution,
                     rgba,
                 });
             }
         }
+
         let wear = wearing.then(|| world::TerrainWear {
             resolution: world::WEAR_RESOLUTION,
             texels: wear_texels(roads, origin, size),
@@ -233,13 +259,16 @@ impl CompilePlan {
     /// rest trampled, as `world::TerrainWear::lay` wears a page's.
     fn worn_ground(&self, weights: &[f64], wear: f64, bare: f64) -> Vec<f64> {
         let mut full = weights.to_vec();
+
         if wear <= 0.0 {
             return full;
         }
+
         for (i, &w) in weights.iter().enumerate() {
             if w <= 0.0 {
                 continue;
             }
+
             let given = w * wear;
             let to_trampled = self.trampled[i].map_or(0.0, |_| given * (1.0 - bare));
             let to_bare = if self.worn[i].is_empty() {
@@ -248,13 +277,16 @@ impl CompilePlan {
                 given - to_trampled
             };
             full[i] -= to_trampled + to_bare;
+
             if let Some(t) = self.trampled[i] {
                 full[t] += to_trampled;
             }
+
             for &(j, share) in &self.worn[i] {
                 full[j] += to_bare * share;
             }
         }
+
         full
     }
 
@@ -267,10 +299,13 @@ impl CompilePlan {
             .filter_map(|&(i, share)| Some((palette.iter().position(|&p| p == i)?, share)))
             .collect();
         let total: f64 = kept.iter().map(|k| k.1).sum();
+
         if total <= 0.0 {
             return slots;
         }
+
         let mut given = 0u8;
+
         for (k, &(slot, share)) in kept.iter().enumerate() {
             let value = if k + 1 == kept.len() {
                 255 - given
@@ -280,6 +315,7 @@ impl CompilePlan {
             given += value;
             slots[k] = (slot as u8, value);
         }
+
         slots
     }
 
@@ -301,23 +337,28 @@ impl CompilePlan {
     ) -> Vec<f64> {
         let mut weights = vec![0.0; self.definition.surfaces.len()];
         weights[base] = 1.0;
+
         for layer in &self.layers {
             if !layer.source.enabled {
                 continue;
             }
+
             let Some(ground) = &layer.composition.ground else {
                 continue;
             };
             let a = coverage.sample(cell, layer.source.id, uv)
                 * f64::from(layer.source.opacity)
                 * f64::from(ground.strength);
+
             for weight in &mut weights {
                 *weight *= 1.0 - a;
             }
+
             for &(index, weight) in &layer.ground {
                 weights[index] += a * weight;
             }
         }
+
         weights
     }
 
@@ -338,6 +379,7 @@ impl CompilePlan {
         let size = f64::from(self.definition.cell_size);
         let origin = cell.origin(self.definition.cell_size);
         let mut samples = vec![vec![0; resolution * resolution]; self.grass.len()];
+
         for z in 0..resolution {
             for x in 0..resolution {
                 let uv = [
@@ -356,6 +398,7 @@ impl CompilePlan {
                     shown(self.worn_ground(&natural, wear, bare))
                 };
                 let mut kept = 1.0;
+
                 for layer in &self.layers {
                     if layer.source.enabled && layer.grass_exclusion > 0.0 {
                         kept *= 1.0
@@ -364,9 +407,11 @@ impl CompilePlan {
                                 * layer.grass_exclusion;
                     }
                 }
+
                 if let Some(roads) = roads {
                     kept *= 1.0 - roads.grass_suppression(cell, uv);
                 }
+
                 for (field, grass) in samples.iter_mut().zip(&self.grass) {
                     let (ground, share) = match (grass.wear, wear, &unworn) {
                         (Some(band), Some(wear), Some(unworn)) => {
@@ -381,6 +426,7 @@ impl CompilePlan {
                 }
             }
         }
+
         let fields: Vec<_> = samples
             .into_iter()
             .zip(&self.grass)
@@ -391,9 +437,11 @@ impl CompilePlan {
                 coverage,
             })
             .collect();
+
         if fields.len() > self.profile.max_fields_per_cell {
             return Err(CompileError::Budget("fields per cell"));
         }
+
         let page = VegetationFieldPageData { fields };
         page.validate(&self.catalog)?;
         Ok(page)
@@ -446,21 +494,27 @@ fn keep_heaviest(
     maximum: usize,
 ) -> Vec<usize> {
     let mut kept = palette.to_vec();
+
     // Highest score first; equal scores keep the lower surface index.
     kept.sort_by(|&a, &b| score[b].total_cmp(&score[a]).then(a.cmp(&b)));
     kept.truncate(maximum);
     let heaviest = kept[0];
     kept.sort_unstable();
+
     for weights in samples.chunks_mut(surface_count) {
         let mut shares = vec![0.0; surface_count];
+
         for &i in &kept {
             shares[i] = f64::from(weights[i]);
         }
+
         if shares.iter().all(|&w| w == 0.0) {
             shares[heaviest] = 1.0;
         }
+
         weights.copy_from_slice(&quantize(&shares));
     }
+
     kept
 }
 
@@ -476,9 +530,11 @@ fn quantize(weights: &[f64]) -> Vec<u8> {
             .total_cmp(&(exact[a] - f64::from(result[a])))
             .then(a.cmp(&b))
     });
+
     for &index in order.iter().take(remaining) {
         result[index] += 1;
     }
+
     result
 }
 
@@ -492,12 +548,15 @@ fn shown(mut weights: Vec<f64>) -> Vec<f64> {
         t * t * (3.0 - 2.0 * t)
     };
     let total: f64 = weights.iter().map(|&w| step(w)).sum();
+
     if total <= 0.0 {
         return weights;
     }
+
     for w in &mut weights {
         *w = step(*w) / total;
     }
+
     weights
 }
 

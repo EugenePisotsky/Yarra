@@ -3,19 +3,32 @@ pub mod clouds;
 pub mod fog;
 pub mod terrain_hierarchy;
 pub mod weather;
+
 pub use terrain_hierarchy::*;
+
 mod terrain_heightfield_codec;
 mod terrain_preview;
+
 pub use terrain_preview::TerrainPreviewProducts;
+
 mod view_bookmark;
+
 pub use view_bookmark::WorldViewBookmark;
+
 mod gameplay_area;
+
 pub use gameplay_area::*;
+
 mod terrain_road;
+
 pub use terrain_road::*;
+
 mod terrain_wear;
+
 pub use terrain_wear::*;
+
 mod terrain_control;
+
 pub use terrain_control::*;
 
 use std::{error::Error, fmt};
@@ -25,6 +38,7 @@ use vegetation::VegetationFieldPageData;
 
 /// Default authoring source relative to the repository root.
 pub const DEFAULT_PROJECT_DATABASE: &str = "content/world.project.sqlite";
+
 /// Default cooked world relative to the asset root (also used in iOS bundles).
 pub const DEFAULT_RUNTIME_DATABASE: &str = "generated/world.runtime.sqlite";
 
@@ -33,6 +47,7 @@ pub const MAX_DECODED_PAGE_BYTES: u64 = 64 * 1024 * 1024;
 pub const PROJECT_SCHEMA_VERSION: i64 = 32;
 pub const RUNTIME_SCHEMA_VERSION: i64 = 32;
 pub const PAGE_PAYLOAD_VERSION: u16 = 14;
+
 /// Surfaces a terrain page holds, four per RGBA weight page: natural ground and what roads wear
 /// it to, so varied ground along a road keeps both.
 pub const MAX_TERRAIN_SURFACES_PER_CELL: usize = 12;
@@ -44,12 +59,15 @@ pub const IMPOSTOR_SUFFIX: &str = ".impostor.json";
 pub fn is_impostor_uri(uri: &str) -> bool {
     uri.ends_with(IMPOSTOR_SUFFIX)
 }
+
 pub const MAX_TERRAIN_WEIGHT_PAGES: usize = MAX_TERRAIN_SURFACES_PER_CELL.div_ceil(4);
 pub const MAX_TERRAIN_WEIGHT_RESOLUTION: u16 = 257;
 pub const MAX_TERRAIN_HEIGHTFIELD_RESOLUTION: u16 = 257;
+
 /// Terrain heights are whole multiples of this step (1/1024 m) on one grid shared by every
 /// page. Scaling by a power of two is exact, so rounding never depends on the page.
 pub const TERRAIN_HEIGHT_STEP: f32 = 1.0 / 1024.0;
+
 /// Precision of each octahedral terrain normal axis (about 0.05°). The low bits of the
 /// stored `i16` are zero.
 pub const TERRAIN_NORMAL_BITS: u32 = 12;
@@ -371,9 +389,11 @@ impl TerrainHeightfield {
         if !cell_size.is_finite() || cell_size <= 0.0 {
             return Err(TerrainHeightfieldError::InvalidDimensionsOrRange);
         }
+
         let resolution_usize = usize::from(resolution);
         let spacing = cell_size / (resolution_usize.saturating_sub(1)) as f32;
         let mut normals = Vec::with_capacity(heights.len());
+
         if resolution_usize >= 2 && heights.len() == resolution_usize * resolution_usize {
             for z in 0..resolution_usize {
                 for x in 0..resolution_usize {
@@ -391,6 +411,7 @@ impl TerrainHeightfield {
                 }
             }
         }
+
         Self::from_heights_and_normals(
             resolution,
             heights,
@@ -408,6 +429,7 @@ impl TerrainHeightfield {
         maximum_height: f32,
     ) -> Result<Self, TerrainHeightfieldError> {
         let resolution_usize = usize::from(resolution);
+
         if !(2..=usize::from(MAX_TERRAIN_HEIGHTFIELD_RESOLUTION)).contains(&resolution_usize)
             || heights.len() != resolution_usize * resolution_usize
             || normals.len() != heights.len()
@@ -422,6 +444,7 @@ impl TerrainHeightfield {
         {
             return Err(TerrainHeightfieldError::InvalidDimensionsOrRange);
         }
+
         if heights
             .iter()
             .any(|height| *height < minimum_height || *height > maximum_height)
@@ -450,6 +473,7 @@ impl TerrainHeightfield {
 
     pub fn validate(&self) -> Result<(), TerrainHeightfieldError> {
         let resolution = usize::from(self.resolution);
+
         if !(2..=usize::from(MAX_TERRAIN_HEIGHTFIELD_RESOLUTION)).contains(&resolution)
             || self.heights.len() != resolution * resolution
             || self.normals_oct.len() != resolution * resolution
@@ -457,6 +481,7 @@ impl TerrainHeightfield {
         {
             return Err(TerrainHeightfieldError::InvalidDimensionsOrRange);
         }
+
         Ok(())
     }
 
@@ -480,6 +505,7 @@ impl TerrainHeightfield {
         let (corners, weights) = self.triangle(local_xz, cell_size);
         let mut height = 0.0;
         let mut normal = [0.0_f32; 3];
+
         for ((x, z), weight) in corners.into_iter().zip(weights) {
             height += self.height_at(x, z) * weight;
             let vertex_normal = self.normal_at(x, z);
@@ -487,6 +513,7 @@ impl TerrainHeightfield {
             normal[1] += vertex_normal[1] * weight;
             normal[2] += vertex_normal[2] * weight;
         }
+
         TerrainSurfaceSample {
             height,
             normal: normalize3(normal),
@@ -497,9 +524,11 @@ impl TerrainHeightfield {
     pub fn sample_height(&self, local_xz: [f32; 2], cell_size: f32) -> f32 {
         let (corners, weights) = self.triangle(local_xz, cell_size);
         let mut height = 0.0;
+
         for ((x, z), weight) in corners.into_iter().zip(weights) {
             height += self.height_at(x, z) * weight;
         }
+
         height
     }
 
@@ -538,12 +567,14 @@ fn encode_octahedral_normal(normal: [f32; 3]) -> [i16; 2] {
     let normal = normalize3(normal);
     let inverse_l1 = (normal[0].abs() + normal[1].abs() + normal[2].abs()).recip();
     let mut encoded = [normal[0] * inverse_l1, normal[2] * inverse_l1];
+
     if normal[1] < 0.0 {
         encoded = [
             (1.0 - encoded[1].abs()).copysign(encoded[0]),
             (1.0 - encoded[0].abs()).copysign(encoded[1]),
         ];
     }
+
     [
         ((encoded[0].clamp(-1.0, 1.0) * UNIT).round() as i16) << SHIFT,
         ((encoded[1].clamp(-1.0, 1.0) * UNIT).round() as i16) << SHIFT,
@@ -560,6 +591,7 @@ fn decode_octahedral_normal(encoded: [i16; 2]) -> [f32; 3] {
         1.0 - encoded[0].abs() - encoded[1].abs(),
         encoded[1],
     ];
+
     if normal[1] < 0.0 {
         normal = [
             (1.0 - encoded[1].abs()).copysign(encoded[0]),
@@ -567,14 +599,17 @@ fn decode_octahedral_normal(encoded: [i16; 2]) -> [f32; 3] {
             (1.0 - encoded[0].abs()).copysign(encoded[1]),
         ];
     }
+
     normalize3(normal)
 }
 
 fn normalize3(value: [f32; 3]) -> [f32; 3] {
     let length_squared = value[0] * value[0] + value[1] * value[1] + value[2] * value[2];
+
     if length_squared <= f32::EPSILON || !length_squared.is_finite() {
         return [0.0, 1.0, 0.0];
     }
+
     let inverse_length = length_squared.sqrt().recip();
     [
         value[0] * inverse_length,
@@ -709,17 +744,20 @@ pub fn decode_page_payload(bytes: &[u8]) -> Result<PagePayload, PagePayloadDecod
             .with_fixed_int_encoding()
             .with_limit::<{ MAX_DECODED_PAGE_BYTES as usize }>(),
     )?;
+
     if consumed != bytes.len() {
         return Err(PagePayloadDecodeError::TrailingBytes {
             consumed,
             total: bytes.len(),
         });
     }
+
     if versioned.version != PAGE_PAYLOAD_VERSION {
         return Err(PagePayloadDecodeError::UnsupportedVersion(
             versioned.version,
         ));
     }
+
     Ok(versioned.payload)
 }
 
@@ -735,6 +773,7 @@ pub enum PagePayloadDecodeError {
 
 /// Cells per side of a far-object block.
 pub const FAR_OBJECT_BLOCK_CELLS: i32 = 16;
+
 pub const FAR_OBJECTS_PAGE_VERSION: u16 = 2;
 pub const MAX_FAR_OBJECT_FORMS: usize = 256;
 pub const MAX_FAR_OBJECTS_PER_BLOCK: usize = 262_144;
@@ -803,6 +842,7 @@ impl FarObjectsPage {
         {
             return Err("far-object page has no or too many forms or instances".into());
         }
+
         if self
             .forms
             .iter()
@@ -810,6 +850,7 @@ impl FarObjectsPage {
         {
             return Err("far-object form is not an impostor with a hand-off".into());
         }
+
         // Mesh LODs nearest first with descending thresholds, the last one handing off.
         if self.forms.iter().any(|f| {
             !(f.height.is_finite() && f.height > 0.0)
@@ -824,6 +865,7 @@ impl FarObjectsPage {
         }) {
             return Err("far-object form has no valid mesh LOD chain".into());
         }
+
         if self.instances.iter().any(|i| {
             usize::from(i.form) >= self.forms.len()
                 || !i.translation.iter().all(|v| v.is_finite())
@@ -833,6 +875,7 @@ impl FarObjectsPage {
         }) {
             return Err("far-object instance is invalid".into());
         }
+
         Ok(())
     }
 
@@ -857,17 +900,20 @@ impl FarObjectsPage {
                     .with_fixed_int_encoding()
                     .with_limit::<{ MAX_DECODED_PAGE_BYTES as usize }>(),
             )?;
+
         if consumed != bytes.len() {
             return Err(PagePayloadDecodeError::TrailingBytes {
                 consumed,
                 total: bytes.len(),
             });
         }
+
         if versioned.version != FAR_OBJECTS_PAGE_VERSION {
             return Err(PagePayloadDecodeError::UnsupportedVersion(
                 versioned.version,
             ));
         }
+
         Ok(versioned.page)
     }
 }
@@ -1015,11 +1061,13 @@ mod tests {
     fn mountain_range_preserves_shallow_road_relief() {
         let heights = [1500.0, 1499.995, 1499.99, 1500.0];
         let field = TerrainHeightfield::from_heights(2, &heights, -500.0, 2500.0, 8.0).unwrap();
+
         // Millimetre rounding keeps 5 mm steps at 1.5 km, where a per-page 16-bit range
         // over this world's 3 km would round to 4.6 cm.
         for (stored, source) in field.heights.iter().zip(heights) {
             assert!((stored - source).abs() <= TERRAIN_HEIGHT_STEP / 2.0);
         }
+
         assert!(field.heights[0] > field.heights[1] && field.heights[1] > field.heights[2]);
         assert_eq!(
             field.height_bounds(),
@@ -1040,6 +1088,7 @@ mod tests {
             normals_oct: terrain.normals_oct.clone(),
             validity: vec![255; 4],
         };
+
         // The rendered 00--11 diagonal is zero; bilinear sampling would return 7.5.
         for (xz, expected) in [
             ([0.5, 0.5], 0.0),
@@ -1052,6 +1101,7 @@ mod tests {
             let grass = surface.sample([0.0; 2], 1.0, xz);
             assert_eq!(ground.height, expected);
             assert_eq!(ground.height, grass.height);
+
             for axis in 0..3 {
                 assert!((ground.normal[axis] - grass.normal[axis]).abs() < 1e-6);
             }

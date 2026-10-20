@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 fn always() -> u8 {
     100
 }
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LootEntry {
@@ -19,17 +20,20 @@ pub struct LootEntry {
     #[serde(default = "always")]
     pub chance: u8,
 }
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LootTable {
     pub id: LootId,
     pub entries: Vec<LootEntry>,
 }
+
 impl LootTable {
     pub fn validate(&self, catalog: &ItemCatalog) -> Result<()> {
         for entry in &self.entries {
             catalog.item(entry.item)?;
             let (least, most) = entry.quantity;
+
             if least == 0 || least > most || most > 10_000 || !(1..=100).contains(&entry.chance) {
                 return Err(InventoryError::Invalid(format!(
                     "loot {}: bad quantity or chance for {}",
@@ -39,6 +43,7 @@ impl LootTable {
         }
         Ok(())
     }
+
     /// Puts what the table yields into an inventory, drawing from `random`.
     pub fn roll(
         &self,
@@ -50,6 +55,7 @@ impl LootTable {
             if entry.chance < 100 && random.die(100)? > u32::from(entry.chance) {
                 continue;
             }
+
             let (least, most) = entry.quantity;
             let quantity = least + random.below(most - least + 1)?;
             inventory.grant(catalog, entry.item, quantity)?;

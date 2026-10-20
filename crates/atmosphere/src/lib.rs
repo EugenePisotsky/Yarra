@@ -33,7 +33,9 @@ use bevy::{
         view::{ColorGrading, ViewDepthStencilTexture},
     },
 };
+
 use std::borrow::Cow;
+
 use world::{
     atmosphere::{AtmosphereProfile, linear_rgb},
     weather::{WeatherFog, WeatherParams, WeatherTransition},
@@ -84,6 +86,7 @@ pub struct AtmospherePresentation {
     /// and lights the scene: a dark sun's shadow passes cost the night forest about 1.2 ms.
     pub shadows: bool,
 }
+
 impl Default for AtmospherePresentation {
     fn default() -> Self {
         Self {
@@ -116,6 +119,7 @@ pub struct FogTuning {
     /// Extinction of the air under crowns that light shafts draw.
     pub canopy_air: f32,
 }
+
 impl Default for FogTuning {
     fn default() -> Self {
         Self {
@@ -146,6 +150,7 @@ pub struct AtmosphereState {
     /// A lightning strike in progress, set by the game's weather.
     pub lightning: Option<lightning::LightningFlash>,
 }
+
 impl Default for AtmosphereState {
     fn default() -> Self {
         let profile = AtmosphereProfile::default();
@@ -163,19 +168,23 @@ impl Default for AtmosphereState {
         }
     }
 }
+
 impl AtmosphereState {
     /// Moves the time of day by `days` (back when negative), carrying whole days into `day`.
     pub fn advance(&mut self, days: f32) {
         let time = self.phase + days;
         let mut day = self.day + time.floor() as i32;
         let mut phase = time - time.floor();
+
         if phase >= 1.0 {
             phase = 0.0;
             day += 1;
         }
+
         self.day = day;
         self.phase = phase;
     }
+
     /// Moves to the nearest day on which the moon is about `age` days old at the current time of
     /// day.
     pub fn set_moon_age(&mut self, age: f32) {
@@ -189,15 +198,18 @@ impl AtmosphereState {
         };
         self.day += ahead.round() as i32;
     }
+
     /// Whether an isolated editor workspace owns lighting: no clouds, weather, particles,
     /// lightning or sea, and the world's moon stays dark.
     pub fn isolated(&self) -> bool {
         self.owner == AtmosphereOwner::Isolated
     }
+
     /// The atmosphere at the current day and time, for the presented profile.
     pub fn evaluate(&self, profile: &AtmosphereProfile) -> world::atmosphere::EvaluatedAtmosphere {
         world::atmosphere::evaluate_at(profile, self.day, self.phase)
     }
+
     /// The presented profile: authored, with any game weather overlaid.
     pub fn effective_profile(&self) -> Cow<'_, AtmosphereProfile> {
         match &self.weather {
@@ -205,6 +217,7 @@ impl AtmosphereState {
             _ => Cow::Borrowed(&self.profile),
         }
     }
+
     /// Reduced-visibility fog from game weather, in front of the authored clear-air haze.
     pub fn weather_fog(&self) -> Option<WeatherFog> {
         match &self.weather {
@@ -213,6 +226,7 @@ impl AtmosphereState {
         }
     }
 }
+
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ApplyAtmosphere;
 
@@ -221,6 +235,7 @@ pub struct WorldEnvironmentPlugin {
     shadow_distance: f32,
     owner: AtmosphereOwner,
 }
+
 impl WorldEnvironmentPlugin {
     pub const fn game() -> Self {
         Self {
@@ -229,6 +244,7 @@ impl WorldEnvironmentPlugin {
             owner: AtmosphereOwner::Game,
         }
     }
+
     pub const fn editor() -> Self {
         Self {
             first_cascade: 60.0,
@@ -237,6 +253,7 @@ impl WorldEnvironmentPlugin {
         }
     }
 }
+
 impl Plugin for WorldEnvironmentPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<AtmospherePresentation>()
@@ -266,23 +283,29 @@ impl Plugin for WorldEnvironmentPlugin {
             .add_systems(PostUpdate, apply.in_set(ApplyAtmosphere));
     }
 }
+
 #[derive(Resource)]
 struct ShadowCoverage(f32, f32);
+
 #[derive(Component)]
 pub struct WorldSun;
+
 #[derive(Component)]
 pub(crate) struct WorldMoon;
+
 #[derive(Component, Default)]
 #[require(sky::SkyCompositeView)]
 pub struct WorldEnvironmentView {
     /// Explicit launch/bookmark override, displayed and clearable by the editor.
     pub visibility_override: Option<f32>,
 }
+
 #[derive(Bundle)]
 pub struct WorldEnvironmentCamera {
     exposure: Exposure,
     view: WorldEnvironmentView,
 }
+
 impl Default for WorldEnvironmentCamera {
     fn default() -> Self {
         Self {
@@ -291,6 +314,7 @@ impl Default for WorldEnvironmentCamera {
         }
     }
 }
+
 impl WorldEnvironmentCamera {
     #[cfg(test)]
     pub(crate) fn with_visibility(visibility: f32) -> Self {
@@ -302,8 +326,10 @@ impl WorldEnvironmentCamera {
         }
     }
 }
+
 #[derive(Component)]
 struct WorldAtmosphere;
+
 #[derive(Resource)]
 struct MediumHandle(Handle<ScatteringMedium>);
 
@@ -401,11 +427,14 @@ fn apply(
         }
         return;
     }
+
     let profile = state.effective_profile();
     let profile = profile.as_ref();
+
     if profile.validate().is_err() || !state.phase.is_finite() {
         return;
     }
+
     let value = state.evaluate(profile);
     let direction = state
         .direction_override
@@ -413,6 +442,7 @@ fn apply(
         .map(Vec3::normalize)
         .unwrap_or(Vec3::from_array(value.direction_to_sun));
     let presentation = presentation.as_deref().copied().unwrap_or_default();
+
     // Neither light is ever hidden: Bevy 0.19 loses a directional light's shadow casters once it
     // has been hidden and shown again, so a dark light only stops rendering shadow maps.
     let casts = |direction: Vec3, diameter_degrees: f32, lux: f32| {
@@ -420,6 +450,7 @@ fn apply(
             && lux > 0.0
             && direction.y > -(0.5 * diameter_degrees).to_radians().sin()
     };
+
     for (mut transform, mut light, mut disk) in &mut sun {
         let up = if direction.y.abs() > 0.999 {
             Vec3::Z
@@ -432,12 +463,15 @@ fn apply(
         light.color = rgb(value.sun_linear);
         light.illuminance = if profile.outdoor { value.sun_lux } else { 0.0 };
         disk.angular_size = profile.sun_diameter_degrees.to_radians();
+
         // After sunset it still lights the sky, but nothing on the ground.
         let shadows = casts(direction, profile.sun_diameter_degrees, light.illuminance);
+
         if light.shadow_maps_enabled != shadows {
             light.shadow_maps_enabled = shadows;
         }
     }
+
     for (mut transform, mut light, mut disk) in &mut moon {
         let direction = Vec3::from_array(value.direction_to_moon);
         transform.rotation = Transform::from_translation(direction)
@@ -446,18 +480,22 @@ fn apply(
         light.color = rgb(value.moon_linear);
         light.illuminance = if profile.outdoor { value.moon_lux } else { 0.0 };
         let shadows = casts(direction, profile.night.diameter_degrees, light.illuminance);
+
         if light.shadow_maps_enabled != shadows {
             light.shadow_maps_enabled = shadows;
         }
+
         // The sky composite draws the moon's face and phase itself.
         disk.angular_size = profile.night.diameter_degrees.to_radians();
         disk.intensity = 0.0;
     }
+
     light_ambient(
         &mut ambient,
         &value,
         state.lightning.map_or(0.0, |l| l.flash),
     );
+
     // Eye adaptation in the game only: authoring judges the exposure as set.
     let adapt =
         presentation.auto_exposure && state.owner == AtmosphereOwner::Game && profile.outdoor;
@@ -469,6 +507,7 @@ fn apply(
     } else {
         (1.0, (0.0, 0.0))
     };
+
     for (entity, camera, view, mut exposure, settings, bloom, camera_3d, mut auto, grading) in
         &mut views
     {
@@ -478,12 +517,15 @@ fn apply(
             .exposure_override
             .filter(|v| v.is_finite())
             .unwrap_or(value.exposure_ev100);
+
         if profile.outdoor && settings.is_none() {
             view_commands.insert(AtmosphereSettings::default());
         }
+
         if !profile.outdoor && settings.is_some() {
             view_commands.remove::<AtmosphereSettings>();
         }
+
         // The sky composite reads depth whether or not the atmosphere is present; Bevy only
         // requests sampling for atmosphere views.
         if let Some(mut camera_3d) = camera_3d {
@@ -492,13 +534,16 @@ fn apply(
                 camera_3d.depth_texture_usages = (usages | TextureUsages::TEXTURE_BINDING).into();
             }
         }
+
         present_bloom(
             &mut view_commands,
             bloom,
             presentation.bloom.then_some(profile.bloom_intensity),
         );
+
         // The atmosphere handles both sky and aerial perspective. No second DistanceFog pass.
         view_commands.remove::<DistanceFog>();
+
         if let Some(adaptation) = &adaptation {
             match auto.as_deref_mut() {
                 Some(auto)
@@ -513,18 +558,21 @@ fn apply(
                 None => {}
             }
         }
+
         let visibility = view
             .visibility_override
             .filter(|v| v.is_finite())
             .unwrap_or(profile.visibility_metres)
             .clamp(10.0, 100_000.0);
         let signature = (profile.molecular_density, visibility, profile.haze_srgb);
+
         if previous_medium.as_ref() != Some(&signature) {
             if let Some(mut asset) = media.get_mut(&handle.0) {
                 *asset = scattering_medium(profile, visibility);
             }
             *previous_medium = Some(signature);
         }
+
         // A local tangent atmosphere follows horizontal origin shifts. Absolute Y is
         // unchanged by the engine's XZ rebasing, preserving observer altitude and horizon.
         for (planet, mut transform) in &mut planets {
@@ -546,6 +594,7 @@ fn light_ambient(
 ) {
     ambient.color = rgb(value.ambient_linear);
     ambient.brightness = value.ambient_lux + flash * lightning::FLASH_AMBIENT;
+
     if flash > 0.0 {
         let base = Vec3::from_array(value.ambient_linear) * value.ambient_lux;
         let lit = (base
@@ -630,6 +679,7 @@ pub fn sampled_depth(depth: &ViewDepthStencilTexture) -> &TextureView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn night_lights_surfaces_and_isolated_workspaces_and_interiors_disable_the_moon() {
         let mut app = App::new();
@@ -674,6 +724,7 @@ mod tests {
             .exposure_override = Some(13.0);
         app.update();
         assert_eq!(app.world().get::<Exposure>(camera).unwrap().ev100, 13.0);
+
         // At night only the moon renders shadow maps; neither light is ever hidden.
         let shadows = |app: &App, light: Entity| {
             app.world()
@@ -721,6 +772,7 @@ mod tests {
                 .illuminance,
             0.0
         );
+
         for light in [sun, moon] {
             assert_ne!(
                 app.world().get::<Visibility>(light),
@@ -728,6 +780,7 @@ mod tests {
             );
         }
     }
+
     #[test]
     fn presentation_switches_remove_passes_and_restore_without_editing_profile() {
         let mut app = App::new();
@@ -751,6 +804,7 @@ mod tests {
             shadows: false,
         };
         app.update();
+
         // Surfaces keep atmosphere lighting; the composite alone stops drawing sky and haze.
         assert!(app.world().get::<AtmosphereSettings>(camera).is_some());
         assert!(app.world().get::<Bloom>(camera).is_none());

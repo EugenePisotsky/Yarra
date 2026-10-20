@@ -31,9 +31,11 @@ pub(super) fn receive_database_results(
                     reload.failure =
                         Some("database worker stopped during generation adoption".into());
                 }
+
                 if !matches!(stream.phase, StreamPhase::Failed(_)) {
                     stream.phase = StreamPhase::Failed("database worker stopped".into());
                 }
+
                 break;
             }
         };
@@ -51,10 +53,13 @@ pub(super) fn receive_database_results(
                     manifest.generation_id,
                     manifest.world_spaces.len()
                 );
+
                 if active_space.current.is_none() {
                     active_space.current = Some(manifest.default_world_space);
                 }
+
                 catalog.adopt(&manifest);
+
                 if viewpoint.position.is_none() {
                     // An explicit start view wins; otherwise play starts where the
                     // world says.
@@ -77,10 +82,12 @@ pub(super) fn receive_database_results(
                         manifest.default_world_space().cell_size,
                     ));
                 }
+
                 if origin.space.is_none() {
                     origin.space = Some(manifest.default_world_space);
                     origin.cell = CellCoord::ZERO;
                 }
+
                 stream.manifest = Some(manifest);
                 stream.phase = StreamPhase::Ready;
             }
@@ -113,10 +120,13 @@ pub(super) fn receive_database_results(
                 else {
                     continue;
                 };
+
                 if active_space.current != Some(space) {
                     continue;
                 }
+
                 stream.requested_index = None;
+
                 match result {
                     Ok(descriptors) => stream.descriptors = descriptors,
                     Err(error) => {

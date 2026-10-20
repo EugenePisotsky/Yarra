@@ -14,12 +14,14 @@ fn random(key: &[u8; 32], x: i64, z: i64) -> [u8; 32] {
     h.update(&z.to_le_bytes());
     *h.finalize().as_bytes()
 }
+
 fn unit(h: &[u8; 32], offset: usize) -> f64 {
     (f64::from(u32::from_le_bytes(
         h[offset..offset + 4].try_into().unwrap(),
     )) + 0.5)
         / 4_294_967_296.0
 }
+
 fn position(h: &[u8; 32], x: i64, z: i64, step: f64) -> [f64; 2] {
     [
         (x as f64 + unit(h, 0)) * step,
@@ -33,6 +35,7 @@ impl CompilePlan {
             .iter()
             .any(|l| l.source.enabled && !l.composition.collections.is_empty())
     }
+
     pub(crate) fn scatter_bytes_per_cell(&self) -> usize {
         let candidates = self
             .layers
@@ -50,6 +53,7 @@ impl CompilePlan {
             .saturating_mul(std::mem::size_of::<StaticObjectInstance>())
             .saturating_mul(2)
     }
+
     pub fn collection_assets(&self) -> Vec<world::AssetId> {
         self.layers
             .iter()
@@ -72,6 +76,7 @@ impl CompilePlan {
         let mut result = vec![];
         let mut candidates = 0usize;
         let mut work = 0usize;
+
         for (li, layer) in self
             .layers
             .iter()
@@ -91,11 +96,13 @@ impl CompilePlan {
                 candidates = candidates.saturating_add(
                     ((max[0] - min[0]) as usize).saturating_mul((max[1] - min[1]) as usize),
                 );
+
                 if candidates > MAX_CANDIDATES {
                     return Err(CompileError::Budget(
                         "scatter candidates per cell; increase spacing",
                     ));
                 }
+
                 let exclusion_work = self.layers[li + 1..]
                     .iter()
                     .map(|l| l.composition.exclusions.len())
@@ -107,9 +114,11 @@ impl CompilePlan {
                             25 + exclusion_work + roads.map_or(0, RoadPlan::scatter_work),
                         ),
                 );
+
                 if work > MAX_WORK.min(self.profile.max_sample_work) {
                     return Err(CompileError::Budget("scatter evaluation work"));
                 }
+
                 let mut h = blake3::Hasher::new();
                 h.update(b"yarra.scatter.v1");
                 h.update(&self.definition.space.0.to_le_bytes());
@@ -118,18 +127,22 @@ impl CompilePlan {
                 h.update(&layer.source.seed.to_le_bytes());
                 h.update(&output.seed.to_le_bytes());
                 let key = *h.finalize().as_bytes();
+
                 for z in min[1]..max[1] {
                     for x in min[0]..max[0] {
                         let hash = random(&key, x, z);
                         let p = position(&hash, x, z, step);
                         let local = [p[0] - origin[0], p[1] - origin[1]];
+
                         if local.iter().any(|v| *v < 0.0 || *v >= size) {
                             continue;
                         }
+
                         let uv = [local[0] / size, local[1] / size];
                         let mut amount = coverage.sample(cell, layer.source.id, uv)
                             * f64::from(layer.source.opacity)
                             * f64::from(output.density);
+
                         // Exclusions suppress only lower layers, matching foliage stack semantics.
                         for upper in self.layers[li + 1..].iter().filter(|l| l.source.enabled) {
                             let strength = upper
@@ -144,29 +157,36 @@ impl CompilePlan {
                                     * f64::from(upper.source.opacity)
                                     * strength;
                         }
+
                         if unit(&hash, 8) >= amount {
                             continue;
                         }
+
                         let wins = (-2..=2).all(|dz| {
                             (-2..=2).all(|dx| {
                                 if dx == 0 && dz == 0 {
                                     return true;
                                 }
+
                                 let other = random(&key, x + dx, z + dz);
+
                                 // Priority is independent of position; coordinates break ties.
                                 if (&other[24..], x + dx, z + dz) >= (&hash[24..], x, z) {
                                     return true;
                                 }
+
                                 let q = position(&other, x + dx, z + dz, step);
                                 (p[0] - q[0]).powi(2) + (p[1] - q[1]).powi(2) >= step * step
                             })
                         });
+
                         if !wins
                             || roads
                                 .is_some_and(|r| r.blocks_scatter(cell, uv, output.road_clearance))
                         {
                             continue;
                         }
+
                         let (height, normal_y) = terrain.map_or((0.0, 1.0), |t| {
                             let s = t.sample(
                                 [local[0] as f32, local[1] as f32],
@@ -174,12 +194,15 @@ impl CompilePlan {
                             );
                             (s.height, s.normal[1])
                         });
+
                         if normal_y + 1e-6 < output.max_slope_degrees.to_radians().cos() {
                             continue;
                         }
+
                         let total: f64 = output.assets.iter().map(|a| f64::from(a.weight)).sum();
                         let mut pick = unit(&hash, 12) * total;
                         let mut asset = output.assets.last().unwrap();
+
                         for a in &output.assets {
                             if pick < f64::from(a.weight) {
                                 asset = a;
@@ -187,9 +210,11 @@ impl CompilePlan {
                             }
                             pick -= f64::from(a.weight);
                         }
+
                         if result.len() >= MAX_OBJECTS {
                             return Err(CompileError::Budget("generated objects per cell"));
                         }
+
                         result.push(StaticObjectInstance {
                             generated: true,
                             id: StableObjectId(hash[..16].try_into().unwrap()),
@@ -203,10 +228,13 @@ impl CompilePlan {
                 }
             }
         }
+
         result.sort_by_key(|o| o.id);
+
         if result.windows(2).any(|w| w[0].id == w[1].id) {
             return Err(CompileError::Budget("generated object identity collision"));
         }
+
         Ok(result)
     }
 }

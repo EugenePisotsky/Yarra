@@ -3,6 +3,7 @@
 use super::topology::{
     HIGH_FIRST_INDEX, HIGH_INDEX_COUNT, HIGH_ROWS, LOW_FIRST_INDEX, LOW_INDEX_COUNT, LOW_ROWS,
 };
+
 use bevy::shader::ShaderDefVal;
 use bytemuck::{Pod, Zeroable};
 use std::mem::size_of;
@@ -17,10 +18,13 @@ pub(super) const WORKGROUP_SIZE: u32 = 64;
 pub(super) const GPU_TELEMETRY_WORD_COUNT: u64 = 16;
 pub(super) const GPU_TELEMETRY_SIZE: u64 = GPU_TELEMETRY_WORD_COUNT * size_of::<u32>() as u64;
 pub(super) const DRAW_INDEXED_ARGS_WORD_COUNT: u64 = 5;
+
 pub(super) const DRAW_ARGS_SIZE: u64 =
     BIN_COUNT as u64 * DRAW_INDEXED_ARGS_WORD_COUNT * size_of::<u32>() as u64;
+
 #[cfg(not(target_os = "ios"))]
 pub(super) const TELEMETRY_READBACK_SIZE: u64 = GPU_TELEMETRY_SIZE + DRAW_ARGS_SIZE;
+
 const _: () = assert!(
     crate::PROCEDURAL_DISTANCE_METERS as u32 as f32 == crate::PROCEDURAL_DISTANCE_METERS,
     "the shaders take the procedural distance in whole metres"

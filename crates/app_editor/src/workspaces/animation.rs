@@ -1,5 +1,6 @@
 use bevy::{gizmos::config::GizmoConfigStore, prelude::*, render::view::Msaa};
 use bevy_egui::{EguiPrimaryContextPass, egui};
+
 use engine::{
     CharacterPresentationCatalogSummary, CharacterPresentationPreview,
     CharacterPresentationPreviewPlugin, CharacterPreviewClip, CharacterPreviewClipRole,
@@ -279,6 +280,7 @@ fn sync_animation_preview(
     preview.set_profile(state.presentation_profile.clone());
     preview.set_clip(state.selected_clip);
     preview.set_transport(state.playing, state.speed);
+
     if sync.restart_generation != state.restart_generation {
         preview.restart();
         sync.restart_generation = state.restart_generation;
@@ -345,6 +347,7 @@ fn render_animation_workspace(workspace_ui: &mut egui::Ui, state: &mut Animation
                             .changed();
                     }
                 });
+
             if profile_changed {
                 state.select_profile_defaults();
             }
@@ -382,6 +385,7 @@ fn render_animation_workspace(workspace_ui: &mut egui::Ui, state: &mut Animation
                             .changed();
                     }
                 });
+
             if context_changed {
                 state.select_context_default_clip();
             }
@@ -401,6 +405,7 @@ fn render_animation_workspace(workspace_ui: &mut egui::Ui, state: &mut Animation
                 })
                 .map(|context| context.clips.clone())
                 .unwrap_or_default();
+
             for clip in clips {
                 let selected = state.selected_clip_id == clip.id;
                 if ui

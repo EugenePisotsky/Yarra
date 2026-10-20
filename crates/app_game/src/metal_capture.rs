@@ -15,6 +15,7 @@ use bevy::{
         view::ExtractedView,
     },
 };
+
 use objc2_foundation::{NSString, NSURL};
 use objc2_metal::{MTLCaptureDescriptor, MTLCaptureDestination, MTLCaptureManager};
 
@@ -95,15 +96,18 @@ fn begin_capture(
     wind: Res<vegetation_render::VegetationWind>,
 ) {
     state.frame += 1;
+
     // Allow assets and pipelines to settle before recording; leave normal runs untouched.
     if main_frame.0 < 600 || state.capturing || done.0.load(Ordering::Acquire) {
         return;
     }
+
     // SAFETY: only inspect the actual Metal device; no resources or command queues are mutated
     // through the HAL handle. The descriptor retains this valid MTLDevice during capture.
     let result = unsafe {
         let manager = MTLCaptureManager::sharedCaptureManager();
         let destination = MTLCaptureDestination::GPUTraceDocument;
+
         if !manager.supportsDestination(destination) {
             Err("Metal capture is unavailable; launch with MTL_CAPTURE_ENABLED=1".to_owned())
         } else if let Some(metal) = device.wgpu_device().as_hal::<wgpu::hal::api::Metal>() {
@@ -123,9 +127,11 @@ fn begin_capture(
             Err("Selected renderer is not Metal".to_owned())
         }
     };
+
     match result {
         Ok(()) => {
             state.capturing = true;
+
             for view in &views {
                 warn!(
                     "METAL_CAPTURE view main_frame={} render_frame={} camera={:?} viewport={:?} wind_phase={}",
@@ -136,6 +142,7 @@ fn begin_capture(
                     wind.phase_seconds()
                 );
             }
+
             warn!(
                 "METAL_CAPTURE started main_frame={} render_frame={} output={}",
                 main_frame.0,
@@ -154,12 +161,15 @@ fn end_capture(mut state: ResMut<CaptureState>, done: Res<CaptureDone>) {
     if !state.capturing {
         return;
     }
+
     // SAFETY: this is the capture started by begin_capture in this render frame. All render
     // graph command buffers have been submitted before stopping the capture.
     unsafe {
         MTLCaptureManager::sharedCaptureManager().stopCapture();
     }
+
     state.capturing = false;
+
     #[cfg(target_os = "ios")]
     {
         // CoreDevice's app-container transfer refuses symlinks (ELOOP). Metal deduplicates
@@ -170,6 +180,7 @@ fn end_capture(mut state: ResMut<CaptureState>, done: Res<CaptureDone>) {
             Err(error) => eprintln!("METAL_CAPTURE transfer preparation failed: {error}"),
         }
     }
+
     warn!("METAL_CAPTURE saved output={}", state.path.display());
     done.0.store(true, Ordering::Release);
 }
@@ -187,19 +198,25 @@ fn exit_after_capture(done: Res<CaptureDone>, mut exit: MessageWriter<AppExit>) 
 #[cfg(any(target_os = "ios", test))]
 fn materialize_capture_links(directory: &std::path::Path) -> std::io::Result<()> {
     let root = directory.canonicalize()?;
+
     for entry in std::fs::read_dir(&root)? {
         let entry = entry?;
+
         if !entry.file_type()?.is_symlink() {
             continue;
         }
+
         let source = entry.path().canonicalize()?;
+
         if !source.starts_with(&root) || !source.is_file() {
             return Err(std::io::Error::other("capture link leaves its directory"));
         }
+
         let temporary = entry.path().with_extension("transfer-tmp");
         std::fs::copy(source, &temporary)?;
         std::fs::rename(temporary, entry.path())?;
     }
+
     Ok(())
 }
 

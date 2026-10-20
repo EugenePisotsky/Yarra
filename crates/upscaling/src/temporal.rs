@@ -1,6 +1,7 @@
 //! Shared temporal inputs for custom renderers. Motion is unjittered current-minus-previous UV.
 //! Backend-specific pixel units and history live behind the upscaling backend boundary.
 use crate::*;
+
 use bevy::{
     camera::MainPassResolutionOverride,
     core_pipeline::{
@@ -27,6 +28,7 @@ pub enum TemporalDebug {
     /// Profile the surrounding temporal pipeline without running reconstruction.
     Bypass,
 }
+
 impl TemporalDebug {
     pub fn next(self) -> Self {
         match self {
@@ -36,6 +38,7 @@ impl TemporalDebug {
             Self::Bypass => Self::Off,
         }
     }
+
     pub fn label(self) -> &'static str {
         match self {
             Self::Off => "Image",
@@ -45,6 +48,7 @@ impl TemporalDebug {
         }
     }
 }
+
 #[derive(Component, Clone, ExtractComponent, PartialEq)]
 #[extract_app(bevy::render::RenderApp)]
 #[require(
@@ -60,6 +64,7 @@ pub struct TemporalView {
     pub reset_epoch: u64,
     pub debug: TemporalDebug,
 }
+
 #[derive(Component, Clone, Copy)]
 pub struct TemporalFrame {
     pub size: UVec2,
@@ -69,12 +74,14 @@ pub struct TemporalFrame {
     pub raster_clip_from_world: Mat4,
     pub reset: bool,
 }
+
 /// Custom opaque renderers write this attachment together with their HDR colour and final depth.
 #[derive(Component, Clone)]
 pub struct TemporalMotionTarget {
     pub texture: Texture,
     pub view: TextureView,
 }
+
 /// Motion of static geometry, which leaves the prepass: after Bevy's opaque pass, before custom
 /// renderers write their own motion over it.
 #[derive(SystemSet, Clone, Debug, PartialEq, Eq, Hash)]
@@ -94,6 +101,7 @@ pub(crate) struct Inputs<'a> {
     pub jitter: Vec2,
     pub reset: bool,
 }
+
 pub(crate) fn install(app: &mut App) {
     app.add_plugins(ExtractComponentPlugin::<TemporalView>::default());
     let Some(render) = app.get_sub_app_mut(RenderApp) else {
@@ -124,6 +132,7 @@ pub(crate) fn install(app: &mut App) {
         )
         .add_systems(Core3d, resolve.in_set(Core3dSystems::EarlyPostProcess));
 }
+
 struct History {
     size: UVec2,
     output_size: UVec2,
@@ -136,6 +145,7 @@ struct History {
     native: Result<backends::Temporal, String>,
     last_pair: Option<[TextureId; 2]>,
 }
+
 #[derive(Resource)]
 struct State {
     histories: HashMap<Entity, History>,
@@ -147,6 +157,7 @@ struct State {
     display_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
 }
+
 impl FromWorld for State {
     fn from_world(world: &mut World) -> Self {
         let device = world.resource::<RenderDevice>().wgpu_device();
@@ -200,18 +211,23 @@ impl FromWorld for State {
         }
     }
 }
+
 fn halton(mut n: u32, base: u32) -> f32 {
     let (mut result, mut f) = (0., 1.);
+
     while n > 0 {
         f /= base as f32;
         result += f * (n % base) as f32;
         n /= base;
     }
+
     result
 }
+
 pub fn jitter(index: u32) -> Vec2 {
     Vec2::new(halton(index % 32 + 1, 2), halton(index % 32 + 1, 3)) - Vec2::splat(0.5)
 }
+
 #[allow(clippy::type_complexity)] // Render-view inputs are one Bevy query.
 fn prepare(
     diagnostics: Option<Res<crate::UpscalingDiagnostics>>,
@@ -263,6 +279,7 @@ fn prepare(
                 request.reset_epoch,
             )
         });
+
         if h.size != size || h.output_size != output_size {
             *h = make_history(
                 &device,
@@ -274,15 +291,18 @@ fn prepare(
                 request.reset_epoch,
             );
         }
+
         if let Ok(native) = &mut h.native {
             native.set_timing(diagnostics.as_ref().is_some_and(|d| d.temporal_timing));
         }
+
         let camera_delta = h.position.distance(position);
         let direction_dot = h.forward.dot(forward);
         let reset = h.index == 0
             || h.epoch != request.reset_epoch
             || camera_delta > 8.0
             || direction_dot < 0.5;
+
         if reset && diagnostics.as_ref().is_some_and(|d| d.temporal_timing) {
             // Log every reset, not just the backend's sampled timing frames. This
             // distinguishes coordinate/camera cuts from local mesh/LOD draw gaps.
@@ -293,17 +313,21 @@ fn prepare(
                 h.epoch != request.reset_epoch,
             );
         }
+
         let offset = if h.native.is_ok() {
             jitter(h.index)
         } else {
             Vec2::ZERO
         };
+
         if let Some(mut j) = temporal_jitter {
             j.offset = offset;
         }
+
         if let Some(mut b) = bias {
             b.0 = (size.x as f32 / output_size.x as f32).log2();
         }
+
         usage.0 |= TextureUsages::STORAGE_BINDING;
         camera.depth_texture_usages = (TextureUsages::from(camera.depth_texture_usages)
             | TextureUsages::TEXTURE_BINDING)
@@ -329,6 +353,7 @@ fn prepare(
         h.index = h.index.wrapping_add(1).max(1);
     }
 }
+
 fn make_history(
     device: &RenderDevice,
     size: UVec2,
@@ -368,6 +393,7 @@ fn make_history(
         last_pair: None,
     }
 }
+
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
 struct Params {
@@ -375,6 +401,7 @@ struct Params {
     size: [f32; 4],
     jitter_debug: [f32; 4],
 }
+
 fn params(frame: &TemporalFrame, output: UVec2, debug: TemporalDebug) -> Params {
     Params {
         previous_from_current: (frame.previous_clip_from_world * frame.clip_from_world.inverse())
@@ -398,6 +425,7 @@ fn params(frame: &TemporalFrame, output: UVec2, debug: TemporalDebug) -> Params 
         ],
     }
 }
+
 fn initialize_motion(
     view: ViewQuery<(&TemporalFrame, &TemporalMotionTarget, &ViewPrepassTextures)>,
     state: Res<State>,
@@ -453,6 +481,7 @@ fn initialize_motion(
     pass.set_viewport(0., 0., frame.size.x as f32, frame.size.y as f32, 0., 1.);
     pass.draw(0..3, 0..1);
 }
+
 /// Static geometry (terrain) is not drawn in the prepass, so its pixels hold the prepass's
 /// motion of whatever moving geometry lies behind it, or the background's. Where the scene's depth
 /// after the opaque pass is nearer than the prepass's, the camera's motion at that depth replaces
@@ -517,6 +546,7 @@ fn complete_static_motion(
     pass.set_viewport(0., 0., frame.size.x as f32, frame.size.y as f32, 0., 1.);
     pass.draw(0..3, 0..1);
 }
+
 fn resolve(
     view: ViewQuery<(
         &MainEntity,
@@ -542,6 +572,7 @@ fn resolve(
         .last_pair
         .is_none_or(|old| !pair.iter().all(|id| old.contains(id)));
     let reset = frame.reset || targets_changed;
+
     if targets_changed && diagnostics.as_ref().is_some_and(|d| d.temporal_timing) {
         warn!(
             "TEMPORAL_HISTORY_RESET view={entity:?} history_frame={} targets_changed=true initial_targets={}",
@@ -549,8 +580,10 @@ fn resolve(
             history.last_pair.is_none(),
         );
     }
+
     history.last_pair = Some(pair);
     let mut failure = history.native.as_ref().err().cloned();
+
     if request.debug == TemporalDebug::Off
         && let Ok(native) = &mut history.native
     {
@@ -577,15 +610,19 @@ fn resolve(
             }
         }
     }
+
     if let Some(error) = &failure {
         history.native = Err(error.clone());
     }
+
     let output_size = history.output_size;
     let native_active = history.native.is_ok();
+
     // Debugging consumes no history: the next normal frame must reset the scaler.
     if request.debug != TemporalDebug::Off {
         history.last_pair = None;
     }
+
     if failure.is_some() || request.debug != TemporalDebug::Off {
         let device = ctx.render_device();
         let uniform = device.create_buffer_with_data(&BufferInitDescriptor {
@@ -640,6 +677,7 @@ fn resolve(
         pass.set_bind_group(0, &group, &[]);
         pass.draw(0..3, 0..1);
     }
+
     bridge.0.lock().unwrap().statuses.insert(
         main.id(),
         UpscaleStatus {
@@ -657,6 +695,7 @@ fn resolve(
         },
     );
 }
+
 /// The view of the main pass depth that passes sample; since Bevy 0.20 a depth texture may carry
 /// a stencil aspect, which a binding cannot include.
 fn sampled_depth(depth: &ViewDepthStencilTexture) -> &wgpu::TextureView {
@@ -670,6 +709,7 @@ fn sampled_depth(depth: &ViewDepthStencilTexture) -> &wgpu::TextureView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn jitter_is_bounded_and_visits_both_sides() {
         let samples: Vec<_> = (0..32).map(jitter).collect();

@@ -4,6 +4,7 @@
 use crate::game_render::{
     GameRenderSettings, GameRenderSetup, GameRenderSystems, RESOLUTION_SCALES, scale_index,
 };
+
 use crate::launch::LaunchOptions;
 use bevy::{core_pipeline::prepass::DepthPrepass, light::ShadowFilteringMethod, prelude::*};
 use engine::{GameInputEnabled, GameplaySystems, WorldViewCamera};
@@ -18,9 +19,11 @@ pub(crate) fn apply_launch_options(app: &mut App) -> Result<(), String> {
         .resource_mut::<VegetationSettings>()
         .candidate_cache_enabled &= !options.candidate_reference;
     app.insert_resource(options.clouds);
+
     if options.msaa_store_reference {
         app.add_systems(PostStartup, preserve_msaa_color);
     }
+
     Ok(())
 }
 
@@ -36,6 +39,7 @@ pub(crate) struct RuntimeSettingsPlugin;
 
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct RuntimeSettingsInit;
+
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct RuntimeSettingsApply;
 
@@ -209,6 +213,7 @@ impl RuntimeSettings {
     pub(crate) fn temporal_active(&self) -> bool {
         self.upscaler == upscaling::UpscaleMethod::MetalFxTemporal
     }
+
     pub(crate) fn scale(&self) -> f32 {
         RESOLUTION_SCALES[self.scale_index]
     }
@@ -272,12 +277,15 @@ fn apply_settings(
     if !s.is_changed() {
         return;
     }
+
     let size = SHADOW_MAP_SIZES[s.shadow_map];
+
     if let Some(mut shadow_map) = shadow_map
         && shadow_map.size != size
     {
         shadow_map.size = size;
     }
+
     object_lod.0 = OBJECT_DETAIL_SCALES[s.object_detail];
     *clouds = s.clouds;
     atmosphere.sky_and_haze = s.sky;
@@ -295,6 +303,7 @@ fn apply_settings(
     } else {
         ShadowFilteringMethod::Gaussian
     });
+
     if s.prepass || s.temporal_active() {
         commands.entity(*camera).insert(DepthPrepass);
     } else {
@@ -340,6 +349,7 @@ fn apply_meshes(
         if !s.is_changed() && saved.as_ref().is_some_and(|state| !state.override_active) {
             continue;
         }
+
         let mut initial = MeshOverrideState {
             original_visibility: *visibility,
             override_active: false,
@@ -358,11 +368,14 @@ fn apply_meshes(
             Scene::Ground if state.terrain => Some(Visibility::Visible),
             _ => Some(Visibility::Hidden),
         };
+
         if let Some(desired) = forced {
             if !state.override_active {
                 state.original_visibility = *visibility;
             }
+
             state.override_active = true;
+
             if *visibility != desired {
                 *visibility = desired;
             }
@@ -370,6 +383,7 @@ fn apply_meshes(
             *visibility = state.original_visibility;
             state.override_active = false;
         }
+
         if is_new {
             commands.entity(entity).insert(initial);
         }
@@ -437,6 +451,7 @@ mod tests {
             .spawn((Mesh3d::default(), Visibility::Inherited))
             .id();
         app.update();
+
         // Normal application visibility changes must survive unrelated settings edits.
         *app.world_mut().get_mut::<Visibility>(object).unwrap() = Visibility::Hidden;
         app.world_mut().resource_mut::<RuntimeSettings>().bloom = false;

@@ -23,6 +23,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 <text x="576" y="111" font-size="18">Vegetation density estimate</text>
 "##,
     );
+
     for (cell_index, cell) in cells.iter().enumerate() {
         for z in 0..16 {
             for x in 0..16 {
@@ -32,6 +33,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .find(|(id, _)| *id == GREEN_SOIL)
                     .map_or(0.0, |(_, v)| f64::from(*v) / 255.0);
                 let ground = mix([151, 111, 67], [66, 118, 72], green);
+
                 // Blades per square metre before clump thinning; geometry LOD and render
                 // appearance are not evaluated.
                 let density: f64 = cell
@@ -49,6 +51,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     [166, 214, 109],
                     (density / 48.0).clamp(0.0, 1.0),
                 );
+
                 for (left, color) in [(32, ground), (576, grass)] {
                     writeln!(
                         svg,
@@ -63,6 +66,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
+
     for left in [32, 576] {
         writeln!(
             svg,
@@ -76,6 +80,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             left + 480
         )?;
     }
+
     svg.push_str(r##"<text x="32" y="440" font-size="14" fill="#a9b9c6">Brown: dry ground. Green: meadow ground. The clearing changes both ground and vegetation.</text>
 <text x="32" y="462" font-size="14" fill="#a9b9c6">Dark: no grass. Bright: 48 blades/m² or more before clump thinning. The upper-left hole is unpainted coverage.</text>
 </g></svg>"##);

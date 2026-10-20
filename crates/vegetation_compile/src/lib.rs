@@ -4,6 +4,7 @@
 //! diagnostics a single definition of page ownership, coverage acceptance and clumping.
 
 use thiserror::Error;
+
 use vegetation::{
     GrassTypeId, SceneValidationError, VegetationCatalog, VegetationFieldPage, accepted,
     candidate_domain, sample_candidate,
@@ -26,9 +27,11 @@ pub fn generate_scene_debug_placements(
 ) -> Result<Vec<DebugPlacement>, PlacementError> {
     scene.validate()?;
     let mut placements = Vec::new();
+
     for page in &scene.pages {
         placements.extend(generate_page_debug_placements(&scene.catalog, page)?);
     }
+
     Ok(placements)
 }
 
@@ -41,18 +44,23 @@ pub fn generate_page_debug_placements(
     catalog.validate()?;
     page.validate(catalog)?;
     let mut placements = Vec::new();
+
     for field in &page.fields {
         let grass = catalog.grass(field.grass).expect("validated page grass");
         let domain = candidate_domain(page.origin_xz, page.size, grass);
+
         for index in 0..domain.candidate_count() {
             let candidate =
                 sample_candidate(grass, domain, index).expect("index came from the domain");
+
             if !page.owns(candidate.root_xz) {
                 continue;
             }
+
             let surface = page
                 .surface
                 .sample(page.origin_xz, page.size, candidate.root_xz);
+
             if surface.validity < 0.5
                 || !accepted(
                     &candidate,
@@ -62,6 +70,7 @@ pub fn generate_page_debug_placements(
             {
                 continue;
             }
+
             placements.push(DebugPlacement {
                 root: [candidate.root_xz[0], surface.height, candidate.root_xz[1]],
                 surface_normal: surface.normal,
@@ -74,6 +83,7 @@ pub fn generate_page_debug_placements(
             });
         }
     }
+
     Ok(placements)
 }
 
@@ -127,6 +137,7 @@ mod tests {
             .unwrap()
             .len() as f32;
         let full = meadow.density * 16.0 * 16.0;
+
         // Clumps keep 80–100% of candidates, fewer toward their edges.
         assert!((0.7 * full..=full).contains(&count), "{count} of {full}");
     }

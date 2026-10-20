@@ -4,10 +4,12 @@
 //! presentation; outcomes come from `Story`.
 use super::{Bark, DUMMY, GUARD, HERO, MIRA, Panel, Story};
 use bevy::prelude::*;
+
 use engine::{
     GameplaySystems, MoveIntent, PlayerControlled, PlayerMovementSuspended, TerrainGrounded,
     WorldCatalog, WorldOrigin, WorldRenderRoot, WorldStartAdopted, WorldStartView,
 };
+
 use game_types::{ActorId, AreaId};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
@@ -15,15 +17,20 @@ use std::sync::Arc;
 use world::{GameplayArea, GameplayAreaIndex, WorldSpaceId};
 
 const TALK_RANGE: f32 = 3.0;
+
 /// How close the player stands to the dummy to hit it, and how far away gives it up.
 const STRIKE_RANGE: f32 = 2.5;
+
 const DISENGAGE_RANGE: f32 = 4.0;
 const GUARD_DISTANCE: f32 = 6.0;
 const GATE_DISTANCE: f32 = 11.0;
+
 /// Height given to a newly placed actor; terrain grounding replaces it once the ground is known.
 const UNGROUNDED: f32 = -5000.0;
+
 /// Bearings tried around the start, nearest to the view direction first.
 const BEARINGS: [f32; 8] = [0.0, 45.0, -45.0, 90.0, -90.0, 135.0, -135.0, 180.0];
+
 /// Shapes for the areas the demo content names, used while the world has none painted under
 /// those names: metres along the path from the start, then across it.
 const STAND_INS: [(&str, [f32; 2], [f32; 2]); 2] = [
@@ -63,27 +70,37 @@ pub(crate) fn install(app: &mut App, source: &Path) -> Result<(), String> {
 /// Which actor of the playthrough an entity is.
 #[derive(Component)]
 struct Actor(ActorId);
+
 #[derive(Component)]
 struct Guard;
+
 /// The party member who waits with the player; she speaks in conversations but does not
 /// follow yet.
 #[derive(Component)]
 struct Companion;
+
 /// Something to hit.
 #[derive(Component)]
 struct Dummy;
+
 #[derive(Component)]
 struct Gate;
+
 #[derive(Component)]
 struct GateHinge;
+
 #[derive(Component)]
 struct SummaryText;
+
 #[derive(Component)]
 struct PanelBox;
+
 #[derive(Component)]
 struct SpeakerText;
+
 #[derive(Component)]
 struct BodyText;
+
 #[derive(Component)]
 struct BarkText;
 
@@ -99,6 +116,7 @@ struct Placement {
     waited: u32,
     settled: bool,
 }
+
 impl Placement {
     /// The world ground position a distance along the path from the start and across it.
     fn ground(&self, along: f32, across: f32) -> [f64; 2] {
@@ -110,6 +128,7 @@ impl Placement {
             anchor[2] + f64::from(offset.y),
         ]
     }
+
     fn direction(&self) -> Vec2 {
         let (_, forward) = self.anchor.expect("anchor known");
         Vec2::from_angle(BEARINGS[self.attempt].to_radians()).rotate(forward)
@@ -125,6 +144,7 @@ struct Places {
     /// Where an actor sent to an area walks to, in the area's world.
     targets: HashMap<AreaId, (WorldSpaceId, [f64; 2])>,
 }
+
 impl Places {
     fn new(story: &Story, catalog: &WorldCatalog, origin: &WorldOrigin, at: &Placement) -> Self {
         let mut areas: Vec<GameplayArea> = catalog
@@ -135,11 +155,13 @@ impl Places {
             .cloned()
             .collect();
         let painted = areas.len();
+
         if let Some(space) = origin.space() {
             for (name, along, across) in STAND_INS {
                 if story.area(name).is_none() || areas.iter().any(|area| area.name == name) {
                     continue;
                 }
+
                 let corners = [(0, 0), (1, 0), (1, 1), (0, 1)];
                 areas.push(GameplayArea {
                     name: name.into(),
@@ -149,6 +171,7 @@ impl Places {
                 });
             }
         }
+
         info!(
             "Story areas: {painted} painted in the world, {} stand-ins",
             areas.len() - painted
@@ -161,6 +184,7 @@ impl Places {
             .iter()
             .map(|area| (ids[&area.name], (area.space, area.interior_point())))
             .collect();
+
         // Content that sends someone to an area the world lacks would fail every such walk.
         for missing in story
             .declared_areas()
@@ -168,6 +192,7 @@ impl Places {
         {
             warn!("Story: the world has no area named {missing}");
         }
+
         Self {
             index: GameplayAreaIndex::new(Arc::from(areas)),
             ids,
@@ -341,17 +366,21 @@ fn place(
     if let Some(adopted) = adopted.read().last() {
         placement.yaw = Some(adopted.0.yaw_degrees.to_radians());
     }
+
     if placement.settled {
         return;
     }
+
     let Some(space) = origin.space() else {
         return;
     };
+
     // Taken before anything moves: a bearing is judged by where its actors came to rest.
     let heights = [guard.translation.y, gate.translation.y];
     let mut position = |placement: &Placement| {
         [**guard, **gate, **companion, **dummy] = stand(placement, &origin, &catalog);
     };
+
     if placement.anchor.is_none() {
         placement.waited += 1;
         let yaw = placement
@@ -366,19 +395,23 @@ fn place(
         let Some((_, anchor)) = origin.to_world(&catalog, player.translation) else {
             return;
         };
+
         // The camera sits at +(sin yaw, cos yaw) from the player and looks back at it.
         placement.anchor = Some((anchor, -Vec2::new(yaw.sin(), yaw.cos())));
         placement.attempt = 0;
         position(&placement);
         return;
     }
+
     if heights.contains(&UNGROUNDED) {
         return; // terrain under them has not streamed in yet
     }
+
     let sea = catalog.world_space(space).and_then(|s| s.sea_level);
     let anchor = placement.anchor.expect("anchor set above").0[1] as f32;
     let usable = |y: f32| sea.is_none_or(|sea| y > sea + 0.3) && (y - anchor).abs() < 8.0;
     let last = placement.attempt + 1 == BEARINGS.len();
+
     if heights.into_iter().all(usable) || last {
         placement.settled = true;
         info!(
@@ -436,10 +469,12 @@ fn report(
             .filter_map(|area| places.ids.get(&area.name).copied())
             .collect()
     };
+
     if story.areas(actor) != &areas {
         let names: Vec<String> = areas.iter().map(AreaId::to_string).collect();
         info!("Story: {actor} is now in [{}]", names.join(", "));
     }
+
     story.observe(actor, position, areas);
 }
 
@@ -481,6 +516,7 @@ fn walk(
     if !placement.settled {
         return;
     }
+
     // A walk for an actor the scene has no body for, or for the player, cannot happen.
     let drivable: HashSet<ActorId> = actors.iter().map(|(actor, _)| actor.0).collect();
     let stranded: Vec<(ActorId, u64)> = story
@@ -488,10 +524,12 @@ fn walk(
         .filter(|m| !drivable.contains(&m.actor))
         .map(|m| (m.actor, m.request))
         .collect();
+
     for (actor, request) in stranded {
         info!("Story: nothing here can walk {actor}");
         story.move_failed(actor, request);
     }
+
     for (actor, mut intent) in &mut actors {
         let Some((to, request)) = story.movement(actor.0).map(|m| (m.to, m.request)) else {
             // A walk that arrived carries on to the middle of its area; one that was given
@@ -503,6 +541,7 @@ fn walk(
                     actor.0,
                     if arrived { "reached" } else { "gave up on" }
                 );
+
                 if !arrived {
                     intent.clear();
                 }
@@ -518,9 +557,11 @@ fn walk(
             story.move_failed(actor.0, request);
             continue;
         };
+
         if walking.insert(actor.0, to) != Some(to) {
             info!("Story: {} walks to {to}", actor.0);
         }
+
         if story.in_conversation() {
             // The world waits for a conversation.
             if intent.destination().is_some() {
@@ -546,11 +587,14 @@ fn restore(
     if *seen == story.loads() {
         return;
     }
+
     *seen = story.loads();
+
     for (actor, mut transform, mut intent) in &mut actors {
         // Saved positions do not name a world yet; they are in the one the game is in.
         let saved = story.position(actor.0).zip(origin.space());
         let saved = saved.and_then(|(position, space)| origin.to_render(&catalog, space, position));
+
         if let Some(position) = saved {
             transform.translation = position;
             intent.clear();
@@ -561,6 +605,7 @@ fn restore(
 fn near_guard(player: &Transform, guard: &Transform) -> bool {
     player.translation.distance(guard.translation) < TALK_RANGE
 }
+
 fn within(player: &Transform, other: &Transform, range: f32) -> bool {
     player.translation.distance(other.translation) < range
 }
@@ -590,10 +635,13 @@ fn input(
         story.record(positions);
         story.quicksave();
     }
+
     if keys.just_pressed(KeyCode::F9) && placement.settled {
         story.quickload();
     }
+
     handle(&mut story, &keys, &placement, &player, &guard, &dummy);
+
     // Before movement runs, so a conversation holds the player on the frame it opens.
     suspended.hold("conversation", story.in_conversation());
 }
@@ -610,6 +658,7 @@ fn handle(
         if !placement.settled {
             return;
         }
+
         if near_guard(player, guard) {
             if keys.just_pressed(KeyCode::KeyE) {
                 story.talk(None);
@@ -619,10 +668,12 @@ fn handle(
                 story.talk(Some(topic));
             }
         }
+
         // Walking away from the dummy gives the fight up.
         if story.busy() && !within(player, dummy, DISENGAGE_RANGE) {
             story.stop();
         }
+
         if within(player, dummy, STRIKE_RANGE) {
             if keys.just_pressed(KeyCode::KeyF) {
                 story.strike();
@@ -631,12 +682,15 @@ fn handle(
                 story.power_strike();
             }
         }
+
         if keys.just_pressed(KeyCode::KeyV) {
             story.stop();
         }
+
         if keys.just_pressed(KeyCode::KeyH) {
             story.drink();
         }
+
         for (key, stat) in [
             (KeyCode::KeyZ, "strength"),
             (KeyCode::KeyX, "wisdom"),
@@ -646,11 +700,14 @@ fn handle(
                 story.spend(stat);
             }
         }
+
         return;
     }
+
     if keys.any_just_pressed([KeyCode::Space, KeyCode::Enter]) {
         story.advance();
     }
+
     if keys.just_pressed(KeyCode::KeyQ) {
         story.leave();
     }
@@ -696,6 +753,7 @@ fn present(
     let target = if story.gate_locked() { 0.0 } else { 1.9 };
     let (current, _, _) = hinge.rotation.to_euler(EulerRot::YXZ);
     let step = (target - current).clamp(-1.0, 1.0) * (time.delta_secs() * 3.0).min(1.0);
+
     if step.abs() > 1e-4 {
         hinge.rotation = Quat::from_rotation_y(current + step);
     }
@@ -704,9 +762,11 @@ fn present(
     let near = placement.settled && near_guard(&player, &guard);
     let sparring = placement.settled && within(&player, &dummy, STRIKE_RANGE);
     let current = (story.revision(), near, sparring);
+
     if *shown == Some(current) {
         return;
     }
+
     *shown = Some(current);
     let (speaker, body) = match story.panel() {
         Some(Panel {
@@ -726,9 +786,11 @@ fn present(
         }
         None if near => {
             let mut hint = format!("[E] Talk to {}", story.guard_name());
+
             if let Some((_, topic)) = story.topic() {
                 hint.push_str(&format!("    [T] {topic}"));
             }
+
             (String::new(), hint)
         }
         None if sparring => (
@@ -737,6 +799,7 @@ fn present(
         ),
         None => (String::new(), String::new()),
     };
+
     // A conversation that just ended releases the player.
     suspended.hold("conversation", story.in_conversation());
     **panel_box = if body.is_empty() {
@@ -750,33 +813,42 @@ fn present(
     summary.push_str(&story.character());
     summary.push_str("    [H] Potion");
     let (attribute, learning) = story.points();
+
     if attribute + learning > 0 {
         summary.push_str(&format!(
             "\nUnspent: {attribute} attribute [Z] Strength [X] Wisdom [C] Vitality, \
              {learning} learning (ask the guard about lessons)"
         ));
     }
+
     if sparring || story.busy() {
         summary.push('\n');
         summary.push_str(&story.fight());
     }
+
     if !story.notice.is_empty() {
         summary = format!("{}\n{summary}", story.notice);
     }
+
     texts.p0().0 = speaker;
     texts.p1().0 = body;
+
     if texts.p2().0 != summary {
         // The log follows the quest line; the sheet and the fight change many times a second.
         let headline = |text: &str| text.lines().next().unwrap_or_default().to_owned();
+
         if headline(&texts.p2().0) != headline(&summary) {
             info!("Story status: {}", headline(&summary));
         }
+
         texts.p2().0 = summary;
     }
+
     let bark = match story.bark() {
         Some(Bark { speaker, text }) => format!("{speaker}: {text}"),
         None => String::new(),
     };
+
     if texts.p3().0 != bark {
         if !bark.is_empty() {
             info!("Story bark: {bark}");

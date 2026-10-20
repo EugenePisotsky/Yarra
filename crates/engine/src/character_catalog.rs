@@ -266,6 +266,7 @@ impl CharacterPresentationCatalog {
                 self.schema_version
             ));
         }
+
         if self.skeletons.is_empty()
             || self.models.is_empty()
             || self.animation_banks.is_empty()
@@ -314,18 +315,23 @@ impl CharacterPresentationCatalog {
             .iter()
             .map(|definition| definition.id.as_str())
             .collect::<HashSet<_>>();
+
         for skeleton in &self.skeletons {
             validate_name("skeleton", &skeleton.id, &skeleton.name)?;
         }
+
         for model in &self.models {
             validate_name("model", &model.id, &model.name)?;
+
             if !skeleton_ids.contains(model.skeleton.as_str()) {
                 return Err(format!(
                     "model {:?} references unknown skeleton {:?}",
                     model.id, model.skeleton
                 ));
             }
+
             validate_asset_path("model", &model.id, &model.visual.asset)?;
+
             if model
                 .visual
                 .translation_m
@@ -341,24 +347,30 @@ impl CharacterPresentationCatalog {
                 ));
             }
         }
+
         for bank in &self.animation_banks {
             validate_name("animation bank", &bank.id, &bank.name)?;
+
             if !skeleton_ids.contains(bank.skeleton.as_str()) {
                 return Err(format!(
                     "animation bank {:?} references unknown skeleton {:?}",
                     bank.id, bank.skeleton
                 ));
             }
+
             validate_asset_path("animation bank", &bank.id, &bank.asset)?;
         }
+
         for clip in &self.clips {
             validate_name("animation clip", &clip.id, &clip.name)?;
+
             if self.bank(&clip.bank).is_none() {
                 return Err(format!(
                     "animation clip {:?} references unknown bank {:?}",
                     clip.id, clip.bank
                 ));
             }
+
             if clip.animation.trim().is_empty() {
                 return Err(format!(
                     "animation clip {:?} has an empty GLTF name",
@@ -366,17 +378,21 @@ impl CharacterPresentationCatalog {
                 ));
             }
         }
+
         for set in &self.movement_sets {
             validate_name("movement set", &set.id, &set.name)?;
+
             if !skeleton_ids.contains(set.skeleton.as_str()) {
                 return Err(format!(
                     "movement set {:?} references unknown skeleton {:?}",
                     set.id, set.skeleton
                 ));
             }
+
             self.validate_movement_set_clips(set)?;
             validate_movement_tuning(set)?;
         }
+
         for profile in &self.profiles {
             validate_name("presentation profile", &profile.id, &profile.name)?;
             let Some(model) = self.model(&profile.model) else {
@@ -385,28 +401,34 @@ impl CharacterPresentationCatalog {
                     profile.id, profile.model
                 ));
             };
+
             if profile.movement_sets.is_empty() {
                 return Err(format!(
                     "presentation profile {:?} has no movement-set bindings",
                     profile.id
                 ));
             }
+
             validate_semantic_id("movement context", &profile.default_movement_context)?;
             let mut contexts = HashSet::new();
+
             for binding in &profile.movement_sets {
                 validate_semantic_id("movement context", &binding.context)?;
+
                 if !contexts.insert(binding.context.as_str()) {
                     return Err(format!(
                         "presentation profile {:?} repeats movement context {:?}",
                         profile.id, binding.context
                     ));
                 }
+
                 let Some(set) = self.movement_set(&binding.movement_set) else {
                     return Err(format!(
                         "presentation profile {:?} references unknown movement set {:?}",
                         profile.id, binding.movement_set
                     ));
                 };
+
                 if model.skeleton != set.skeleton {
                     return Err(format!(
                         "presentation profile {:?} combines model {:?} and movement set {:?} with different skeletons",
@@ -414,6 +436,7 @@ impl CharacterPresentationCatalog {
                     ));
                 }
             }
+
             if !contexts.contains(profile.default_movement_context.as_str()) {
                 return Err(format!(
                     "presentation profile {:?} has no binding for default movement context {:?}",
@@ -421,6 +444,7 @@ impl CharacterPresentationCatalog {
                 ));
             }
         }
+
         Ok(())
     }
 
@@ -488,6 +512,7 @@ impl CharacterPresentationCatalog {
             ("jog", set.jog.clip.as_str()),
         ];
         let mut expected_bank = None;
+
         for (role, clip_id) in roles {
             let Some(clip) = self.clip(clip_id) else {
                 return Err(format!(
@@ -495,21 +520,25 @@ impl CharacterPresentationCatalog {
                     set.id
                 ));
             };
+
             if clip.playback != ClipPlayback::Loop {
                 return Err(format!(
                     "movement set {:?} requires looping {role} clip {clip_id:?}",
                     set.id
                 ));
             }
+
             let bank = self
                 .bank(&clip.bank)
                 .expect("animation clip banks were validated before movement sets");
+
             if bank.skeleton != set.skeleton {
                 return Err(format!(
                     "movement set {:?} and {role} clip {clip_id:?} use different skeletons",
                     set.id
                 ));
             }
+
             if let Some(expected_bank) = expected_bank {
                 if expected_bank != bank.id {
                     return Err(format!(
@@ -521,6 +550,7 @@ impl CharacterPresentationCatalog {
                 expected_bank = Some(bank.id.as_str());
             }
         }
+
         Ok(())
     }
 }
@@ -530,12 +560,14 @@ fn validate_unique_ids<'a>(
     ids: impl IntoIterator<Item = &'a str>,
 ) -> Result<(), String> {
     let mut unique = HashSet::new();
+
     for id in ids {
         validate_semantic_id(kind, id)?;
         if !unique.insert(id) {
             return Err(format!("duplicate {kind} ID {id:?}"));
         }
     }
+
     Ok(())
 }
 
@@ -569,6 +601,7 @@ fn validate_asset_path(kind: &str, id: &str, path: &str) -> Result<(), String> {
 
 fn validate_movement_tuning(set: &MovementSetDefinition) -> Result<(), String> {
     let tuning = set.tuning;
+
     if !set.walk.speed_mps.is_finite()
         || set.walk.speed_mps <= 0.0
         || !set.jog.speed_mps.is_finite()
@@ -576,6 +609,7 @@ fn validate_movement_tuning(set: &MovementSetDefinition) -> Result<(), String> {
     {
         return Err(format!("movement set {:?} has invalid gait speeds", set.id));
     }
+
     if !tuning.input_dead_zone.is_finite()
         || !(0.0..1.0).contains(&tuning.input_dead_zone)
         || !tuning.input_response_exponent.is_finite()
@@ -590,6 +624,7 @@ fn validate_movement_tuning(set: &MovementSetDefinition) -> Result<(), String> {
             set.id
         ));
     }
+
     let positive_durations = [
         tuning.walk_acceleration_seconds,
         tuning.jog_acceleration_seconds,
@@ -598,6 +633,7 @@ fn validate_movement_tuning(set: &MovementSetDefinition) -> Result<(), String> {
         tuning.start_blend_seconds,
         tuning.stop_blend_seconds,
     ];
+
     if positive_durations
         .iter()
         .any(|value| !value.is_finite() || *value <= 0.0)
@@ -613,6 +649,7 @@ fn validate_movement_tuning(set: &MovementSetDefinition) -> Result<(), String> {
             set.id
         ));
     }
+
     Ok(())
 }
 

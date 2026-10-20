@@ -3,13 +3,17 @@ use crate::catalog::{
     query_world_spaces, read_vegetation_catalog, terrain_profile_from_row,
     terrain_surface_from_row, terrain_texture_set_from_row,
 };
+
 use crate::storage::{blob_array, ensure_schema_version, immutable_uri};
+
 use crate::{
     CellDescriptor, EncodedPage, MAX_CELL_DESCRIPTOR_QUERY, PageDependency, RuntimeManifest,
     RuntimeObjectDefinition, RuntimeTerrainSurface, TerrainRenderResources, WorldDbError,
 };
+
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 use std::path::Path;
+
 use world::{
     AssetId, CellCoord, ObjectActivationPolicy, ObjectDefinitionId, PageCodec, PageKey,
     RUNTIME_SCHEMA_VERSION, WorldSpaceId,
@@ -77,6 +81,7 @@ impl RuntimeReader {
         connection.execute_batch("PRAGMA query_only = ON; PRAGMA foreign_keys = ON;")?;
         ensure_schema_version(&connection, RUNTIME_SCHEMA_VERSION, "runtime")?;
         let manifest = read_runtime_manifest(&connection)?;
+
         if manifest.schema_version != RUNTIME_SCHEMA_VERSION {
             return Err(WorldDbError::SchemaVersion {
                 database: "runtime",
@@ -84,6 +89,7 @@ impl RuntimeReader {
                 actual: manifest.schema_version,
             });
         }
+
         Ok(Self {
             connection,
             manifest,
@@ -103,18 +109,23 @@ impl RuntimeReader {
         if minimum.x > maximum.x || minimum.z > maximum.z {
             return Err(WorldDbError::InvalidSpatialQueryBounds { minimum, maximum });
         }
+
         let width = (i64::from(maximum.x) - i64::from(minimum.x) + 1) as u64;
         let depth = (i64::from(maximum.z) - i64::from(minimum.z) + 1) as u64;
+
         if width > MAX_CELL_DESCRIPTOR_QUERY as u64
             || depth > MAX_CELL_DESCRIPTOR_QUERY as u64
             || width * depth > MAX_CELL_DESCRIPTOR_QUERY as u64
         {
             return Err(WorldDbError::InvalidQueryLimit);
         }
+
         let mut statement = self.connection.prepare_cached(CELL_DESCRIPTOR_SQL)?;
+
         // A seek per X row bounds visited rows even for a world with millions of
         // cells outside the requested Z range. A broad BETWEEN on X cannot do that.
         let mut result = Vec::new();
+
         for x in minimum.x..=maximum.x {
             let rows = statement.query_map(params![space.0, x, minimum.z, maximum.z], |row| {
                 let domain_mask: i64 = row.get(4)?;
@@ -132,6 +143,7 @@ impl RuntimeReader {
                 result.push(row?);
             }
         }
+
         Ok(result)
     }
 
@@ -323,11 +335,13 @@ pub(crate) fn read_runtime_manifest(
     )?;
     manifest.start_view = crate::storage::decode_start_view(start_view)?;
     manifest.gameplay_areas = crate::gameplay_areas::decode(&gameplay_areas)?;
+
     if manifest.world_space(manifest.default_world_space).is_none() {
         return Err(WorldDbError::UnknownDefaultWorldSpace(
             manifest.default_world_space,
         ));
     }
+
     Ok(manifest)
 }
 

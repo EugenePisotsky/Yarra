@@ -14,10 +14,12 @@ impl LoadedProject {
         let manifest = repository.manifest().clone();
         let mut records = Vec::new();
         let mut headers = Vec::new();
+
         for kind in AssetKind::ALL {
             headers.extend(repository.headers(kind)?);
             records.extend(repository.read_kind(kind)?);
         }
+
         require(
             headers.len() == records.len(),
             "publication asset count mismatch",
@@ -52,6 +54,7 @@ impl LoadedProject {
         let mut scripts = BTreeMap::new();
         let mut loot = BTreeMap::new();
         let mut text = BTreeMap::new();
+
         for record in records {
             match record {
                 Asset::DialogueContract(v) => {
@@ -105,6 +108,7 @@ impl LoadedProject {
                 }
             }
         }
+
         let content = GameContent {
             text,
             manifest: manifest.content,

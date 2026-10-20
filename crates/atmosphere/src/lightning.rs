@@ -8,13 +8,18 @@ use bevy::math::Vec3;
 
 /// Segments of one channel: the main channel and its branches.
 pub(crate) const SEGMENTS: usize = 16;
+
 const MAIN: usize = 10;
+
 /// Seconds a strike lasts, afterglow included.
 pub(crate) const DURATION: f32 = 1.2;
+
 /// Linear colour of the flash, and the ambient light (Bevy's brightness) a close strike adds at
 /// its peak. The cloud deck spreads it: a flash lights the ground from everywhere.
 pub(crate) const FLASH_COLOR: [f32; 3] = [0.85, 0.9, 1.0];
+
 pub(crate) const FLASH_AMBIENT: f32 = 2000.0;
+
 /// Light a close strike's flash scatters from the cloud deck and the rain haze, unexposed.
 pub(crate) const FLASH_SKY: f32 = 9000.0;
 
@@ -68,13 +73,17 @@ pub fn envelope(seed: u32, age: f32) -> (f32, f32) {
     if !(0.0..DURATION).contains(&age) {
         return (0.0, 0.0);
     }
+
     let mut flash = 0.0;
     let mut channel = 0.0_f32;
+
     for (k, at) in strokes(seed).enumerate() {
         let since = age - at;
+
         if since < 0.0 {
             continue;
         }
+
         // The first stroke is the brightest.
         let strength = if k == 0 {
             1.0
@@ -84,6 +93,7 @@ pub fn envelope(seed: u32, age: f32) -> (f32, f32) {
         channel = channel.max(strength * (-since / 0.035).exp());
         flash += strength * (-since / 0.06).exp();
     }
+
     // The clouds' afterglow fades over the rest of the second.
     flash += 0.12 * (1.0 - age / DURATION);
     (flash.min(1.5), channel.min(1.0))
@@ -98,6 +108,7 @@ pub fn channel(strike: &Strike) -> [[f32; 4]; 2 * SEGMENTS] {
     let mut segments = [[0.0; 4]; 2 * SEGMENTS];
     let mut point = strike.ground + Vec3::Y * height;
     let mut points = [point; MAIN + 1];
+
     for i in 0..MAIN {
         // Each step wanders sideways, and the channel ends on the strike point.
         let left = (MAIN - i) as f32;
@@ -118,12 +129,14 @@ pub fn channel(strike: &Strike) -> [[f32; 4]; 2 * SEGMENTS] {
         point = next;
         points[i + 1] = next;
     }
+
     // Branches fork from the upper channel, two segments each, thinner and dimmer.
     for b in 0..(SEGMENTS - MAIN) / 2 {
         let from = 1 + (hash(seed, 200 + b as u32) * (MAIN as f32 * 0.6)) as usize;
         let mut point = points[from];
         let angle = hash(seed, 210 + b as u32) * std::f32::consts::TAU;
         let out = Vec3::new(angle.cos(), 0.0, angle.sin());
+
         for s in 0..2 {
             let next = point + out * step * (0.5 + 0.4 * hash(seed, 220 + b as u32 * 2 + s))
                 - Vec3::Y * step * (0.5 + 0.5 * hash(seed, 230 + b as u32 * 2 + s));
@@ -133,6 +146,7 @@ pub fn channel(strike: &Strike) -> [[f32; 4]; 2 * SEGMENTS] {
             point = next;
         }
     }
+
     segments
 }
 
@@ -166,6 +180,7 @@ mod tests {
         for seed in 0..50 {
             let (peak, channel) = envelope(seed, 0.0);
             assert!(peak > 1.0 && channel == 1.0, "{seed}");
+
             // Between strokes the channel dims; afterwards only the afterglow is left.
             let (late, dark) = envelope(seed, 0.9);
             assert!(late < 0.1 && dark < 0.01, "{seed} {late} {dark}");
@@ -184,17 +199,21 @@ mod tests {
             let bottom = Vec3::from_slice(&segments[2 * MAIN - 1][..3]);
             assert!((top.y - s.base).abs() < 1e-3);
             assert!(bottom.distance(s.ground) < 1e-3);
+
             // Connected, falling all the way, and never far from the strike's column.
             for i in 0..MAIN {
                 let a = Vec3::from_slice(&segments[2 * i][..3]);
                 let b = Vec3::from_slice(&segments[2 * i + 1][..3]);
                 assert!(b.y < a.y, "{seed}");
+
                 if i > 0 {
                     assert_eq!(segments[2 * i - 1], segments[2 * i]);
                 }
+
                 let off = (a - s.ground).with_y(0.0).length();
                 assert!(off < s.base - s.ground.y, "{seed}");
             }
+
             for branch in &segments[2 * MAIN..] {
                 assert!(branch[3] < 1.0 && branch[1] > s.ground.y - 200.0);
             }

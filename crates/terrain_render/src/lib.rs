@@ -3,6 +3,7 @@ mod environment;
 mod heightfield_mesh;
 mod material;
 mod page_material;
+
 // Submodules share these through `use super::*`.
 use bevy::{
     asset::RenderAssetUsages,
@@ -13,13 +14,18 @@ use bevy::{
     render::storage::ShaderBuffer,
     shader::ShaderRef,
 };
+
 pub use heightfield_mesh::build_heightfield_mesh;
+
 #[cfg(test)]
 use material::TERRAIN_SHADER;
+
 pub(crate) use material::TerrainMaterialUniform;
+
 pub use material::{
     TerrainMacroVariation, TerrainMaterial, TerrainMaterialKey, TerrainShadingMode,
 };
+
 pub use page_material::{
     PrepareTerrainMaterialContext, PreparedTerrainMaterial, TerrainSurfaceLayer,
     prepare_terrain_material,

@@ -3,19 +3,22 @@
 
 use bevy::prelude::*;
 use std::collections::HashMap;
+
 use vegetation::{
     VegetationCatalog, VegetationFieldPage, VegetationFieldPageData, VegetationScene,
     VegetationSurfaceField,
 };
+
 use vegetation_render::{
     GrassBender, GrassBenders, MAX_GRASS_BENDERS, VegetationLodFocus, VegetationRenderPlugin,
     VegetationSceneState, VegetationTerrainGate,
 };
+
 use world::{CellCoord, PageKey, WorldSpaceId};
 
 use crate::{
-    ClipmapTerrain, StreamedTerrainSurface, StreamedVegetationFieldPage, WorldCatalog,
-    WorldOrigin, WorldStreamingSystems, WorldViewpoint,
+    ClipmapTerrain, StreamedTerrainSurface, StreamedVegetationFieldPage, WorldCatalog, WorldOrigin,
+    WorldStreamingSystems, WorldViewpoint,
 };
 
 /// Installs the renderer, joins published resident sources and updates grass focus. Requires
@@ -81,6 +84,7 @@ fn list_grass_benders(
             velocity: motion.displacement.normalize_or_zero() * motion.speed_mps,
             radius: BENDER_RADIUS,
         }));
+
     if benders.benders.len() > MAX_GRASS_BENDERS {
         let centre = focus.position.unwrap_or(Vec3::ZERO);
         benders.benders.sort_by(|a, b| {
@@ -160,6 +164,7 @@ fn sync_scene(
                 })
                 .expect("clearing vegetation preserves a validated catalog");
         }
+
         *previous = default();
         return;
     };
@@ -190,6 +195,7 @@ fn sync_scene(
     let edited = pairs.iter().any(|&(field, surface)| {
         fields.get(field).unwrap().1.is_changed() || terrain.get(surface).unwrap().1.is_changed()
     });
+
     if previous.pairs == pairs
         && previous.frame == Some(frame)
         && !catalog.is_changed()
@@ -198,10 +204,13 @@ fn sync_scene(
     {
         return;
     }
+
     let mut source_catalog = source_catalog.clone();
+
     if let Some(looks) = &looks.0 {
         source_catalog.adopt_looks(looks);
     }
+
     let pages = pairs
         .iter()
         .map(|&(field, surface)| {
@@ -257,6 +266,7 @@ fn gate_grass_on_ground(
         block_all: !terrain.has_ground(),
         ..default()
     };
+
     if !next.block_all {
         next.blocked_pages = scene
             .scene()
@@ -270,6 +280,7 @@ fn gate_grass_on_ground(
             .map(VegetationTerrainGate::page_id)
             .collect();
     }
+
     gate.set_if_neq(next);
 }
 
@@ -283,6 +294,7 @@ fn update_lod_focus(
         if Some(position.space) != origin.space() {
             return None;
         }
+
         let space = catalog.world_space(position.space)?;
         Some(Vec3::from_array(
             position.relative_to(origin.cell(), space.cell_size),

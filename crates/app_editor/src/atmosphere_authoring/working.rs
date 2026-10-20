@@ -11,6 +11,7 @@ pub(crate) struct Snapshot {
     pub base: AtmosphereProfile,
     pub current: AtmosphereProfile,
 }
+
 #[derive(Default)]
 pub(crate) struct WorkingSet {
     pub entries: BTreeMap<WorldSpaceId, Snapshot>,
@@ -20,6 +21,7 @@ pub(crate) struct WorkingSet {
     pub conflict: Option<(WorldSpaceId, i64, AtmosphereProfile)>,
     pub gesture: Option<(WorldSpaceId, AtmosphereProfile)>,
 }
+
 impl WorkingSet {
     pub fn pin(&mut self, source: &WorldSpaceRecord) {
         self.entries.entry(source.id).or_insert_with(|| Snapshot {
@@ -29,19 +31,23 @@ impl WorkingSet {
             current: source.atmosphere.clone(),
         });
     }
+
     pub fn dirty_count(&self) -> usize {
         self.entries
             .values()
             .filter(|e| e.base != e.current)
             .count()
     }
+
     pub fn blocked(&self) -> bool {
         self.saving.is_some() || self.gesture.is_some() || self.conflict.is_some()
     }
+
     pub fn apply(&mut self, space: WorldSpaceId, profile: &AtmosphereProfile) -> bool {
         if self.blocked() || profile.validate().is_err() {
             return false;
         }
+
         let Some(entry) = self.entries.get_mut(&space) else {
             return false;
         };
@@ -50,38 +56,47 @@ impl WorkingSet {
         self.error = None;
         true
     }
+
     pub fn finish_gesture(
         &mut self,
     ) -> Option<(WorldSpaceId, AtmosphereProfile, AtmosphereProfile)> {
         let (space, before) = self.gesture.take()?;
         let after = self.entries.get(&space)?.current.clone();
+
         if before == after {
             return None;
         }
+
         self.revision += 1;
         Some((space, before, after))
     }
+
     pub fn cancel_gesture(&mut self) {
         if let Some((space, before)) = self.gesture.take() {
             self.entries.get_mut(&space).unwrap().current = before;
         }
     }
+
     pub fn journal(&self) -> Vec<Snapshot> {
         self.entries
             .values()
             .filter_map(|entry| {
                 let mut entry = entry.clone();
+
                 if let Some((space, before)) = &self.gesture
                     && *space == entry.space
                 {
                     entry.current = before.clone();
                 }
+
                 (entry.base != entry.current).then_some(entry)
             })
             .collect()
     }
+
     pub fn restore(&mut self, snapshots: Vec<Snapshot>) -> usize {
         let mut count = 0;
+
         for snapshot in snapshots.into_iter().take(32) {
             if snapshot.base.validate().is_err()
                 || snapshot.current.validate().is_err()
@@ -98,13 +113,16 @@ impl WorkingSet {
                 count += 1;
             }
         }
+
         self.revision += 1;
         count
     }
+
     pub fn queue_save(&mut self, store: &mut ProjectEditorStore) -> bool {
         if self.blocked() {
             return false;
         }
+
         let writes = self
             .entries
             .values()
@@ -119,6 +137,7 @@ impl WorkingSet {
         self.error = None;
         self.saving.is_some()
     }
+
     pub fn complete(&mut self, result: Result<AtmosphereWriteResult, String>) -> bool {
         self.saving = None;
         match result {
@@ -129,6 +148,7 @@ impl WorkingSet {
                         entry.base = profile;
                     }
                 }
+
                 self.revision += 1;
                 self.error = None;
                 true
@@ -151,15 +171,18 @@ impl WorkingSet {
             }
         }
     }
+
     pub fn resolve_conflict(&mut self, keep_local: bool) {
         if let Some((id, revision, actual)) = self.conflict.take() {
             if let Some(entry) = self.entries.get_mut(&id) {
                 entry.revision = revision;
                 entry.base = actual.clone();
+
                 if !keep_local {
                     entry.current = actual;
                 }
             }
+
             self.revision += 1;
             self.error = None;
         }

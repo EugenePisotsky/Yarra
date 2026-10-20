@@ -1,10 +1,12 @@
 //! Translate source payloads into ECS entities.
 use super::PreparedPage;
 use crate::object_lod::{ObjectFootprint, ScreenSpaceLod, ScreenSpaceLodVariant};
+
 use crate::world_streaming::{
     GameplayObject, GeneratedEnvironmentObject, StreamedPageEntity, StreamedTerrainSurface,
     StreamedTerrainWear, StreamedVegetationFieldPage, StreamedVisualObject,
 };
+
 use bevy::prelude::*;
 use std::collections::HashMap;
 use vegetation::VegetationCatalog;
@@ -64,6 +66,7 @@ pub(super) fn attach_page(
         asset_variants: page_asset_variants(&prepared.dependencies, gpu_trees),
         ..default()
     };
+
     match prepared.decoded.payload {
         PagePayload::TerrainHeightfield(terrain) => attach_terrain_source(
             &mut attachment,
@@ -110,6 +113,7 @@ pub(super) fn attach_page(
             &prepared.definitions,
         )?,
     }
+
     Ok(attachment)
 }
 
@@ -128,24 +132,30 @@ fn attach_static_objects(
     gpu_trees: bool,
 ) -> Result<(), String> {
     let mut dependencies: HashMap<AssetId, Vec<&PageDependency>> = HashMap::new();
+
     for dependency in dependencies_of_page {
         dependencies
             .entry(dependency.asset)
             .or_default()
             .push(dependency);
     }
+
     for variants in dependencies.values_mut() {
         variants.sort_by_key(|variant| variant.asset_lod);
     }
+
     // Validate the whole page first: a late error must not orphan earlier entities.
     for instance in &objects.instances {
         let dependencies = dependencies
             .get(&instance.asset)
             .ok_or_else(|| format!("object {:?} has no cooked asset dependency", instance.id))?;
+
         if dependencies.is_empty() {
             return Err(format!("asset {:?} has no LOD variants", instance.asset));
         }
+
         let mut previous_minimum = f32::INFINITY;
+
         // Only the last LOD may be an impostor, and a mesh must come before it.
         for (i, dependency) in dependencies.iter().enumerate() {
             if world::is_impostor_uri(&dependency.uri) && (i == 0 || i + 1 != dependencies.len()) {
@@ -155,6 +165,7 @@ fn attach_static_objects(
                 ));
             }
         }
+
         for dependency in dependencies {
             if dependency.kind != "gltf-scene" {
                 return Err(format!(
@@ -162,15 +173,18 @@ fn attach_static_objects(
                     dependency.asset, dependency.kind
                 ));
             }
+
             if dependency.minimum_screen_height > previous_minimum {
                 return Err(format!(
                     "asset {:?} LOD thresholds are not descending",
                     dependency.asset
                 ));
             }
+
             previous_minimum = dependency.minimum_screen_height;
         }
     }
+
     // Impostor LODs have no scene here: far-object blocks draw them.
     for instance in objects.instances {
         let dependencies = &dependencies[&instance.asset];
@@ -200,6 +214,7 @@ fn attach_static_objects(
             StreamedPageEntity(key),
             Name::new(format!("Streamed object {:?}", instance.id)),
         ));
+
         if !drawn_on_gpu {
             let variants: Vec<_> = dependencies
                 .iter()
@@ -216,15 +231,19 @@ fn attach_static_objects(
             lod.spawn_scenes(&mut object);
             object.insert(lod);
         }
+
         let entity = object.id();
+
         if instance.generated {
             commands.entity(entity).insert(GeneratedEnvironmentObject {
                 space: key.space,
                 cell: key.cell,
             });
         }
+
         attachment.entities.push(entity);
     }
+
     Ok(())
 }
 
@@ -241,6 +260,7 @@ fn attach_gameplay_objects(
         .iter()
         .map(|definition| (definition.id, definition))
         .collect();
+
     // Validate the whole page first: a late error must not orphan earlier entities.
     for instance in &objects.instances {
         let definition = definitions.get(&instance.definition).ok_or_else(|| {
@@ -256,6 +276,7 @@ fn attach_gameplay_objects(
             ));
         }
     }
+
     for instance in objects.instances {
         let definition = &definitions[&instance.definition];
         let translation = Vec3::new(
@@ -279,6 +300,7 @@ fn attach_gameplay_objects(
         attachment.entities.push(entity);
         attachment.gameplay_objects += 1;
     }
+
     Ok(())
 }
 
@@ -299,6 +321,7 @@ pub(super) fn attach_terrain_source(
         ..
     } = terrain;
     heightfield.validate().map_err(|e| e.to_string())?;
+
     // The texture layer of each of the page's surfaces, which its wear's worn-to slots name.
     let wear = resources
         .map(|resources| {
@@ -327,9 +350,11 @@ pub(super) fn attach_terrain_source(
             Name::new(format!("Terrain source {}, {}", key.cell.x, key.cell.z)),
         ))
         .id();
+
     if let Some(wear) = wear {
         commands.entity(entity).insert(wear);
     }
+
     attachment.entities.push(entity);
     attachment.terrain_source_pages = 1;
     Ok(())

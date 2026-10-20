@@ -4,6 +4,7 @@ mod junctions;
 mod loader;
 mod viewport;
 pub(crate) mod working;
+
 use crate::{
     domain_editing::SourceWorkingSets,
     editing::EditorHistory,
@@ -11,6 +12,7 @@ use crate::{
     tools::{EditorToolRegistry, ROAD_TOOL},
     workspaces::EditorWorkspace,
 };
+
 use bevy::prelude::*;
 use bevy_egui::egui;
 use environment::{PresetKind, roads::*};
@@ -19,6 +21,7 @@ use world::{CellCoord, WorldSpaceId};
 use world_db::{RoadRecordKey, RoadSourceRecord};
 
 pub(crate) struct RoadAuthoringPlugin;
+
 impl Plugin for RoadAuthoringPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<RoadToolState>()
@@ -37,6 +40,7 @@ impl Plugin for RoadAuthoringPlugin {
             .add_systems(PostUpdate, viewport::draw);
     }
 }
+
 #[derive(Resource, Default)]
 pub(crate) struct RoadToolState {
     space: Option<WorldSpaceId>,
@@ -59,6 +63,7 @@ pub(crate) struct RoadToolState {
     ready_window: Option<(WorldSpaceId, RoadCellBounds)>,
     pub(super) refresh: u64,
 }
+
 impl RoadToolState {
     fn can_create_at(&self, space: WorldSpaceId, cell: CellCoord) -> bool {
         self.ready
@@ -66,6 +71,7 @@ impl RoadToolState {
                 .ready_window
                 .is_some_and(|(loaded, bounds)| loaded == space && bounds.contains(cell))
     }
+
     fn discovery_status(&self, space: WorldSpaceId) -> &'static str {
         if self.loaded_space == Some(space) {
             "Nearby roads · 5 × 5 cells around the editing focus"
@@ -73,6 +79,7 @@ impl RoadToolState {
             "Loading nearby road controls…"
         }
     }
+
     fn commit(
         &mut self,
         dense: &mut SourceWorkingSets,
@@ -98,6 +105,7 @@ impl RoadToolState {
         }
     }
 }
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn inspector(
     ui: &mut egui::Ui,
@@ -110,19 +118,24 @@ pub(crate) fn inspector(
 ) {
     ui.heading("Roads");
     ui.weak("Click a curve or point to select it. Drag points and cyan handles to shape the road. Esc cancels a drag.");
+
     if let Some(e) = &state.load_error {
         ui.colored_label(egui::Color32::YELLOW, e);
     }
+
     if let Some(e) = &state.status {
         ui.colored_label(egui::Color32::YELLOW, e);
     }
+
     if let Some(e) = &dense.roads.error {
         ui.colored_label(egui::Color32::YELLOW, e);
     }
+
     if let Some(e) = &preview.error {
         ui.colored_label(egui::Color32::YELLOW, format!("Preview: {e}"));
         ui.weak("Last valid terrain and grass remain visible.");
     }
+
     if dense.roads.conflict {
         if ui
             .button("Discard road edits and reload (clears undo)")
@@ -134,6 +147,7 @@ pub(crate) fn inspector(
         }
         return;
     }
+
     let Some(space) = space else { return };
     let Some(size) = dense.definition(space).map(|d| d.cell_size) else {
         ui.weak("Loading environment…");
@@ -226,6 +240,7 @@ pub(crate) fn inspector(
         };
         let mut next = source.clone();
         ui.separator();
+
         // Text remains in egui's temporary state until explicitly applied.
         let name_id = ui.make_persistent_id(("road-name", id.0));
         let mut name = ui
@@ -244,12 +259,14 @@ pub(crate) fn inspector(
         });
         if ui.button("Edit this shared style…").clicked() { state.style_request = Some((space, source.road.profile.into())); }
         ui.checkbox(&mut next.road.enabled, "Enabled");
+
         // Held in egui's temporary state while dragged; one change when let go.
         let traffic_id = ui.make_persistent_id(("road-traffic", id.0));
         let mut traffic = ui
             .data_mut(|d| d.get_temp::<f32>(traffic_id))
             .unwrap_or(source.road.traffic);
         let slider = ui.add(egui::Slider::new(&mut traffic, 0.0..=1.0).text("Traffic"));
+
         if slider.dragged() {
             ui.data_mut(|d| d.insert_temp(traffic_id, traffic));
         } else {
@@ -258,6 +275,7 @@ pub(crate) fn inspector(
                 next.road.traffic = traffic;
             }
         }
+
         ui.small("How much the road is used: two trampled lines when quiet, bare tracks with grass between at the middle, one bare band when busy.");
         egui::ComboBox::from_id_salt("road-direction")
             .selected_text(format!("{:?}", next.road.direction))
@@ -271,6 +289,7 @@ pub(crate) fn inspector(
                 }
             });
         ui.weak("Direction is source metadata; NPC routing is not connected yet.");
+
         if next != source {
             let changes = next.road.validate().map_err(|e| e.to_string()).and_then(|_| {
                 if next.road.profile != source.road.profile {
@@ -287,8 +306,10 @@ pub(crate) fn inspector(
             });
             state.commit(dense, history, changes);
         }
+
         if let Some(knot) = state.knot {
             ui.label("Selected point — drag the orange width handle to adjust shoulders.");
+
             if ui.button("Extend from this endpoint").clicked() {
                 state.branching = false;
                 state.connecting = false;
@@ -297,11 +318,14 @@ pub(crate) fn inspector(
                 state.creating = false;
                 state.status = Some("Click the next endpoint on the ground".into());
             }
+
             junctions::inspector(ui, state, dense, history, knot, size);
+
             if !junctions::ready(&dense.roads, knot) {
                 ui.weak("Loading adjoining curves…");
             }
         }
+
         if let Some(span) = state.span {
             ui.horizontal(|ui| {
                 if ui.button("Split curve").clicked() {
@@ -338,6 +362,7 @@ fn validate_route_style(
         Some(RoadSourceRecord::Road(r)) => Some(r.road.profile),
         _ => None,
     };
+
     for e in w.entries.values() {
         if let Some(RoadSourceRecord::Junction(j)) = &e.current
             && j.junction.profile != p.id
@@ -355,11 +380,13 @@ fn validate_route_style(
             );
         }
     }
+
     let saved = w.route_minimum_widths.get(&route).copied().flatten();
     let local = w.entries.values().filter_map(|e| match &e.current {
         Some(RoadSourceRecord::Knot(k)) if k.road == route => Some(k.knot.width),
         _ => None,
     });
+
     if saved
         .into_iter()
         .chain(local)
@@ -370,5 +397,6 @@ fn validate_route_style(
             p.minimum_width()
         ));
     }
+
     Ok(())
 }

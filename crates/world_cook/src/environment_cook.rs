@@ -13,6 +13,7 @@ pub(super) struct TerrainSlot {
     pub slot: u8,
     pub surface: TerrainSurfaceId,
 }
+
 pub(super) struct TerrainWeights {
     pub space: WorldSpaceId,
     pub cell: CellCoord,
@@ -21,12 +22,14 @@ pub(super) struct TerrainWeights {
     pub rgba: Vec<u8>,
     pub source_revision: i64,
 }
+
 pub(super) struct VegetationPage {
     pub space: WorldSpaceId,
     pub cell: CellCoord,
     pub data: VegetationFieldPageData,
     pub source_revision: i64,
 }
+
 pub(super) struct CookedEnvironment {
     pub objects: BTreeMap<(WorldSpaceId, CellCoord), Vec<world::StaticObjectInstance>>,
     pub terrain: BTreeMap<(WorldSpaceId, CellCoord), world::TerrainHeightfield>,
@@ -46,10 +49,12 @@ pub(super) fn prepare_plans(
     let plants = project.vegetation_catalog.as_ref().unwrap_or(&empty);
     let mut definitions = BTreeMap::new();
     let mut plans = BTreeMap::new();
+
     for definition in &project.environments {
         if definitions.insert(definition.space, definition).is_some() {
             bail!("duplicate environment world");
         }
+
         let world = project
             .world_spaces
             .iter()
@@ -60,9 +65,11 @@ pub(super) fn prepare_plans(
             .iter()
             .find(|p| p.space == definition.space)
             .context("environment world has no terrain profile")?;
+
         if definition.cell_size != world.cell_size {
             bail!("environment and terrain cell sizes differ");
         }
+
         for surface in &definition.surfaces {
             if !project
                 .terrain_texture_layers
@@ -72,6 +79,7 @@ pub(super) fn prepare_plans(
                 bail!("environment surface is not in the world's terrain texture set");
             }
         }
+
         plans.insert(
             definition.space,
             CompilePlan::new(
@@ -85,6 +93,7 @@ pub(super) fn prepare_plans(
             )?,
         );
     }
+
     Ok(plans)
 }
 
@@ -93,6 +102,7 @@ pub(super) fn compile_environment(project: &ProjectDocument) -> Result<CookedEnv
     let plans = prepare_plans(project)?;
     let definitions: BTreeMap<_, _> = project.environments.iter().map(|d| (d.space, d)).collect();
     let mut source = BTreeMap::new();
+
     for record in &project.environment_cells {
         let definition = definitions
             .get(&record.space)
@@ -104,6 +114,7 @@ pub(super) fn compile_environment(project: &ProjectDocument) -> Result<CookedEnv
             bail!("invalid environment coverage header");
         }
     }
+
     let heights = project
         .terrain_cell_heightfields
         .iter()
@@ -125,8 +136,10 @@ pub(super) fn compile_environment(project: &ProjectDocument) -> Result<CookedEnv
         fingerprint: [0; 32],
     };
     let mut hash = blake3::Hasher::new();
+
     for (space, plan) in &plans {
         hash.update(&plan.fingerprint());
+
         // Validate authored masks outside terrain too. They can own boundary endpoints, but
         // cannot hide invalid layer references or seams simply because terrain is not built there.
         let requested: BTreeSet<_> = source
@@ -147,6 +160,7 @@ pub(super) fn compile_environment(project: &ProjectDocument) -> Result<CookedEnv
             .filter(|c| c.space == *space)
             .map(|c| c.cell)
             .collect();
+
         // One output at a time: a 3x3 halo is bounded even for large source grids and many layers.
         for cell in requested {
             let coverage = CoverageSnapshot {
@@ -165,10 +179,12 @@ pub(super) fn compile_environment(project: &ProjectDocument) -> Result<CookedEnv
                     })
                     .collect(),
             };
+
             if !terrain_cells.contains(&cell) {
                 plan.validate_coverage(&[cell], &coverage)?;
                 continue;
             }
+
             let halo = environment_dependency_cells(&[cell])?;
             let bounds = environment::roads::RoadCellBounds {
                 minimum: CellCoord {
@@ -229,6 +245,7 @@ pub(super) fn compile_environment(project: &ProjectDocument) -> Result<CookedEnv
             result.push_cell(*space, cell, source_revision, compiled);
         }
     }
+
     for cell in &project.cells {
         if !plans.contains_key(&cell.space) {
             bail!(
@@ -237,6 +254,7 @@ pub(super) fn compile_environment(project: &ProjectDocument) -> Result<CookedEnv
             );
         }
     }
+
     result.fingerprint = *hash.finalize().as_bytes();
     Ok(result)
 }
@@ -286,6 +304,7 @@ pub(super) fn demo_environment(
     };
     let mut records = Vec::new();
     let n = usize::from(definition.mask_resolution);
+
     for x in super::DEMO_WORLD_CELL_RANGE {
         for z in super::DEMO_WORLD_CELL_RANGE {
             let mut tiles: Vec<_> = definition
@@ -296,6 +315,7 @@ pub(super) fn demo_environment(
                     samples: Vec::with_capacity(n * n),
                 })
                 .collect();
+
             for sample_z in 0..n {
                 for sample_x in 0..n {
                     let point = glam::Vec2::new(
@@ -309,6 +329,7 @@ pub(super) fn demo_environment(
                             + super::demo_terrain_mix_signal(point)
                                 * super::demo_terrain_mix_amplitude()))
                     .clamp(0.0, 1.0);
+
                     // A sampled clearing fixture; the editable curved-road source comes in a later slice.
                     let clearing =
                         (1.0 - super::smoothstep(
@@ -316,6 +337,7 @@ pub(super) fn demo_environment(
                             3.8,
                             (point.y - (10.0 + (point.x * 0.025).sin() * 8.0)).abs(),
                         )) * meadow;
+
                     for (tile, weight) in
                         tiles
                             .iter_mut()
@@ -325,6 +347,7 @@ pub(super) fn demo_environment(
                     }
                 }
             }
+
             tiles.retain(|t| t.samples.iter().any(|&v| v != 0));
             records.push(SourceEnvironmentCellRecord {
                 space: overworld,
@@ -335,6 +358,7 @@ pub(super) fn demo_environment(
             });
         }
     }
+
     let interior = EnvironmentDefinition {
         space: interior,
         revision: 1,
@@ -420,12 +444,15 @@ mod tests {
         reordered.presets.presets.reverse();
         reordered.environments.reverse();
         reordered.environment_cells.reverse();
+
         for definition in &mut reordered.environments {
             definition.layers.reverse();
         }
+
         for cell in &mut reordered.environment_cells {
             cell.tiles.reverse();
         }
+
         let repeat = super::super::build_runtime(reordered).unwrap();
         assert_eq!(build.manifest.content_hash, repeat.manifest.content_hash);
         let mut cleared = project;
@@ -440,6 +467,7 @@ mod tests {
         );
         let empty = super::super::build_runtime(cleared).unwrap();
         assert_ne!(build.manifest.content_hash, empty.manifest.content_hash);
+
         for page in &build.pages {
             if matches!(
                 page.key.domain,
@@ -463,9 +491,11 @@ mod tests {
         let mut project = super::super::demo_project_document();
         project.environment_cells.clear();
         let compiled = compile_environment(&project).unwrap();
+
         // Unpainted cells show their base ground and grow what grows on it.
         assert!(!compiled.vegetation.is_empty());
         assert!(compiled.weights.is_empty());
+
         for slot in &compiled.slots {
             assert_eq!(
                 slot.surface,
@@ -477,6 +507,7 @@ mod tests {
                     .base_surface
             );
         }
+
         project.environments.clear();
         assert!(compile_environment(&project).is_err());
     }
@@ -487,6 +518,7 @@ mod road_tests {
     use super::*;
     use environment::roads::*;
     use world_db::{RoadDocument, RoadSourceRecord, SourceRoad, SourceRoadKnot, SourceRoadSpan};
+
     #[test]
     fn persisted_roads_cook_the_same_fields_as_a_bounded_database_snapshot() {
         let mut project = super::super::demo_project_document();
@@ -626,10 +658,12 @@ mod road_tests {
             .filter(|v| v.space == space && v.cell == CellCoord::ZERO)
             .collect::<Vec<_>>();
         assert_eq!(weights.len(), compiled.ground.weight_pages.len());
+
         for (a, b) in weights.iter().zip(&compiled.ground.weight_pages) {
             assert_eq!(a.rgba, b.rgba);
             assert_eq!(a.resolution, b.resolution);
         }
+
         let mut reordered = loaded;
         reordered.roads.records.reverse();
         assert_eq!(
@@ -654,6 +688,7 @@ impl CookedEnvironment {
             fingerprint,
         }
     }
+
     pub(super) fn push_cell(
         &mut self,
         space: WorldSpaceId,
@@ -663,9 +698,11 @@ impl CookedEnvironment {
     ) {
         self.terrain
             .insert((space, cell), compiled.terrain.unwrap());
+
         if let Some(wear) = compiled.wear {
             self.wear.insert((space, cell), wear);
         }
+
         self.objects.insert((space, cell), compiled.objects);
         self.slots.extend(
             compiled
@@ -696,6 +733,7 @@ impl CookedEnvironment {
                         source_revision,
                     }),
             );
+
         if !compiled.vegetation.fields.is_empty() {
             self.vegetation.push(VegetationPage {
                 space,

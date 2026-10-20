@@ -4,14 +4,18 @@ use crate::catalog::{
     query_all_terrain_texture_sets, query_world_spaces, read_vegetation_catalog,
     write_terrain_catalog, write_vegetation_catalog,
 };
+
 use crate::project::query::query_source_catalog;
+
 use crate::storage::{
     blob_array, decode_f32_blob, encode_f32_blob, ensure_new_database_path, ensure_schema_version,
 };
+
 use crate::{
     ProjectDocument, SourceCellRecord, SourceObjectRecord, SourceTerrainCellHeightfieldRecord,
     WorldDbError, atmosphere, environment_store, road_store, schema,
 };
+
 use rusqlite::{Connection, OpenFlags, Transaction, params};
 use std::path::Path;
 use world::{CellCoord, ObjectDefinitionId, PROJECT_SCHEMA_VERSION, StableObjectId, WorldSpaceId};
@@ -35,6 +39,7 @@ fn write_project_document(
         "INSERT INTO project_metadata(key, value) VALUES ('schema_name', 'yarra-project')",
         [],
     )?;
+
     for space in &document.world_spaces {
         transaction.execute(
             "INSERT INTO world_spaces(id, name, cell_size, minimum_y, maximum_y, atmosphere, atmosphere_revision, sea_level) \
@@ -51,6 +56,7 @@ fn write_project_document(
             ],
         )?;
     }
+
     transaction.execute(
         "INSERT INTO project_settings(singleton, default_world_space_id, start_view) \
          VALUES (1, ?1, ?2)",
@@ -61,6 +67,7 @@ fn write_project_document(
     )?;
     crate::gameplay_areas::store(transaction, 1, &document.gameplay_areas)?;
     write_vegetation_catalog(transaction, document.vegetation_catalog.as_ref())?;
+
     for cell in &document.cells {
         transaction.execute(
             "INSERT INTO source_cells(world_space_id, cell_x, cell_z, height, source_revision) \
@@ -74,6 +81,7 @@ fn write_project_document(
             ],
         )?;
     }
+
     write_terrain_catalog(
         transaction,
         &document.terrain_surfaces,
@@ -81,6 +89,7 @@ fn write_project_document(
         &document.terrain_texture_layers,
         &document.terrain_profiles,
     )?;
+
     for heightfield in &document.terrain_cell_heightfields {
         transaction.execute(
             "INSERT INTO terrain_cell_heightfields( \
@@ -96,6 +105,7 @@ fn write_project_document(
             ],
         )?;
     }
+
     for asset in &document.assets {
         transaction.execute(
             "INSERT INTO source_assets(asset_id, asset_key, kind, source_uri) \
@@ -108,6 +118,7 @@ fn write_project_document(
             ],
         )?;
     }
+
     for variant in &document.asset_variants {
         transaction.execute(
             "INSERT INTO source_asset_variants( \
@@ -128,9 +139,11 @@ fn write_project_document(
             ],
         )?;
     }
+
     // Collection presets validate against assets and their runtime LOD variants.
     environment_store::write_environment_document(transaction, document)?;
     road_store::write_document(transaction, &document.roads)?;
+
     for definition in &document.definitions {
         transaction.execute(
             "INSERT INTO object_definitions( \
@@ -145,6 +158,7 @@ fn write_project_document(
             ],
         )?;
     }
+
     for object in &document.objects {
         transaction.execute(
             "INSERT INTO object_placements( \
@@ -166,6 +180,7 @@ fn write_project_document(
             ],
         )?;
     }
+
     Ok(())
 }
 

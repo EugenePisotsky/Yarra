@@ -21,6 +21,7 @@ pub struct Graphs {
     /// Least recently used first.
     loaded: RefCell<VecDeque<Rc<Dialogue>>>,
 }
+
 impl Graphs {
     pub fn reading(read: impl FnMut(DialogueId) -> Result<Dialogue> + 'static) -> Self {
         Self {
@@ -28,6 +29,7 @@ impl Graphs {
             loaded: RefCell::default(),
         }
     }
+
     /// The graph if it is in memory, now the most recently used.
     pub(crate) fn cached(&self, id: DialogueId) -> Option<Rc<Dialogue>> {
         let mut loaded = self.loaded.borrow_mut();
@@ -36,26 +38,32 @@ impl Graphs {
         loaded.push_back(graph.clone());
         Some(graph)
     }
+
     /// Reads a graph from the source, if the content has one.
     pub(crate) fn read(&self, id: DialogueId) -> Option<Result<Dialogue>> {
         let read = self.read.as_ref()?;
         Some((read.borrow_mut())(id))
     }
+
     /// Keeps a graph just read, letting go of the least recently used beyond the limit.
     pub(crate) fn keep(&self, graph: Dialogue) -> Rc<Dialogue> {
         let graph = Rc::new(graph);
         let mut loaded = self.loaded.borrow_mut();
+
         if loaded.len() == MAX_LOADED_DIALOGUES {
             loaded.pop_front();
         }
+
         loaded.push_back(graph.clone());
         graph
     }
+
     /// How many graphs are in memory.
     pub fn loaded(&self) -> usize {
         self.loaded.borrow().len()
     }
 }
+
 impl Clone for Graphs {
     fn clone(&self) -> Self {
         Self {
@@ -64,12 +72,15 @@ impl Clone for Graphs {
         }
     }
 }
+
 impl PartialEq for Graphs {
     fn eq(&self, _: &Self) -> bool {
         true
     }
 }
+
 impl Eq for Graphs {}
+
 impl std::fmt::Debug for Graphs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Graphs({} loaded)", self.loaded())
@@ -79,6 +90,7 @@ impl std::fmt::Debug for Graphs {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn the_graph_used_least_recently_goes_first() {
         let template =
@@ -88,15 +100,18 @@ mod tests {
             ..template.clone()
         };
         let graphs = Graphs::default();
+
         for n in 0..MAX_LOADED_DIALOGUES {
             graphs.keep(graph(n));
         }
+
         // Using the first leaves the second as the one used least recently.
         assert!(graphs.cached(graph(0).id).is_some());
         graphs.keep(graph(MAX_LOADED_DIALOGUES));
         assert_eq!(graphs.loaded(), MAX_LOADED_DIALOGUES);
         assert!(graphs.cached(graph(0).id).is_some());
         assert!(graphs.cached(graph(1).id).is_none());
+
         // A clone reads from the same place but starts with nothing in memory.
         assert_eq!(graphs.clone().loaded(), 0);
     }

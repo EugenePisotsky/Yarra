@@ -3,6 +3,7 @@ use bevy::{
     prelude::*,
     winit::{UpdateMode, WinitSettings},
 };
+
 use std::time::Duration;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -103,6 +104,7 @@ impl AppliedPacing {
         if self.source == ClockSource::FollowDisplay {
             return original.clone();
         }
+
         let mode = UpdateMode::Reactive {
             wait: if self.source == ClockSource::Display {
                 Duration::MAX
@@ -143,6 +145,7 @@ pub(crate) fn install(app: &mut App, rate: FrameRate, timer: bool) {
         PostUpdate,
         apply_pending.run_if(resource_changed::<FramePacing>),
     );
+
     #[cfg(target_os = "macos")]
     {
         app.add_systems(First, macos::acknowledge_frame);
@@ -158,9 +161,11 @@ pub(crate) fn set_fps(app: &mut App, fps: u32) {
 // PostUpdate sees UI changes before extraction; render receives the applied policy.
 fn apply_pending(world: &mut World) {
     let settings = *world.resource::<FramePacing>();
+
     if world.resource::<Controller>().last == Some(settings) {
         return;
     }
+
     #[cfg(target_os = "macos")]
     let display_available = macos::configure_clock(world, settings);
     #[cfg(not(target_os = "macos"))]
@@ -184,6 +189,7 @@ mod tests;
 #[cfg(target_os = "macos")]
 mod macos {
     use super::*;
+
     use bevy::{
         render::{
             Extract, ExtractSchedule, Render, RenderApp, RenderSystems, renderer::RenderQueue,
@@ -211,10 +217,13 @@ mod macos {
 
     fn configure_presentation(settings: Option<Res<AppliedPacing>>, queue: Res<RenderQueue>) {
         let Some(settings) = settings else { return };
+
         if !settings.is_changed() && !queue.is_changed() {
             return;
         }
+
         let duration = settings.presentation_interval;
+
         // SAFETY: only configure this queue's presentation policy. No raw resource
         // is destroyed, submitted or retained beyond the HAL guard.
         if let Some(metal) = unsafe { queue.as_hal::<wgpu::hal::api::Metal>() } {
@@ -225,14 +234,18 @@ mod macos {
             );
         }
     }
+
     use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send, rc::Retained, sel};
     use objc2_app_kit::NSView;
+
     use objc2_foundation::{
         MainThreadMarker, NSObject, NSObjectProtocol, NSOperatingSystemVersion, NSProcessInfo,
         NSRunLoop, NSRunLoopCommonModes,
     };
+
     use objc2_quartz_core::{CADisplayLink, CAFrameRateRange};
     use raw_window_handle::RawWindowHandle;
+
     use std::{
         ops::Deref,
         sync::{
@@ -260,9 +273,11 @@ mod macos {
 
         fn set_active(&self, active: bool) {
             self.active.store(active, Ordering::Release);
+
             if !active {
                 self.pending.store(false, Ordering::Relaxed);
             }
+
             self.seen.store(true, Ordering::Relaxed);
         }
 
@@ -306,6 +321,7 @@ mod macos {
             self.tick.set_active(false);
             self.link.invalidate();
             let _ = self.stop.send(());
+
             if let Some(thread) = self.watchdog.take() {
                 let _ = thread.join();
             }
@@ -314,15 +330,18 @@ mod macos {
 
     pub(super) fn configure_clock(world: &mut World, settings: FramePacing) -> bool {
         let requested = settings.rate.fps() != 0 && !settings.timer;
+
         if requested
             && world.get_non_send::<DisplayClock>().is_none()
             && let Some(clock) = create(world)
         {
             world.insert_non_send(clock);
         }
+
         let Some(clock) = world.get_non_send::<DisplayClock>() else {
             return false;
         };
+
         if requested {
             let fps = settings.rate.fps() as f32;
             clock.link.setPreferredFrameRateRange(CAFrameRateRange {
@@ -336,11 +355,13 @@ mod macos {
             clock.tick.set_active(false);
             clock.link.setPaused(true);
         }
+
         requested
     }
 
     fn create(world: &mut World) -> Option<DisplayClock> {
         let mtm = MainThreadMarker::new().expect("display link must start on the main thread");
+
         if !NSProcessInfo::processInfo().isOperatingSystemAtLeastVersion(NSOperatingSystemVersion {
             majorVersion: 14,
             minorVersion: 0,
@@ -349,6 +370,7 @@ mod macos {
             warn!("FRAME_PACING timer fallback: window display links require macOS 14");
             return None;
         }
+
         let mut query = world.query_filtered::<&RawHandleWrapper, With<PrimaryWindow>>();
         let Ok(handle) = query.single(world) else {
             warn!("FRAME_PACING timer fallback: primary window has no native handle");
@@ -367,6 +389,7 @@ mod macos {
             active: AtomicBool::new(false),
         });
         let target = YarraFramePacingTarget::alloc(mtm).set_ivars(tick.clone());
+
         // SAFETY: init is inherited from NSObject. The NSView is owned by the
         // live primary window, accessed on the main thread. The selector matches
         // the target method above; the link retains its target until invalidated.
@@ -376,6 +399,7 @@ mod macos {
             view.displayLinkWithTarget_selector(&target, sel!(displayTick:))
         };
         link.setPaused(true);
+
         unsafe {
             link.addToRunLoop_forMode(&NSRunLoop::mainRunLoop(), NSRunLoopCommonModes);
         }
@@ -444,10 +468,12 @@ mod macos {
 
             // Follow-display must not leave a second source of updates behind.
             tick.set_active(false);
+
             for _ in 0..5 {
                 tick.watchdog_tick();
                 tick.request_frame();
             }
+
             assert_eq!(wakes.load(Ordering::Relaxed), 2);
             tick.set_active(true);
             tick.request_frame();

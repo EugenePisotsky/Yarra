@@ -32,16 +32,20 @@ pub(crate) fn apply(
     let Some(request) = live.request.clone() else {
         return;
     };
+
     if terrain.identity.as_ref() != Some(&(request.generation.clone(), request.space))
         || live.applied == Some(request.revision)
         || live.error.is_some()
     {
         return;
     }
+
     live.ready = Some(request.revision);
+
     if live.commit != Some(request.revision) {
         return;
     }
+
     terrain.set_overlay(request.products, &mut uploads);
     live.applied = Some(request.revision);
     live.commit = None;
@@ -60,6 +64,7 @@ impl ClipmapTerrain {
         let Some(layout) = self.layout else {
             return;
         };
+
         if let Some(old) = &old {
             let reverted = old
                 .nodes
@@ -76,6 +81,7 @@ impl ClipmapTerrain {
                 }
             }
         }
+
         let keys: std::collections::BTreeSet<_> = products
             .nodes
             .keys()
@@ -83,14 +89,17 @@ impl ClipmapTerrain {
             .copied()
             .filter(|k| self.resident.bounds.contains_key(k))
             .collect();
+
         for key in keys {
             let unchanged = |o: &TerrainPreviewProducts| {
                 o.nodes.get(&key) == products.nodes.get(&key)
                     && o.controls.get(&key) == products.controls.get(&key)
             };
+
             if old.as_deref().is_some_and(unchanged) {
                 continue;
             }
+
             let mut node = match products.nodes.get(&key) {
                 Some(n) => match relief(n, layout.intervals) {
                     Ok(node) => node,
@@ -103,9 +112,11 @@ impl ClipmapTerrain {
                     leaf: None,
                 },
             };
+
             if let Some(control) = products.controls.get(&key) {
                 node.block.control = Some(control.to_vec());
             }
+
             self.place(&layout, uploads, node);
         }
     }

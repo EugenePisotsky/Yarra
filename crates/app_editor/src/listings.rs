@@ -7,6 +7,7 @@ use bevy::prelude::*;
 use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError};
 use engine::WorldViewpoint;
 use world::WorldSpaceId;
+
 use world_db::{
     ProjectReader, SourceObjectOutlinerCursor, SourceObjectPaletteCursor,
     SourceObjectPaletteRecord, SourceObjectViewRecord,
@@ -133,9 +134,11 @@ impl ProjectListings {
 
     pub(crate) fn search_palette(&mut self, search: String) {
         let search = search.trim().to_owned();
+
         if self.palette_search == search {
             return;
         }
+
         self.palette_search = search;
         self.palette_history.clear();
         self.queue_palette(None);
@@ -143,9 +146,11 @@ impl ProjectListings {
 
     pub(crate) fn search_outliner(&mut self, search: String) {
         let search = search.trim().to_owned();
+
         if self.outliner_search == search {
             return;
         }
+
         self.outliner_search = search;
         self.outliner_history.clear();
         self.queue_outliner(None);
@@ -227,6 +232,7 @@ impl ProjectListings {
             id: self.next_request_id,
             kind,
         };
+
         match request.kind {
             ListingRequestKind::Palette { .. } => {
                 self.latest_palette_id = request.id;
@@ -271,9 +277,11 @@ fn listing_worker(
             return;
         }
     };
+
     if results.try_send(ListingResult::Opened(Ok(()))).is_err() {
         return;
     }
+
     while let Ok(request) = requests.recv() {
         let result = match request.kind {
             ListingRequestKind::Palette { search, cursor } => ListingResult::Palette {
@@ -317,12 +325,16 @@ fn receive_listing_results(worker: Option<Res<ListingWorker>>, mut store: ResMut
             Ok(ListingResult::Palette { id, cursor, result }) => {
                 if store.in_flight != Some(id) || id != store.latest_palette_id {
                     store.stale_results = store.stale_results.saturating_add(1);
+
                     if store.in_flight == Some(id) {
                         store.in_flight = None;
                     }
+
                     continue;
                 }
+
                 store.in_flight = None;
+
                 match result {
                     Ok(page) => {
                         store.palette_cursor = cursor;
@@ -335,12 +347,16 @@ fn receive_listing_results(worker: Option<Res<ListingWorker>>, mut store: ResMut
             Ok(ListingResult::Outliner { id, cursor, result }) => {
                 if store.in_flight != Some(id) || id != store.latest_outliner_id {
                     store.stale_results = store.stale_results.saturating_add(1);
+
                     if store.in_flight == Some(id) {
                         store.in_flight = None;
                     }
+
                     continue;
                 }
+
                 store.in_flight = None;
+
                 match result {
                     Ok(page) => {
                         store.outliner_cursor = cursor;
@@ -361,9 +377,11 @@ fn receive_listing_results(worker: Option<Res<ListingWorker>>, mut store: ResMut
 
 fn follow_outliner_world_space(viewpoint: Res<WorldViewpoint>, mut store: ResMut<ProjectListings>) {
     let space = viewpoint.position().map(|position| position.space);
+
     if store.outliner_space == space {
         return;
     }
+
     store.outliner_space = space;
     store.outliner_history.clear();
     store.outliner_records.clear();
@@ -378,6 +396,7 @@ fn dispatch_listing_request(
     if store.in_flight.is_some() {
         return;
     }
+
     let Some(worker) = worker else {
         return;
     };
@@ -388,6 +407,7 @@ fn dispatch_listing_request(
     else {
         return;
     };
+
     match worker.try_send(request.clone()) {
         Ok(()) => store.in_flight = Some(request.id),
         Err(TrySendError::Full(request)) => match request.kind {
@@ -407,9 +427,11 @@ mod tests {
     #[test]
     fn cursor_history_is_bounded() {
         let mut history = Vec::new();
+
         for value in 0..(MAX_CURSOR_HISTORY + 5) {
             push_bounded(&mut history, value);
         }
+
         assert_eq!(history.len(), MAX_CURSOR_HISTORY);
         assert_eq!(history[0], 5);
     }

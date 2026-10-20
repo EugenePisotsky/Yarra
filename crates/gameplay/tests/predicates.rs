@@ -9,11 +9,13 @@ fn resolved_depth_is_checked_before_a_valid_local_tree_reaches_runtime() {
         definition: inventory::fixtures::KEY,
         quantity: 1,
     };
+
     for i in 0..3 {
         // Each asset is below the local depth limit; their expansion exceeds evaluation's limit.
         for _ in 0..15 {
             condition = Condition::Not(Box::new(condition));
         }
+
         let id = PredicateId([i; 16]);
         content
             .game
@@ -21,6 +23,7 @@ fn resolved_depth_is_checked_before_a_valid_local_tree_reaches_runtime() {
             .add(NamedPredicate { id, condition });
         condition = Condition::Named(id);
     }
+
     assert!(
         content
             .validate_condition(&condition)

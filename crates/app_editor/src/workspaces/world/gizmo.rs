@@ -7,6 +7,7 @@ use crate::{
         world::{objects::PromotedEditorObject, overlay::EditorOverlayGizmos},
     },
 };
+
 use bevy::{
     camera::visibility::RenderLayers,
     gizmos::{
@@ -18,6 +19,7 @@ use bevy::{
     },
     prelude::*,
 };
+
 use engine::{WorldCatalog, WorldOrigin, WorldViewCamera};
 use world::{StableObjectId, WorldPosition};
 use world_db::SourceObjectTransform;
@@ -36,12 +38,14 @@ pub(crate) struct BuiltinGizmoRenderSetup {
     camera_layers_configured: bool,
     materials_configured: bool,
 }
+
 type BuiltinGizmoOverlayCameras<'world, 'state> = Query<
     'world,
     'state,
     (Entity, &'static Camera, &'static RenderLayers),
     (With<Camera3d>, Without<WorldViewCamera>),
 >;
+
 type BuiltinGizmoMeshes<'world, 'state> = Query<
     'world,
     'state,
@@ -51,6 +55,7 @@ type BuiltinGizmoMeshes<'world, 'state> = Query<
     ),
     With<TransformGizmoMeshMarker>,
 >;
+
 pub(crate) fn configure_transform_gizmo(
     mut settings: ResMut<TransformGizmoSettings>,
     mut gizmo_configs: ResMut<GizmoConfigStore>,
@@ -59,6 +64,7 @@ pub(crate) fn configure_transform_gizmo(
     settings.space = TransformGizmoSpace::World;
     settings.screen_scale_factor = 0.12;
     settings.axis_hit_distance = 10.0;
+
     // Cursor confinement falls back to locking on macOS, which breaks ray-based gizmo dragging.
     settings.confine_cursor = false;
     let (overlay, _) = gizmo_configs.config_mut::<EditorOverlayGizmos>();
@@ -109,6 +115,7 @@ pub(crate) fn prepare_builtin_transform_gizmo_renderer(
 
     if !setup.materials_configured && !gizmo_meshes.is_empty() {
         let mut all_materials_available = true;
+
         for (handle, _) in &gizmo_meshes {
             let Some(mut material) = materials.get_mut(handle) else {
                 all_materials_available = false;
@@ -118,6 +125,7 @@ pub(crate) fn prepare_builtin_transform_gizmo_renderer(
             // clearing world camera, a strong positive bias preserves that behavior.
             material.depth_bias = TRANSFORM_GIZMO_DEPTH_BIAS;
         }
+
         setup.materials_configured = all_materials_available;
     }
 }
@@ -166,6 +174,7 @@ pub(crate) fn apply_promoted_gizmo(
                 })
                 .collect();
         }
+
         let Some((_, active_before)) = transaction
             .before
             .iter()
@@ -178,6 +187,7 @@ pub(crate) fn apply_promoted_gizmo(
             return;
         };
         let mut active_preview = active_before;
+
         match settings.mode {
             TransformGizmoMode::Translate => {
                 let origin_world = origin.cell().origin(space.cell_size);
@@ -209,6 +219,7 @@ pub(crate) fn apply_promoted_gizmo(
                 active_preview.scale = scale.max(0.001);
             }
         }
+
         let previews = group_gizmo_targets(
             settings.mode,
             proxy.id,
@@ -223,6 +234,7 @@ pub(crate) fn apply_promoted_gizmo(
         history.record_previews(&objects, &transaction.before);
         transaction.before.clear();
     }
+
     transaction.was_active = gizmo.active;
 }
 
@@ -273,7 +285,9 @@ fn group_gizmo_targets(
             if *object == active {
                 return (*object, active_target);
             }
+
             let mut target = *initial;
+
             match mode {
                 TransformGizmoMode::Translate => {
                     let initial_world = WorldPosition {
@@ -301,6 +315,7 @@ fn group_gizmo_targets(
                     target.scale = (initial.scale * scale_factor).max(0.001);
                 }
             }
+
             (*object, target)
         })
         .collect()
@@ -309,10 +324,12 @@ fn group_gizmo_targets(
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use bevy::{
         camera::visibility::RenderLayers,
         gizmos::transform_gizmo::{TransformGizmoMeshMarker, TransformGizmoMode},
     };
+
     use engine::WorldViewCamera;
     use world::{CellCoord, StableObjectId};
     use world_db::SourceObjectTransform;
@@ -332,6 +349,7 @@ mod tests {
             scale,
         }
     }
+
     #[test]
     fn group_translation_preserves_offsets_across_cell_boundaries() {
         let space = world::WorldSpaceId(3);
@@ -375,6 +393,7 @@ mod tests {
         assert_eq!(companion_target.yaw, 0.5);
         assert_eq!(companion_target.scale, 2.0);
     }
+
     #[test]
     fn group_rotation_applies_the_active_yaw_delta_in_place() {
         let space = world::WorldSpaceId(3);
@@ -407,6 +426,7 @@ mod tests {
         assert!((companion_target.yaw - 1.5).abs() < f32::EPSILON);
         assert_eq!(companion_target.local_translation, [4.0, 0.0, 5.0]);
     }
+
     #[test]
     fn group_scale_applies_the_active_uniform_factor_in_place() {
         let space = world::WorldSpaceId(3);
@@ -439,6 +459,7 @@ mod tests {
         assert!((companion_target.scale - 6.0).abs() < f32::EPSILON);
         assert_eq!(companion_target.local_translation, [4.0, 0.0, 5.0]);
     }
+
     #[test]
     fn stock_gizmo_uses_the_clearing_world_camera() {
         use bevy::gizmos::transform_gizmo::{TransformGizmoAxis, TransformGizmoRoot};

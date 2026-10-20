@@ -17,9 +17,11 @@ pub(crate) struct TransformInspectorDraft {
 impl TransformInspectorDraft {
     pub(crate) fn sync(&mut self, selection: &EditorSelection, objects: &EditorObjectWorkingSet) {
         let object = selection.selected_id();
+
         if self.object == object && self.edit_revision == objects.edit_revision() {
             return;
         }
+
         self.object = object;
         self.edit_revision = objects.edit_revision();
         self.transform = selection
@@ -41,6 +43,7 @@ pub(crate) fn normalize_transform(
     {
         return None;
     }
+
     let origin = transform.owner_cell.origin(cell_size);
     let world = [
         origin[0] + f64::from(transform.local_translation[0]),
@@ -49,9 +52,11 @@ pub(crate) fn normalize_transform(
     ];
     let minimum = f64::from(i32::MIN) * f64::from(cell_size);
     let maximum = (f64::from(i32::MAX) + 1.0) * f64::from(cell_size);
+
     if world[0] < minimum || world[0] >= maximum || world[2] < minimum || world[2] >= maximum {
         return None;
     }
+
     let position = WorldPosition::from_world(transform.space, world, cell_size);
     transform.owner_cell = position.cell;
     transform.local_translation = position.local;

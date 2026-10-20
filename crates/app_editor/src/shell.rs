@@ -12,9 +12,11 @@ use bevy::{
     window::{PresentMode, WindowResolution},
     winit::{UpdateMode, WinitSettings},
 };
+
 use bevy_egui::{
     EguiContexts, EguiGlobalSettings, EguiPlugin, EguiPrimaryContextPass, PrimaryEguiContext, egui,
 };
+
 use engine::{WorldEnvironmentPlugin, WorldStreamingPlugin, WorldViewCamera};
 use terrain_render::TerrainRenderPlugin;
 
@@ -254,10 +256,13 @@ pub(crate) fn sync_workspace_cameras(
     for mut camera in &mut preset_cameras {
         camera.is_active = *workspace.get() == EditorWorkspace::Presets;
     }
+
     let world_active = *workspace.get() == EditorWorkspace::World;
+
     for mut camera in &mut world_cameras {
         camera.is_active = world_active;
     }
+
     for mut camera in &mut animation_cameras {
         camera.is_active = *workspace.get() == EditorWorkspace::Animation;
     }
@@ -273,6 +278,7 @@ fn update_workspace_frame_pacing(
         AUTHORING_FRAME_RATE
     };
     let focused_mode = reactive_update_mode(frame_rate, true);
+
     if settings.focused_mode != focused_mode {
         settings.focused_mode = focused_mode;
     }
@@ -314,6 +320,7 @@ fn editor_shell(
                 }
             });
             let workspace_windows = windows.windows_for(active_workspace).collect::<Vec<_>>();
+
             if !workspace_windows.is_empty() {
                 ui.menu_button("Tools", |ui| {
                     for descriptor in workspace_windows {
@@ -359,6 +366,7 @@ fn reactive_update_mode(frame_rate: f64, wake_on_input: bool) -> UpdateMode {
 
 fn runtime_database_path(asset_root: &std::path::Path) -> PathBuf {
     let mut arguments = std::env::args_os();
+
     while let Some(argument) = arguments.next() {
         if argument == "--world-db" {
             return arguments
@@ -367,11 +375,13 @@ fn runtime_database_path(asset_root: &std::path::Path) -> PathBuf {
                 .unwrap_or_else(|| panic!("--world-db requires a database path"));
         }
     }
+
     asset_root.join(world::DEFAULT_RUNTIME_DATABASE)
 }
 
 fn project_database_path() -> PathBuf {
     let mut arguments = std::env::args_os();
+
     while let Some(argument) = arguments.next() {
         if argument == "--project-db" {
             return arguments
@@ -380,6 +390,7 @@ fn project_database_path() -> PathBuf {
                 .unwrap_or_else(|| panic!("--project-db requires a database path"));
         }
     }
+
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
         .join(world::DEFAULT_PROJECT_DATABASE)
@@ -387,15 +398,18 @@ fn project_database_path() -> PathBuf {
 
 fn resolve_asset_root() -> PathBuf {
     let mut candidates = Vec::new();
+
     if let Ok(current_directory) = std::env::current_dir() {
         candidates.push(current_directory.join("assets"));
     }
+
     if let Ok(executable) = std::env::current_exe()
         && let Some(executable_directory) = executable.parent()
     {
         candidates.push(executable_directory.join("assets"));
         candidates.push(executable_directory.join("../Resources/assets"));
     }
+
     candidates.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets"));
 
     candidates
@@ -414,6 +428,7 @@ mod window_registry_tests {
         label: "World",
         default_open: true,
     };
+
     const ANIMATION_WINDOW: EditorWindowDescriptor = EditorWindowDescriptor {
         id: EditorWindowId("test.animation"),
         workspace: EditorWorkspace::Animation,

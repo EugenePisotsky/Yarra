@@ -8,6 +8,7 @@ fn hash(x: i32, y: i32, z: i32, period: i32) -> f32 {
     v ^= v >> 15;
     (v & 0x00ffffff) as f32 / 16777215.
 }
+
 fn value(p: [f32; 3], period: i32) -> f32 {
     let i = p.map(|x| x.floor() as i32);
     let f = p.map(|x| {
@@ -15,6 +16,7 @@ fn value(p: [f32; 3], period: i32) -> f32 {
         t * t * (3. - 2. * t)
     });
     let mut v = 0.;
+
     for z in 0..2 {
         for y in 0..2 {
             for x in 0..2 {
@@ -27,11 +29,14 @@ fn value(p: [f32; 3], period: i32) -> f32 {
             }
         }
     }
+
     v
 }
+
 fn worley(p: [f32; 3], period: i32) -> f32 {
     let base = p.map(|v| v.floor() as i32);
     let mut best = 3.0f32;
+
     for z in -1..=1 {
         for y in -1..=1 {
             for x in -1..=1 {
@@ -48,10 +53,13 @@ fn worley(p: [f32; 3], period: i32) -> f32 {
             }
         }
     }
+
     (1. - best.sqrt()).clamp(0., 1.)
 }
+
 pub fn generate(size: u32) -> Vec<u8> {
     let mut data = Vec::with_capacity((size * size * size * 4) as usize);
+
     for z in 0..size {
         for y in 0..size {
             for x in 0..size {
@@ -62,6 +70,7 @@ pub fn generate(size: u32) -> Vec<u8> {
                 let w = worley(uv.map(|v| v * 4.), 4);
                 let detail =
                     worley(uv.map(|v| v * 12.), 12) * 0.7 + worley(uv.map(|v| v * 24.), 24) * 0.3;
+
                 for c in [
                     v * 0.65 + w * 0.35,
                     detail,
@@ -73,11 +82,14 @@ pub fn generate(size: u32) -> Vec<u8> {
             }
         }
     }
+
     data
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn periodic_and_repeatable() {
         let p = [0.37, 1.2, -0.2];

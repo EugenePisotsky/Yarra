@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use environment::{
     EnvironmentDefinition, GRASS_CHANNEL, Layer, LayerId, PresetLibrary, ResolvedComposition,
 };
+
 use vegetation::{GrassTypeId, VegetationCatalog};
 
 use crate::{CompileError, CompileProfile};
@@ -51,14 +52,17 @@ impl CompilePlan {
         if cells.len() > self.profile.max_cells_per_batch {
             return Err(CompileError::Budget("requested cells"));
         }
+
         let coverage = crate::coverage::Coverage::new(self, source)?;
         let mut unique = std::collections::BTreeSet::new();
+
         for &cell in cells {
             if !unique.insert(cell) {
                 return Err(CompileError::DuplicateCell(cell));
             }
             coverage.check_halo(self, cell)?;
         }
+
         Ok(())
     }
 
@@ -81,19 +85,23 @@ impl CompilePlan {
         {
             return Err(CompileError::InvalidProfile);
         }
+
         if source.layers.len() > profile.max_layers || source.surfaces.len() > 64 {
             return Err(CompileError::Budget("definition catalog"));
         }
+
         grass.validate()?;
         source.validate(presets)?;
         let mut definition = source.clone();
         definition.surfaces.sort();
         definition.layers.sort_by_key(|l| (l.order, l.id));
+
         for layer in &mut definition.layers {
             layer
                 .overrides
                 .sort_by(|a, b| (&a.path, a.value.key()).cmp(&(&b.path, b.value.key())));
         }
+
         let compositions: BTreeMap<LayerId, ResolvedComposition> = definition
             .layers
             .iter()
@@ -103,6 +111,7 @@ impl CompilePlan {
                     .map(|resolved| (l.id, resolved))
             })
             .collect::<Result<_, _>>()?;
+
         // Grass and detail types in catalog order; a type grows here when some surface of this
         // world carries it.
         let bindings: Vec<_> = grass
@@ -132,6 +141,7 @@ impl CompilePlan {
         let index = |s: &world::TerrainSurfaceId| definition.surfaces.binary_search(s).unwrap();
         let mut worn = vec![vec![]; definition.surfaces.len()];
         let mut trampled = vec![None; definition.surfaces.len()];
+
         for w in &definition.worn {
             trampled[index(&w.surface)] = w.trampled.as_ref().map(index);
             let total: f64 = w.ground.iter().map(|g| f64::from(g.weight)).sum();
@@ -141,9 +151,11 @@ impl CompilePlan {
                 .map(|g| (index(&g.surface), f64::from(g.weight) / total))
                 .collect();
         }
+
         if bindings.len() > profile.max_grass_types {
             return Err(CompileError::Budget("grass types"));
         }
+
         let layers = definition
             .layers
             .iter()
@@ -180,6 +192,7 @@ impl CompilePlan {
                 }
             })
             .collect();
+
         // Coverage depends on what grows where, not on how the grass looks.
         let growth: Vec<_> = bindings
             .iter()
@@ -190,6 +203,7 @@ impl CompilePlan {
             bincode::config::standard(),
         )?;
         let mut hash = blake3::Hasher::new();
+
         // v5: grass follows the ground that shows, not faint blend weights.
         // v7: up to twelve surfaces a page, those shared along its edges kept first.
         // v8: details that grow by how worn the ground is.
@@ -211,10 +225,12 @@ impl CompilePlan {
     pub fn catalog(&self) -> &VegetationCatalog {
         &self.catalog
     }
+
     /// The grass types this world grows, in catalog order.
     pub fn grass_types(&self) -> impl Iterator<Item = GrassTypeId> + '_ {
         self.grass.iter().map(|b| b.grass)
     }
+
     pub fn fingerprint(&self) -> [u8; 32] {
         self.fingerprint
     }

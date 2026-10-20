@@ -1,4 +1,5 @@
 use super::*;
+
 use bevy::{
     app::PluginsState,
     camera::{RenderTarget, visibility::RenderLayers},
@@ -14,6 +15,7 @@ use bevy::{
     window::ExitCondition,
     winit::WinitPlugin,
 };
+
 use std::sync::{Arc, Mutex};
 
 #[derive(Resource, Default)]
@@ -51,6 +53,7 @@ fn resolve_only_matches_stored_color_and_preserves_later_consumers() {
         }
     });
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(90);
+
     while app.plugins_state() != PluginsState::Ready {
         assert!(
             std::time::Instant::now() < deadline,
@@ -58,12 +61,14 @@ fn resolve_only_matches_stored_color_and_preserves_later_consumers() {
         );
         bevy::tasks::tick_global_task_pools_on_main_thread();
     }
+
     app.finish();
     app.cleanup();
     let pixels: PixelPair = default();
     let mut targets = Vec::new();
     let mut cameras = Vec::new();
     let pose = Transform::from_xyz(0.0, 1.3, 4.0).looking_at(Vec3::ZERO, Vec3::Y);
+
     for (i, policy) in [
         MsaaColorStorePolicy::Preserve,
         MsaaColorStorePolicy::Automatic,
@@ -87,6 +92,7 @@ fn resolve_only_matches_stored_color_and_preserves_later_consumers() {
                 pose,
             ))
             .id();
+
         // UI renders into resolved color after the opaque pass.
         app.world_mut().spawn((
             Node {
@@ -108,6 +114,7 @@ fn resolve_only_matches_stored_color_and_preserves_later_consumers() {
         targets.push(target);
         cameras.push(camera);
     }
+
     let cube = app
         .world_mut()
         .resource_mut::<Assets<Mesh>>()
@@ -126,6 +133,7 @@ fn resolve_only_matches_stored_color_and_preserves_later_consumers() {
         Transform::from_xyz(-0.45, 0.0, 0.0).with_rotation(Quat::from_rotation_y(0.3)),
     ));
     let mut checker_data = Vec::new();
+
     for y in 0..8 {
         for x in 0..8 {
             checker_data.extend_from_slice(&[
@@ -136,6 +144,7 @@ fn resolve_only_matches_stored_color_and_preserves_later_consumers() {
             ]);
         }
     }
+
     let checker = app
         .world_mut()
         .resource_mut::<Assets<Image>>()
@@ -195,6 +204,7 @@ fn resolve_only_matches_stored_color_and_preserves_later_consumers() {
             > 100,
         "test must draw visible geometry"
     );
+
     // The shared graph slot keeps Bevy's public before/after anchors functional.
     let render_world = app.sub_app_mut(RenderApp).world_mut();
     let schedule = render_world.resource::<Schedules>().get(Core3d).unwrap();
@@ -222,7 +232,9 @@ fn resolve_only_matches_stored_color_and_preserves_later_consumers() {
             .entity_mut(camera)
             .insert(bevy::core_pipeline::prepass::DepthPrepass);
     }
+
     compare(&mut app, &pixels, "depth prepass", true);
+
     for &camera in &cameras {
         app.world_mut()
             .entity_mut(camera)
@@ -237,6 +249,7 @@ fn resolve_only_matches_stored_color_and_preserves_later_consumers() {
         opaque, with_transparency,
         "transparent probe must affect the image"
     );
+
     {
         let mut materials = app.world_mut().resource_mut::<Assets<StandardMaterial>>();
         let mut material = materials.get_mut(&translucent).unwrap();
@@ -244,6 +257,7 @@ fn resolve_only_matches_stored_color_and_preserves_later_consumers() {
         material.specular_transmission = 0.6;
         material.unlit = false;
     }
+
     compare(&mut app, &pixels, "screen-space transmission", false);
     app.world_mut()
         .entity_mut(transparent)
@@ -252,6 +266,7 @@ fn resolve_only_matches_stored_color_and_preserves_later_consumers() {
     let with_gizmos = compare(&mut app, &pixels, "gizmos", false);
     assert_ne!(opaque, with_gizmos, "gizmo probe must affect the image");
     app.world_mut().resource_mut::<ProbeGizmos>().0 = false;
+
     for &camera in &cameras {
         app.world_mut().get_mut::<Camera>(camera).unwrap().viewport = Some(Viewport {
             physical_position: UVec2::splat(16),
@@ -259,15 +274,20 @@ fn resolve_only_matches_stored_color_and_preserves_later_consumers() {
             ..default()
         });
     }
+
     compare(&mut app, &pixels, "sub-viewport", true);
+
     for &camera in &cameras {
         app.world_mut().get_mut::<Camera>(camera).unwrap().viewport = None;
         app.world_mut().entity_mut(camera).insert(Msaa::Off);
     }
+
     compare(&mut app, &pixels, "single sample", false);
+
     for &camera in &cameras {
         app.world_mut().entity_mut(camera).insert(Msaa::Sample4);
     }
+
     for target in &targets {
         app.world_mut()
             .resource_mut::<Assets<Image>>()
@@ -279,7 +299,9 @@ fn resolve_only_matches_stored_color_and_preserves_later_consumers() {
                 depth_or_array_layers: 1,
             });
     }
+
     compare(&mut app, &pixels, "resized 4x target", true);
+
     // Empty later cameras still load/resolve shared multisample color.
     for (target, policy) in targets.iter().zip([
         MsaaColorStorePolicy::Preserve,
@@ -299,6 +321,7 @@ fn resolve_only_matches_stored_color_and_preserves_later_consumers() {
             RenderLayers::layer(31),
         ));
     }
+
     compare(
         &mut app,
         &pixels,
@@ -312,11 +335,13 @@ fn compare(app: &mut App, pixels: &PixelPair, name: &str, expected_discard: bool
         let pair = pixels.lock().unwrap();
         [pair[0].0, pair[1].0]
     };
+
     // Settle extraction, pipeline creation, and asynchronous readback after edits.
     for _ in 0..24 {
         app.update();
         std::thread::sleep(std::time::Duration::from_millis(8));
     }
+
     let decisions = app
         .sub_app_mut(RenderApp)
         .world_mut()
@@ -337,6 +362,7 @@ fn compare(app: &mut App, pixels: &PixelPair, name: &str, expected_discard: bool
         )
         .unwrap();
     assert!(decisions.len() >= 2, "{name}: missing render views");
+
     for (policy, discard) in decisions {
         assert_eq!(
             discard,
@@ -344,12 +370,15 @@ fn compare(app: &mut App, pixels: &PixelPair, name: &str, expected_discard: bool
             "{name}: store decision"
         );
     }
+
     let cache = app.sub_app(RenderApp).world().resource::<PipelineCache>();
+
     for pipeline in cache.pipelines() {
         if let CachedPipelineState::Err(error) = &pipeline.state {
             panic!("{name}: pipeline error {error}");
         }
     }
+
     let pair = pixels.lock().unwrap();
     assert!(
         (0..2).all(|i| pair[i].0 > previous[i] + 3 && !pair[i].1.is_empty()),

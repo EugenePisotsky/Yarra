@@ -27,6 +27,7 @@ pub enum AssetKind {
     Loot,
     Character,
 }
+
 impl AssetKind {
     pub const ALL: [Self; 17] = [
         Self::Category,
@@ -69,6 +70,7 @@ pub enum AssetId {
     Loot(LootId),
     Character(ActorId),
 }
+
 impl AssetId {
     pub fn kind(&self) -> AssetKind {
         match self {
@@ -91,6 +93,7 @@ impl AssetId {
             Self::Character(_) => AssetKind::Character,
         }
     }
+
     /// Storage key: the identity bytes, never the name, so lookups do not depend on which
     /// names this process has seen.
     pub fn key(&self) -> String {
@@ -114,6 +117,7 @@ impl AssetId {
             Self::Character(id) => id.raw(),
         }
     }
+
     pub(crate) fn from_key(kind: AssetKind, key: String) -> Result<Self> {
         require(key.len() <= 192, "asset key exceeds limit")?;
         let id = match kind {
@@ -141,6 +145,7 @@ impl AssetId {
         Ok(id)
     }
 }
+
 pub(crate) fn validate_locale(locale: &str) -> Result<()> {
     require(locale.len() <= 64, "locale exceeds limit")?;
     let parsed: unic_langid::LanguageIdentifier = locale
@@ -170,6 +175,7 @@ pub enum Asset {
     Loot(inventory::LootTable),
     Character(actors::CharacterDefinition),
 }
+
 impl Asset {
     pub(crate) fn text_references(&self) -> Vec<&MessageRef> {
         let texts: Vec<&TextRef> = match self {
@@ -230,6 +236,7 @@ impl Asset {
             Self::Character(v) => AssetId::Character(v.id),
         }
     }
+
     pub(crate) fn validate_local(&self) -> Result<()> {
         match self {
             Self::Object(v) => v.name.validate()?,
@@ -264,6 +271,7 @@ impl Asset {
         Ok(())
     }
 }
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AssetHeader {
     pub id: AssetId,
@@ -272,6 +280,7 @@ pub struct AssetHeader {
     pub payload_bytes: usize,
     pub hash: [u8; 32],
 }
+
 pub(crate) fn corrupt(id: &AssetId, message: impl Into<String>) -> ContentError {
     ContentError::CorruptAsset {
         id: id.clone(),

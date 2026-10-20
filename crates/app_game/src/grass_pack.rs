@@ -31,21 +31,26 @@ impl Plugin for GrassPackPlugin {
 
 fn reload(time: Res<Time<Real>>, mut watch: ResMut<Watch>, mut looks: ResMut<engine::GrassLooks>) {
     let now = time.elapsed_secs_f64();
+
     if now < watch.next_check {
         return;
     }
+
     watch.next_check = now + CHECK_INTERVAL;
     let Ok(modified) = std::fs::metadata(&watch.path).and_then(|m| m.modified()) else {
         return;
     };
+
     if watch.modified == Some(modified) {
         return;
     }
+
     let first = watch.modified.is_none();
     watch.modified = Some(modified);
     let pack = std::fs::read_to_string(&watch.path)
         .map_err(|e| e.to_string())
         .and_then(|text| vegetation::GrassPack::parse(&text));
+
     match pack {
         Ok(pack) => {
             let catalog = vegetation::VegetationCatalog {
@@ -53,13 +58,16 @@ fn reload(time: Res<Time<Real>>, mut watch: ResMut<Watch>, mut looks: ResMut<eng
                 details: pack.details,
                 surfaces: Vec::new(),
             };
+
             if let Err(error) = catalog.validate() {
                 warn!("Grass pack {}: {error}", watch.path.display());
                 return;
             }
+
             if !first {
                 info!("Grass pack reloaded from {}", watch.path.display());
             }
+
             looks.0 = Some(catalog);
         }
         Err(error) => warn!("Grass pack {}: {error}", watch.path.display()),

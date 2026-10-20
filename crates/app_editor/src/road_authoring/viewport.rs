@@ -1,6 +1,7 @@
 use super::*;
 use crate::workspaces::world::{EditorOverlayGizmos, GroundToolInput};
 use bevy::ecs::system::SystemParam;
+
 #[derive(Clone, Copy, PartialEq)]
 enum Handle {
     Point,
@@ -8,21 +9,25 @@ enum Handle {
     Outgoing,
     Width,
 }
+
 pub(super) struct Drag {
     before: world_db::SourceRoadKnot,
     connected_before: Vec<RoadChange>,
     handle: Handle,
     start: RoadPoint,
 }
+
 #[derive(SystemParam)]
 pub(super) struct Input<'w, 's> {
     ground: GroundToolInput<'w, 's>,
     project: Res<'w, ProjectEditorStore>,
     presets: Res<'w, crate::workspaces::presets::PresetAuthoringState>,
 }
+
 fn active(input: &Input) -> bool {
     input.ground.active(&ROAD_TOOL)
 }
+
 fn finish(
     state: &mut RoadToolState,
     dense: &mut SourceWorkingSets,
@@ -39,6 +44,7 @@ fn finish(
         } else {
             drag.connected_before
         };
+
         if cancel {
             if let Err(e) = dense.roads.apply(&before) {
                 state.status = Some(e);
@@ -49,6 +55,7 @@ fn finish(
         }
     }
 }
+
 pub(super) fn input(
     input: Input,
     mut dense: ResMut<SourceWorkingSets>,
@@ -56,6 +63,7 @@ pub(super) fn input(
     mut state: ResMut<RoadToolState>,
 ) {
     let enabled = active(&input) && input.ground.window.focused;
+
     if input.ground.keys.just_pressed(KeyCode::Escape) {
         finish(&mut state, &mut dense, &mut history, true);
         state.creating = false;
@@ -66,14 +74,17 @@ pub(super) fn input(
         state.status = None;
         return;
     }
+
     let blocked = input.ground.paused()
         || input.project.save_in_flight()
         || dense.saving()
         || dense.has_any_conflict()
         || input.presets.dirty();
+
     if !enabled || blocked {
         finish(&mut state, &mut dense, &mut history, false);
     }
+
     if !enabled {
         state.hover = None;
         state.creating = false;
@@ -83,15 +94,18 @@ pub(super) fn input(
         state.first = None;
         return;
     }
+
     if blocked {
         return;
     }
+
     let Some(space) = input.ground.origin.space() else {
         if !input.ground.buttons.pressed(MouseButton::Left) {
             finish(&mut state, &mut dense, &mut history, false);
         }
         return;
     };
+
     if state.space != Some(space) {
         finish(&mut state, &mut dense, &mut history, false);
         state.space = Some(space);
@@ -105,6 +119,7 @@ pub(super) fn input(
         state.first = None;
         state.hover = None;
     }
+
     let Some(size) = dense.definition(space).map(|d| d.cell_size) else {
         if !input.ground.buttons.pressed(MouseButton::Left) {
             finish(&mut state, &mut dense, &mut history, false);
@@ -133,9 +148,11 @@ pub(super) fn input(
             .map(|(_, point)| point);
     let Some(hit) = hit else {
         state.hover = None;
+
         if !input.ground.buttons.pressed(MouseButton::Left) {
             finish(&mut state, &mut dense, &mut history, false);
         }
+
         return;
     };
     let Ok(point) = RoadPoint::from_relative(
@@ -149,6 +166,7 @@ pub(super) fn input(
         return;
     };
     state.hover = Some(point);
+
     if state.drag.is_some() {
         update_drag(
             &mut state,
@@ -160,14 +178,17 @@ pub(super) fn input(
         );
         return;
     }
+
     if !input.ground.buttons.just_pressed(MouseButton::Left) {
         return;
     }
+
     if state.creating {
         if !state.can_create_at(space, point.cell) {
             state.status = Some("Wait for nearby road controls to load".into());
             return;
         }
+
         if let Some(start) = state.first {
             let Some(style) = state.style else { return };
             match commands::create(&dense.roads, space, size, style, start, point) {
@@ -193,8 +214,10 @@ pub(super) fn input(
             state.first = Some(point);
             state.status = Some("Click the end of the first curve".into());
         }
+
         return;
     }
+
     if state.branching {
         if let Some(knot) = state.knot {
             match junctions::branch(&dense.roads, knot, size, point) {
@@ -215,6 +238,7 @@ pub(super) fn input(
         }
         return;
     }
+
     if state.extending {
         if let Some(knot) = state.knot {
             match commands::extend(&dense.roads, knot, size, point) {
@@ -237,7 +261,9 @@ pub(super) fn input(
         }
         return;
     }
+
     let mut picks = vec![];
+
     for e in dense.roads.entries.values() {
         let Some(RoadSourceRecord::Knot(k)) = &e.current else {
             continue;
@@ -245,9 +271,11 @@ pub(super) fn input(
         let Some(RoadSourceRecord::Road(r)) = dense.roads.get(RoadRecordKey::Road(k.road)) else {
             continue;
         };
+
         if r.space != space {
             continue;
         }
+
         for (handle, p) in handles(
             &k.knot,
             !state.connecting && state.knot == Some(k.knot.id),
@@ -265,12 +293,15 @@ pub(super) fn input(
                 continue;
             };
             let distance = screen.distance(cursor);
+
             if distance < 12.0 {
                 picks.push((distance, k.clone(), handle));
             }
         }
     }
+
     picks.sort_by(|a, b| a.0.total_cmp(&b.0));
+
     if let Some((_, k, handle)) = picks.into_iter().next() {
         if state.connecting {
             if let Some(source) = state.knot {
@@ -281,6 +312,7 @@ pub(super) fn input(
             }
             return;
         }
+
         state.road = Some(k.road);
         state.knot = Some(k.knot.id);
         state.span = dense.roads.entries.values().find_map(|e| {
@@ -290,6 +322,7 @@ pub(super) fn input(
                 None
             }
         });
+
         if junctions::ready(&dense.roads, k.knot.id) {
             let connected_before = if handle == Handle::Point {
                 junctions::drag_before(&dense.roads, k.knot.id)
@@ -306,14 +339,18 @@ pub(super) fn input(
         } else {
             state.status = Some("Loading adjoining curves; drag again when ready".into());
         }
+
         return;
     }
+
     if state.connecting {
         state.status =
             Some("Click a road point; split a curve first to create a connection point".into());
         return;
     }
+
     let mut nearest: Option<(f32, RoadSpanId, RoadId)> = None;
+
     for e in dense.roads.entries.values() {
         let Some(RoadSourceRecord::Span(s)) = &e.current else {
             continue;
@@ -321,14 +358,17 @@ pub(super) fn input(
         let Some(RoadSourceRecord::Road(r)) = dense.roads.get(RoadRecordKey::Road(s.road)) else {
             continue;
         };
+
         if r.space != space {
             continue;
         }
+
         let Some(span) = commands::span(&dense.roads, s.id) else {
             continue;
         };
         let controls = span.control_points(input.ground.origin.cell(), size);
         let mut last = None;
+
         for i in 0..=48 {
             let point = RoadPoint::from_relative(
                 input.ground.origin.cell(),
@@ -346,21 +386,25 @@ pub(super) fn input(
                         .world_to_viewport(input.ground.camera.1, p)
                         .ok()
                 });
+
             if let (Some(a), Some(b)) = (last, screen) {
                 let distance = distance_to_segment(cursor, a, b);
                 if distance < 10.0 && nearest.is_none_or(|v| distance < v.0) {
                     nearest = Some((distance, s.id, s.road));
                 }
             }
+
             last = screen;
         }
     }
+
     if let Some((_, id, road)) = nearest {
         state.span = Some(id);
         state.road = Some(road);
         state.knot = None;
     }
 }
+
 fn update_drag(
     state: &mut RoadToolState,
     dense: &mut SourceWorkingSets,
@@ -381,10 +425,12 @@ fn update_drag(
         })
         .and_then(|changes| dense.roads.apply(&changes));
     state.status = result.err();
+
     if released {
         finish(state, dense, history, false);
     }
 }
+
 fn drag_change(
     drag: &Drag,
     point: RoadPoint,
@@ -394,6 +440,7 @@ fn drag_change(
     let mut next = drag.before.clone();
     let now = point.relative_to(drag.start.cell, size as f64);
     let delta = [now[0] - drag.start.local[0], now[1] - drag.start.local[1]];
+
     match drag.handle {
         Handle::Point => {
             let p = next.knot.position;
@@ -418,9 +465,11 @@ fn drag_change(
             own[1] += delta[1];
             let len = own[0].hypot(own[1]);
             let opposite = other[0].hypot(other[1]);
+
             if len < 0.05 {
                 return Err("Keep the curve handle longer than 5 cm".into());
             }
+
             if opposite > 0.0 {
                 *other = own.map(|v| -v / len * opposite);
             }
@@ -431,6 +480,7 @@ fn drag_change(
                 (next.knot.width + 2.0 * (delta[0] * n[0] + delta[1] * n[1]) as f32).min(64.0);
         }
     }
+
     let Some(RoadSourceRecord::Road(r)) = working.get(RoadRecordKey::Road(next.road)) else {
         return Err("The road reference is not loaded".into());
     };
@@ -440,19 +490,23 @@ fn drag_change(
     };
     next.knot.width = next.knot.width.max(p.minimum_width());
     next.knot.validate(size, p).map_err(|e| e.to_string())?;
+
     if junctions::at(working, next.knot.id).is_some_and(|j| next.knot.width > j.junction.radius) {
         return Err("Increase the junction blend radius before widening this point".into());
     }
+
     Ok(RoadChange {
         key: RoadRecordKey::Knot(next.knot.id),
         record: Some(RoadSourceRecord::Knot(next)),
     })
 }
+
 fn distance_to_segment(p: Vec2, a: Vec2, b: Vec2) -> f32 {
     let d = b - a;
     let t = ((p - a).dot(d) / d.length_squared().max(0.0001)).clamp(0.0, 1.0);
     p.distance(a + t * d)
 }
+
 fn normal(k: &RoadKnot) -> [f64; 2] {
     let d = if k.outgoing[0].hypot(k.outgoing[1]) > 0.01 {
         k.outgoing
@@ -462,8 +516,10 @@ fn normal(k: &RoadKnot) -> [f64; 2] {
     let len = d[0].hypot(d[1]).max(0.001);
     [-d[1] / len, d[0] / len]
 }
+
 fn handles(k: &RoadKnot, selected: bool, size: f32) -> Vec<(Handle, RoadPoint)> {
     let mut result = vec![(Handle::Point, k.position)];
+
     if selected {
         for (h, d) in [
             (Handle::Incoming, k.incoming),
@@ -482,8 +538,10 @@ fn handles(k: &RoadKnot, selected: bool, size: f32) -> Vec<(Handle, RoadPoint)> 
             }
         }
     }
+
     result
 }
+
 fn project_point(input: &Input, p: RoadPoint, size: f32) -> Option<Vec3> {
     let (_, terrain) =
         input.ground.terrain.iter().find(|(_, s)| {
@@ -496,6 +554,7 @@ fn project_point(input: &Input, p: RoadPoint, size: f32) -> Option<Vec3> {
     let local = p.relative_to(input.ground.origin.cell(), size as f64);
     Some(Vec3::new(local[0] as f32, y + 0.12, local[1] as f32))
 }
+
 fn cubic(p: [[f64; 2]; 4], t: f64) -> [f64; 2] {
     let u = 1.0 - t;
     [0, 1].map(|i| {
@@ -505,11 +564,13 @@ fn cubic(p: [[f64; 2]; 4], t: f64) -> [f64; 2] {
             + t * t * t * p[3][i]
     })
 }
+
 fn cross(g: &mut Gizmos<EditorOverlayGizmos>, p: Vec3, color: Color, r: f32) {
     g.line(p - Vec3::X * r, p + Vec3::X * r, color);
     g.line(p - Vec3::Z * r, p + Vec3::Z * r, color);
     g.line(p - Vec3::Y * r, p + Vec3::Y * r, color);
 }
+
 pub(super) fn draw(
     input: Input,
     dense: Res<SourceWorkingSets>,
@@ -519,6 +580,7 @@ pub(super) fn draw(
     if !active(&input) {
         return;
     }
+
     let Some(space) = input.ground.origin.space() else {
         return;
     };
@@ -527,14 +589,18 @@ pub(super) fn draw(
     };
     let cyan = Color::srgb(0.15, 0.85, 1.0);
     let orange = Color::srgb(1.0, 0.55, 0.1);
+
     for e in dense.roads.entries.values() {
         match &e.current {
             Some(RoadSourceRecord::Junction(j)) if j.space == space => {
                 let color = Color::srgb(1.0, 0.35, 0.8);
+
                 if let Some(p) = project_point(&input, j.junction.position, size) {
                     cross(&mut gizmos, p, color, 0.28);
                 }
+
                 let mut previous = None;
+
                 for i in 0..=48 {
                     let angle = std::f64::consts::TAU * i as f64 / 48.0;
                     let p = RoadPoint::from_relative(
@@ -549,9 +615,11 @@ pub(super) fn draw(
                     )
                     .ok()
                     .and_then(|p| project_point(&input, p, size));
+
                     if let (Some(a), Some(b)) = (previous, p) {
                         gizmos.line(a, b, color);
                     }
+
                     previous = p;
                 }
             }
@@ -560,9 +628,11 @@ pub(super) fn draw(
                 else {
                     continue;
                 };
+
                 if r.space != space {
                     continue;
                 }
+
                 let Some(span) = commands::span(&dense.roads, s.id) else {
                     continue;
                 };
@@ -575,6 +645,7 @@ pub(super) fn draw(
                 } else {
                     Color::srgb(0.85, 0.85, 0.55)
                 };
+
                 for i in 0..=48 {
                     let next = RoadPoint::from_relative(
                         input.ground.origin.cell(),
@@ -583,9 +654,11 @@ pub(super) fn draw(
                     )
                     .ok()
                     .and_then(|p| project_point(&input, p, size));
+
                     if let (Some(a), Some(b)) = (last, next) {
                         gizmos.line(a, b, color);
                     }
+
                     last = next;
                 }
             }
@@ -594,10 +667,13 @@ pub(super) fn draw(
                 else {
                     continue;
                 };
+
                 if r.space != space {
                     continue;
                 }
+
                 let center = project_point(&input, k.knot.position, size);
+
                 for (handle, p) in handles(&k.knot, state.knot == Some(k.knot.id), size) {
                     if let Some(p) = project_point(&input, p, size) {
                         let color = if handle == Handle::Width {
@@ -611,6 +687,7 @@ pub(super) fn draw(
                             color,
                             if handle == Handle::Point { 0.16 } else { 0.12 },
                         );
+
                         if handle != Handle::Point
                             && let Some(a) = center
                         {
@@ -622,6 +699,7 @@ pub(super) fn draw(
             _ => {}
         }
     }
+
     let first = state.first.or_else(|| {
         if state.branching || state.extending {
             state
@@ -634,6 +712,7 @@ pub(super) fn draw(
             None
         }
     });
+
     if let Some(first) = first.and_then(|p| project_point(&input, p, size)) {
         cross(&mut gizmos, first, orange, 0.2);
         if let Some(last) = state.hover.and_then(|p| project_point(&input, p, size)) {
@@ -646,6 +725,7 @@ pub(super) fn draw(
 mod tests {
     use super::*;
     use crate::editing::EditorObjectWorkingSet;
+
     #[test]
     fn release_uses_last_ground_hit_and_one_undo_restores_the_start() {
         let mut dense = SourceWorkingSets::default();
@@ -697,6 +777,7 @@ mod tests {
         );
         assert!(!history.undo(&mut objects, &mut dense));
     }
+
     #[test]
     fn cancelling_a_junction_drag_restores_all_members_without_an_undo_entry() {
         let mut dense = SourceWorkingSets::default();

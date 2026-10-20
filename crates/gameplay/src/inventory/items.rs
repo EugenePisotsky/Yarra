@@ -20,6 +20,7 @@ pub enum InventoryRole {
     /// What a container holds.
     Contents,
 }
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Inventory {
@@ -49,6 +50,7 @@ impl Inventory {
             entries: Vec::new(),
         }
     }
+
     /// An identity for an entry this inventory creates, from the inventory's own and how
     /// many it created before. A command replayed after a load makes the same items, and
     /// one that is undone gives the numbers back with the rest of the inventory.
@@ -62,36 +64,46 @@ impl Inventory {
         id.copy_from_slice(&hash.finalize().as_bytes()[..16]);
         ItemId(id)
     }
+
     /// The character this is the carried inventory of, if it is one.
     pub fn carried_by(&self) -> Option<ActorId> {
         self.owner
             .as_actor()
             .filter(|_| self.role == InventoryRole::Carried)
     }
+
     /// Checks the inventory against a catalog that was itself checked when it was loaded.
     pub fn validate(&self, catalog: &ItemCatalog) -> Result<()> {
         validate_revision(self.revision)?;
+
         if self.entries.len() > MAX_INVENTORY_ENTRIES {
             return Err(InventoryError::Capacity);
         }
+
         let mut ids = BTreeSet::new();
+
         for entry in &self.entries {
             if !ids.insert(entry.id) {
                 return Err(InventoryError::Duplicate);
             }
+
             let definition = catalog.item(entry.definition)?;
+
             if entry.quantity == 0 || entry.quantity > definition.stack_limit {
                 return Err(InventoryError::InvalidQuantity);
             }
         }
+
         Ok(())
     }
+
     pub fn entry(&self, id: ItemId) -> Result<&ItemEntry> {
         self.entries
             .iter()
             .find(|e| e.id == id)
             .ok_or(InventoryError::UnknownItem(id))
     }
+
     pub fn list_items<'a>(
         &'a self,
         catalog: &ItemCatalog,
@@ -99,6 +111,7 @@ impl Inventory {
     ) -> Result<Vec<&'a ItemEntry>> {
         self.validate(catalog)?;
         let mut result = Vec::new();
+
         for entry in &self.entries {
             let item = catalog.item(entry.definition)?;
             if filter.category.is_none_or(|c| item.category == c)
@@ -107,8 +120,10 @@ impl Inventory {
                 result.push(entry);
             }
         }
+
         Ok(result)
     }
+
     pub fn total_weight_grams(&self, catalog: &ItemCatalog) -> Result<u64> {
         self.validate(catalog)?;
         self.entries.iter().try_fold(0_u64, |total, entry| {
@@ -117,6 +132,7 @@ impl Inventory {
             total.checked_add(weight).ok_or(InventoryError::Overflow)
         })
     }
+
     /// Authoritative creation (loot generation, rewards, fixtures). Not a transfer.
     pub fn grant(
         &mut self,
@@ -125,9 +141,11 @@ impl Inventory {
         quantity: u32,
     ) -> Result<Vec<ItemId>> {
         self.validate(catalog)?;
+
         if quantity == 0 {
             return Err(InventoryError::InvalidQuantity);
         }
+
         catalog.item(definition)?;
         let mut next = self.clone();
         let entry = ItemEntry {
@@ -140,6 +158,7 @@ impl Inventory {
         *self = next;
         Ok(ids)
     }
+
     /// Authoritative consumption/destruction. Gameplay must authorize the reason.
     /// Use discard for user-requested destruction, which respects discardable.
     pub fn remove(&mut self, catalog: &ItemCatalog, entry: ItemId, quantity: u32) -> Result<()> {
@@ -150,6 +169,7 @@ impl Inventory {
         *self = next;
         Ok(())
     }
+
     pub fn discard(&mut self, catalog: &ItemCatalog, entry: ItemId, quantity: u32) -> Result<()> {
         if !catalog
             .item(self.entry(entry)?.definition)?
@@ -160,6 +180,7 @@ impl Inventory {
         }
         self.remove(catalog, entry, quantity)
     }
+
     /// Splitting gives the new stack a new ID; the remaining stack keeps its ID.
     pub fn split_stack(
         &mut self,
@@ -168,12 +189,15 @@ impl Inventory {
         quantity: u32,
     ) -> Result<ItemId> {
         self.validate(catalog)?;
+
         if quantity == 0 || quantity >= self.entry(entry)?.quantity {
             return Err(InventoryError::InvalidQuantity);
         }
+
         if self.entries.len() == MAX_INVENTORY_ENTRIES {
             return Err(InventoryError::Capacity);
         }
+
         let mut next = self.clone();
         let split = withdraw(&mut next, entry, quantity)?;
         let id = split.id;
@@ -182,6 +206,7 @@ impl Inventory {
         *self = next;
         Ok(id)
     }
+
     /// Merge the whole source stack into the destination; source ID is retired.
     pub fn merge_stacks(
         &mut self,
@@ -190,22 +215,28 @@ impl Inventory {
         destination: ItemId,
     ) -> Result<()> {
         self.validate(catalog)?;
+
         if source == destination {
             return Err(InventoryError::SameParticipant);
         }
+
         let from = self.entry(source)?;
         let to = self.entry(destination)?;
         let limit = catalog.item(from.definition)?.stack_limit;
+
         if from.definition != to.definition || limit == 1 {
             return Err(InventoryError::IncompatibleStack);
         }
+
         let quantity = from
             .quantity
             .checked_add(to.quantity)
             .ok_or(InventoryError::Overflow)?;
+
         if quantity > limit {
             return Err(InventoryError::InvalidQuantity);
         }
+
         let revision = next_revision(self.revision)?;
         self.entries.retain(|entry| entry.id != source);
         self.entries
@@ -229,6 +260,7 @@ pub fn transfer(
     quantity: u32,
 ) -> Result<Vec<ItemId>> {
     validate_pair(catalog, source, destination)?;
+
     if !catalog
         .item(source.entry(entry)?.definition)?
         .permissions
@@ -236,6 +268,7 @@ pub fn transfer(
     {
         return Err(InventoryError::Restricted);
     }
+
     let mut from = source.clone();
     let mut to = destination.clone();
     let moved = withdraw(&mut from, entry, quantity)?;
@@ -251,12 +284,15 @@ pub(crate) fn validate_pair(catalog: &ItemCatalog, a: &Inventory, b: &Inventory)
     if a.id == b.id {
         return Err(InventoryError::SameParticipant);
     }
+
     a.validate(catalog)?;
     b.validate(catalog)?;
     let ids: BTreeSet<_> = a.entries.iter().map(|e| e.id).collect();
+
     if b.entries.iter().any(|e| ids.contains(&e.id)) {
         return Err(InventoryError::Duplicate);
     }
+
     Ok(())
 }
 
@@ -267,12 +303,15 @@ pub(crate) fn withdraw(inventory: &mut Inventory, id: ItemId, quantity: u32) -> 
         .position(|e| e.id == id)
         .ok_or(InventoryError::UnknownItem(id))?;
     let entry = &mut inventory.entries[index];
+
     if quantity == 0 || quantity > entry.quantity {
         return Err(InventoryError::InvalidQuantity);
     }
+
     if quantity == entry.quantity {
         return Ok(inventory.entries.remove(index));
     }
+
     entry.quantity -= quantity;
     let definition = entry.definition;
     Ok(ItemEntry {
@@ -288,28 +327,36 @@ pub(crate) fn deposit(
     mut incoming: ItemEntry,
 ) -> Result<Vec<ItemId>> {
     let limit = catalog.item(incoming.definition)?.stack_limit;
+
     if inventory.entries.iter().any(|e| e.id == incoming.id) {
         return Err(InventoryError::Duplicate);
     }
+
     let mut ids = Vec::new();
+
     if limit > 1 {
         for existing in &mut inventory.entries {
             if existing.definition != incoming.definition || existing.quantity == limit {
                 continue;
             }
+
             let amount = incoming.quantity.min(limit - existing.quantity);
             existing.quantity += amount;
             incoming.quantity -= amount;
             ids.push(existing.id);
+
             if incoming.quantity == 0 {
                 return Ok(ids);
             }
         }
     }
+
     let needed = u64::from(incoming.quantity).div_ceil(u64::from(limit));
+
     if needed > (MAX_INVENTORY_ENTRIES - inventory.entries.len()) as u64 {
         return Err(InventoryError::Capacity);
     }
+
     while incoming.quantity > 0 {
         let quantity = incoming.quantity.min(limit);
         ids.push(incoming.id);
@@ -318,10 +365,12 @@ pub(crate) fn deposit(
             ..incoming.clone()
         });
         incoming.quantity -= quantity;
+
         if incoming.quantity > 0 {
             incoming.id = inventory.mint();
         }
     }
+
     Ok(ids)
 }
 
@@ -333,6 +382,7 @@ pub struct Wallet {
     pub revision: u64,
     pub balance: Money,
 }
+
 impl Wallet {
     pub fn new(owner: OwnerRef) -> Self {
         Self {
@@ -342,9 +392,11 @@ impl Wallet {
             balance: Money::ZERO,
         }
     }
+
     pub fn validate(&self) -> Result<()> {
         validate_revision(self.revision)
     }
+
     /// Authoritative currency creation, such as a quest reward.
     pub fn credit(&mut self, amount: Money) -> Result<()> {
         self.validate()?;
@@ -354,6 +406,7 @@ impl Wallet {
         self.revision = revision;
         Ok(())
     }
+
     /// Authoritative currency removal, such as paying for a service.
     pub fn debit(&mut self, amount: Money) -> Result<()> {
         self.validate()?;
@@ -369,6 +422,7 @@ pub fn transfer_money(source: &mut Wallet, destination: &mut Wallet, amount: Mon
     if source.id == destination.id {
         return Err(InventoryError::SameParticipant);
     }
+
     let mut from = source.clone();
     let mut to = destination.clone();
     from.debit(amount)?;

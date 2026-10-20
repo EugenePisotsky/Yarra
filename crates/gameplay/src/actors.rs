@@ -20,6 +20,7 @@ pub struct Intent {
     #[serde(default)]
     pub repeat: bool,
 }
+
 /// What a character is in the middle of.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -32,6 +33,7 @@ pub struct Acting {
 fn first_level() -> u32 {
     1
 }
+
 /// A character the content knows by name: who it is built from and what it is called.
 /// Content may name only declared characters, so a mistyped name fails the build.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -43,6 +45,7 @@ pub struct CharacterDefinition {
     #[serde(default)]
     pub name: Option<TextRef>,
 }
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ActorTemplate {
@@ -66,12 +69,14 @@ pub struct ActorTemplate {
     #[serde(default)]
     pub loot: Option<LootId>,
 }
+
 /// Logical world coordinates in millimetres; never an ECS transform/handle.
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Position {
     pub millimetres: [i64; 3],
 }
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Actor {
@@ -108,6 +113,7 @@ pub struct Actor {
     #[serde(deserialize_with = "game_types::deserialize_unique_map")]
     pub cooldowns: BTreeMap<Key, GameTime>,
 }
+
 impl ActorTemplate {
     pub fn validate(&self, rules: &Rules) -> Result<()> {
         self.name.validate()?;
@@ -116,6 +122,7 @@ impl ActorTemplate {
             (1..=rules.max_level()).contains(&self.level),
             "template level cannot be reached",
         )?;
+
         for (stat, value) in &self.base {
             let (minimum, maximum) = rules.primary(stat)?;
             require(
@@ -123,15 +130,18 @@ impl ActorTemplate {
                 "template stat outside its bounds",
             )?;
         }
+
         for (skill, rank) in &self.skills {
             require(
                 *rank > 0 && usize::from(*rank) <= rules.skill(skill)?.ranks.len(),
                 "template skill rank out of range",
             )?;
         }
+
         Ok(())
     }
 }
+
 impl Actor {
     /// A character as its template and class describe it, levels included. Its stats and
     /// resources are filled in by the state, which knows the formulas.
@@ -160,11 +170,14 @@ impl Actor {
             intents: VecDeque::new(),
             cooldowns: BTreeMap::new(),
         };
+
         while actor.level < template.level {
             actor.gain_level(rules)?;
         }
+
         Ok(actor)
     }
+
     /// Reaches the next level and takes what the class grants for it.
     pub fn gain_level(&mut self, rules: &Rules) -> Result<()> {
         require(
@@ -173,40 +186,49 @@ impl Actor {
         )?;
         self.level += 1;
         let class = rules.class(&self.class)?;
+
         for grants in rules.grants(class, self.level) {
             self.attribute_points = self
                 .attribute_points
                 .saturating_add(grants.attribute_points);
             self.learning_points = self.learning_points.saturating_add(grants.learning_points);
+
             for (stat, bonus) in &grants.bonuses {
                 let (minimum, maximum) = rules.primary(stat)?;
                 let value = self.base.entry(stat.clone()).or_insert(minimum);
                 *value = value.saturating_add(*bonus).clamp(minimum, maximum);
             }
+
             self.abilities.extend(grants.abilities.iter().cloned());
         }
+
         Ok(())
     }
+
     pub fn alive(&self, rules: &Rules) -> bool {
         self.resources
             .get(&rules.life)
             .is_some_and(|life| *life > 0)
     }
+
     pub fn skill(&self, skill: &Key) -> u8 {
         self.skills.get(skill).copied().unwrap_or(0)
     }
+
     /// Takes stats just worked out and keeps every resource within its cap. A resource the
     /// rules have gained starts full; one they no longer have is dropped.
     pub(crate) fn set_stats(&mut self, stats: Stats, rules: &Rules) {
         self.stats = stats;
         self.resources
             .retain(|resource, _| rules.resources().any(|(known, _)| known == resource));
+
         for (resource, maximum) in rules.resources() {
             let cap = self.stats[maximum].max(0);
             let amount = self.resources.entry(resource.clone()).or_insert(cap);
             *amount = (*amount).clamp(0, cap);
         }
     }
+
     /// Whether everything the stats are worked out from is the same as in `other`.
     pub fn same_build(&self, other: &Self) -> bool {
         self.class == other.class
@@ -221,6 +243,7 @@ impl Actor {
                 .zip(&other.effects)
                 .all(|(a, b)| a.effect == b.effect)
     }
+
     /// When something next happens to this character by itself: an effect ends or ticks,
     /// what it is doing takes effect, or the ability it is waiting to use is ready again.
     pub fn next_event(&self) -> Option<GameTime> {
@@ -236,12 +259,14 @@ impl Actor {
             .chain(waiting)
             .min()
     }
+
     /// The record's own shape. What it owns and what its stats should be is checked by
     /// the state.
     pub fn validate(&self, rules: &Rules) -> Result<()> {
         if let Some(name) = &self.name_override {
             name.validate()?;
         }
+
         let class = rules.class(&self.class)?;
         require(
             (1..=rules.max_level()).contains(&self.level),
@@ -251,6 +276,7 @@ impl Actor {
             self.base.len() == class.starting.len(),
             "base stats must be the primary stats",
         )?;
+
         for (stat, value) in &self.base {
             let (minimum, maximum) = rules.primary(stat)?;
             require(
@@ -258,19 +284,23 @@ impl Actor {
                 "base stat outside its bounds",
             )?;
         }
+
         require(
             self.effects.len() <= rules.effects.len() && self.equipment.len() <= rules.slots.len(),
             "actor exceeds limits",
         )?;
+
         for (skill, rank) in &self.skills {
             require(
                 *rank > 0 && usize::from(*rank) <= rules.skill(skill)?.ranks.len(),
                 "skill rank out of range",
             )?;
         }
+
         for ability in &self.abilities {
             rules.ability(ability)?;
         }
+
         require(
             self.intents.len() <= MAX_INTENTS && self.cooldowns.len() <= self.abilities.len(),
             "actor exceeds limits",
@@ -279,6 +309,7 @@ impl Actor {
             .intents
             .iter()
             .chain(self.acting.as_ref().map(|a| &a.intent));
+
         for intent in intents {
             require(
                 self.abilities.contains(&intent.ability)
@@ -286,14 +317,18 @@ impl Actor {
                 "intent does not fit the ability",
             )?;
         }
+
         require(
             self.alive(rules) || (self.acting.is_none() && self.intents.is_empty()),
             "the dead do nothing",
         )?;
+
         for slot in self.equipment.keys() {
             require(rules.slots.contains(slot), "unknown equipment slot")?;
         }
+
         let mut effects = BTreeSet::new();
+
         for effect in &self.effects {
             let definition = rules.effect(&effect.effect)?;
             require(effects.insert(&effect.effect), "effect applied twice")?;
@@ -302,10 +337,12 @@ impl Actor {
                 "effect tick does not match its definition",
             )?;
         }
+
         require(
             self.resources.len() == rules.resources().count(),
             "resources must be the rules' resources",
         )?;
+
         for (resource, maximum) in rules.resources() {
             let (Some(amount), Some(cap)) = (self.resources.get(resource), self.stats.get(maximum))
             else {
@@ -316,6 +353,7 @@ impl Actor {
                 "resource outside zero and its cap",
             )?;
         }
+
         Ok(())
     }
 }
@@ -326,22 +364,26 @@ pub struct RelationshipKey {
     pub from: ActorId,
     pub to: ActorId,
 }
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Relationship {
     pub key: RelationshipKey,
     pub attitude: i16,
 }
+
 impl Relationship {
     pub fn neutral(key: RelationshipKey) -> Self {
         Self { key, attitude: 0 }
     }
+
     pub fn validate(&self) -> Result<()> {
         require(
             self.key.from != self.key.to && (-100..=100).contains(&self.attitude),
             "invalid directed relationship",
         )
     }
+
     pub fn adjust(&mut self, amount: i16) -> Result<()> {
         self.validate()?;
         self.attitude = (i32::from(self.attitude) + i32::from(amount)).clamp(-100, 100) as i16;

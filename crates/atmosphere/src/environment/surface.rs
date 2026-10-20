@@ -2,6 +2,7 @@
 //! `shaders/lighting/surface.wesl`): the parameter buffer, the cloud shadow map, rain shelter and
 //! the forest shadow map. Pipelines outside Bevy's materials (grass) bind the same group.
 use super::*;
+
 use bevy::render::{
     Render, RenderApp, RenderStartup, RenderSystems,
     render_asset::RenderAssets,
@@ -9,12 +10,15 @@ use bevy::render::{
     storage::GpuShaderBuffer,
     texture::GpuImage,
 };
+
 use binding_types::*;
 
 #[derive(Resource)]
 pub(crate) struct EnvironmentSurfaceLayout(pub BindGroupLayoutDescriptor);
+
 #[derive(Resource)]
 pub struct EnvironmentSurfaceGpu(pub BindGroup);
+
 pub(super) fn install(app: &mut App) {
     let Some(render) = app.get_sub_app_mut(RenderApp) else {
         return;
@@ -27,9 +31,11 @@ pub(super) fn install(app: &mut App) {
             upload_forest_sky_levels.in_set(RenderSystems::PrepareResources),
         );
 }
+
 fn init(mut commands: Commands) {
     commands.insert_resource(EnvironmentSurfaceLayout(surface_layout()));
 }
+
 /// Writes the forest map's sky levels into its texture once Bevy has rewritten level 0, and
 /// again whenever the map or its texture changes.
 fn upload_forest_sky_levels(
@@ -46,9 +52,11 @@ fn upload_forest_sky_levels(
         return;
     };
     let key = (levels.revision, image.texture.id());
+
     if levels.levels.is_empty() || *written == Some(key) {
         return;
     }
+
     for (index, data) in levels.levels.iter().enumerate() {
         let level = index as u32 + 1;
         let side = crate::forest_shadow::SIZE >> level;
@@ -72,6 +80,7 @@ fn upload_forest_sky_levels(
             },
         );
     }
+
     *written = Some(key);
 }
 
@@ -106,6 +115,7 @@ fn prepare(
         shelter.texture_view.id(),
         forest.texture_view.id(),
     );
+
     if *previous != Some(key) {
         commands.insert_resource(EnvironmentSurfaceGpu(device.create_bind_group(
             "environment surface bind group",
@@ -122,6 +132,7 @@ fn prepare(
         *previous = Some(key);
     }
 }
+
 pub fn surface_layout() -> BindGroupLayoutDescriptor {
     BindGroupLayoutDescriptor::new(
         "environment surface input",

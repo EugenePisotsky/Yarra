@@ -13,6 +13,7 @@ pub enum Participant {
     /// A named character, whoever is talking.
     Actor(ActorId),
 }
+
 impl Participant {
     pub fn resolve(self, player: ActorId, speaker: ActorId) -> ActorId {
         match self {
@@ -22,18 +23,21 @@ impl Participant {
         }
     }
 }
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NamedPredicate {
     pub id: PredicateId,
     pub condition: Condition,
 }
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DialogueVariant {
     pub dialogue: DialogueId,
     pub weight: u32,
 }
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EntryRule {
@@ -46,28 +50,34 @@ pub struct EntryRule {
     pub condition: Condition,
     pub variants: Vec<DialogueVariant>,
 }
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InteractionProfile {
     pub id: InteractionProfileId,
     pub rules: Vec<EntryRule>,
 }
+
 impl InteractionProfile {
     pub fn validate(&self) -> Result<()> {
         require(!self.rules.is_empty(), "a profile has entry rules")?;
         let mut ids = BTreeSet::new();
         let mut precedence = BTreeSet::new();
+
         for rule in &self.rules {
             require(
                 ids.insert(&rule.id) && precedence.insert((rule.priority, rule.order)),
                 "duplicate rule or ambiguous interaction precedence",
             )?;
+
             if let Some(text) = &rule.topic {
                 text.validate()?;
             }
+
             require(!rule.variants.is_empty(), "an entry rule has variants")?;
             let mut dialogues = BTreeSet::new();
             let mut weight = 0u32;
+
             for variant in &rule.variants {
                 require(
                     variant.weight > 0 && dialogues.insert(variant.dialogue),
@@ -77,11 +87,14 @@ impl InteractionProfile {
                     .checked_add(variant.weight)
                     .ok_or_else(|| Invalid("variant weight overflow".into()))?;
             }
+
             rule.condition.visit(&mut |_| Ok(()))?;
         }
+
         Ok(())
     }
 }
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Observed {
     Boolean(bool),
@@ -90,17 +103,20 @@ pub enum Observed {
     Quest(quests::Status),
     Value(Value),
 }
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConditionCheck {
     pub predicate: Condition,
     pub observed: Observed,
     pub matched: bool,
 }
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Evaluation {
     pub matched: bool,
     pub checks: Vec<ConditionCheck>,
 }
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EntryPreview {
     pub rule: Key,
@@ -112,22 +128,26 @@ pub struct EntryPreview {
     pub unavailable_variants: Vec<DialogueId>,
     pub variants: Vec<DialogueVariant>,
 }
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InteractionPreview {
     pub profile: InteractionProfileId,
     pub candidates: Vec<EntryPreview>,
 }
+
 impl InteractionPreview {
     pub fn opening(&self) -> Option<&EntryPreview> {
         self.candidates
             .iter()
             .find(|r| r.topic.is_none() && r.evaluation.matched)
     }
+
     pub fn topics(&self) -> impl Iterator<Item = &EntryPreview> {
         self.candidates
             .iter()
             .filter(|r| r.topic.is_some() && r.evaluation.matched)
     }
+
     pub(crate) fn selected(&self, topic: Option<&Key>) -> Result<&EntryPreview> {
         match topic {
             None => self.opening(),
@@ -136,6 +156,7 @@ impl InteractionPreview {
         .ok_or_else(|| Invalid("no eligible conversation entry".into()).into())
     }
 }
+
 impl Condition {
     /// Visit a bounded authored tree. Named references are reported; the content source loads them.
     pub fn visit(&self, visitor: &mut impl FnMut(&Condition) -> Result<()>) -> Result<()> {
@@ -148,6 +169,7 @@ impl Condition {
             require(depth <= 16 && *budget > 0, "condition complexity exceeded")?;
             *budget -= 1;
             f(c)?;
+
             match c {
                 Condition::All(v) | Condition::Any(v) => {
                     require(!v.is_empty(), "empty condition group")?;
@@ -158,10 +180,12 @@ impl Condition {
                 Condition::Not(c) => walk(c, depth + 1, budget, f)?,
                 _ => {}
             }
+
             Ok(())
         }
         walk(self, 0, &mut 256, visitor)
     }
+
     /// Shared traversal for publication and runtime validation. Named expansions use the
     /// same total depth/work budget as evaluation, while each authored tree stays bounded.
     pub fn visit_resolved<'a>(
@@ -183,6 +207,7 @@ impl Condition {
             )?;
             *budget -= 1;
             visitor(c)?;
+
             match c {
                 Condition::All(children) | Condition::Any(children) => {
                     for child in children {
@@ -199,12 +224,14 @@ impl Condition {
                 }
                 _ => {}
             }
+
             Ok(())
         }
         self.visit(&mut |_| Ok(()))?;
         walk(self, resolve, visitor, &mut BTreeSet::new(), 0, &mut 1024)
     }
 }
+
 impl Action {
     pub fn visit(&self, visitor: &mut impl FnMut(&Action) -> Result<()>) -> Result<()> {
         fn walk(
@@ -216,6 +243,7 @@ impl Action {
             require(depth <= 8 && *budget > 0, "action complexity exceeded")?;
             *budget -= 1;
             f(a)?;
+
             match a {
                 Action::Check {
                     success, failure, ..
@@ -233,11 +261,13 @@ impl Action {
                 }
                 _ => {}
             }
+
             Ok(())
         }
         walk(self, 0, &mut 1024, visitor)
     }
 }
+
 impl GameContent {
     pub fn quest(&self, id: QuestId) -> Result<&quests::Quest> {
         self.game
@@ -245,12 +275,14 @@ impl GameContent {
             .get(&id)
             .ok_or_else(|| Invalid("unknown quest".into()).into())
     }
+
     pub fn profile(&self, id: InteractionProfileId) -> Result<&InteractionProfile> {
         self.game
             .profiles
             .get(&id)
             .ok_or_else(|| Invalid("unknown interaction profile".into()).into())
     }
+
     pub fn predicate(&self, id: PredicateId) -> Result<&Condition> {
         self.game
             .predicates
@@ -258,6 +290,7 @@ impl GameContent {
             .map(|p| &p.condition)
             .ok_or_else(|| Invalid("unknown named predicate".into()).into())
     }
+
     pub fn validate_condition(&self, condition: &Condition) -> Result<()> {
         condition.visit_resolved(&|id| self.predicate(id), &mut |c| {
             match c {
@@ -277,6 +310,7 @@ impl GameContent {
                 } => {
                     require(*minimum > 0, "zero history threshold")?;
                     let d = self.dialogue_contract(*dialogue)?;
+
                     if let dialogue::HistoryEvent::Node(id) = event {
                         require(d.nodes.contains(id), "unknown history node")?
                     }
@@ -293,6 +327,7 @@ impl GameContent {
                     if let Some(of) = of {
                         self.validate_participant(of)?;
                     }
+
                     let initial = &self.variable_use(*variable, of)?.initial;
                     let fits = match test {
                         Test::Is(value) => initial.same_type(value),
@@ -332,6 +367,7 @@ impl GameContent {
             Ok(())
         })
     }
+
     pub fn evaluate(
         &self,
         condition: &Condition,
@@ -341,6 +377,7 @@ impl GameContent {
     ) -> Result<Evaluation> {
         self.evaluate_among(condition, state, player, speaker, &BTreeSet::new())
     }
+
     /// `others` are further actors taking part, beyond the pair and the party.
     pub fn evaluate_among(
         &self,
@@ -400,6 +437,7 @@ impl GameContent {
                 }
                 Condition::All(v) | Condition::Any(v) => {
                     let mut result = matches!(c, Condition::All(_));
+
                     for child in v {
                         let value = eval(content, child, state, pair, checks, budget, depth + 1)?;
                         if matches!(c, Condition::All(_)) {
@@ -408,6 +446,7 @@ impl GameContent {
                             result |= value;
                         }
                     }
+
                     return Ok(result);
                 }
                 Condition::Not(v) => {
@@ -509,6 +548,7 @@ impl GameContent {
         )?;
         Ok(Evaluation { matched, checks })
     }
+
     pub fn preview(
         &self,
         profile: InteractionProfileId,
@@ -517,9 +557,11 @@ impl GameContent {
         speaker: ActorId,
     ) -> Result<InteractionPreview> {
         let mut candidates = Vec::new();
+
         for rule in &self.profile(profile)?.rules {
             let mut variants = Vec::new();
             let mut unavailable_variants = Vec::new();
+
             for variant in &rule.variants {
                 let contract = self.dialogue_contract(variant.dialogue)?;
                 if contract.repeat.eligible(
@@ -531,6 +573,7 @@ impl GameContent {
                     unavailable_variants.push(variant.dialogue);
                 }
             }
+
             let mut evaluation = self.evaluate(&rule.condition, state, player, speaker)?;
             evaluation.matched &= !variants.is_empty();
             candidates.push(EntryPreview {
@@ -543,12 +586,14 @@ impl GameContent {
                 unavailable_variants,
             });
         }
+
         candidates.sort_by_key(|c| (std::cmp::Reverse(c.priority), c.order));
         Ok(InteractionPreview {
             profile,
             candidates,
         })
     }
+
     /// Links used for selection are validated at publication, but are deliberately not eager
     /// runtime dependencies: inspecting an NPC must not load every potential conversation.
     pub fn validate_selection_links(&self) -> Result<()> {
@@ -557,6 +602,7 @@ impl GameContent {
                 self.profile(id)?;
             }
         }
+
         for profile in self.game.profiles.values() {
             for rule in &profile.rules {
                 for variant in &rule.variants {
@@ -565,6 +611,7 @@ impl GameContent {
                 }
             }
         }
+
         Ok(())
     }
 }

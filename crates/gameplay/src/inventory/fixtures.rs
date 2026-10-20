@@ -17,6 +17,7 @@ fn named<T: TryFrom<String, Error = game_types::Invalid> + PartialEq + Copy>(
     assert!(T::try_from(name.to_owned()).is_ok_and(|parsed| parsed == id));
     id
 }
+
 pub fn example_catalog() -> ItemCatalog {
     let mut catalog = ItemCatalog {
         id: CatalogId([1; 16]),
@@ -36,6 +37,7 @@ pub fn example_catalog() -> ItemCatalog {
         .collect(),
         items: Default::default(),
     };
+
     for (id, key, name, category, stack_limit, weight, ask, bid) in [
         (
             POTION,
@@ -69,6 +71,7 @@ pub fn example_catalog() -> ItemCatalog {
             },
         );
     }
+
     let key = catalog.items.get_mut(&KEY).unwrap();
     key.tags.insert("quest".into());
     key.permissions.sellable = false;

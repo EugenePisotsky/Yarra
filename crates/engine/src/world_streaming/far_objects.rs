@@ -6,6 +6,7 @@
 use super::database::{
     DatabaseRequest, FarObjectPayloads, NotSent, RequestId, WorldDatabaseWorker,
 };
+
 use super::{ActiveWorldSpace, StreamPhase, WorldCatalog, WorldOrigin, WorldStream};
 use crate::trees::impostor::{ImpostorBatch, ImpostorInstance, TreeFormSpec};
 use bevy::{math::DVec2, prelude::*};
@@ -14,9 +15,12 @@ use world::{CellCoord, FAR_OBJECT_BLOCK_CELLS, FarObjectsPage, WorldSpaceId};
 
 /// Blocks with any point within this distance of the camera are drawn...
 const RADIUS_METRES: f64 = 2048.0;
+
 /// ...and kept until all of them lie this much further away.
 const HYSTERESIS_METRES: f64 = 256.0;
+
 const MAX_BLOCKS_PER_REQUEST: usize = 16;
+
 /// Each attached block spawns a batch per impostor, whose mesh is built when it loads.
 const MAX_ATTACHMENTS_PER_FRAME: usize = 4;
 
@@ -49,7 +53,9 @@ impl FarObjects {
         if self.requested.as_ref().is_none_or(|(sent, _)| *sent != id) {
             return;
         }
+
         let (_, requested) = self.requested.take().unwrap();
+
         match result {
             Ok(blocks) => self.arrived.extend(blocks),
             Err(error) => {
@@ -69,6 +75,7 @@ impl FarObjects {
                 commands.entity(entity).despawn();
             }
         }
+
         self.requested = None;
         self.arrived.clear();
     }
@@ -92,17 +99,21 @@ pub(super) fn update(
     else {
         return;
     };
+
     if far.generation != catalog.generation_id || far.space != active.current {
         far.clear(&mut commands);
         far.generation = catalog.generation_id.clone();
         far.space = active.current;
     }
+
     let Some(space) = far.space.and_then(|id| manifest.world_space(id)) else {
         return;
     };
+
     if origin.space() != Some(space.id) {
         return;
     }
+
     let size = f64::from(space.cell_size) * f64::from(FAR_OBJECT_BLOCK_CELLS);
     let place = |block: CellCoord| {
         let cells =
@@ -113,6 +124,7 @@ pub(super) fn update(
             (cells(block.z, origin.cell().z) as f64 * f64::from(space.cell_size)) as f32,
         )
     };
+
     if far.origin != origin.cell() {
         far.origin = origin.cell();
         for (&block, state) in &far.blocks {
@@ -128,10 +140,12 @@ pub(super) fn update(
         let count = far.arrived.len().min(MAX_ATTACHMENTS_PER_FRAME);
         far.arrived.drain(..count).collect()
     };
+
     for (block, payload) in arrived {
         if !matches!(far.blocks.get(&block), Some(Block::Requested)) {
             continue;
         }
+
         let state = match payload.map(|bytes| {
             FarObjectsPage::decode(&bytes)
                 .map_err(|error| error.to_string())
@@ -161,14 +175,17 @@ pub(super) fn update(
         f64::from(camera.transform.translation().x) + base[0],
         f64::from(camera.transform.translation().z) + base[1],
     );
+
     if !eye.is_finite() {
         return;
     }
+
     let distance = |block: CellCoord| {
         let low = DVec2::new(f64::from(block.x), f64::from(block.z)) * size;
         eye.distance(eye.clamp(low, low + size))
     };
     let mut gone = Vec::new();
+
     for (&block, state) in &far.blocks {
         if distance(block) > RADIUS_METRES + HYSTERESIS_METRES {
             if let Block::Drawn(entity) = state {
@@ -177,6 +194,7 @@ pub(super) fn update(
             gone.push(block);
         }
     }
+
     for block in gone {
         far.blocks.remove(&block);
     }
@@ -184,27 +202,33 @@ pub(super) fn update(
     if far.requested.is_some() {
         return;
     }
+
     let block_of = |v: f64| (v / size).floor() as i32;
     let (low, high) = (eye - RADIUS_METRES, eye + RADIUS_METRES);
     let mut missing: Vec<(f64, CellCoord)> = Vec::new();
+
     for x in block_of(low.x)..=block_of(high.x) {
         for z in block_of(low.y)..=block_of(high.y) {
             let block = CellCoord { x, z };
             let d = distance(block);
+
             if d <= RADIUS_METRES && !far.blocks.contains_key(&block) {
                 missing.push((d, block));
             }
         }
     }
+
     if missing.is_empty() {
         return;
     }
+
     missing.sort_by(|a, b| a.0.total_cmp(&b.0));
     let blocks: Vec<_> = missing
         .into_iter()
         .take(MAX_BLOCKS_PER_REQUEST)
         .map(|(_, block)| block)
         .collect();
+
     match worker.send(DatabaseRequest::ReadFarObjects {
         generation: far.generation.clone(),
         space: space.id,
@@ -229,6 +253,7 @@ fn spawn_block(
     translation: Vec3,
 ) -> Entity {
     let mut by_form = vec![Vec::new(); page.forms.len()];
+
     for instance in &page.instances {
         let form = usize::from(instance.form);
         by_form[form].push(ImpostorInstance {
@@ -238,6 +263,7 @@ fn spawn_block(
             switch: page.forms[form].switch * instance.scale,
         });
     }
+
     commands
         .spawn((
             FarObjectBlock,

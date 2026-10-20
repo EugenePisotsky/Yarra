@@ -14,11 +14,13 @@ use super::{
     pipelines::VegetationPipelines,
     trample,
 };
+
 use crate::{
     VegetationAmbientGain, VegetationDiagnostics, VegetationLighting, VegetationLodFocus,
     VegetationProfileMode, VegetationRenderOrigin, VegetationSceneState, VegetationSettings,
     VegetationSun, VegetationTerrainGate, VegetationView, VegetationWind,
 };
+
 use bevy::{
     ecs::system::SystemParam,
     prelude::*,
@@ -28,6 +30,7 @@ use bevy::{
         view::ExtractedView,
     },
 };
+
 use std::mem::size_of;
 
 /// What a view's camera and lighting inputs are built from, besides the view itself.
@@ -70,19 +73,23 @@ pub(super) fn prepare(
         buffers.active = false;
         return;
     }
+
     let Some(scene) = scene else {
         buffers.active = false;
         return;
     };
     let mut rebind = false;
     let gate_changed = *terrain_gate != buffers.uploaded_terrain_gate;
+
     if gate_changed {
         // Even DrawFrozen must stop showing roots whose ground is no longer
         // certified. Readiness does not change authored candidate acceptance.
         render_queue.write_buffer(&buffers.args, 0, &[0_u8; DRAW_ARGS_SIZE as usize]);
         buffers.last_generation = None;
     }
+
     let origin = inputs.render_origin.world_xz;
+
     if scene.revision() != buffers.uploaded_revision || origin != buffers.uploaded_origin {
         let position = views
             .iter()
@@ -108,9 +115,11 @@ pub(super) fn prepare(
                 bytemuck::cast_slice(&buffers.source_work_items),
             );
         }
+
         buffers.source_serial = buffers.source_serial.wrapping_add(1);
         buffers.uploaded_terrain_gate = terrain_gate.clone();
     }
+
     if rebind {
         rebind_groups(
             &mut buffers,
@@ -226,6 +235,7 @@ fn upload_sources(
     replaced_buffers += u64::from(cache_replaced);
 
     let b = &mut *buffers;
+
     for (buffer, capacity, label, contents) in [
         (
             &mut b.work_items,
@@ -253,6 +263,7 @@ fn upload_sources(
             replaced_buffers += 1;
         }
     }
+
     if let Some(replacement) = grow_storage(
         render_device,
         buffers.visible_work_items_capacity,
@@ -285,6 +296,7 @@ fn upload_sources(
             + buffers.surfaces_capacity
             + buffers.types_capacity;
         snapshot.source_pages = scene.scene().pages.len() as u32;
+
         // CPU allocation metadata is available even when iOS GPU readback is disabled.
         snapshot.instance_capacity = INSTANCE_CAPACITY;
         snapshot.instance_bytes = u64::from(INSTANCE_CAPACITY) * size_of::<InstanceGpu>() as u64;
@@ -454,6 +466,7 @@ fn write_runs<T: bytemuck::Pod>(
     };
     let mut start = 0;
     let mut run = Vec::new();
+
     for (offset, samples) in ranges {
         if offset as usize != start as usize + run.len() {
             flush(start, &mut run);
@@ -461,6 +474,7 @@ fn write_runs<T: bytemuck::Pod>(
         }
         run.extend(samples);
     }
+
     flush(start, &mut run);
     written
 }

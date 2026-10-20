@@ -7,6 +7,7 @@ pub(super) fn get(c: &Connection, id: RoadJunctionId) -> Result<SourceRoadJuncti
     };
     Ok(j)
 }
+
 pub(super) fn for_knot(
     c: &Connection,
     id: RoadKnotId,
@@ -23,6 +24,7 @@ pub(super) fn for_knot(
     )
     .optional()?)
 }
+
 pub(super) fn store(
     c: &Connection,
     source: &SourceRoadJunction,
@@ -31,27 +33,32 @@ pub(super) fn store(
     let j = &source.junction;
     let size = definition(c, source.space)?.cell_size;
     let bounds = j.bounds(size).map_err(|e| invalid(e.to_string()))?;
+
     if bounds
         .cell_count()
         .is_none_or(|n| n > MAX_ROAD_INDEX_CELLS_PER_SPAN)
     {
         return Err(invalid("junction index budget; use a smaller radius"));
     }
+
     c.execute("INSERT INTO road_junctions(id,world_space_id,profile_id,payload) VALUES(?1,?2,?3,?4) ON CONFLICT(id) DO UPDATE SET world_space_id=excluded.world_space_id,profile_id=excluded.profile_id,payload=excluded.payload",params![j.id.0.as_slice(),source.space.0,j.profile.0.as_slice(),bytes])?;
     c.execute(
         "DELETE FROM road_junction_knots WHERE junction_id=?1",
         [j.id.0.as_slice()],
     )?;
+
     for k in &j.knots {
         c.execute(
             "INSERT INTO road_junction_knots(junction_id,knot_id) VALUES(?1,?2)",
             params![j.id.0.as_slice(), k.0.as_slice()],
         )?;
     }
+
     c.execute(
         "DELETE FROM road_junction_cells WHERE junction_id=?1",
         [j.id.0.as_slice()],
     )?;
+
     for x in bounds.minimum.x..=bounds.maximum.x {
         for z in bounds.minimum.z..=bounds.maximum.z {
             c.execute(
@@ -60,29 +67,37 @@ pub(super) fn store(
             )?;
         }
     }
+
     Ok(())
 }
+
 pub(super) fn validate(c: &Connection, source: &SourceRoadJunction) -> Result<(), WorldDbError> {
     let j = &source.junction;
     let size = definition(c, source.space)?.cell_size;
     j.validate(size).map_err(|e| invalid(e.to_string()))?;
     let mut roads = BTreeMap::new();
     let mut spans = BTreeMap::new();
+
     for id in &j.knots {
         let k = knot(c, *id)?;
         let r = route(c, k.road)?;
+
         if r.space != source.space {
             return Err(invalid("junction cannot connect different worlds"));
         }
+
         roads.insert(r.road.id, r.road);
         let incident = adjacent(c, *id)?;
+
         if incident.is_empty() {
             return Err(invalid("junction cannot contain an unused road point"));
         }
+
         for id in incident {
             spans.insert(id, span(c, id)?);
         }
     }
+
     // Roads of other styles may join; the junction's patch takes one of theirs.
     let mut styles: BTreeSet<_> = roads.values().map(|r: &Road| r.profile).collect();
     styles.insert(j.profile);
@@ -102,6 +117,7 @@ pub(super) fn validate(c: &Connection, source: &SourceRoadJunction) -> Result<()
     .validate()
     .map_err(|e| invalid(e.to_string()))
 }
+
 /// Discover junctions in the window, and at the endpoints of initially discovered spans.
 /// Complete their incident spans once; never recursively load the road network.
 pub(super) fn expand(
@@ -112,6 +128,7 @@ pub(super) fn expand(
 ) -> Result<Vec<RoadJunction>, WorldDbError> {
     let mut found = BTreeSet::new();
     let mut q=c.prepare_cached("SELECT junction_id FROM road_junction_cells WHERE world_space_id=?1 AND cell_x=?2 AND cell_z=?3 ORDER BY junction_id LIMIT 65")?;
+
     for x in bounds.minimum.x..=bounds.maximum.x {
         for z in bounds.minimum.z..=bounds.maximum.z {
             for id in q.query_map(params![space.0, x, z], |r| {
@@ -127,38 +144,50 @@ pub(super) fn expand(
             }
         }
     }
+
     for id in ids.iter() {
         let s = span(c, *id)?;
+
         for k in [s.start.id, s.end.id] {
             if let Some(j) = for_knot(c, k)? {
                 found.insert(j);
             }
         }
+
         if found.len() > MAX_ROAD_RECORDS {
             return Err(invalid("junction query budget"));
         }
     }
+
     let mut junctions = vec![];
+
     for id in found {
         let j = get(c, id)?;
+
         if j.space != space {
             return Err(invalid("foreign junction"));
         }
+
         for k in &j.junction.knots {
             ids.extend(adjacent(c, *k)?);
         }
+
         if ids.len() > MAX_ROAD_SPANS {
             return Err(invalid("junction incident-span budget"));
         }
+
         junctions.push(j.junction);
     }
+
     Ok(junctions)
 }
+
 pub(super) fn touching(
     c: &Connection,
     key: RoadRecordKey,
 ) -> Result<BTreeSet<RoadJunctionId>, WorldDbError> {
     let mut ids = BTreeSet::new();
+
     match key {
         RoadRecordKey::Junction(id) => {
             ids.insert(id);
@@ -181,8 +210,10 @@ pub(super) fn touching(
 
         _ => {}
     }
+
     if ids.len() > MAX_ROAD_RECORDS {
         return Err(invalid("junction dependency budget"));
     }
+
     Ok(ids)
 }

@@ -23,28 +23,37 @@ use bevy::{
 
 /// Share of a change in metered brightness the exposure follows; the rest stays visible.
 pub(crate) const FOLLOW: f32 = 0.5;
+
 /// Metered log2 exposed luminance left as authored, a stop below a forest edge in sun at EV 13
 /// (-3.25), so daylight shows half a stop darker than it meters: the game read too bright in
 /// sun and under cloud. These constants are binary fractions, so the curve's segments meet
 /// exactly, as Bevy requires.
 pub(crate) const REFERENCE: f32 = -4.25;
+
 /// The most the exposure brightens (deep shade) and darkens (bright open ground), in stops.
 pub(crate) const BRIGHTEN: f32 = 1.5;
+
 pub(crate) const DARKEN: f32 = 1.0;
+
 /// The most it brightens at full night. A moonless night meters far below [`REFERENCE`] (dark
 /// grass, a near-black sky; snow is in the top tenth Bevy leaves out), so the full day value
 /// lifted snow to lavender white; a moonlit night meters brighter and kept snow grey.
 pub(crate) const NIGHT_BRIGHTEN: f32 = 0.5;
+
 /// Curves between [`BRIGHTEN`] and [`NIGHT_BRIGHTEN`], a quarter stop apart, picked by the
 /// night's adaptation; Bevy's adaptation speed hides each step.
 const NIGHT_STEPS: usize = 5;
+
 /// Stops per second towards a brighter scene, which eyes adapt to quickly, and towards a
 /// darker one, which takes longer.
 const TO_BRIGHT: f32 = 2.0;
+
 const TO_DARK: f32 = 0.75;
+
 /// Metering weight of the top of the frame (mostly sky), rising to 1 at [`LAND_FROM`] of its
 /// height.
 const SKY_WEIGHT: f32 = 0.3;
+
 const LAND_FROM: f32 = 0.4;
 
 #[derive(Resource)]
@@ -73,6 +82,7 @@ impl Adaptation {
         if !adapt {
             return &self.identity;
         }
+
         let step = (night.clamp(0.0, 1.0) * (NIGHT_STEPS - 1) as f32).round() as usize;
         &self.curves[step]
     }
@@ -176,6 +186,7 @@ mod tests {
     #[test]
     fn exposure_follows_half_the_change_within_its_limits() {
         assert!(correction(REFERENCE).abs() < 1e-5);
+
         // The beach a stop brighter than the forest edge darkens by half a stop.
         assert!((correction(REFERENCE + 1.0) + 0.5).abs() < 1e-5);
         assert!((correction(REFERENCE - 2.0) - 1.0).abs() < 1e-5);
@@ -190,13 +201,16 @@ mod tests {
     fn night_brightens_less_and_daylight_is_unchanged() {
         assert_eq!(night_brighten(0), BRIGHTEN);
         assert_eq!(night_brighten(NIGHT_STEPS - 1), NIGHT_BRIGHTEN);
+
         for step in 0..NIGHT_STEPS {
             let brighten = night_brighten(step);
+
             // Quarter stops: binary fractions, so the curve's segments meet exactly.
             assert_eq!((brighten * 4.0).fract(), 0.0);
             let points = compensation_points(brighten);
             assert!(points.windows(2).all(|w| w[1].x > w[0].x));
             assert!(AutoExposureCompensationCurve::from_curve(LinearSpline::new(points)).is_ok());
+
             // Bright ground darkens alike day and night; only the lift of dark scenes shrinks.
             assert!((correction_with(brighten, REFERENCE + 5.0) + DARKEN).abs() < 1e-5);
             assert!((correction_with(brighten, -8.0) - brighten).abs() < 1e-5);

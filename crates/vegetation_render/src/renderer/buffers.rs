@@ -11,6 +11,7 @@ use super::{
     topology::build_topology_indices,
     trample::TrampleMap,
 };
+
 use bevy::{
     prelude::*,
     render::{
@@ -21,6 +22,7 @@ use bevy::{
         renderer::{RenderDevice, RenderQueue},
     },
 };
+
 use std::mem::size_of;
 
 #[derive(Resource)]
@@ -288,12 +290,14 @@ pub(super) fn update_storage(
     contents: &[u8],
 ) -> Option<(Buffer, u64)> {
     let required = (contents.len() as u64).max(16);
+
     if required <= capacity {
         if !contents.is_empty() {
             render_queue.write_buffer(buffer, 0, contents);
         }
         return None;
     }
+
     let new_capacity = storage_capacity_for(required);
     let buffer = render_device.create_buffer(&BufferDescriptor {
         label: Some(label),
@@ -301,9 +305,11 @@ pub(super) fn update_storage(
         usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
+
     if !contents.is_empty() {
         render_queue.write_buffer(&buffer, 0, contents);
     }
+
     Some((buffer, new_capacity))
 }
 
@@ -314,9 +320,11 @@ pub(super) fn grow_storage(
     required: u64,
 ) -> Option<(Buffer, u64)> {
     let required = required.max(16);
+
     if required <= capacity {
         return None;
     }
+
     let new_capacity = storage_capacity_for(required);
     Some((
         render_device.create_buffer(&BufferDescriptor {

@@ -1,8 +1,10 @@
 //! Named saves. Each slot is one file holding the whole playthrough state, written whole and
 //! published atomically, so a failed save never damages the slot it replaces.
 mod slots;
+
 pub use slots::{SAVE_FORMAT, SaveDirectory, SaveInfo, SaveSlot};
 use thiserror::Error;
+
 #[derive(Debug, Error)]
 pub enum SaveError {
     #[error(transparent)]
@@ -18,4 +20,5 @@ pub enum SaveError {
     #[error("file is not a Yarra save")]
     NotASave,
 }
+
 pub type Result<T> = std::result::Result<T, SaveError>;

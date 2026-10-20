@@ -9,6 +9,7 @@ fn displaying_a_running_clock_does_not_pause_or_quantize_it() {
     controls.playing = true;
     controls.clouds_playing = true;
     controls.cloud_speed = 10.;
+
     for _ in 0..120 {
         let phase = controls.phase;
         context
@@ -22,6 +23,7 @@ fn displaying_a_running_clock_does_not_pause_or_quantize_it() {
         assert_eq!(controls.phase, phase);
         controls.advance(1. / 60., 1200.);
     }
+
     assert!((controls.phase - 0.0333233).abs() < 0.00001);
     assert!((controls.cloud_seconds - 20.).abs() < 0.00001);
     controls.playing = false;
@@ -58,6 +60,7 @@ fn preview_is_transient_and_color_drag_is_one_undo_across_a_save() {
     assert_eq!(dense.dirty_count(), 0);
     let before = source.atmosphere.clone();
     dense.atmospheres.gesture = Some((source.id, before.clone()));
+
     for strength in [1000.0, 2000.0, 3500.0] {
         dense
             .atmospheres
@@ -68,6 +71,7 @@ fn preview_is_transient_and_color_drag_is_one_undo_across_a_save() {
             .phases[1]
             .ambient_lux = strength;
     }
+
     assert!(dense.atmospheres.journal().is_empty());
     let (id, before, after) = dense.atmospheres.finish_gesture().unwrap();
     let mut history = EditorHistory::default();
@@ -91,6 +95,7 @@ fn preview_is_transient_and_color_drag_is_one_undo_across_a_save() {
     assert_eq!(controls.phase, 0.75);
     assert_eq!(controls.cloud_seconds, 123.);
 }
+
 #[test]
 fn recovery_and_conflict_keep_the_local_profile() {
     let mut set = working::WorkingSet::default();

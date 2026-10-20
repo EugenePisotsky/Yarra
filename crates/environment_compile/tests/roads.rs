@@ -1,10 +1,13 @@
 #[path = "support/roads.rs"]
 mod road_support;
+
 mod support;
+
 use environment::roads::*;
 use road_support::*;
 use support::*;
 use world::CellCoord;
+
 use yarra_environment_compile::{
     CompileError, CompilePlan, CompileProfile, CompiledCell, RoadCompileProfile,
 };
@@ -17,6 +20,7 @@ fn grass(cell: &CompiledCell, x: usize, z: usize) -> u8 {
         .max()
         .unwrap_or(0)
 }
+
 /// The road's soil at a weight sample, as the page draws it (natural ground worn by its roads).
 fn ground_at(cell: &CompiledCell, x: usize, z: usize) -> u8 {
     worn_weights(cell, x, z)
@@ -24,6 +28,7 @@ fn ground_at(cell: &CompiledCell, x: usize, z: usize) -> u8 {
         .find(|(s, _)| *s == SOIL)
         .map_or(0, |(_, v)| *v)
 }
+
 fn compile(
     plan: &CompilePlan,
     coverage: &environment::CoverageSnapshot,
@@ -32,6 +37,7 @@ fn compile(
     plan.compile_cells_with_roads(&CELLS, coverage, roads, RoadCompileProfile::default())
         .unwrap()
 }
+
 #[test]
 fn cart_tracks_keep_grass_down_the_middle_and_outside_and_keep_population_identities() {
     let (d, l, p, c, mut r) = cart_tracks();
@@ -53,6 +59,7 @@ fn cart_tracks_keep_grass_down_the_middle_and_outside_and_keep_population_identi
             .map(|f| f.grass)
             .collect::<Vec<_>>()
     );
+
     // 8 m / 64 vegetation samples. Center at z=4; tracks at 4 ± .775. At medium traffic grass
     // grows down the middle, thinned where it is trampled, and in full outside.
     let middle = grass(&cells[0], 32, 31);
@@ -64,6 +71,7 @@ fn cart_tracks_keep_grass_down_the_middle_and_outside_and_keep_population_identi
     assert!(ground_at(&cells[0], 32, 26) > 230);
     let shoulder = grass(&cells[0], 32, 20);
     assert!(shoulder > 0 && shoulder < 255);
+
     // A wider road changes only shoulders, not wheel spacing or the center.
     r.spans[0].start.width = 5.0;
     r.spans[0].end.width = 5.0;
@@ -72,6 +80,7 @@ fn cart_tracks_keep_grass_down_the_middle_and_outside_and_keep_population_identi
     assert_eq!(grass(&wide[0], 32, 31), middle);
     assert!(grass(&wide[0], 32, 17) < grass(&cells[0], 32, 17));
 }
+
 #[test]
 fn traffic_wears_a_quiet_track_to_trampled_lines_and_a_busy_one_to_a_bare_band() {
     let (d, l, p, c, mut r) = cart_tracks();
@@ -83,23 +92,28 @@ fn traffic_wears_a_quiet_track_to_trampled_lines_and_a_busy_one_to_a_bare_band()
         compile(&plan, &c, &r).remove(0)
     };
     let (quiet, medium, busy) = (at(&r, 0.1), at(&r, 0.5), at(&r, 1.0));
+
     // Tracks: worn partly when quiet, bare from medium traffic on.
     assert!(ground_at(&quiet, 32, 26) < 200);
     assert!(ground_at(&medium, 32, 26) > 230 && ground_at(&busy, 32, 26) > 230);
+
     // The middle: untouched when quiet, worn bare when busy, grass gone with it.
     assert_eq!(ground_at(&quiet, 32, 32), 0);
     assert_eq!(grass(&quiet, 32, 31), 255);
     assert!(ground_at(&busy, 32, 32) > 230);
     assert!(grass(&busy, 32, 31) < 20, "{}", grass(&busy, 32, 31));
+
     // Shoulders wear more the busier the road.
     let shoulder = |cell: &CompiledCell| grass(cell, 32, 20);
     assert!(shoulder(&quiet) > shoulder(&medium) && shoulder(&medium) > shoulder(&busy));
 }
+
 #[test]
 fn curved_road_matches_local_batch_order_and_cell_border_compilation() {
     let (d, l, p, c, r) = cart_tracks();
     let plan = CompilePlan::new(&d, &p, &l, CompileProfile::default()).unwrap();
     let batch = compile(&plan, &c, &r);
+
     for (i, cell) in CELLS.iter().enumerate() {
         assert_eq!(
             plan.compile_cells_with_roads(&[*cell], &c, &r, Default::default())
@@ -107,6 +121,7 @@ fn curved_road_matches_local_batch_order_and_cell_border_compilation() {
             batch[i]
         );
     }
+
     let mut reverse = r.clone();
     reverse.spans.reverse();
     reverse.roads.reverse();
@@ -116,6 +131,7 @@ fn curved_road_matches_local_batch_order_and_cell_border_compilation() {
             .unwrap(),
         batch
     );
+
     for z in 0..=64 {
         assert_eq!(
             ground_weights(&batch[0].ground, 64, z),
@@ -123,6 +139,7 @@ fn curved_road_matches_local_batch_order_and_cell_border_compilation() {
         );
     }
 }
+
 #[test]
 fn splitting_a_curve_preserves_coverage_within_raster_tolerance_and_never_reseeds_noise() {
     let (d, l, p, c, mut r) = cart_tracks();
@@ -138,6 +155,7 @@ fn splitting_a_curve_preserves_coverage_within_raster_tolerance_and_never_reseed
     .unwrap();
     r.spans = vec![right, left];
     let split = compile(&plan, &c, &r);
+
     for (a, b) in original.iter().zip(&split) {
         assert_eq!(a.ground.surfaces, b.ground.surfaces);
         let ground_delta = a.ground.weight_pages[0]
@@ -162,6 +180,7 @@ fn splitting_a_curve_preserves_coverage_within_raster_tolerance_and_never_reseed
         );
     }
 }
+
 #[test]
 fn disabled_and_absent_roads_leave_base_output_identical_and_add_no_grass() {
     let (d, l, p, _, mut r) = cart_tracks();
@@ -183,6 +202,7 @@ fn disabled_and_absent_roads_leave_base_output_identical_and_add_no_grass() {
     r.profiles.clear();
     assert_eq!(compile(&plan, &c, &r), base);
 }
+
 #[test]
 fn breakup_retains_grass_in_worn_areas_without_changing_outside_or_base_catalog() {
     let (d, l, p, c, mut r) = cart_tracks();
@@ -192,11 +212,13 @@ fn breakup_retains_grass_in_worn_areas_without_changing_outside_or_base_catalog(
     r.profiles[0].breakup = 1.0;
     let worn = compile(&plan, &c, &r);
     assert!((0..64).any(|x| grass(&worn[0], x, 25) > grass(&solid[0], x, 25) + 20));
+
     for x in 0..64 {
         assert_eq!(grass(&worn[0], x, 0), grass(&solid[0], x, 0));
         assert!(grass(&worn[0], x, 31) >= grass(&solid[0], x, 31));
     }
 }
+
 #[test]
 fn incomplete_queries_and_expensive_or_invalid_geometry_fail_explicitly() {
     let (d, l, p, c, r) = cart_tracks();
@@ -253,6 +275,7 @@ fn incomplete_queries_and_expensive_or_invalid_geometry_fail_explicitly() {
             .is_err()
     );
 }
+
 #[test]
 fn intersecting_routes_require_explicit_junctions_instead_of_implied_connectivity() {
     let (d, l, p, c, mut r) = cart_tracks();
@@ -276,6 +299,7 @@ fn intersecting_routes_require_explicit_junctions_instead_of_implied_connectivit
         Err(CompileError::RoadJunctionRequired { .. })
     ));
 }
+
 #[test]
 fn geometry_is_independent_of_render_origin_at_large_logical_coordinates() {
     let (d, l, p, _, mut r) = cart_tracks();
@@ -286,10 +310,12 @@ fn geometry_is_independent_of_render_origin_at_large_logical_coordinates() {
     let plan = CompilePlan::new(&d, &p, &l, Default::default()).unwrap();
     let original = compile(&plan, &base, &r);
     let shift = 1_000_000_000;
+
     for span in &mut r.spans {
         span.start.position.cell.x += shift;
         span.end.position.cell.x += shift;
     }
+
     r.loaded_bounds.minimum.x += shift;
     r.loaded_bounds.maximum.x += shift;
     let cells = CELLS.map(|c| CellCoord {
@@ -300,6 +326,7 @@ fn geometry_is_independent_of_render_origin_at_large_logical_coordinates() {
     let moved = plan
         .compile_cells_with_roads(&cells, &source, &r, Default::default())
         .unwrap();
+
     for (a, b) in original.iter().zip(&moved) {
         assert_eq!(a.ground, b.ground);
         assert_eq!(a.vegetation, b.vegetation);
@@ -314,6 +341,7 @@ fn routes_suppress_only_the_named_channel_and_material_budget_still_applies() {
     let worn = compile(&baseline_plan, &c, &r);
     r.profiles[0].vegetation_channel = FLOWERS;
     let roads = compile(&baseline_plan, &c, &r);
+
     // Grass still follows the road's ground, but no wear clears it beyond that.
     assert_ne!(roads[0].ground, base[0].ground);
     assert!((0..64).all(|z| (0..64).all(|x| grass(&roads[0], x, z) >= grass(&worn[0], x, z))));
@@ -363,6 +391,7 @@ fn routes_suppress_only_the_named_channel_and_material_budget_still_applies() {
         },
     )
     .unwrap();
+
     // Past the budget a cell keeps the surfaces that show most, worn ground included and its
     // edge counting most, so the road still compiles and neighbours agree along their edge.
     let cells = narrow
@@ -372,18 +401,22 @@ fn routes_suppress_only_the_named_channel_and_material_budget_still_applies() {
     assert!(cells.iter().any(|c| !c.roads.roads.is_empty()));
     assert_eq!(cells[0].ground.surfaces, cells[1].ground.surfaces);
 }
+
 #[test]
 fn detail_below_output_resolution_is_broadened_in_the_bake_and_drawn_as_authored_up_close() {
     let (d, l, p, c, mut r) = cart_tracks();
     straight(&mut r);
+
     // Half-metre grids: 0.65 m tracks with 0.15 m edges are finer than they resolve.
     let coarse = CompilePlan::new(&d, &p, &l, profile()).unwrap();
     let cells = compile(&coarse, &c, &r);
+
     // The bake broadens the tracks to a metre, so both still clear their grass (centres at
     // z = 4 -+ 0.775; texel centres every 0.5 m from 0.25).
     for z in [6, 9] {
         assert_eq!(grass(&cells[0], 8, z), 0, "track at row {z}");
     }
+
     // Near detail gets the style as authored.
     let shape = cells[0].roads.roads[0].shape;
     assert_eq!(
@@ -391,6 +424,7 @@ fn detail_below_output_resolution_is_broadened_in_the_bake_and_drawn_as_authored
         (0.65, 0.15),
         "page roads carry the authored style"
     );
+
     // A distant profile cannot impose anything on this output cell.
     r.spans[0].start.position.cell.z += 20;
     r.spans[0].end.position.cell.z += 20;
@@ -399,6 +433,7 @@ fn detail_below_output_resolution_is_broadened_in_the_bake_and_drawn_as_authored
         coarse.compile_cells(&CELLS, &c).unwrap()
     );
 }
+
 #[test]
 fn detail_minima_satisfy_sampling_constraints_and_broaden_only_what_falls_below() {
     let (_, _, _, _, r) = cart_tracks();
@@ -446,6 +481,7 @@ fn detail_minima_satisfy_sampling_constraints_and_broaden_only_what_falls_below(
         assert_eq!(coarse.breakup_patch_size, limits.patch_size);
     }
 }
+
 #[test]
 fn source_records_reject_nan_duplicates_invalid_references_and_overflowing_coordinates() {
     let (_, _, _, _, r) = cart_tracks();
@@ -489,6 +525,7 @@ fn source_records_reject_nan_duplicates_invalid_references_and_overflowing_coord
         .is_err()
     );
 }
+
 #[test]
 fn offscreen_controls_are_loaded_but_unrelated_far_spans_do_not_invalidate_products() {
     let (d, l, p, c, mut r) = cart_tracks();
@@ -507,6 +544,7 @@ fn offscreen_controls_are_loaded_but_unrelated_far_spans_do_not_invalidate_produ
     r.spans[1].start.outgoing[0] += 0.25;
     assert_eq!(compile(&plan, &c, &r), original);
 }
+
 #[test]
 fn overlapping_shoulders_wear_at_least_as_much_and_are_input_order_independent() {
     let (d, l, p, c, mut r) = cart_tracks();
@@ -525,15 +563,18 @@ fn overlapping_shoulders_wear_at_least_as_much_and_are_input_order_independent()
     r.roads.extend(other.roads);
     r.spans.extend(other.spans);
     let both = compile(&plan, &c, &r);
+
     for z in 0..64 {
         for x in 0..64 {
             assert!(grass(&both[0], x, z) <= grass(&a[0], x, z).min(grass(&b[0], x, z)));
         }
     }
+
     r.roads.reverse();
     r.spans.reverse();
     assert_eq!(compile(&plan, &c, &r), both);
 }
+
 #[test]
 fn same_road_continuation_does_not_leave_an_internal_cap_or_reroll_noise() {
     let (d, l, p, c, mut r) = cart_tracks();
@@ -552,6 +593,7 @@ fn same_road_continuation_does_not_leave_an_internal_cap_or_reroll_noise() {
     .unwrap();
     r.spans = vec![a, b];
     let after = compile(&plan, &c, &r);
+
     for (a, b) in before.iter().zip(after) {
         assert_eq!(a.ground, b.ground);
         assert_eq!(a.vegetation, b.vegetation);
@@ -578,6 +620,7 @@ fn width_taper_survives_knot_insertion_on_a_straight_curve_with_nonuniform_speed
     .unwrap();
     r.spans = vec![a, b];
     let after = compile(&plan, &c, &r);
+
     for (a, b) in before.iter().zip(&after) {
         for z in 0..64 {
             for x in 0..64 {
@@ -586,6 +629,7 @@ fn width_taper_survives_knot_insertion_on_a_straight_curve_with_nonuniform_speed
         }
     }
 }
+
 #[test]
 fn finite_end_caps_do_not_turn_into_infinite_wheel_strips() {
     let (d, l, p, c, mut r) = cart_tracks();
@@ -601,6 +645,7 @@ fn finite_end_caps_do_not_turn_into_infinite_wheel_strips() {
     assert_eq!(grass(&output[0], 32, 25), 0);
     assert_eq!(grass(&output[1], 63, 25), 255);
 }
+
 #[test]
 fn road_thinning_keeps_cpu_reference_roots_at_their_original_positions() {
     let (d, l, p, c, r) = cart_tracks();
@@ -632,12 +677,14 @@ fn road_thinning_keeps_cpu_reference_roots_at_their_original_positions() {
     assert!(retained.len() < original.len());
     assert!(retained.is_subset(&original));
 }
+
 #[test]
 fn page_roads_reproduce_the_compiled_road_ground_for_near_detail() {
     let (d, l, p, c, r) = cart_tracks();
     let plan = CompilePlan::new(&d, &p, &l, CompileProfile::default()).unwrap();
     let cells = compile(&plan, &c, &r);
     let mut worn = 0;
+
     for (cell, compiled) in CELLS.iter().zip(&cells) {
         let roads = &compiled.roads;
         assert_eq!(roads.roads.len(), 1);
@@ -645,6 +692,7 @@ fn page_roads_reproduce_the_compiled_road_ground_for_near_detail() {
         let n = usize::from(compiled.ground.weight_pages[0].resolution);
         let size = f64::from(d.cell_size);
         let origin = [f64::from(cell.x) * size, f64::from(cell.z) * size];
+
         for z in 0..n {
             for x in 0..n {
                 let local = [x, z].map(|v| v as f64 * size / (n - 1) as f64);
@@ -658,8 +706,10 @@ fn page_roads_reproduce_the_compiled_road_ground_for_near_detail() {
             }
         }
     }
+
     assert!(worn > 20, "the road wore {worn} samples");
 }
+
 #[test]
 fn road_wear_clears_plants_but_leaves_stones_and_twigs() {
     let (d, l, mut p, c, mut r) = cart_tracks();
@@ -683,11 +733,13 @@ fn road_wear_clears_plants_but_leaves_stones_and_twigs() {
         wear: None,
     };
     let (pebbles, nettles) = (detail("pebbles", true), detail("nettles", false));
+
     // Both grow on the meadow and on the road's bare soil alike.
     p.surfaces.push(vegetation::SurfaceGrass {
         surface: SOIL.0,
         grass: vec![],
     });
+
     for s in &mut p.surfaces {
         for t in [&pebbles, &nettles] {
             s.grass.push(vegetation::GrassAmount {
@@ -696,6 +748,7 @@ fn road_wear_clears_plants_but_leaves_stones_and_twigs() {
             });
         }
     }
+
     p.details = vec![pebbles.clone(), nettles.clone()];
     let plan = CompilePlan::new(&d, &p, &l, CompileProfile::default()).unwrap();
     let cells = compile(&plan, &c, &r);
@@ -708,13 +761,16 @@ fn road_wear_clears_plants_but_leaves_stones_and_twigs() {
             .unwrap();
         field.coverage[z * usize::from(field.resolution) + 32]
     };
+
     // A wheel track (row 25) is worn bare of plants; pebbles still lie there.
     assert_eq!(at(nettles.id(), 25), 0);
     assert_eq!(at(pebbles.id(), 25), 255);
+
     // Off the road both grow.
     assert_eq!(at(nettles.id(), 0), 255);
     assert_eq!(at(pebbles.id(), 0), 255);
 }
+
 #[test]
 fn details_with_a_wear_band_lie_where_wear_falls_off() {
     let (d, l, mut p, c, mut r) = cart_tracks();
@@ -737,6 +793,7 @@ fn details_with_a_wear_band_lie_where_wear_falls_off() {
         on_paths: false,
         wear: Some([0.02, 0.15, 0.35]),
     };
+
     // On the meadow the road wears; its worn soil carries none.
     for s in &mut p.surfaces {
         if s.surface == GREEN_SOIL.0 {
@@ -746,6 +803,7 @@ fn details_with_a_wear_band_lie_where_wear_falls_off() {
             });
         }
     }
+
     p.details = vec![verge.clone()];
     let plan = CompilePlan::new(&d, &p, &l, CompileProfile::default()).unwrap();
     let cells = compile(&plan, &c, &r);
@@ -756,6 +814,7 @@ fn details_with_a_wear_band_lie_where_wear_falls_off() {
         .find(|f| f.grass == verge.id())
         .unwrap();
     let column: Vec<u8> = (0..64).map(|z| field.coverage[z * 64 + 32]).collect();
+
     // None away from the road or in its wheel tracks; some along each edge, outside the tracks.
     assert_eq!(column[0], 0);
     assert_eq!(column[63], 0);
@@ -763,6 +822,7 @@ fn details_with_a_wear_band_lie_where_wear_falls_off() {
     assert_eq!(column[38], 0);
     assert!(column[..25].iter().any(|&v| v > 100), "{column:?}");
     assert!(column[39..].iter().any(|&v| v > 100), "{column:?}");
+
     // The plain compile has no wear, so nothing grows there.
     let base = plan.compile_cells(&CELLS, &c).unwrap();
     assert!(
@@ -773,6 +833,7 @@ fn details_with_a_wear_band_lie_where_wear_falls_off() {
             .all(|f| f.grass != verge.id())
     );
 }
+
 #[test]
 fn the_wear_field_draws_what_roads_wear_and_names_the_worn_ground() {
     let (d, l, p, c, mut r) = cart_tracks();
@@ -783,14 +844,17 @@ fn the_wear_field_draws_what_roads_wear_and_names_the_worn_ground() {
     let wear = cell.wear.as_ref().unwrap();
     let surfaces = &cell.ground.surfaces;
     assert!(wear.is_valid(surfaces.len()));
+
     // Green meadow wears down to soil; soil to itself.
     let slot = |s| surfaces.iter().position(|x| *x == s).unwrap();
     let none = (world::NO_WORN_SLOT, 0);
     assert_eq!(wear.worn[slot(GREEN_SOIL)], [(slot(SOIL) as u8, 255), none]);
     assert_eq!(wear.worn[slot(SOIL)], [none, none]);
+
     // Texels hold the roads' wear at their centres.
     let n = usize::from(wear.resolution);
     let origin = [f64::from(cell.cell.x) * 8.0, f64::from(cell.cell.z) * 8.0];
+
     for i in (0..n * n).step_by(37) {
         let local = [(i % n) as f64 + 0.5, (i / n) as f64 + 0.5].map(|v| v / n as f64 * 8.0);
         let s = cell.roads.wear(origin, local);
@@ -799,8 +863,10 @@ fn the_wear_field_draws_what_roads_wear_and_names_the_worn_ground() {
             world::TerrainWear::encode(s.wear, s.rut, s.direction)
         );
     }
+
     let worn = wear.texels.iter().filter(|t| t[0] > 200).count();
     assert!(worn > 1000, "{worn} texels worn");
+
     // A cell no road reaches has no field.
     let far = plan.compile_cells(&CELLS, &c).unwrap();
     assert!(far.iter().all(|c| c.wear.is_none()));

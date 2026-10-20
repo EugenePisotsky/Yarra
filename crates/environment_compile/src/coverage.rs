@@ -20,15 +20,19 @@ impl<'a> Coverage<'a> {
         if source.space != plan.definition.space {
             return Err(CompileError::WrongSpace);
         }
+
         if source.cells.len() > plan.profile.max_cells_per_batch.saturating_mul(9) {
             return Err(CompileError::Budget("loaded coverage cells"));
         }
+
         let layers: BTreeSet<_> = plan.definition.layers.iter().map(|l| l.id).collect();
         let resolution = usize::from(plan.definition.mask_resolution);
         let mut cells = BTreeMap::new();
         let mut samples = 0usize;
+
         for cell in &source.cells {
             let mut tiles = BTreeMap::new();
+
             for tile in &cell.tiles {
                 if !layers.contains(&tile.layer)
                     || tile.samples.len() != resolution * resolution
@@ -36,13 +40,16 @@ impl<'a> Coverage<'a> {
                 {
                     return Err(CompileError::InvalidTile(cell.cell));
                 }
+
                 samples = samples
                     .checked_add(tile.samples.len())
                     .ok_or(CompileError::Budget("mask samples"))?;
+
                 if samples > plan.profile.max_mask_samples {
                     return Err(CompileError::Budget("mask samples"));
                 }
             }
+
             if cells
                 .insert(
                     cell.cell,
@@ -56,6 +63,7 @@ impl<'a> Coverage<'a> {
                 return Err(CompileError::DuplicateCell(cell.cell));
             }
         }
+
         Ok(Self { cells, resolution })
     }
 
@@ -63,14 +71,18 @@ impl<'a> Coverage<'a> {
         if !self.cells.contains_key(&cell) {
             return Err(CompileError::UnloadedCell(cell));
         }
+
         let last = self.resolution - 1;
+
         for (dx, dz, neighbour) in halo(cell)? {
             if !self.cells.contains_key(&neighbour) {
                 return Err(CompileError::UnloadedCell(neighbour));
             }
+
             if dx == 0 && dz == 0 {
                 continue;
             }
+
             // Shared edges and diagonal corners must agree even when a neighbour has no tile.
             for layer in &plan.definition.layers {
                 for t in 0..self.resolution {
@@ -94,6 +106,7 @@ impl<'a> Coverage<'a> {
                         1 => 0,
                         _ => t,
                     };
+
                     if self.value(cell, layer.id, ax, az) != self.value(neighbour, layer.id, bx, bz)
                     {
                         return Err(CompileError::BorderMismatch {
@@ -105,6 +118,7 @@ impl<'a> Coverage<'a> {
                 }
             }
         }
+
         Ok(())
     }
 
@@ -141,8 +155,10 @@ impl<'a> Coverage<'a> {
         hash.update(&plan.fingerprint);
         hash.update(&cell.x.to_le_bytes());
         hash.update(&cell.z.to_le_bytes());
+
         for (_, _, neighbour) in halo(cell)? {
             let source = &self.cells[&neighbour];
+
             // BTreeMap gives a canonical tile order, including explicit absent-tile information.
             let bytes = bincode::serde::encode_to_vec(
                 (neighbour, source.source.revision, &source.tiles),
@@ -150,12 +166,14 @@ impl<'a> Coverage<'a> {
             )?;
             hash.update(&bytes);
         }
+
         Ok(*hash.finalize().as_bytes())
     }
 }
 
 pub(crate) fn halo(cell: CellCoord) -> Result<Vec<(i32, i32, CellCoord)>, CompileError> {
     let mut cells = Vec::with_capacity(9);
+
     for dz in -1..=1 {
         for dx in -1..=1 {
             cells.push((
@@ -174,5 +192,6 @@ pub(crate) fn halo(cell: CellCoord) -> Result<Vec<(i32, i32, CellCoord)>, Compil
             ));
         }
     }
+
     Ok(cells)
 }

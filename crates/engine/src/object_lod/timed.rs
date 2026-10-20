@@ -13,8 +13,10 @@ use crate::trees::impostor::ImpostorFades;
 use bevy::{camera::visibility::VisibilityRange, math::DVec2};
 
 pub(crate) const FADE_SECONDS: f32 = 0.6;
+
 /// A representation keeps drawing until the camera is this share past its band.
 const HYSTERESIS: f32 = 0.04;
+
 /// Mesh tags carry 64 + the dither level; 0 means no level (distance crossfades).
 pub(crate) const TAG_BIAS: i32 = 64;
 
@@ -98,6 +100,7 @@ impl TimedLod {
             .find(|b| distance >= b.start && distance < b.end)
             .map(|b| b.index);
         let current = self.fade.map(|f| f.to).or(self.shown);
+
         match current.and_then(|c| self.bands.iter().find(|b| b.index == c)) {
             Some(band)
                 if distance <= band.end * (1.0 + HYSTERESIS)
@@ -134,7 +137,9 @@ impl TimedLod {
                         progress: 1.0 - fade.progress,
                     };
                 }
+
                 fade.progress += dt / FADE_SECONDS;
+
                 if fade.progress >= 1.0 {
                     self.shown = Some(fade.to);
                     self.fade = None;
@@ -183,9 +188,11 @@ impl TimedLod {
     /// Levels of every variant, if they differ from those last written.
     pub(super) fn changed_levels(&mut self, variants: usize) -> Option<Vec<Option<i32>>> {
         let levels: Vec<_> = (0..variants).map(|i| self.level(i)).collect();
+
         if self.applied.as_ref() == Some(&levels) {
             return None;
         }
+
         self.applied = Some(levels.clone());
         Some(levels)
     }
@@ -195,11 +202,13 @@ impl TimedLod {
         if self.searched == Some(fades.generation()) {
             return;
         }
+
         let Some(world_xz) = world_xz else {
             return;
         };
         self.searched = Some(fades.generation());
         let slot = fades.find(world_xz);
+
         if slot != self.slot {
             self.slot = slot;
             // Rewrite every level, including the new slot's.
@@ -249,6 +258,7 @@ mod tests {
         lod.step(ForcedLod::Auto, 30.0, 3, 0.016);
         assert_eq!(lod.shown, Some(0));
         assert_eq!(lod.level(0), Some(0));
+
         // Past the band and its hysteresis: LOD0 fades out, LOD1 in, from the next frame.
         lod.step(ForcedLod::Auto, 43.0, 3, quarter);
         let fade = lod.fade.unwrap();
@@ -258,9 +268,11 @@ mod tests {
         assert_eq!(lod.level(0), Some(4));
         assert_eq!(lod.level(1), Some(-12));
         assert_eq!(lod.level(3), None);
+
         for _ in 0..3 {
             lod.step(ForcedLod::Auto, 43.0, 3, quarter);
         }
+
         assert_eq!(lod.shown, Some(1));
         assert!(!lod.fading());
         assert_eq!(lod.level(0), None);
@@ -278,9 +290,11 @@ mod tests {
     fn turning_back_reverses_the_dissolve_from_where_it_got() {
         let mut lod = lod();
         lod.step(ForcedLod::Auto, 30.0, 3, 0.016);
+
         for _ in 0..3 {
             lod.step(ForcedLod::Auto, 95.0, 3, FADE_SECONDS / 4.0);
         }
+
         lod.step(ForcedLod::Auto, 30.0, 3, 0.0);
         let fade = lod.fade.unwrap();
         assert_eq!((fade.from, fade.to), (3, 0));

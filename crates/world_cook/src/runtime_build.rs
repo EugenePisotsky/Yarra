@@ -14,9 +14,11 @@ pub(crate) fn build_compiled_runtime(
     let output = {
         let sources = SourceIndex::new(&project, &environment)?;
         let mut output = RuntimeOutput::new(&project, &environment)?;
+
         for source_cell in &project.cells {
             output.add_cell(source_cell, &sources, &environment)?;
         }
+
         output
     };
     Ok(output.finish(project, environment))
@@ -26,6 +28,7 @@ fn validate_world_spaces(project: &ProjectDocument) -> Result<()> {
     if project.world_spaces.is_empty() {
         bail!("a project must contain at least one world space");
     }
+
     if !project
         .world_spaces
         .iter()
@@ -36,6 +39,7 @@ fn validate_world_spaces(project: &ProjectDocument) -> Result<()> {
             project.default_world_space
         );
     }
+
     Ok(())
 }
 
@@ -93,12 +97,14 @@ impl<'a> SourceIndex<'a> {
         let assets = AssetIndex::new(project)?;
         let definitions = index_definitions(project, &assets)?;
         let mut objects: BTreeMap<CellKey, Vec<&SourceObjectRecord>> = BTreeMap::new();
+
         for object in &project.objects {
             objects
                 .entry((object.space, object.owner_cell))
                 .or_default()
                 .push(object);
         }
+
         Ok(Self {
             terrain_slots,
             terrain_weights,
@@ -123,9 +129,11 @@ impl<'a> TerrainCatalogIndex<'a> {
             .iter()
             .map(|surface| (surface.id, surface))
             .collect();
+
         if surfaces_by_id.len() != project.terrain_surfaces.len() {
             bail!("terrain surface IDs must be unique");
         }
+
         if project
             .terrain_surfaces
             .iter()
@@ -136,17 +144,21 @@ impl<'a> TerrainCatalogIndex<'a> {
         {
             bail!("terrain surface keys must be unique");
         }
+
         for surface in &project.terrain_surfaces {
             validate_terrain_surface(surface)?;
         }
+
         let texture_sets_by_id: HashMap<_, _> = project
             .terrain_texture_sets
             .iter()
             .map(|texture_set| (texture_set.id, texture_set))
             .collect();
+
         if texture_sets_by_id.len() != project.terrain_texture_sets.len() {
             bail!("terrain texture-set IDs must be unique");
         }
+
         if project
             .terrain_texture_sets
             .iter()
@@ -157,19 +169,24 @@ impl<'a> TerrainCatalogIndex<'a> {
         {
             bail!("terrain texture-set keys must be unique");
         }
+
         for texture_set in &project.terrain_texture_sets {
             validate_terrain_texture_set(texture_set)?;
         }
+
         let mut layers_by_surface = HashMap::new();
         let mut layers_by_index = HashSet::new();
         let mut layer_indices_by_set: BTreeMap<TerrainTextureSetId, Vec<u16>> = BTreeMap::new();
+
         for layer in &project.terrain_texture_layers {
             if !texture_sets_by_id.contains_key(&layer.texture_set) {
                 bail!("terrain texture layer references a missing texture set");
             }
+
             if !surfaces_by_id.contains_key(&layer.surface) {
                 bail!("terrain texture layer references a missing surface");
             }
+
             if layers_by_surface
                 .insert((layer.texture_set, layer.surface), layer.layer)
                 .is_some()
@@ -177,11 +194,13 @@ impl<'a> TerrainCatalogIndex<'a> {
             {
                 bail!("terrain texture-set layers must be unique");
             }
+
             layer_indices_by_set
                 .entry(layer.texture_set)
                 .or_default()
                 .push(layer.layer);
         }
+
         for (texture_set, layers) in &layer_indices_by_set {
             if layers
                 .iter()
@@ -194,19 +213,23 @@ impl<'a> TerrainCatalogIndex<'a> {
                 );
             }
         }
+
         let profiles_by_space: HashMap<_, _> = project
             .terrain_profiles
             .iter()
             .map(|profile| (profile.space, profile))
             .collect();
+
         if profiles_by_space.len() != project.terrain_profiles.len() {
             bail!("world spaces may have only one terrain profile");
         }
+
         for space in &project.world_spaces {
             let Some(profile) = profiles_by_space.get(&space.id) else {
                 bail!("world space {:?} has no terrain profile", space.id);
             };
             validate_terrain_profile(profile)?;
+
             if !texture_sets_by_id.contains_key(&profile.texture_set) {
                 bail!(
                     "world space {:?} references a missing terrain texture set",
@@ -214,6 +237,7 @@ impl<'a> TerrainCatalogIndex<'a> {
                 );
             }
         }
+
         Ok(Self {
             layers_by_surface,
             profiles_by_space,
@@ -227,6 +251,7 @@ fn index_terrain_slots<'a>(
     catalog: &TerrainCatalogIndex,
 ) -> Result<BTreeMap<CellKey, Vec<&'a TerrainSlot>>> {
     let mut slots_by_cell: BTreeMap<CellKey, Vec<&TerrainSlot>> = BTreeMap::new();
+
     for slot in &environment.slots {
         if !source_cells.contains(&(slot.space, slot.cell)) {
             bail!(
@@ -234,20 +259,24 @@ fn index_terrain_slots<'a>(
                 slot.cell
             );
         }
+
         let Some(profile) = catalog.profiles_by_space.get(&slot.space) else {
             bail!("terrain surface slot references an unprofiled world space");
         };
+
         if !catalog
             .layers_by_surface
             .contains_key(&(profile.texture_set, slot.surface))
         {
             bail!("terrain surface slot is not present in the world's texture set");
         }
+
         slots_by_cell
             .entry((slot.space, slot.cell))
             .or_default()
             .push(slot);
     }
+
     Ok(slots_by_cell)
 }
 
@@ -257,6 +286,7 @@ fn index_terrain_weights<'a>(
     catalog: &TerrainCatalogIndex,
 ) -> Result<BTreeMap<CellKey, Vec<&'a TerrainWeights>>> {
     let mut weights_by_cell: BTreeMap<CellKey, Vec<&TerrainWeights>> = BTreeMap::new();
+
     for weights in &environment.weights {
         if !source_cells.contains(&(weights.space, weights.cell)) {
             bail!(
@@ -264,16 +294,20 @@ fn index_terrain_weights<'a>(
                 weights.cell
             );
         }
+
         let profile = catalog.profiles_by_space[&weights.space];
         let expected_bytes = usize::from(weights.resolution).pow(2) * 4;
+
         if weights.resolution != profile.weight_resolution || weights.rgba.len() != expected_bytes {
             bail!("terrain weight page has the wrong resolution or byte count");
         }
+
         weights_by_cell
             .entry((weights.space, weights.cell))
             .or_default()
             .push(weights);
     }
+
     Ok(weights_by_cell)
 }
 
@@ -287,6 +321,7 @@ fn index_terrain_heightfields<'a>(
         .map(|space| (space.id, space))
         .collect();
     let mut heightfields_by_cell = BTreeMap::new();
+
     for heightfield in &project.terrain_cell_heightfields {
         if !source_cells.contains(&(heightfield.space, heightfield.cell)) {
             bail!(
@@ -294,7 +329,9 @@ fn index_terrain_heightfields<'a>(
                 heightfield.cell
             );
         }
+
         let resolution = usize::from(heightfield.resolution);
+
         if !(2..=usize::from(MAX_TERRAIN_HEIGHTFIELD_RESOLUTION)).contains(&resolution)
             || heightfield.heights.len() != resolution * resolution
             || !heightfield.heights.iter().all(|height| height.is_finite())
@@ -305,7 +342,9 @@ fn index_terrain_heightfields<'a>(
                 heightfield.cell
             );
         }
+
         let space = spaces_by_id[&heightfield.space];
+
         if heightfield
             .heights
             .iter()
@@ -316,6 +355,7 @@ fn index_terrain_heightfields<'a>(
                 heightfield.cell
             );
         }
+
         if heightfields_by_cell
             .insert((heightfield.space, heightfield.cell), heightfield)
             .is_some()
@@ -323,6 +363,7 @@ fn index_terrain_heightfields<'a>(
             bail!("terrain cells may have only one heightfield");
         }
     }
+
     Ok(heightfields_by_cell)
 }
 
@@ -337,12 +378,14 @@ fn validate_cell_terrain(
         let Some(slots) = slots_by_cell.get(&(source_cell.space, source_cell.cell)) else {
             bail!("terrain cell {:?} has no surface slots", source_cell.cell);
         };
+
         if slots.is_empty() || slots.len() > MAX_TERRAIN_SURFACES_PER_CELL {
             bail!(
                 "terrain cell {:?} has an invalid surface count",
                 source_cell.cell
             );
         }
+
         if slots
             .iter()
             .enumerate()
@@ -353,10 +396,12 @@ fn validate_cell_terrain(
                 source_cell.cell
             );
         }
+
         let expected_weight_pages = slots.len().div_ceil(4);
         let actual_weight_pages = weights_by_cell
             .get(&(source_cell.space, source_cell.cell))
             .map_or(0, Vec::len);
+
         if weights_by_cell
             .get(&(source_cell.space, source_cell.cell))
             .is_some_and(|pages| {
@@ -371,6 +416,7 @@ fn validate_cell_terrain(
                 source_cell.cell
             );
         }
+
         if slots.len() == 1 {
             if actual_weight_pages != 0 {
                 bail!("constant terrain cells must not store weight pages");
@@ -392,20 +438,25 @@ fn index_vegetation<'a>(
     source_cells: &HashSet<CellKey>,
 ) -> Result<HashMap<CellKey, &'a VegetationPage>> {
     let mut pages_by_cell = HashMap::new();
+
     if !environment.vegetation.is_empty() {
         let catalog = environment
             .catalog
             .as_ref()
             .context("vegetation field pages require a vegetation catalog")?;
         catalog.validate()?;
+
         for page in &environment.vegetation {
             if !source_cells.contains(&(page.space, page.cell)) {
                 bail!("vegetation page references missing cell {:?}", page.cell);
             }
+
             if page.source_revision < 0 {
                 bail!("vegetation page {:?} has a negative revision", page.cell);
             }
+
             page.data.validate(catalog)?;
+
             if pages_by_cell
                 .insert((page.space, page.cell), page)
                 .is_some()
@@ -416,6 +467,7 @@ fn index_vegetation<'a>(
     } else if let Some(catalog) = &environment.catalog {
         catalog.validate()?;
     }
+
     Ok(pages_by_cell)
 }
 
@@ -435,6 +487,7 @@ impl<'a> AssetIndex<'a> {
             .collect();
         let mut variants: HashMap<AssetId, Vec<(u8, f32)>> = HashMap::new();
         let mut maximum_height: HashMap<AssetId, f32> = HashMap::new();
+
         for variant in &project.asset_variants {
             if !by_id.contains_key(&variant.asset) {
                 bail!(
@@ -443,6 +496,7 @@ impl<'a> AssetIndex<'a> {
                     variant.asset
                 );
             }
+
             if !variant.minimum_screen_height.is_finite() {
                 bail!(
                     "asset {:?} LOD{} has a non-finite screen-height threshold",
@@ -450,6 +504,7 @@ impl<'a> AssetIndex<'a> {
                     variant.lod
                 );
             }
+
             variants
                 .entry(variant.asset)
                 .or_default()
@@ -459,6 +514,7 @@ impl<'a> AssetIndex<'a> {
                 .and_modify(|height| *height = height.max(variant.bounds[1]))
                 .or_insert(variant.bounds[1]);
         }
+
         for (asset, lods) in &variants {
             if lods.windows(2).any(|pair| pair[1].1 > pair[0].1) {
                 bail!("asset {:?} LOD thresholds must descend by LOD", asset);
@@ -467,6 +523,7 @@ impl<'a> AssetIndex<'a> {
                 bail!("asset {:?} coarsest LOD threshold must be zero", asset);
             }
         }
+
         Ok(Self {
             by_id,
             variants,
@@ -486,10 +543,12 @@ fn index_definitions<'a>(
         .iter()
         .map(|definition| (definition.id, definition))
         .collect();
+
     for definition in &project.definitions {
         let Some(asset) = definition.visual_asset else {
             continue;
         };
+
         if !assets.by_id.contains_key(&asset) {
             bail!(
                 "definition {:?} references missing visual asset {:?}",
@@ -497,10 +556,12 @@ fn index_definitions<'a>(
                 asset
             );
         }
+
         if !assets.variants.contains_key(&asset) {
             bail!("visual asset {:?} has no runtime LOD variants", asset);
         }
     }
+
     for preset in &project.presets.presets {
         if let environment::PresetKind::AssetCollection(c) = &preset.kind {
             for a in &c.assets {
@@ -514,6 +575,7 @@ fn index_definitions<'a>(
             }
         }
     }
+
     for object in &project.objects {
         if !definitions_by_id.contains_key(&object.definition) {
             bail!(
@@ -523,6 +585,7 @@ fn index_definitions<'a>(
             );
         }
     }
+
     Ok(definitions_by_id)
 }
 
@@ -574,30 +637,37 @@ impl RuntimeOutput {
             .unwrap_or_default();
         let mut render_objects = Vec::new();
         let mut gameplay_objects = Vec::new();
+
         for object in source_objects {
             let definition = sources.definitions[&object.definition];
+
             if let Some(asset) = definition.visual_asset {
                 render_objects.push((*object, asset));
             }
+
             if definition.activation == ObjectActivationPolicy::Proximity {
                 gameplay_objects.push(*object);
             }
         }
 
         let mut domain_mask = domain_bit(PageDomain::Terrain);
+
         if let Some(source_page) = sources.vegetation.get(&cell_key) {
             self.add_vegetation(source_cell, source_page)?;
             domain_mask |= domain_bit(PageDomain::Vegetation);
         }
+
         let generated = environment
             .objects
             .get(&cell_key)
             .map(Vec::as_slice)
             .unwrap_or_default();
+
         if !render_objects.is_empty() || !generated.is_empty() {
             domain_mask |= domain_bit(PageDomain::StaticObjects);
             self.add_static_objects(source_cell, &render_objects, generated, sources)?;
         }
+
         if !gameplay_objects.is_empty() {
             domain_mask |= domain_bit(PageDomain::GameplayObjects);
             self.add_gameplay_objects(source_cell, &gameplay_objects)?;
@@ -606,16 +676,19 @@ impl RuntimeOutput {
         let mut minimum_y = terrain_height_bounds[0];
         let mut maximum_y = terrain_height_bounds[1];
         let maximum_height = &sources.assets.maximum_height;
+
         for (object, asset) in &render_objects {
             minimum_y = minimum_y.min(object.local_translation[1]);
             maximum_y =
                 maximum_y.max(object.local_translation[1] + maximum_height[asset] * object.scale);
         }
+
         for object in generated {
             minimum_y = minimum_y.min(object.translation[1]);
             maximum_y =
                 maximum_y.max(object.translation[1] + maximum_height[&object.asset] * object.scale);
         }
+
         self.cells.push(RuntimeCellRecord {
             space: source_cell.space,
             cell: source_cell.cell,
@@ -727,9 +800,11 @@ impl RuntimeOutput {
             .collect();
         instances.extend_from_slice(generated);
         instances.sort_by_key(|o| o.id);
+
         if instances.windows(2).any(|w| w[0].id == w[1].id) {
             bail!("generated/manual object identity collision");
         }
+
         let object_page = encoded_page(
             object_key,
             PagePayload::StaticObjects(StaticObjectsPage { instances }),
@@ -737,6 +812,7 @@ impl RuntimeOutput {
         )?;
         self.push_page(object_page);
         let mut depended_assets = HashSet::new();
+
         for asset in render_objects
             .iter()
             .map(|(_, a)| a)
@@ -753,6 +829,7 @@ impl RuntimeOutput {
                 });
             }
         }
+
         Ok(())
     }
 
@@ -779,6 +856,7 @@ impl RuntimeOutput {
         )?;
         self.push_page(gameplay_page);
         let mut depended_definitions = HashSet::new();
+
         for object in gameplay_objects {
             if depended_definitions.insert(object.definition) {
                 self.definition_dependencies
@@ -788,6 +866,7 @@ impl RuntimeOutput {
                     });
             }
         }
+
         Ok(())
     }
 
@@ -871,6 +950,7 @@ fn hash_sources(
     hasher.update(&RUNTIME_SCHEMA_VERSION.to_le_bytes());
 
     hasher.update(&project.default_world_space.0.to_le_bytes());
+
     for space in &project.world_spaces {
         hasher.update(&space.id.0.to_le_bytes());
         hasher.update(space.name.as_bytes());
@@ -883,8 +963,10 @@ fn hash_sources(
             bincode::config::standard(),
         )?);
     }
+
     hash_terrain_catalog(hasher, project, environment);
     hasher.update(&environment.fingerprint);
+
     if let Some(catalog) = &environment.catalog {
         let encoded = bincode::serde::encode_to_vec(
             catalog,
@@ -894,42 +976,52 @@ fn hash_sources(
         )?;
         hasher.update(&encoded);
     }
+
     for heightfield in &project.terrain_cell_heightfields {
         hasher.update(&heightfield.space.0.to_le_bytes());
         hasher.update(&heightfield.cell.x.to_le_bytes());
         hasher.update(&heightfield.cell.z.to_le_bytes());
         hasher.update(&heightfield.resolution.to_le_bytes());
+
         for height in &heightfield.heights {
             hasher.update(&height.to_bits().to_le_bytes());
         }
+
         hasher.update(&heightfield.source_revision.to_le_bytes());
     }
+
     for asset in &project.assets {
         hasher.update(&asset.id.0);
         hasher.update(asset.key.as_bytes());
         hasher.update(asset.kind.as_bytes());
         hasher.update(asset.source_uri.as_bytes());
     }
+
     for variant in &project.asset_variants {
         hasher.update(&variant.asset.0);
         hasher.update(&[variant.lod]);
         hasher.update(variant.uri.as_bytes());
+
         for bound in variant.bounds {
             hasher.update(&bound.to_bits().to_le_bytes());
         }
+
         hasher.update(&variant.gpu_bytes_estimate.to_le_bytes());
         hasher.update(&variant.shadow_policy.to_le_bytes());
         hasher.update(&variant.minimum_screen_height.to_bits().to_le_bytes());
     }
+
     for definition in &project.definitions {
         hasher.update(&definition.id.0);
         hasher.update(definition.key.as_bytes());
         hasher.update(definition.display_name.as_bytes());
         hasher.update(&[definition.activation as u8]);
+
         if let Some(asset) = definition.visual_asset {
             hasher.update(&asset.0);
         }
     }
+
     Ok(())
 }
 
@@ -1014,6 +1106,7 @@ fn validate_terrain_heightfield_borders(
             let Some(neighbour) = pages_by_cell.get(&(space, neighbour_cell)) else {
                 continue;
             };
+
             if page.resolution != neighbour.resolution
                 || height_edge(page, current_edge)
                     .iter()
@@ -1056,6 +1149,7 @@ fn hash_terrain_catalog(
         hasher.update(surface.key.as_bytes());
         hasher.update(surface.display_name.as_bytes());
         hasher.update(&[u8::from(surface.anti_tiling)]);
+
         for value in [
             surface.tile_size,
             surface.normal_y_sign,
@@ -1066,9 +1160,11 @@ fn hash_terrain_catalog(
             hasher.update(&value.to_bits().to_le_bytes());
         }
     }
+
     for texture_set in &project.terrain_texture_sets {
         hasher.update(&texture_set.id.0);
         hasher.update(texture_set.key.as_bytes());
+
         for uri in [
             &texture_set.base_color_universal_uri,
             &texture_set.normal_material_universal_uri,
@@ -1079,24 +1175,30 @@ fn hash_terrain_catalog(
         ] {
             hasher.update(uri.as_bytes());
         }
+
         hasher.update(&texture_set.universal_gpu_bytes.to_le_bytes());
         hasher.update(&texture_set.astc_gpu_bytes.to_le_bytes());
     }
+
     for layer in &project.terrain_texture_layers {
         hasher.update(&layer.texture_set.0);
         hasher.update(&layer.surface.0);
         hasher.update(&layer.layer.to_le_bytes());
     }
+
     for profile in &project.terrain_profiles {
         hasher.update(&profile.space.0.to_le_bytes());
         hasher.update(&profile.texture_set.0);
         hasher.update(&profile.weight_resolution.to_le_bytes());
+
         for value in profile.macro_scales {
             hasher.update(&value.to_bits().to_le_bytes());
         }
+
         hasher.update(&profile.macro_contrast.to_bits().to_le_bytes());
         hasher.update(&profile.macro_albedo_strength.to_bits().to_le_bytes());
     }
+
     for slot in &environment.slots {
         hasher.update(&slot.space.0.to_le_bytes());
         hasher.update(&slot.cell.x.to_le_bytes());
@@ -1104,6 +1206,7 @@ fn hash_terrain_catalog(
         hasher.update(&[slot.slot]);
         hasher.update(&slot.surface.0);
     }
+
     for weights in &environment.weights {
         hasher.update(&weights.space.0.to_le_bytes());
         hasher.update(&weights.cell.x.to_le_bytes());

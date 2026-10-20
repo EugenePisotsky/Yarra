@@ -11,6 +11,7 @@ use crate::{
     environment::{EnvironmentAssets, EnvironmentParams},
     sky::SkyCompositeView,
 };
+
 use bevy::{
     camera::MainPassResolutionOverride,
     core_pipeline::{Core3d, Core3dSystems},
@@ -39,9 +40,11 @@ pub(crate) struct SunRays {
     pub(crate) texture: CachedTexture,
     size: UVec2,
 }
+
 const WORKGROUP: u32 = 8;
 
 pub(crate) struct SunGlarePlugin;
+
 impl Plugin for SunGlarePlugin {
     fn build(&self, app: &mut App) {
         let Some(render) = app.get_sub_app_mut(RenderApp) else {
@@ -83,10 +86,12 @@ fn prepare(
             });
             commands.entity(entity).insert(SunState(buffer));
         }
+
         if !rays {
             commands.entity(entity).remove::<SunRays>();
             continue;
         }
+
         let main = resolution.map_or(
             UVec2::new(
                 target.main_texture().width(),
@@ -279,6 +284,7 @@ fn draw(
             state.0.as_entire_binding(),
         )),
     );
+
     // Rays need this frame's share of the sun seen, so they follow in the same pass.
     let rays = rays
         .zip(cache.get_compute_pipeline(pipelines.rays[index]))
@@ -305,6 +311,7 @@ fn draw(
     pass.set_pipeline(pipeline);
     pass.set_bind_group(0, &group, &[offset.offset, light_offset.offset]);
     pass.dispatch_workgroups(1, 1, 1);
+
     if let Some((size, rays_pipeline, group)) = rays {
         pass.set_pipeline(rays_pipeline);
         pass.set_bind_group(0, &group, &[offset.offset]);

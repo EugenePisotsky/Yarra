@@ -12,6 +12,7 @@ use crate::{
         world::{camera::EditorCameraFocusRequest, objects::source_object_position},
     },
 };
+
 use bevy::{gizmos::transform_gizmo::TransformGizmoMode, prelude::*};
 use bevy_egui::egui;
 use engine::{WorldCatalog, WorldViewpoint};
@@ -44,12 +45,14 @@ pub(super) fn draw_context_inspector(
         ui.weak("No active World tool.");
         return;
     };
+
     if active_tool.id == OBJECT_TOOL.id {
         if selection.selected_id().is_none() {
             ui.heading("Visible assets");
             ui.weak("Select an asset in the viewport or World window to inspect it.");
             return;
         }
+
         draw_object_inspector(
             ui,
             catalog,
@@ -76,14 +79,18 @@ pub(super) fn draw_context_inspector(
         );
         return;
     }
+
     if active_tool.id == ENVIRONMENT_TOOL.id {
         draw_dense_conflict_controls(ui, dense_domains, history);
+
         if let Some(status) = dense_domains.status() {
             ui.colored_label(egui::Color32::YELLOW, status);
         }
+
         if project.environment_coverage_truncated() {
             ui.weak("Paint area is incomplete; wait for the source query.");
         }
+
         crate::environment_paint::inspector(
             ui,
             paint,
@@ -108,14 +115,17 @@ fn draw_dense_conflict_controls(
     history: &mut EditorHistory,
 ) {
     let conflicts = dense_domains.conflict_count();
+
     if conflicts == 0 {
         return;
     }
+
     ui.colored_label(
         egui::Color32::LIGHT_RED,
         format!("{conflicts} dense source conflict(s)"),
     );
     ui.small("Resolving a conflict clears command history because its old checkpoints are stale.");
+
     if ui
         .add_enabled(
             dense_domains.can_keep_local_conflicts(),
@@ -129,6 +139,7 @@ fn draw_dense_conflict_controls(
     {
         history.clear();
     }
+
     if ui
         .add_enabled(
             dense_domains.can_accept_database_conflicts(),
@@ -142,6 +153,7 @@ fn draw_dense_conflict_controls(
     {
         history.clear();
     }
+
     ui.separator();
 }
 
@@ -182,11 +194,13 @@ fn draw_object_inspector(
 
     ui.add_space(4.0);
     ui.strong("Transform");
+
     if selection_count > 1 {
         ui.small(
             "The gizmo applies its delta to same-world companions; fields edit the active item.",
         );
     }
+
     match gizmo_mode {
         TransformGizmoMode::Translate => {
             ui.small("Move along world axes or edit normalized cell/local coordinates.");
@@ -198,6 +212,7 @@ fn draw_object_inspector(
             ui.small("World objects use uniform scale.");
         }
     }
+
     ui.add_enabled_ui(objects.can_edit(selected_id), |ui| {
         if let Some(transform) = draft.transform.as_mut() {
             egui::Grid::new("selected_object_transform")
@@ -209,6 +224,7 @@ fn draw_object_inspector(
                     ui.label("Cell Z");
                     ui.add(egui::DragValue::new(&mut transform.owner_cell.z).speed(1));
                     ui.end_row();
+
                     for (label, value) in ["Local X", "Local Y", "Local Z"]
                         .into_iter()
                         .zip(transform.local_translation.iter_mut())
@@ -217,14 +233,17 @@ fn draw_object_inspector(
                         ui.add(egui::DragValue::new(value).speed(0.1));
                         ui.end_row();
                     }
+
                     let mut yaw_degrees = transform.yaw.to_degrees();
                     ui.label("Yaw°");
+
                     if ui
                         .add(egui::DragValue::new(&mut yaw_degrees).speed(0.5))
                         .changed()
                     {
                         transform.yaw = yaw_degrees.to_radians();
                     }
+
                     ui.end_row();
                     ui.label("Scale");
                     ui.add(
@@ -248,6 +267,7 @@ fn draw_object_inspector(
     ui.horizontal(|ui| {
         let can_apply =
             objects.can_edit(selected_id) && normalized.is_some_and(|value| value != current);
+
         if ui
             .add_enabled(can_apply, egui::Button::new("Apply"))
             .clicked()
@@ -256,6 +276,7 @@ fn draw_object_inspector(
             history.apply_transform(objects, selected_id, transform);
             draft.sync(selection, objects);
         }
+
         if ui
             .add_enabled(
                 draft.transform.is_some_and(|value| value != current),
@@ -274,10 +295,12 @@ fn draw_object_inspector(
             egui::Color32::LIGHT_RED,
             "This asset changed in the database.",
         );
+
         if ui.button("Keep local on latest revision").clicked() {
             objects.rebase_conflict(selected_id, history);
             draft.sync(selection, objects);
         }
+
         if ui.button("Use database version").clicked() {
             objects.reload_conflict(selected_id, history);
             draft.sync(selection, objects);
@@ -289,12 +312,14 @@ fn draw_object_inspector(
         let same_space = viewpoint
             .position()
             .is_some_and(|position| position.space == selected.object.space);
+
         if ui
             .add_enabled(same_space, egui::Button::new("Focus"))
             .clicked()
         {
             focus_request.0 = Some(source_object_position(&selected));
         }
+
         if ui
             .add_enabled(
                 selection.can_change_selection(objects),
@@ -306,6 +331,7 @@ fn draw_object_inspector(
             draft.sync(selection, objects);
         }
     });
+
     if ui
         .add_enabled(
             selected_ids.iter().all(|object| objects.can_edit(*object)),
@@ -317,6 +343,7 @@ fn draw_object_inspector(
         selection.clear(objects);
         draft.sync(selection, objects);
     }
+
     if viewpoint
         .position()
         .is_some_and(|position| position.space != selected.object.space)

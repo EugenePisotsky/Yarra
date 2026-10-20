@@ -1,6 +1,7 @@
 //! Project/runtime record contracts. Database access belongs to the readers and writers.
 use crate::{EncodedPage, RoadDocument, SourceEnvironmentCellRecord};
 use vegetation::VegetationCatalog;
+
 use world::{
     AssetId, CellCoord, ObjectActivationPolicy, ObjectDefinitionId, PageDomain, PageKey,
     StableObjectId, TerrainProfile, TerrainSurface, TerrainSurfaceId, TerrainTextureLayer,

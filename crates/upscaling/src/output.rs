@@ -1,6 +1,7 @@
 //! Fuse the final tone map and output copy for temporal views.
 //! Uses Bevy's tone-mapping shader, LUTs, grading and dithering unchanged.
 use crate::temporal::TemporalView;
+
 use bevy::{
     camera::{CameraOutputMode, CompositingSpace},
     core_pipeline::{
@@ -42,6 +43,7 @@ struct Pipeline {
     fullscreen: FullscreenShader,
     shader: Handle<Shader>,
 }
+
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 struct Key {
     format: TextureFormat,
@@ -51,13 +53,16 @@ struct Key {
     balance: bool,
     sectional: bool,
 }
+
 impl SpecializedRenderPipeline for Pipeline {
     type Key = Key;
+
     fn specialize(&self, k: Key) -> RenderPipelineDescriptor {
         let mut defs = vec![
             ShaderDefVal::UInt("TONEMAPPING_LUT_TEXTURE_BINDING_INDEX".into(), 3),
             ShaderDefVal::UInt("TONEMAPPING_LUT_SAMPLER_BINDING_INDEX".into(), 4),
         ];
+
         for (enabled, name) in [
             (k.dither == DebandDither::Enabled, "DEBAND_DITHER"),
             (k.hue, "HUE_ROTATE"),
@@ -68,6 +73,7 @@ impl SpecializedRenderPipeline for Pipeline {
                 defs.push(name.into());
             }
         }
+
         defs.push(
             match k.tone {
                 Tonemapping::None | Tonemapping::Linear => "TONEMAP_METHOD_LINEAR",
@@ -102,6 +108,7 @@ impl SpecializedRenderPipeline for Pipeline {
         }
     }
 }
+
 #[derive(Component)]
 struct Ready(CachedRenderPipelineId);
 
@@ -119,6 +126,7 @@ pub(super) fn install(app: &mut App) {
             draw.after(Core3dSystems::PostProcess).before(upscaling),
         );
 }
+
 pub(super) fn finish(app: &mut App) {
     let Some(render) = app.get_sub_app_mut(RenderApp) else {
         return;
@@ -127,10 +135,12 @@ pub(super) fn finish(app: &mut App) {
     let schedule = schedules
         .get_mut(Core3d)
         .expect("Core3d plugin is required");
+
     // Add a condition in place: preserve all ordering edges and let the normal
     // startup initialize these systems, including the game's timing adapters.
     // This adapter, like the engine's opaque-pass adapter, targets Bevy 0.20.
     assert!(!schedule.graph().systems.is_initialized());
+
     for system_type in [
         IntoSystem::into_system(tonemapping::tonemapping).system_type(),
         IntoSystem::into_system(upscaling).system_type(),
@@ -153,9 +163,11 @@ pub(super) fn finish(app: &mut App) {
             ))));
     }
 }
+
 fn use_builtin(current: Res<CurrentView>, ready: Query<(), With<Ready>>) -> bool {
     !ready.contains(current.0)
 }
+
 fn init(
     mut commands: Commands,
     device: Res<RenderDevice>,
@@ -183,6 +195,7 @@ fn init(
         shader: assets.load("embedded://bevy_core_pipeline/tonemapping/tonemapping_frag.wesl"),
     });
 }
+
 #[allow(clippy::type_complexity)]
 fn prepare(
     mut commands: Commands,
@@ -235,6 +248,7 @@ fn prepare(
                 .any(|section| *section != default()),
         };
         let id = pipelines.specialize(&cache, &pipeline, key);
+
         if cache.get_render_pipeline(id).is_some() {
             commands.entity(e).insert(Ready(id));
         } else {
@@ -242,12 +256,14 @@ fn prepare(
         }
     }
 }
+
 #[derive(Default)]
 struct Bindings {
     // Temporal reconstruction alternates the HDR source every frame. Retain
     // both bindings, with a fixed bound across resizes/LUT changes/view switches.
     cached: Vec<(BufferId, TextureViewId, TextureViewId, BindGroup)>,
 }
+
 #[allow(clippy::too_many_arguments)] // Independent render-world inputs of one pass.
 fn draw(
     view: ViewQuery<(&Ready, &ViewTarget, &ViewUniformOffset, &Tonemapping)>,
@@ -267,6 +283,7 @@ fn draw(
     let Some(buffer) = uniforms.uniforms.buffer() else {
         return;
     };
+
     // This pass owns the entire target and overwrites it without blending.
     // Clear permits a tile GPU to avoid loading last frame's display image.
     let Some(attachment) = target.out_texture_color_attachment(Some(LinearRgba::BLACK)) else {
@@ -293,9 +310,11 @@ fn draw(
                 lut_sampler,
             )),
         );
+
         if bindings.cached.len() == 2 {
             bindings.cached.remove(0);
         }
+
         bindings.cached.push((key.0, key.1, key.2, group));
         bindings.cached.len() - 1
     };

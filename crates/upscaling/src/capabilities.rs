@@ -7,10 +7,12 @@ pub(crate) struct BackendCapability {
     pub supported: bool,
     pub reason: Option<String>,
 }
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct UpscalingCapabilities {
     pub backends: Vec<BackendCapability>,
 }
+
 impl UpscalingCapabilities {
     pub(crate) fn detect(device: &bevy::render::renderer::RenderDevice) -> Self {
         let support = crate::backends::metalfx_support(device);
@@ -35,10 +37,12 @@ impl UpscalingCapabilities {
             ],
         }
     }
+
     pub fn select(&self, requested: UpscaleMethod) -> (UpscaleMethod, Option<String>) {
         if requested == UpscaleMethod::Linear {
             return (UpscaleMethod::Linear, None);
         }
+
         let candidate = self.backends.iter().find(|c| {
             c.method
                 == if requested == UpscaleMethod::MetalFxTemporal {
@@ -47,6 +51,7 @@ impl UpscalingCapabilities {
                     UpscaleMethod::MetalFxSpatial
                 }
         });
+
         match candidate {
             Some(c) if c.supported => (c.method, None),
             Some(c) => (UpscaleMethod::Linear, c.reason.clone()),

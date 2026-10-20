@@ -3,14 +3,17 @@
 //! compared side by side (`tools/look_sheet.py`). The world loads once and only the
 //! presentation changes between frames: the camera stays put, wind and weather stand still.
 use crate::runtime_settings::RuntimeSettings;
+
 use bevy::{
     core_pipeline::tonemapping::Tonemapping,
     prelude::*,
     render::view::screenshot::{Screenshot, ScreenshotCaptured},
     window::{MonitorSelection, PrimaryWindow, WindowMode},
 };
+
 use engine::{AtmosphereState, FogTuning, ForestSkyOcclusion, WorldSun, WorldViewCamera};
 use serde_json::{Value, json};
+
 use std::{
     path::PathBuf,
     sync::{
@@ -23,9 +26,12 @@ use std::{
 /// Frames and seconds each variant draws before its screenshot. Eye adaptation takes that long
 /// to settle, also when a variant turns it off (the correction eases back to none).
 const VARIANT_FRAMES: u32 = 30;
+
 const VARIANT_SECONDS: f64 = 5.0;
+
 /// Frames to wait past the settle time for terrain to reach full quality.
 const QUALITY_FRAMES: u32 = 600;
+
 const TIMEOUT: Duration = Duration::from_secs(15 * 60);
 
 /// One presentation to capture; `None` and 1.0 keep the game's own.
@@ -118,6 +124,7 @@ pub(crate) fn parse_variants(spec: &str) -> Result<Vec<LookVariant>, String> {
                 wind: 0.0,
                 wet: None,
             };
+
             for setting in settings.split(',').map(str::trim).filter(|s| !s.is_empty()) {
                 let (key, value) = setting.split_once('=').ok_or_else(|| {
                     format!("look variant {name:?}: {setting:?} is not key=value")
@@ -135,6 +142,7 @@ pub(crate) fn parse_variants(spec: &str) -> Result<Vec<LookVariant>, String> {
                             )
                         })
                 };
+
                 match key.trim() {
                     "ev" => variant.ev100 = Some(number(4.0..=18.0)?),
                     "ambient" => variant.ambient = number(0.05..=20.0)?,
@@ -185,15 +193,19 @@ pub(crate) fn parse_variants(spec: &str) -> Result<Vec<LookVariant>, String> {
                     other => return Err(format!("look variant {name:?}: unknown key {other:?}")),
                 }
             }
+
             if variant.name.is_empty() {
                 return Err("look variants need names".into());
             }
+
             Ok(variant)
         })
         .collect::<Result<Vec<_>, String>>()?;
+
     if variants.is_empty() {
         return Err("--look-variants lists no variants".into());
     }
+
     Ok(variants)
 }
 
@@ -221,11 +233,13 @@ pub(crate) fn install(app: &mut App) {
     else {
         return;
     };
+
     {
         let mut settings = app.world_mut().resource_mut::<RuntimeSettings>();
         settings.controls_locked = true;
         settings.show_ui = false;
     }
+
     app.insert_resource(Capture {
         options,
         started: Instant::now(),
@@ -275,6 +289,7 @@ fn tilt_camera(
         return;
     };
     let tilt = capture.options.variants[index].tilt;
+
     if tilt != 0.0 {
         for mut transform in &mut cameras {
             transform.rotate_local_x(tilt.to_radians());
@@ -305,30 +320,41 @@ fn present(
     let variant = &capture.options.variants[index];
     atmosphere.exposure_override = variant.ev100;
     let phase = variant.phase.unwrap_or(atmosphere.profile.initial_phase);
+
     if atmosphere.phase != phase {
         atmosphere.phase = phase;
     }
+
     if let Some(age) = variant.moon {
         atmosphere.set_moon_age(age);
     }
+
     let fog = variant.fog.unwrap_or(settings.fog);
+
     if presentation.low_air != fog {
         presentation.low_air = fog;
     }
+
     let particles = variant.particles.unwrap_or(settings.particles);
+
     if presentation.particles != particles {
         presentation.particles = particles;
     }
+
     let shafts = variant.shafts.unwrap_or(settings.light_shafts);
+
     if presentation.light_shafts != shafts {
         presentation.light_shafts = shafts;
     }
+
     tuning.set_if_neq(variant.tuning);
+
     if let Some(mut weather) = weather
         && weather.wetness_override != variant.wet
     {
         weather.wetness_override = variant.wet;
     }
+
     if let Some(mut lightning) = lightning {
         match (variant.lightning, lightning.holding()) {
             (Some(age), held) if held != Some(age) => lightning.hold(age),
@@ -336,14 +362,18 @@ fn present(
             _ => {}
         }
     }
+
     occlusion.set_if_neq(ForestSkyOcclusion(
         variant.canopy.unwrap_or(ForestSkyOcclusion::default().0),
     ));
     let adapt = variant.auto_exposure.unwrap_or(settings.auto_exposure);
+
     if presentation.auto_exposure != adapt {
         presentation.auto_exposure = adapt;
     }
+
     let tone = variant.tonemapping.unwrap_or(engine::WORLD_TONEMAPPING);
+
     for (entity, current) in &cameras {
         if current != Some(&tone) {
             commands.entity(entity).insert(tone);
@@ -363,6 +393,7 @@ fn scale_lights(
     };
     let variant = &capture.options.variants[index];
     ambient.brightness *= variant.ambient;
+
     for mut light in &mut sun {
         light.illuminance *= variant.sun;
     }
@@ -385,6 +416,7 @@ fn run(
         exit.write(AppExit::error());
         return;
     }
+
     if capture.done {
         if !capture.awaiting.load(Ordering::Acquire) && capture.saving.load(Ordering::Acquire) == 0
         {
@@ -392,21 +424,25 @@ fn run(
         }
         return;
     }
+
     if capture.awaiting.load(Ordering::Acquire) {
         return;
     }
+
     let now = time.elapsed_secs_f64();
     let Some((index, drawn, started)) = capture.current else {
         // Wait for the world to settle at full terrain quality, then start.
         capture.warm += 1;
         let settled = time.elapsed_secs() >= capture.options.settle;
         let quality = !terrain.pending() || capture.warm > QUALITY_FRAMES;
+
         if settled && quality {
             if let Err(e) = std::fs::create_dir_all(&capture.options.dir) {
                 error!("LOOK cannot create {}: {e}", capture.options.dir.display());
                 exit.write(AppExit::error());
                 return;
             }
+
             info!(
                 "LOOK capturing {} variants into {}",
                 capture.options.variants.len(),
@@ -414,16 +450,20 @@ fn run(
             );
             capture.current = Some((0, 0, now));
         }
+
         return;
     };
     let adapting = capture.options.variants[index]
         .auto_exposure
         .unwrap_or(settings.auto_exposure);
+
     if drawn < VARIANT_FRAMES || now - started < VARIANT_SECONDS {
         capture.current = Some((index, drawn.min(VARIANT_FRAMES - 1) + 1, started));
         return;
     }
+
     let shot = drawn - VARIANT_FRAMES;
+
     if shot >= capture.options.variants[index].burst {
         // Its screenshots are taken: the next variant may draw.
         if index + 1 < capture.options.variants.len() {
@@ -433,6 +473,7 @@ fn run(
         }
         return;
     }
+
     capture.current = Some((index, drawn + 1, started));
     let variant = capture.options.variants[index].clone();
     let burst = if variant.burst > 1 {
@@ -489,17 +530,21 @@ fn run(
                     .try_into_dynamic()
                     .map_err(|e| e.to_string())
                     .and_then(|image| image.to_rgb8().save(&path).map_err(|e| e.to_string()));
+
                 if let Err(e) = result {
                     error!("LOOK cannot save {}: {e}", path.display());
                     failed.store(true, Ordering::Release);
                 }
+
                 saving.fetch_sub(1, Ordering::AcqRel);
             });
         },
     );
+
     if index + 1 < capture.options.variants.len() || shot + 1 < variant.burst {
         return;
     }
+
     let phases = &atmosphere.profile.phases;
     let to_sun = sun.map(|s| s.back());
     let manifest = json!({
@@ -516,6 +561,7 @@ fn run(
         "frames": capture.frames,
     });
     let manifest_path = capture.options.dir.join("manifest.json");
+
     if let Err(e) = std::fs::write(
         &manifest_path,
         serde_json::to_string_pretty(&manifest).unwrap_or_default(),
@@ -524,6 +570,7 @@ fn run(
         exit.write(AppExit::error());
         return;
     }
+
     info!(
         "LOOK wrote {} frames and {}",
         capture.frames.len(),

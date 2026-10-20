@@ -6,6 +6,7 @@ struct EmptyRuntime {
     folder: PathBuf,
     path: PathBuf,
 }
+
 impl EmptyRuntime {
     fn new(name: &str) -> Self {
         let folder = std::env::temp_dir().join(format!("yarra-db-{name}-{}", std::process::id()));
@@ -50,6 +51,7 @@ impl EmptyRuntime {
         Self { folder, path }
     }
 }
+
 impl Drop for EmptyRuntime {
     fn drop(&mut self) {
         std::fs::remove_dir_all(&self.folder).unwrap();
@@ -94,6 +96,7 @@ fn shutdown_interrupts_full_reply_and_request_queues() {
         space: WorldSpaceId(1),
         windows: vec![[CellCoord::ZERO; 2]],
     };
+
     // Fill replies, then leave the reader blocked delivering one more result.
     for _ in 0..RESULT_CAPACITY {
         worker
@@ -101,13 +104,16 @@ fn shutdown_interrupts_full_reply_and_request_queues() {
             .send_timeout((0, query()), Duration::from_secs(5))
             .unwrap();
     }
+
     wait_until(|| worker.results.is_full());
     worker.send(query()).unwrap();
     wait_until(|| worker.requests.is_empty());
+
     // Further work must stay bounded, even with no reply consumer making progress.
     for _ in 0..REQUEST_CAPACITY {
         worker.send(query()).unwrap();
     }
+
     assert_eq!(worker.send(query()), Err(NotSent::Full));
     assert_drop_finishes(worker);
 }
@@ -244,6 +250,7 @@ fn worker_keeps_both_snapshots_until_commit_and_rejects_stale_source_work() {
         })
     };
     let old_page = page(&old.generation_id).unwrap();
+
     for id in [1, 2] {
         requests
             .send((
@@ -254,6 +261,7 @@ fn worker_keeps_both_snapshots_until_commit_and_rejects_stale_source_work() {
             ))
             .unwrap();
         assert!(matches!(recv(), DatabaseResult::Reloaded(Ok(_))));
+
         // An older discard must not remove this operation's candidate.
         requests
             .send((10, DatabaseRequest::DiscardReload { reload: 0 }))
@@ -264,6 +272,7 @@ fn worker_keeps_both_snapshots_until_commit_and_rejects_stale_source_work() {
         assert_eq!(page(&old.generation_id).unwrap(), old_page);
         assert!(index(&next.generation_id).is_err());
         assert!(page(&next.generation_id).is_err());
+
         for (wrong_id, wrong_generation) in [
             (id + 20, next.generation_id.clone()),
             (id, old.generation_id.clone()),
@@ -279,6 +288,7 @@ fn worker_keeps_both_snapshots_until_commit_and_rejects_stale_source_work() {
                 .unwrap();
             assert!(matches!(recv(), DatabaseResult::ReloadCommitted(Err(_))));
         }
+
         if id == 1 {
             requests
                 .send((12, DatabaseRequest::DiscardReload { reload: id }))
@@ -287,6 +297,7 @@ fn worker_keeps_both_snapshots_until_commit_and_rejects_stale_source_work() {
             assert_eq!(page(&old.generation_id).unwrap(), old_page);
         }
     }
+
     requests
         .send((
             13,
@@ -305,6 +316,7 @@ fn worker_keeps_both_snapshots_until_commit_and_rejects_stale_source_work() {
     drop(worker);
     std::fs::remove_dir_all(folder).unwrap();
 }
+
 #[test]
 fn database_worker_reopens_the_exact_published_generation() {
     let folder = std::env::temp_dir().join(format!("yarra-worker-reopen-{}", std::process::id()));

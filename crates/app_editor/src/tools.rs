@@ -42,6 +42,7 @@ impl EditorToolRegistry {
             "duplicate editor tool {}",
             descriptor.id.0
         );
+
         if active_by_default {
             let previous = self.active.insert(descriptor.workspace, descriptor.id);
             assert!(

@@ -7,9 +7,12 @@ use world::MAX_GAMEPLAY_AREA_POINTS;
 
 /// Pointer distances, in logical pixels, within which a corner or an edge is picked.
 const CORNER_PICK: f32 = 12.0;
+
 const EDGE_PICK: f32 = 10.0;
+
 /// Outlines are drawn for areas within this distance of the camera.
 const DRAW_RANGE: f64 = 800.0;
+
 /// How far above the ground outlines float.
 const LIFT: f32 = 0.15;
 
@@ -78,9 +81,11 @@ impl Input<'_, '_> {
             .collect::<Option<_>>()?;
         let heights: Vec<Option<f32>> = flat.iter().map(|p| self.ground(*p)).collect();
         let known: Vec<f32> = heights.iter().flatten().copied().collect();
+
         if known.is_empty() {
             return None;
         }
+
         let average = known.iter().sum::<f32>() / known.len() as f32;
         let ground = known
             .iter()
@@ -92,6 +97,7 @@ impl Input<'_, '_> {
             .zip(&heights)
             .map(|(p, h)| p.with_y(h.unwrap_or(average) + LIFT))
             .collect();
+
         // Long edges are split so the line follows the ground between the corners.
         let mut line = Vec::new();
         let edges = if closed {
@@ -99,21 +105,26 @@ impl Input<'_, '_> {
         } else {
             corners.len().saturating_sub(1)
         };
+
         for i in 0..edges {
             let (a, b) = (corners[i], corners[(i + 1) % corners.len()]);
             let steps = ((a.xz().distance(b.xz()) / 4.0).ceil() as usize).clamp(1, 16);
             line.push(a);
+
             for step in 1..steps {
                 let p = a.lerp(b, step as f32 / steps as f32);
                 line.push(self.ground(p).map_or(p, |y| p.with_y(y + LIFT)));
             }
+
             if i + 1 == edges {
                 line.push(b);
             }
         }
+
         if line.is_empty() {
             line.extend(&corners);
         }
+
         Some(Trace {
             corners,
             line,
@@ -220,9 +231,11 @@ pub(super) fn act(
                 state.edit(dense, moved);
             }
         }
+
         if !gesture.held {
             state.finish(dense, history, false);
         }
+
         return;
     }
 
@@ -230,6 +243,7 @@ pub(super) fn act(
         if gesture.back {
             draft.pop();
         }
+
         if draft.len() >= 3 && (gesture.close || gesture.click && gesture.on_first) {
             let name = unused_name(&areas);
             let mut next = areas.to_vec();
@@ -239,6 +253,7 @@ pub(super) fn act(
                 points: state.draft.take().unwrap_or_default(),
                 height: None,
             });
+
             if state.commit(dense, history, next) {
                 state.selected = Some(name);
                 state.corner = None;
@@ -252,10 +267,12 @@ pub(super) fn act(
                 state.status = Some("An area has at most 64 corners".into());
             }
         }
+
         return;
     }
 
     let selected = state.selected_index(&areas);
+
     if gesture.back
         && let (Some(index), Some(corner)) = (selected, state.corner)
         && areas[index].points.len() > 3
@@ -268,11 +285,14 @@ pub(super) fn act(
         state.corner = None;
         return;
     }
+
     if !gesture.click {
         return;
     }
+
     if let Some(index) = selected {
         let area = &areas[index];
+
         if let Some(corner) = gesture.corner.filter(|&c| c < area.points.len()) {
             // Keep the corner where it is under the pointer instead of snapping to it.
             let at = area.points[corner];
@@ -283,24 +303,30 @@ pub(super) fn act(
             state.dragging = Some((corner, offset));
             return;
         }
+
         if let (Some(after), Some(point)) = (gesture.edge, gesture.hit) {
             if area.points.len() >= MAX_GAMEPLAY_AREA_POINTS {
                 state.status = Some("An area has at most 64 corners".into());
                 return;
             }
+
             let more = with_area(&areas, index, |area| area.points.insert(after + 1, point));
+
             // The new corner is already in hand: adding it and placing it is one step.
             if state.edit(dense, more) {
                 state.corner = Some(after + 1);
                 state.dragging = Some((after + 1, [0.; 2]));
             }
+
             return;
         }
     }
+
     let picked = gesture
         .hit
         .and_then(|hit| area_at(&areas, space, hit))
         .map(|area| area.name.clone());
+
     if picked != state.selected {
         state.corner = None;
         state.selected = picked;
@@ -323,31 +349,38 @@ pub(super) fn input(
         state.corner = None;
         state.draft = None;
     }
+
     let active = input.active();
     let enabled = active && input.ground.window.focused;
     let typing = input.ground.capture.wants_keyboard;
     let pressed = |key| !typing && input.ground.keys.just_pressed(key);
+
     if enabled && pressed(KeyCode::Escape) {
         state.finish(&mut dense, &mut history, true);
         state.draft = None;
         return;
     }
+
     let blocked = input.ground.paused()
         || input.project.save_in_flight()
         || dense.saving()
         || dense.has_any_conflict();
+
     if (!enabled || blocked) && state.dragging.is_some() {
         state.finish(&mut dense, &mut history, false);
     }
+
     if !active {
         state.hover = None;
         state.draft = None;
         return;
     }
+
     // A shape half drawn survives looking away from the editor or a save.
     if !enabled || blocked {
         return;
     }
+
     let Some(space) = input.ground.origin.space() else {
         return;
     };
@@ -360,6 +393,7 @@ pub(super) fn input(
         back: pressed(KeyCode::Backspace) || pressed(KeyCode::Delete),
         ..default()
     };
+
     // What is within reach of the pointer only matters on the frame of a click.
     if let (true, Some(cursor)) = (gesture.click && state.dragging.is_none(), cursor) {
         if let (Some(draft), Some(space)) = (&state.draft, state.space) {
@@ -379,6 +413,7 @@ pub(super) fn input(
             gesture.edge = pick_edge(&corners, cursor);
         }
     }
+
     act(&mut state, &mut dense, &mut history, space, gesture);
 }
 
@@ -397,22 +432,26 @@ pub(super) fn draw(
     if !input.active() {
         return;
     }
+
     let Some(space) = input.ground.origin.space() else {
         return;
     };
     let resting = Color::srgb(0.45, 0.95, 0.55);
     let chosen = Color::srgb(1.0, 0.55, 0.1);
     let mut ground = None;
+
     for area in dense.areas.areas().iter() {
         if area.space != space || !input.near(area) {
             continue;
         }
+
         let Some(trace) = input.trace(area.space, &area.points, true) else {
             continue;
         };
         let selected = state.selected.as_deref() == Some(area.name.as_str());
         let color = if selected { chosen } else { resting };
         gizmos.linestrip(trace.line.iter().copied(), color);
+
         if selected {
             ground = Some(trace.ground);
             for (i, corner) in trace.corners.iter().enumerate() {
@@ -425,30 +464,37 @@ pub(super) fn draw(
                 );
             }
         }
+
         if let Some([low, high]) = area.height {
             // The height range as a fence: the outline at both heights, joined at the corners.
             let faded = color.with_alpha(0.45);
+
             for y in [low, high] {
                 let ring = trace.corners.iter().chain(trace.corners.first());
                 gizmos.linestrip(ring.map(|p| p.with_y(y)), faded);
             }
+
             for corner in &trace.corners {
                 gizmos.line(corner.with_y(low), corner.with_y(high), faded);
             }
         }
     }
+
     if state.selected.is_some() {
         state.ground = ground.or(state.ground);
     } else {
         state.ground = None;
     }
+
     let Some(draft) = &state.draft else {
         return;
     };
     let mut points = draft.clone();
     points.extend(state.hover);
+
     if let Some(trace) = input.trace(space, &points, false) {
         gizmos.linestrip(trace.line.iter().copied(), chosen);
+
         for (i, corner) in trace.corners.iter().take(draft.len()).enumerate() {
             // The first corner is the one to click to close the shape.
             cross(
@@ -458,6 +504,7 @@ pub(super) fn draw(
                 if i == 0 { 0.35 } else { 0.2 },
             );
         }
+
         if draft.len() >= 2
             && let (Some(last), Some(first)) = (trace.corners.last(), trace.corners.first())
         {

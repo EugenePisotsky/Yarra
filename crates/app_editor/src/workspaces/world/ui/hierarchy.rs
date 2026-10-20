@@ -6,6 +6,7 @@ use crate::{
     tools::{AREA_TOOL, ENVIRONMENT_TOOL, EditorToolRegistry, OBJECT_TOOL, ROAD_TOOL},
     workspaces::{EditorWorkspace, world::ui::WorldWorkspaceUiState},
 };
+
 use bevy::prelude::*;
 use bevy_egui::egui;
 use engine::{ActiveWorldSpace, WorldCatalog};
@@ -48,12 +49,14 @@ pub(super) fn draw_world_hierarchy(
 
     ui.separator();
     let active_tool = tools.active(EditorWorkspace::World);
+
     if ui
         .selectable_label(active_tool.is_some_and(|t| t.id == ROAD_TOOL.id), "Roads")
         .clicked()
     {
         tools.set_active(EditorWorkspace::World, ROAD_TOOL.id);
     }
+
     if ui
         .selectable_label(
             active_tool.is_some_and(|tool| tool.id == ENVIRONMENT_TOOL.id),
@@ -63,6 +66,7 @@ pub(super) fn draw_world_hierarchy(
     {
         tools.set_active(EditorWorkspace::World, ENVIRONMENT_TOOL.id);
     }
+
     if ui
         .selectable_label(active_tool.is_some_and(|t| t.id == AREA_TOOL.id), "Areas")
         .on_hover_text("Named places the game's rules react to")
@@ -71,11 +75,13 @@ pub(super) fn draw_world_hierarchy(
         tools.set_active(EditorWorkspace::World, AREA_TOOL.id);
         windows.set_open(crate::area_authoring::WINDOW.id, true);
     }
+
     let mut visible_assets = visible_asset_records(project, objects);
     let visible_count = visible_assets.len();
     let mut objects_active = tools
         .active(EditorWorkspace::World)
         .is_some_and(|tool| tool.id == OBJECT_TOOL.id);
+
     if ui
         .selectable_label(objects_active, format!("Visible assets ({visible_count})"))
         .clicked()
@@ -83,6 +89,7 @@ pub(super) fn draw_world_hierarchy(
         tools.set_active(EditorWorkspace::World, OBJECT_TOOL.id);
         objects_active = true;
     }
+
     if objects_active {
         ui.indent("visible_assets_tree", |ui| {
             ui.add(
@@ -90,6 +97,7 @@ pub(super) fn draw_world_hierarchy(
                     .hint_text("Filter visible assets"),
             );
             let search = ui_state.visible_assets_search.trim().to_lowercase();
+
             if !search.is_empty() {
                 visible_assets.retain(|record| {
                     record
@@ -101,6 +109,7 @@ pub(super) fn draw_world_hierarchy(
                         || short_object_id(record.object.id).contains(&search)
                 });
             }
+
             egui::ScrollArea::vertical()
                 .id_salt("world_visible_assets")
                 .max_height((ui.available_height() - 28.0).max(120.0))
@@ -120,6 +129,7 @@ pub(super) fn draw_world_hierarchy(
                                 ui.selectable_label(is_selected, label)
                             })
                             .inner;
+
                         if response.clicked() {
                             let additive = ui.input(|input| {
                                 input.modifiers.shift
@@ -134,6 +144,7 @@ pub(super) fn draw_world_hierarchy(
                         }
                     }
                 });
+
             if visible_count == 0 {
                 ui.weak("No authored assets in the loaded source window.");
             }
@@ -154,11 +165,13 @@ fn visible_asset_records(
         .iter()
         .map(|record| record.object.id)
         .collect::<HashSet<_>>();
+
     if let Some(window) = project.loaded_window() {
         records.extend(objects.current_views().into_iter().filter(|record| {
             !source_ids.contains(&record.object.id) && source_object_in_window(record, window)
         }));
     }
+
     records.sort_by_key(|record| {
         (
             record.object.owner_cell.x,

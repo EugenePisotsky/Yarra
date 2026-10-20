@@ -48,9 +48,11 @@ fn invalid(message: impl std::fmt::Display) -> WorldDbError {
 pub(crate) fn encode(areas: &[GameplayArea]) -> Result<Vec<u8>, WorldDbError> {
     world::validate_gameplay_areas(areas).map_err(invalid)?;
     let bytes = bincode::serde::encode_to_vec(areas, bincode::config::standard())?;
+
     if bytes.len() > MAX_GAMEPLAY_AREA_BYTES {
         return Err(invalid("the encoded set is too large"));
     }
+
     Ok(bytes)
 }
 
@@ -58,11 +60,14 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<Arc<[GameplayArea]>, WorldDbError> 
     if bytes.len() > MAX_GAMEPLAY_AREA_BYTES {
         return Err(invalid("the encoded set is too large"));
     }
+
     let (areas, used): (Vec<GameplayArea>, usize) =
         bincode::serde::decode_from_slice(bytes, bincode::config::standard())?;
+
     if used != bytes.len() {
         return Err(invalid("trailing bytes"));
     }
+
     world::validate_gameplay_areas(&areas).map_err(invalid)?;
     Ok(areas.into())
 }
@@ -86,6 +91,7 @@ pub(crate) fn store(
     areas: &[GameplayArea],
 ) -> Result<(), WorldDbError> {
     let payload = encode(areas)?;
+
     for area in areas {
         let known: bool = connection.query_row(
             "SELECT EXISTS(SELECT 1 FROM world_spaces WHERE id=?1)",
@@ -96,6 +102,7 @@ pub(crate) fn store(
             return Err(invalid(format!("{} is in an unknown world", area.name)));
         }
     }
+
     connection.execute(
         "UPDATE gameplay_areas SET revision=?1, payload=?2 WHERE singleton=1",
         params![revision, payload],
@@ -119,13 +126,16 @@ impl ProjectWriter {
         if expected_revision <= 0 || expected_revision == i64::MAX {
             return Err(invalid("invalid revision"));
         }
+
         let tx = self
             .connection
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let stored = read(&tx)?;
+
         if stored.revision != expected_revision {
             return Ok(GameplayAreasWriteResult::Conflict(stored));
         }
+
         store(&tx, expected_revision + 1, areas)?;
         tx.commit()?;
         Ok(GameplayAreasWriteResult::Committed(GameplayAreasRecord {
@@ -188,6 +198,7 @@ mod tests {
             writer.write_gameplay_areas(1, &[]).unwrap(),
             GameplayAreasWriteResult::Conflict(before.clone())
         );
+
         for broken in [
             vec![area("guard/approach", 7)],
             vec![area("Guard", 1)],
@@ -196,6 +207,7 @@ mod tests {
             assert!(writer.write_gameplay_areas(2, &broken).is_err());
             assert_eq!(read(&writer.connection).unwrap(), before);
         }
+
         let mut bytes = encode(&before.areas).unwrap();
         bytes.push(0);
         assert!(decode(&bytes).is_err());

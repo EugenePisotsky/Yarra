@@ -1,5 +1,6 @@
 //! Compute layouts and draw-pipeline specialization for view, lighting and temporal variants.
 use super::{gpu_types::shader_defs, temporal};
+
 use bevy::{
     core_pipeline::core_3d::CORE_3D_DEPTH_FORMAT,
     pbr::{MeshPipelineViewLayoutKey, MeshPipelineViewLayouts},
@@ -18,6 +19,7 @@ use bevy::{
     },
     shader::ShaderDefVal,
 };
+
 use std::borrow::Cow;
 
 const SCHEDULE_SHADER_PATH: &str = "shaders/vegetation/schedule.wesl";
@@ -226,6 +228,7 @@ impl Specializer<RenderPipeline> for VegetationPipelineSpecializer {
                     key.view_layout_bits,
                 ));
         descriptor.layout = vec![view_layout.main_layout, self.draw_layout.clone()];
+
         if key.environment {
             descriptor
                 .layout
@@ -239,12 +242,14 @@ impl Specializer<RenderPipeline> for VegetationPipelineSpecializer {
                 ShaderDefVal::UInt("MATERIAL_BIND_GROUP".into(), 2),
             ]);
         }
+
         if key.temporal {
             if !key.environment {
                 descriptor
                     .layout
                     .push(BindGroupLayoutDescriptor::new("unused environment", &[]));
             }
+
             descriptor.layout.push(temporal::layout());
             descriptor.vertex.shader_defs.push("TEMPORAL_GRASS".into());
             descriptor
@@ -264,7 +269,9 @@ impl Specializer<RenderPipeline> for VegetationPipelineSpecializer {
                     write_mask: ColorWrites::ALL,
                 }));
         }
+
         descriptor.multisample.count = key.msaa.samples();
+
         if MeshPipelineViewLayoutKey::from_bits_retain(key.view_layout_bits)
             .contains(MeshPipelineViewLayoutKey::ATMOSPHERE)
         {
@@ -276,6 +283,7 @@ impl Specializer<RenderPipeline> for VegetationPipelineSpecializer {
                 .shader_defs
                 .push("ATMOSPHERE".into());
         }
+
         descriptor.fragment.as_mut().unwrap().targets[0]
             .as_mut()
             .unwrap()

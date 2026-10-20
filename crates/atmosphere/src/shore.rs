@@ -10,22 +10,29 @@ use bevy::{
     prelude::*,
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
 };
+
 use std::{cmp::Reverse, collections::BinaryHeap, sync::Arc};
 
 /// Period of the swell coming ashore, seconds. The wave clock wraps after whole periods
 /// (`crate::environment::WAVE_PERIOD`).
 pub(crate) const SURF_PERIOD: f32 = 9.0;
+
 /// Depth taken for ground missing from the map: open sea.
 const OPEN_SEA_DEPTH: f32 = 50.0;
+
 /// Crests set out from water this deep, all at once: the surf is worked out from here inwards.
 const DEEP: f32 = 20.0;
+
 /// Below this depth a step integrates the shallow-water speed exactly.
 const SHALLOW: f32 = 5.0;
+
 /// Height of the broken waves' bore: it runs at the square root of g times the depth and its
 /// own height, so crests keep coming ashore where linear waves would stall at the waterline.
 const BORE: f32 = 0.4;
+
 /// Arrival time of water no crest reaches (a basin below the sea level inland).
 pub(crate) const UNREACHED: f32 = 600.0;
+
 const GRAVITY: f32 = 9.81;
 
 /// The shore map over a whole world space, in world coordinates, on the valley mist's grid.
@@ -113,19 +120,24 @@ fn travel_times(depth: &[f32], w: usize, h: usize, spacing: f32) -> Vec<f32> {
     let slowness = |d: f32| 1.0 / crest_speed(d);
     let mut time = vec![UNREACHED; w * h];
     let mut queue = BinaryHeap::new();
+
     for (i, &d) in depth.iter().enumerate() {
         if d >= DEEP {
             time[i] = 0.0;
             queue.push(Reverse((0_u32, i)));
         }
     }
+
     while let Some(Reverse((bits, i))) = queue.pop() {
         let here = f32::from_bits(bits);
         let a = depth[i];
+
         if here > time[i] || a <= 0.0 {
             continue;
         }
+
         let (x, z) = ((i % w) as isize, (i / w) as isize);
+
         for (dx, dz) in [
             (1, 0),
             (-1, 0),
@@ -137,9 +149,11 @@ fn travel_times(depth: &[f32], w: usize, h: usize, spacing: f32) -> Vec<f32> {
             (-1, -1),
         ] {
             let (nx, nz) = (x + dx, z + dz);
+
             if nx < 0 || nz < 0 || nx >= w as isize || nz >= h as isize {
                 continue;
             }
+
             let j = nz as usize * w + nx as usize;
             let b = depth[j];
             let length = spacing
@@ -158,12 +172,14 @@ fn travel_times(depth: &[f32], w: usize, h: usize, spacing: f32) -> Vec<f32> {
                 length * 0.5 * (slowness(a) + slowness(b))
             };
             let arrival = here + step;
+
             if arrival < time[j] {
                 time[j] = arrival;
                 queue.push(Reverse((arrival.to_bits(), j)));
             }
         }
     }
+
     time
 }
 
@@ -282,6 +298,7 @@ mod tests {
     #[test]
     fn crests_travel_at_the_square_root_of_g_times_depth_in_shallow_water() {
         assert!((crest_speed(1.0) - GRAVITY.sqrt()).abs() < 0.05);
+
         // Deep water: g T / 2 pi.
         let deep = GRAVITY * SURF_PERIOD / std::f32::consts::TAU;
         assert!((crest_speed(500.0) - deep).abs() / deep < 0.01);
@@ -293,10 +310,12 @@ mod tests {
         let slope = 0.08;
         let map = beach(slope);
         let at = |x: f32| map.texel_at([f64::from(x) + 64.0, 32.0]);
+
         // Out from the 20 m line, crests set out together.
         assert_eq!(at(300.0)[1], 0.0);
         let times: Vec<f32> = (0..9).map(|i| at(236.0 - 28.0 * i as f32)[1]).collect();
         assert!(times.windows(2).all(|t| t[1] > t[0]), "{times:?}");
+
         // The time follows the crest speed's integral from the 20 m line, within the grid's
         // error.
         let integral = |x: f32| {
@@ -309,6 +328,7 @@ mod tests {
                 })
                 .sum::<f32>()
         };
+
         for x in [20.0, 100.0, 180.0] {
             let (found, expected) = (at(x)[1], integral(x));
             assert!(
@@ -316,6 +336,7 @@ mod tests {
                 "{x}: {found} {expected}"
             );
         }
+
         // The gradient points to the shore, at the crest's slowness.
         let texel = at(100.0);
         assert!(
@@ -323,6 +344,7 @@ mod tests {
             "{texel:?}"
         );
         assert!(texel[3].abs() < 1e-3);
+
         // Land takes the time the crest reaches the waterline.
         let land = at(-4.0);
         assert!(

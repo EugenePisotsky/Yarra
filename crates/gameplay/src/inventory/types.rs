@@ -11,18 +11,22 @@ pub use game_types::{
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(try_from = "u64", into = "u64")]
 pub struct Money(u64);
+
 impl Money {
     pub const ZERO: Self = Self(0);
     pub const MAX: Self = Self(i64::MAX as u64);
+
     pub fn new(units: u64) -> Result<Self> {
         if units > Self::MAX.0 {
             return Err(InventoryError::Overflow);
         }
         Ok(Self(units))
     }
+
     pub fn units(self) -> u64 {
         self.0
     }
+
     pub fn checked_add(self, other: Self) -> Result<Self> {
         Self::new(
             self.0
@@ -30,6 +34,7 @@ impl Money {
                 .ok_or(InventoryError::Overflow)?,
         )
     }
+
     /// What is left after paying `other` out of this.
     pub fn checked_sub(self, other: Self) -> Result<Self> {
         let left = self.0.checked_sub(other.0);
@@ -38,6 +43,7 @@ impl Money {
             available: self.0,
         })?))
     }
+
     pub fn checked_mul(self, quantity: u32) -> Result<Self> {
         Self::new(
             self.0
@@ -46,12 +52,15 @@ impl Money {
         )
     }
 }
+
 impl TryFrom<u64> for Money {
     type Error = InventoryError;
+
     fn try_from(value: u64) -> Result<Self> {
         Self::new(value)
     }
 }
+
 impl From<Money> for u64 {
     fn from(value: Money) -> Self {
         value.0
@@ -109,18 +118,21 @@ pub(crate) fn validate_key(key: &str) -> Result<()> {
     }
     Ok(())
 }
+
 pub(crate) fn validate_text(text: &str, max: usize) -> Result<()> {
     if text.trim().is_empty() || text.len() > max {
         return Err(InventoryError::Invalid("empty or oversized text".into()));
     }
     Ok(())
 }
+
 pub(crate) fn next_revision(revision: u64) -> Result<u64> {
     if revision == 0 || revision >= i64::MAX as u64 {
         return Err(InventoryError::Overflow);
     }
     Ok(revision + 1)
 }
+
 pub(crate) fn validate_revision(revision: u64) -> Result<()> {
     if revision == 0 || revision > i64::MAX as u64 {
         return Err(InventoryError::Invalid("invalid revision".into()));

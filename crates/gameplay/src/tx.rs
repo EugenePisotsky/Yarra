@@ -15,6 +15,7 @@ struct Scalars {
     random: RandomState,
     narrative_random: RandomState,
 }
+
 impl Scalars {
     fn of(state: &SessionState) -> Self {
         Self {
@@ -24,6 +25,7 @@ impl Scalars {
         }
     }
 }
+
 /// The single list of journaled record maps: `name / touch: Key => Value, state path`.
 macro_rules! journal {
     ($($name:ident / $touch:ident: $key:ty => $value:ty, $($path:ident).+;)*) => {
@@ -104,6 +106,7 @@ macro_rules! journal {
         }
     };
 }
+
 journal! {
     actors / touch_actor: ActorId => Actor, actors;
     inventories / touch_inventory: InventoryId => Inventory, inventories;
@@ -125,12 +128,15 @@ pub(crate) struct Tx<'a> {
     state: &'a mut SessionState,
     pub(crate) before: Before,
 }
+
 impl std::ops::Deref for Tx<'_> {
     type Target = SessionState;
+
     fn deref(&self) -> &SessionState {
         self.state
     }
 }
+
 /// An enclosing scope set aside while a nested one runs; see `Tx::savepoint`.
 pub(crate) struct Savepoint(Before);
 
@@ -139,31 +145,39 @@ impl<'a> Tx<'a> {
         let before = Before::new(state);
         Self { state, before }
     }
+
     pub fn rollback(self) {
         self.before.restore(self.state);
     }
+
     /// Start a nested scope that can be undone on its own, keeping earlier work of the command.
     pub fn savepoint(&mut self) -> Savepoint {
         let fresh = Before::new(self.state);
         Savepoint(std::mem::replace(&mut self.before, fresh))
     }
+
     pub fn release(&mut self, savepoint: Savepoint) {
         let nested = std::mem::replace(&mut self.before, savepoint.0);
         nested.merge_into(&mut self.before);
     }
+
     pub fn rollback_to(&mut self, savepoint: Savepoint) {
         let nested = std::mem::replace(&mut self.before, savepoint.0);
         nested.restore(self.state);
     }
+
     pub fn set_time(&mut self, time: GameTime) {
         self.state.time = time;
     }
+
     pub fn random_mut(&mut self) -> &mut RandomState {
         &mut self.state.random
     }
+
     pub fn set_narrative_random(&mut self, random: RandomState) {
         self.state.narrative_random = random;
     }
+
     pub fn bump_generation(&mut self) -> Result<()> {
         self.state.generation = self
             .state
@@ -173,11 +187,13 @@ impl<'a> Tx<'a> {
             .ok_or_else(|| Invalid("session generation overflow".into()))?;
         Ok(())
     }
+
     pub fn actor_mut(&mut self, id: ActorId) -> Result<&mut Actor> {
         self.state.actor(id)?;
         self.touch_actor(&id);
         Ok(self.state.actors.get_mut(&id).expect("checked actor"))
     }
+
     pub fn inventory_mut(&mut self, id: InventoryId) -> Result<&mut Inventory> {
         self.state.inventory(id)?;
         self.touch_inventory(&id);
@@ -187,21 +203,26 @@ impl<'a> Tx<'a> {
             .get_mut(&id)
             .expect("checked inventory"))
     }
+
     /// Adds an inventory that did not exist: one opened for the first time.
     pub fn put_inventory(&mut self, inventory: Inventory) {
         let id = inventory.id;
         self.touch_inventory(&id);
+
         if let Some(actor) = inventory.carried_by() {
             self.touch_carried(&actor);
             self.state.carried.insert(actor, id);
         }
+
         self.state.inventories.insert(id, inventory);
     }
+
     pub fn wallet_mut(&mut self, id: WalletId) -> Result<&mut Wallet> {
         self.state.wallet(id)?;
         self.touch_wallet(&id);
         Ok(self.state.wallets.get_mut(&id).expect("checked wallet"))
     }
+
     pub fn quest_mut(&mut self, id: QuestId) -> &mut quests::Progress {
         self.touch_quest(&id);
         self.state
@@ -209,6 +230,7 @@ impl<'a> Tx<'a> {
             .entry(id)
             .or_insert_with(|| quests::Progress::new(id))
     }
+
     pub fn relationship_mut(&mut self, key: RelationshipKey) -> &mut Relationship {
         self.touch_relationship(&key);
         self.state
@@ -216,6 +238,7 @@ impl<'a> Tx<'a> {
             .entry(key)
             .or_insert_with(|| Relationship::neutral(key))
     }
+
     pub fn interaction_mut(&mut self, key: InteractionKey) -> &mut Interaction {
         self.touch_interaction(&key);
         self.state
@@ -223,6 +246,7 @@ impl<'a> Tx<'a> {
             .entry(key)
             .or_insert(Interaction { key, current: None })
     }
+
     pub fn history_mut(&mut self, key: HistoryKey) -> &mut History {
         self.touch_history(&key);
         self.state
@@ -230,6 +254,7 @@ impl<'a> Tx<'a> {
             .entry(key)
             .or_insert_with(|| History::empty(key))
     }
+
     pub fn conversation_mut(&mut self, key: ConversationKey) -> Result<&mut Conversation> {
         self.state.conversation(key)?;
         self.touch_conversation(&key);
@@ -239,16 +264,19 @@ impl<'a> Tx<'a> {
             .get_mut(&key)
             .expect("checked conversation"))
     }
+
     pub fn put_conversation(&mut self, conversation: Conversation) {
         let key = ConversationKey::of(&conversation);
         self.touch_conversation(&key);
         self.state.conversations.insert(key, conversation);
     }
+
     pub fn object_mut(&mut self, content: &GameContent, id: ObjectId) -> Result<&mut ObjectState> {
         let current = self.state.object(content, id)?;
         self.touch_object(&id);
         Ok(self.state.world.objects.entry(id).or_insert(current))
     }
+
     pub fn set_areas(&mut self, actor: ActorId, areas: BTreeSet<AreaId>) {
         self.touch_location(&actor);
         self.state
@@ -256,38 +284,46 @@ impl<'a> Tx<'a> {
             .locations
             .insert(actor, LocationState { actor, areas });
     }
+
     pub fn set_movement(&mut self, movement: Movement) {
         self.touch_movement(&movement.actor);
         self.state.world.movements.insert(movement.actor, movement);
     }
+
     pub fn remove_movement(&mut self, actor: ActorId) -> Option<Movement> {
         self.touch_movement(&actor);
         self.state.world.movements.remove(&actor)
     }
+
     /// Announces something the changed records alone do not show, such as an arrival.
     pub fn signal(&mut self, signal: WorldSignal) {
         self.before.signals.push(signal);
     }
+
     pub fn put_trigger(&mut self, progress: TriggerState) {
         self.touch_trigger(&progress.id);
         self.state.world.triggers.insert(progress.id, progress);
     }
+
     pub fn set_variable(&mut self, key: VariableKey, value: Value) {
         self.touch_variable(&key);
         self.state.variables.insert(key, value);
     }
+
     pub fn party_mut(&mut self) -> &mut Party {
         if self.before.party.is_none() {
             self.before.party = Some(self.state.party.clone());
         }
         &mut self.state.party
     }
+
     pub fn floor_mut(&mut self) -> &mut Floor {
         if self.before.floor.is_none() {
             self.before.floor = Some(self.state.floor.clone());
         }
         &mut self.state.floor
     }
+
     /// Characters with an effect that will tick or end.
     pub fn timed_mut(&mut self) -> &mut BTreeSet<ActorId> {
         if self.before.timed.is_none() {
@@ -295,6 +331,7 @@ impl<'a> Tx<'a> {
         }
         &mut self.state.timed
     }
+
     pub fn pending_mut(&mut self) -> &mut VecDeque<Pending> {
         if self.before.pending.is_none() {
             self.before.pending = Some(self.state.world.pending.clone());

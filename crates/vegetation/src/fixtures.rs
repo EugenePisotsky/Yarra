@@ -94,6 +94,7 @@ pub fn reference_page(origin_xz: [f32; 2]) -> VegetationFieldPage {
     let resolution = usize::from(REFERENCE_FIELD_RESOLUTION);
     let mut meadow_coverage = Vec::with_capacity(resolution * resolution);
     let mut tuft_coverage = Vec::with_capacity(resolution * resolution);
+
     for z in 0..resolution {
         for _ in 0..resolution {
             let world_z = origin_xz[1] + (z as f32 + 0.5) * REFERENCE_PAGE_SIZE / resolution as f32;
@@ -102,6 +103,7 @@ pub fn reference_page(origin_xz: [f32; 2]) -> VegetationFieldPage {
             tuft_coverage.push(to_unorm8(band));
         }
     }
+
     VegetationFieldPage {
         origin_xz,
         size: REFERENCE_PAGE_SIZE,

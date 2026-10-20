@@ -4,6 +4,7 @@ use super::{
     transfer_money,
     types::*,
 };
+
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
@@ -13,6 +14,7 @@ pub struct TradeLine {
     pub entry: ItemId,
     pub quantity: u32,
 }
+
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TradeOffer {
@@ -44,16 +46,20 @@ pub struct TradeQuote {
     purchase_total: Money,
     sale_total: Money,
 }
+
 impl TradeQuote {
     pub fn participants(&self) -> TradeParticipants {
         self.participants
     }
+
     pub fn offer(&self) -> &TradeOffer {
         &self.offer
     }
+
     pub fn purchase_total(&self) -> Money {
         self.purchase_total
     }
+
     pub fn sale_total(&self) -> Money {
         self.sale_total
     }
@@ -70,12 +76,15 @@ pub fn quote_trade(
     validate_pair(catalog, merchant, customer)?;
     merchant_wallet.validate()?;
     customer_wallet.validate()?;
+
     if merchant_wallet.id == customer_wallet.id {
         return Err(InventoryError::SameParticipant);
     }
+
     if offer.purchases.len() + offer.sales.len() == 0 {
         return Err(InventoryError::Invalid("empty trade".into()));
     }
+
     let quote = TradeQuote {
         participants: TradeParticipants {
             merchant_inventory: merchant.id,
@@ -94,6 +103,7 @@ pub fn quote_trade(
         sale_total: price_lines(catalog, customer, &offer.sales, false)?,
         offer: offer.clone(),
     };
+
     // Preview final capacity and settlement as well as prices, without mutating inputs.
     prepare_trade(
         catalog,
@@ -121,6 +131,7 @@ pub fn commit_trade(
         merchant_wallet: merchant_wallet.id,
         customer_wallet: customer_wallet.id,
     };
+
     if participants != quote.participants
         || (catalog.id, catalog.revision) != quote.catalog
         || [
@@ -132,6 +143,7 @@ pub fn commit_trade(
     {
         return Err(InventoryError::StaleQuote);
     }
+
     let current = quote_trade(
         catalog,
         merchant,
@@ -140,9 +152,11 @@ pub fn commit_trade(
         customer_wallet,
         &quote.offer,
     )?;
+
     if current != *quote {
         return Err(InventoryError::StaleQuote);
     }
+
     let (next_merchant, next_customer, next_merchant_wallet, next_customer_wallet) = prepare_trade(
         catalog,
         merchant,
@@ -166,18 +180,24 @@ fn price_lines(
 ) -> Result<Money> {
     let mut total = Money::ZERO;
     let mut seen = BTreeSet::new();
+
     for line in lines {
         if !seen.insert(line.entry) {
             return Err(InventoryError::Duplicate);
         }
+
         let entry = inventory.entry(line.entry)?;
+
         if line.quantity == 0 || line.quantity > entry.quantity {
             return Err(InventoryError::InvalidQuantity);
         }
+
         let definition = catalog.item(entry.definition)?;
+
         if !definition.permissions.sellable || !definition.permissions.transferable {
             return Err(InventoryError::Restricted);
         }
+
         let price = if purchase {
             definition.merchant_sell_price
         } else {
@@ -186,6 +206,7 @@ fn price_lines(
         .ok_or(InventoryError::NotForTrade)?;
         total = total.checked_add(price.checked_mul(line.quantity)?)?;
     }
+
     Ok(total)
 }
 
@@ -201,6 +222,7 @@ fn prepare_trade(
     let mut customer = customer.clone();
     let mut merchant_wallet = merchant_wallet.clone();
     let mut customer_wallet = customer_wallet.clone();
+
     // Withdraw both sides first so a full inventory can exchange its last slot.
     let purchases = quote
         .offer
@@ -214,12 +236,15 @@ fn prepare_trade(
         .iter()
         .map(|l| withdraw(&mut customer, l.entry, l.quantity))
         .collect::<Result<Vec<_>>>()?;
+
     for entry in purchases {
         deposit(catalog, &mut customer, entry)?;
     }
+
     for entry in sales {
         deposit(catalog, &mut merchant, entry)?;
     }
+
     // Settle the net price: selling goods can fund purchases in the same basket.
     if quote.purchase_total > quote.sale_total {
         transfer_money(
@@ -234,6 +259,7 @@ fn prepare_trade(
             quote.sale_total.checked_sub(quote.purchase_total)?,
         )?;
     }
+
     merchant.revision = next_revision(merchant.revision)?;
     customer.revision = next_revision(customer.revision)?;
     Ok((merchant, customer, merchant_wallet, customer_wallet))

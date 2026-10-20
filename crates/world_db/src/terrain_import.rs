@@ -67,6 +67,7 @@ impl TerrainImportWriter {
         )?);
         let definition = read_definition(&connection, space)?
             .ok_or_else(|| invalid("imported terrain needs an environment definition"))?;
+
         // World settings are part of every cell's cook inputs: rewrite them only on change.
         connection.execute(
             "UPDATE world_spaces SET minimum_y=?2, maximum_y=?3, sea_level=?4 WHERE id=?1 \
@@ -88,12 +89,14 @@ impl TerrainImportWriter {
     pub fn put(&mut self, imported: &ImportedTerrainCell) -> Result<(), WorldDbError> {
         let space = self.space;
         let cell = imported.cell;
+
         if let Some(heights) = &imported.heights
             && (heights.len() != usize::from(imported.resolution).pow(2)
                 || !(2..=257).contains(&imported.resolution))
         {
             return Err(invalid("imported heightfield size"));
         }
+
         let mask = usize::from(self.definition.mask_resolution).pow(2);
         let imported_layer = |layer| {
             self.definition
@@ -101,6 +104,7 @@ impl TerrainImportWriter {
                 .iter()
                 .any(|l| l.id == layer && l.imported_mask.is_some())
         };
+
         if imported
             .tiles
             .iter()
@@ -110,6 +114,7 @@ impl TerrainImportWriter {
                 "imported coverage must be for layers with an imported mask",
             ));
         }
+
         let c = &self.connection;
         c.execute(
             "INSERT INTO imported_cells VALUES (?1, ?2)",
@@ -149,6 +154,7 @@ impl TerrainImportWriter {
                 _ => false,
             };
         let mut changed = false;
+
         if !same_terrain {
             // One revision covers the cell and its heightfield, above both previous ones.
             let revision = source
@@ -166,6 +172,7 @@ impl TerrainImportWriter {
                  WHERE world_space_id=?1 AND cell_x=?2 AND cell_z=?3",
                 params![space.0, cell.x, cell.z],
             )?;
+
             if let Some(heights) = &imported.heights {
                 c.execute(
                     "INSERT INTO terrain_cell_heightfields(world_space_id, cell_x, cell_z, \
@@ -180,10 +187,13 @@ impl TerrainImportWriter {
                     ],
                 )?;
             }
+
             changed = true;
         }
+
         let mut budget = usize::MAX;
         let paint = read_cell(c, &self.definition, cell, &mut budget)?;
+
         // Painted layers keep their tiles; imported layers get the new ones.
         let mut tiles: Vec<_> = paint
             .iter()
@@ -198,6 +208,7 @@ impl TerrainImportWriter {
             Some(old) => old.tiles == tiles,
             None => tiles.is_empty(),
         };
+
         if !same_paint {
             store_cell(
                 c,
@@ -211,12 +222,15 @@ impl TerrainImportWriter {
             )?;
             changed = true;
         }
+
         self.stats.cells += 1;
+
         if source.is_none() {
             self.stats.added += 1;
         } else if changed {
             self.stats.changed += 1;
         }
+
         Ok(())
     }
 
@@ -235,6 +249,7 @@ impl TerrainImportWriter {
         let space = self.space.0;
         let stale = "NOT EXISTS (SELECT 1 FROM imported_cells i \
                      WHERE i.cell_x = t.cell_x AND i.cell_z = t.cell_z)";
+
         // Coverage and heightfields cascade; a cell that still owns objects or roads fails.
         c.execute(
             &format!("DELETE FROM environment_cells AS t WHERE world_space_id=?1 AND {stale}"),

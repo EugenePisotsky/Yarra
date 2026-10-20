@@ -7,11 +7,13 @@ use world_db::ImportedTerrainCell;
 
 /// 1 m geometry and paint; ground weights are still compiled at 0.5 m.
 pub(crate) const HEIGHT_SIDE: usize = 33;
+
 pub(crate) const MASK_SIDE: usize = 33;
 const VIEW_VISIBILITY: f32 = 20_000.;
 
 /// Terrain height at a world XZ position.
 pub(crate) type HeightFn<'a> = dyn Fn(Vec2) -> f32 + Sync + 'a;
+
 /// A terrain tool's mask at a world XZ position, from 0 to 1.
 pub(crate) type MaskFn<'a> = dyn Fn(Vec2) -> f32 + Sync + 'a;
 
@@ -67,6 +69,7 @@ fn island_ground(project: &mut ProjectDocument) {
     let pack = TerrainPack::baltic();
     let definition = &mut project.environments[0];
     let first = definition.layers.len() as i32;
+
     for (index, ground) in ground_layers().into_iter().skip(2).enumerate() {
         let id = |part: &str| stable_id(&format!("island-ground/{}/{part}", ground.mask));
         let preset = |part: &str, name: String, kind| Preset {
@@ -183,11 +186,13 @@ pub(crate) fn base_document(name: &str, bounds: [f32; 2], sea_level: f32) -> Pro
     let definition = &mut project.environments[0];
     definition.cell_size = DEFAULT_CELL_SIZE;
     definition.mask_resolution = MASK_SIDE as u16;
+
     // The meadow layers follow masks, so imports keep them up to date. Island ground layers
     // replace the demo's clearing.
     definition
         .layers
         .retain(|l| l.preset != environment::fixtures::CLEARING);
+
     for layer in &mut definition.layers {
         let mask = match layer.preset {
             environment::fixtures::DRY_MEADOW => "land",
@@ -196,6 +201,7 @@ pub(crate) fn base_document(name: &str, bounds: [f32; 2], sea_level: f32) -> Pro
         };
         layer.imported_mask = Some(mask.into());
     }
+
     island_ground(&mut project);
     project.terrain_profiles.retain(|p| p.space == space);
     project.cells.clear();
@@ -238,6 +244,7 @@ pub(crate) fn terrain_cell(
     bounds: [Vec2; 2],
 ) -> ImportedTerrainCell {
     let step = DEFAULT_CELL_SIZE / (HEIGHT_SIDE - 1) as f32;
+
     // One sample of halo on each side gives central-difference slopes that agree across
     // cell borders.
     let side = HEIGHT_SIDE + 2;
@@ -262,6 +269,7 @@ pub(crate) fn terrain_cell(
             samples: Vec::with_capacity(MASK_SIDE * MASK_SIDE),
         })
         .collect();
+
     for j in 1..=MASK_SIDE {
         for i in 1..=MASK_SIDE {
             let dx = (halo[j * side + i + 1] - halo[j * side + i - 1]) / (2. * step);
@@ -269,6 +277,7 @@ pub(crate) fn terrain_cell(
             let p = point(i, j);
             let fade = smoothstep(0., 48., (p - bounds[0]).min(bounds[1] - p).min_element());
             let generated = paint(p, halo[j * side + i], dx.hypot(dz));
+
             for (tile, (_, mask)) in tiles.iter_mut().zip(layers) {
                 let weight = match *mask {
                     Mask::Generated(index) => generated[index],
@@ -278,6 +287,7 @@ pub(crate) fn terrain_cell(
             }
         }
     }
+
     tiles.retain(|t| t.samples.iter().any(|&v| v != 0));
     let flat = heights.iter().all(|h| h.to_bits() == heights[0].to_bits());
     ImportedTerrainCell {
@@ -313,11 +323,14 @@ pub(crate) fn highest(height: &HeightFn, centre: Vec2, radius: f32) -> Vec2 {
             .unwrap()
     };
     let (mut p, mut spacing) = (centre, radius / 20.);
+
     loop {
         p = search(p, spacing);
+
         if spacing <= 2. {
             return p;
         }
+
         spacing = (spacing / 20.).max(2.);
     }
 }
@@ -346,6 +359,7 @@ pub(crate) fn view(
 pub(crate) fn write_views(project: &Path, views: &[(&str, WorldViewBookmark)]) -> Result<()> {
     let directory = project.with_extension("views");
     fs::create_dir_all(&directory)?;
+
     for (name, view) in views {
         view.validate().map_err(anyhow::Error::msg)?;
         fs::write(
@@ -353,6 +367,7 @@ pub(crate) fn write_views(project: &Path, views: &[(&str, WorldViewBookmark)]) -
             ron::ser::to_string_pretty(view, Default::default())?,
         )?;
     }
+
     Ok(())
 }
 
@@ -376,6 +391,7 @@ mod ground_tests {
         definition.validate(&project.presets).unwrap();
         let fallback = imported_layers(definition, &[]).unwrap();
         let values = paint(Vec2::new(20., 30.), 400., 0.2);
+
         for (layer, source) in fallback {
             let name = definition
                 .layers

@@ -5,6 +5,7 @@ pub(crate) struct Linear {
     layout: BindGroupLayout,
     sampler: Sampler,
 }
+
 impl Linear {
     pub fn new(device: &RenderDevice) -> Self {
         let shader = device
@@ -64,6 +65,7 @@ impl Linear {
             sampler,
         }
     }
+
     pub fn bind(&self, device: &RenderDevice, input: &GpuImage) -> BindGroup {
         device.create_bind_group(
             "linear upscaler",
@@ -71,6 +73,7 @@ impl Linear {
             &BindGroupEntries::sequential((&input.texture_view, &self.sampler)),
         )
     }
+
     pub fn encode(&self, encoder: &mut wgpu::CommandEncoder, bind: &BindGroup, output: &GpuImage) {
         let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
             label: Some("linear upscale"),

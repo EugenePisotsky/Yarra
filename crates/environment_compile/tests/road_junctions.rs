@@ -1,11 +1,14 @@
 #[path = "support/roads.rs"]
 mod road_support;
+
 mod support;
+
 use environment::roads::*;
 use road_support::*;
 use support::*;
 use world::CellCoord;
 use yarra_environment_compile::{CompilePlan, TerrainSource, TerrainSourceCell};
+
 fn setup() -> (CompilePlan, environment::CoverageSnapshot, RoadSnapshot) {
     let (d, l, p, c, mut r) = cart_tracks();
     straight(&mut r);
@@ -61,6 +64,7 @@ fn setup() -> (CompilePlan, environment::CoverageSnapshot, RoadSnapshot) {
         r,
     )
 }
+
 fn terrain(cell: CellCoord) -> TerrainSource {
     let loaded_cells = (-1..=1)
         .flat_map(|x| {
@@ -88,6 +92,7 @@ fn terrain(cell: CellCoord) -> TerrainSource {
         loaded_cells,
     }
 }
+
 fn compile(
     plan: &CompilePlan,
     c: &environment::CoverageSnapshot,
@@ -108,6 +113,7 @@ fn compile(
     plan.compile_cell_with_terrain(cell, c, &r, &terrain(cell), Default::default())
         .unwrap()
 }
+
 #[test]
 fn t_junction_wears_the_center_and_blends_ruts_without_adding_grass_or_excavating_twice() {
     let (plan, c, r) = setup();
@@ -117,11 +123,13 @@ fn t_junction_wears_the_center_and_blends_ruts_without_adding_grass_or_excavatin
     assert!((0..33).all(|x| (0..33).all(|z| h.height_at(x, z) > -0.231)));
     let center = worn_weights(&a, 64, 32);
     assert_eq!(center.iter().find(|(s, _)| *s == SOIL).unwrap().1, 255);
+
     // Worn bare there, the hub clears nearly all grass.
     for f in &a.vegetation.fields {
         let v = f.coverage[31 * usize::from(f.resolution) + 63];
         assert!(v < 26, "{v}");
     }
+
     // Outside the junction grass still grows down the road's middle.
     let middle = a
         .vegetation
@@ -136,8 +144,10 @@ fn t_junction_wears_the_center_and_blends_ruts_without_adding_grass_or_excavatin
     plain.spans.retain(|s| s.road == plain.roads[0].id);
     plain.roads.truncate(1);
     let before = compile(&plan, &c, &plain, CELLS[0]);
+
     // Away from the corner legs (the page's roads after the two that meet).
     let mut compared = 0;
+
     for z in 0..33 {
         let local = [1.0, z as f64 * 0.25];
         let near_leg = (2..a.roads.roads.len()).any(|leg| {
@@ -145,16 +155,20 @@ fn t_junction_wears_the_center_and_blends_ruts_without_adding_grass_or_excavatin
                 .nearest_on(leg, local)
                 .is_some_and(|hit| hit.offset.distance < hit.offset.width * 0.5 + 2.0)
         });
+
         if near_leg {
             continue;
         }
+
         compared += 1;
         assert_eq!(
             h.height_at(4, z),
             before.terrain.as_ref().unwrap().height_at(4, z)
         );
     }
+
     assert!(compared >= 5, "{compared} samples away from the legs");
+
     // Roads and junctions only wear the meadow away. The worn ground they paint grows its own
     // grass, no more than the corridor retains.
     let mut none = r.clone();
@@ -162,6 +176,7 @@ fn t_junction_wears_the_center_and_blends_ruts_without_adding_grass_or_excavatin
     none.spans.clear();
     none.roads.clear();
     let bare = compile(&plan, &c, &none, CELLS[0]);
+
     for field in &a.vegetation.fields {
         match bare
             .vegetation
@@ -180,6 +195,7 @@ fn t_junction_wears_the_center_and_blends_ruts_without_adding_grass_or_excavatin
         }
     }
 }
+
 #[test]
 fn independently_compiled_junction_borders_and_reordered_inputs_match() {
     let (plan, c, mut r) = setup();
@@ -187,6 +203,7 @@ fn independently_compiled_junction_borders_and_reordered_inputs_match() {
     r.profiles[0].relief.road_variation = 0.2;
     let a = compile(&plan, &c, &r, CELLS[0]);
     let b = compile(&plan, &c, &r, CELLS[1]);
+
     for z in 0..33 {
         assert_eq!(
             a.terrain.as_ref().unwrap().heights[z * 33 + 32],
@@ -197,12 +214,14 @@ fn independently_compiled_junction_borders_and_reordered_inputs_match() {
             b.terrain.as_ref().unwrap().normals_oct[z * 33]
         );
     }
+
     for z in 0..=64 {
         assert_eq!(
             ground_weights(&a.ground, 64, z),
             ground_weights(&b.ground, 0, z)
         );
     }
+
     r.spans.reverse();
     r.roads.reverse();
     r.profiles.reverse();
@@ -211,6 +230,7 @@ fn independently_compiled_junction_borders_and_reordered_inputs_match() {
     dry.profiles[0].breakup = 0.0;
     assert_eq!(a.terrain, compile(&plan, &c, &dry, CELLS[0]).terrain);
 }
+
 #[test]
 fn four_way_connection_is_explicit_and_preserves_its_center_when_an_arm_is_disabled() {
     let (plan, c, mut r) = setup();
@@ -238,6 +258,7 @@ fn four_way_connection_is_explicit_and_preserves_its_center_when_an_arm_is_disab
     let disabled = compile(&plan, &c, &r, CELLS[0]);
     assert!((disabled.terrain.unwrap().height_at(32, 16) + 0.15).abs() < 0.001);
 }
+
 #[test]
 fn malformed_connections_acute_forks_and_unrelated_crossings_are_rejected() {
     let (plan, c, r) = setup();
@@ -311,19 +332,23 @@ fn overlapping_approach_materials_do_not_jump_at_the_junction_boundary() {
         "material jumps at junction radius: {outside} vs {inside}"
     );
 }
+
 #[test]
 fn page_roads_reproduce_a_junction_for_near_detail() {
     let (plan, c, r) = setup();
     let mut hub = 0;
+
     for cell in CELLS {
         let compiled = compile(&plan, &c, &r, cell);
         let roads = &compiled.roads;
+
         // Both roads, and the corner legs between them.
         assert!(roads.roads.len() >= 2, "both roads draw on {cell:?}");
         assert_eq!(roads.junctions.len(), 1);
         assert_eq!(roads.junctions[0].members, 0b11);
         let n = usize::from(compiled.ground.weight_pages[0].resolution);
         let origin = [f64::from(cell.x) * 8.0, f64::from(cell.z) * 8.0];
+
         for z in 0..n {
             for x in 0..n {
                 let local = [x, z].map(|v| v as f64 * 8.0 / (n - 1) as f64);
@@ -341,8 +366,10 @@ fn page_roads_reproduce_a_junction_for_near_detail() {
             }
         }
     }
+
     assert!(hub > 20, "the junction wore {hub} samples");
 }
+
 #[test]
 fn a_footpath_of_its_own_style_branches_from_a_cart_road() {
     let (plan, c, mut r) = setup();
@@ -354,13 +381,16 @@ fn a_footpath_of_its_own_style_branches_from_a_cart_road() {
     path.track_wander = 0.1;
     r.profiles.push(path.clone());
     r.roads[1].profile = path.id;
+
     for s in r.spans.iter_mut().filter(|s| s.road == r.roads[1].id) {
         s.start.width = 1.6;
         s.end.width = 1.6;
     }
+
     let cell = compile(&plan, &c, &r, CELLS[0]);
     let roads = &cell.roads;
     assert_eq!(roads.roads[1].shape.track_spacing, 0.0);
+
     // Its corner legs to the cart road take the quieter footpath's style.
     assert!(roads.roads.len() > 2);
     assert!(
@@ -368,9 +398,11 @@ fn a_footpath_of_its_own_style_branches_from_a_cart_road() {
             .iter()
             .all(|r| r.shape.track_spacing == 0.0)
     );
+
     // One track: both wander as one.
     let tracks = roads.roads[1].shape.tracks([3.0, 5.0]);
     assert_eq!(tracks[0], tracks[1]);
+
     // The junction's patch takes the style of one of its roads.
     r.junctions[0].profile = RoadProfileId([8; 16]);
     r.profiles.push(environment::roads::CartTrackProfile {
@@ -379,9 +411,11 @@ fn a_footpath_of_its_own_style_branches_from_a_cart_road() {
     });
     assert!(r.validate().is_err());
 }
+
 #[test]
 fn corner_legs_cut_the_corners_traffic_turns_leaving_a_grass_island() {
     let (plan, c, r) = setup();
+
     // A T: the branch leaves the straight road at right angles, so both corners are cut.
     let cells: Vec<_> = CELLS
         .iter()
@@ -389,6 +423,7 @@ fn corner_legs_cut_the_corners_traffic_turns_leaving_a_grass_island() {
         .collect();
     let legs = cells[0].roads.roads.len() - 2;
     assert_eq!(legs, 2, "one leg per corner");
+
     // The legs are narrower and wear less than the roads they join.
     let main = &cells[0].roads.roads[0];
     assert!(
@@ -396,6 +431,7 @@ fn corner_legs_cut_the_corners_traffic_turns_leaving_a_grass_island() {
             .iter()
             .all(|l| l.strength < main.strength)
     );
+
     // Between a leg and the junction the meadow stays (an island); on the leg it is worn.
     let roads = &cells[0].roads;
     let origin = [0.0, 0.0];
@@ -409,6 +445,7 @@ fn corner_legs_cut_the_corners_traffic_turns_leaving_a_grass_island() {
         island < on_leg,
         "island {island} against the leg's {on_leg}"
     );
+
     // Corners too sharp or too straight are not cut: two roads meeting end to end keep none.
     let mut straight = r.clone();
     straight.spans.retain(|s| s.road == straight.roads[0].id);

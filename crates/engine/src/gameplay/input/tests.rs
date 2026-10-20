@@ -26,10 +26,12 @@ fn trackpad_orbit_is_independent_of_frame_batching() {
         app.world_mut()
             .resource_mut::<Time>()
             .advance_by(std::time::Duration::from_secs(1));
+
         for _ in 0..fps {
             app.world_mut()
                 .resource_mut::<Time>()
                 .advance_by(std::time::Duration::from_secs_f64(1.0 / f64::from(fps)));
+
             // Identical 120 Hz native event stream, grouped into render frames.
             for _ in 0..120 / fps {
                 app.world_mut().write_message(MouseWheel {
@@ -40,8 +42,10 @@ fn trackpad_orbit_is_independent_of_frame_batching() {
                     window: Entity::PLACEHOLDER,
                 });
             }
+
             app.update();
         }
+
         let rig = app.world().get::<CameraRig>(camera).unwrap();
         (rig.yaw, rig.target_yaw)
     };
@@ -87,10 +91,12 @@ fn irregular_scroll_batches_are_consumed_once_and_account_for_clipping() {
         .advance_by(std::time::Duration::from_secs(1));
     let mut expected_yaw = 0.0;
     let mut sent = 0;
+
     for (frame, batch_size) in [0, 1, 0, 4, 2, 0, 3, 0].into_iter().enumerate() {
         // Idle frames, uneven native batches, and an event above the current clamp.
         let mut raw_x = 0.0;
         let mut clipped = 0;
+
         for _ in 0..batch_size {
             let x = if sent == 5 {
                 100.0_f32
@@ -114,6 +120,7 @@ fn irregular_scroll_batches_are_consumed_once_and_account_for_clipping() {
             expected_yaw -= x.min(80.0) * CAMERA_TRACKPAD_ORBIT_SPEED;
             sent += 1;
         }
+
         app.world_mut()
             .resource_mut::<Time>()
             .advance_by(std::time::Duration::from_millis(17));
@@ -128,6 +135,7 @@ fn irregular_scroll_batches_are_consumed_once_and_account_for_clipping() {
             (app.world().get::<CameraRig>(camera).unwrap().target_yaw - expected_yaw).abs() < 1e-6
         );
     }
+
     assert_eq!(sent, 10);
 }
 

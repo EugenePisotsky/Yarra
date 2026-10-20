@@ -95,6 +95,7 @@ impl RuntimePublicationState {
         if source_epoch == 0 || self.active() {
             return false;
         }
+
         let request_id = self.next_request_id.wrapping_add(1).max(1);
         self.next_request_id = request_id;
         self.phase = PublicationPhase::Queued {
@@ -216,6 +217,7 @@ fn dispatch_publication(
     let Some(worker) = worker else {
         return;
     };
+
     match worker.try_send(PublicationRequest {
         request_id,
         source_epoch,
@@ -254,10 +256,12 @@ fn receive_publication_result(
                     else {
                         continue;
                     };
+
                     if request_id != completed.request_id || source_epoch != completed.source_epoch
                     {
                         continue;
                     }
+
                     match completed.result {
                         Ok(_) if project.source_epoch() != source_epoch => {
                             state.phase = PublicationPhase::Failed {
@@ -313,6 +317,7 @@ fn receive_publication_result(
     let Some(result) = reload.take_completion() else {
         return;
     };
+
     match result {
         Ok(adopted) if adopted == generation => {
             objects.adopt_runtime_generation();

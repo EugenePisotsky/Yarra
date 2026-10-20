@@ -3,22 +3,26 @@ use crate::dialogue::{
     ArgumentSource, Conversation, Dialogue, HistoryEvent, Node, NodeKind, Position, Repeat,
     RunStatus, Token,
 };
+
 use crate::session::run_action;
 use crate::tx::Tx;
 use crate::{Result, *};
 use game_types::*;
 use std::collections::{BTreeMap, BTreeSet};
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LineView {
     pub id: Key,
     pub speaker: ActorId,
     pub text: BoundText,
 }
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChoiceView {
     pub id: Key,
     pub text: BoundText,
 }
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConversationView {
     pub key: ConversationKey,
@@ -28,6 +32,7 @@ pub struct ConversationView {
     pub line: Option<LineView>,
     pub choices: Vec<ChoiceView>,
 }
+
 impl GameContent {
     pub fn dialogue_contract(&self, id: DialogueId) -> Result<&dialogue::DialogueContract> {
         self.game
@@ -35,6 +40,7 @@ impl GameContent {
             .get(&id)
             .ok_or_else(|| Invalid("unknown dialogue contract".into()).into())
     }
+
     pub(crate) fn validate_dialogue_text(&self, graph: &Dialogue) -> Result<()> {
         graph.validate_messages(&|m| {
             self.text
@@ -42,6 +48,7 @@ impl GameContent {
                 .and_then(|c| c.messages.get(&m.key))
                 .ok_or_else(|| Invalid("unknown dialogue message contract".into()))
         })?;
+
         for (_, args) in graph.messages() {
             for source in args.values() {
                 if let ArgumentSource::Stat { stat, .. } = source {
@@ -49,10 +56,13 @@ impl GameContent {
                 }
             }
         }
+
         Ok(())
     }
+
     fn bind_text(&self, state: &SessionState, c: &Conversation, node: &Node) -> Result<BoundText> {
         let mut arguments = BTreeMap::new();
+
         for (name, source) in &node.arguments {
             let value = match source {
                 ArgumentSource::ActorName(role) => {
@@ -68,11 +78,13 @@ impl GameContent {
             };
             arguments.insert(name.clone(), value);
         }
+
         Ok(BoundText {
             text: node.text.clone(),
             arguments,
         })
     }
+
     pub fn conversation_view(
         &self,
         state: &SessionState,
@@ -87,9 +99,11 @@ impl GameContent {
             line: None,
             choices: Vec::new(),
         };
+
         if c.status != RunStatus::Active {
             return Ok(view);
         }
+
         match &c.position {
             Position::Line(id) => {
                 let node = graph.node(id)?;
@@ -108,14 +122,17 @@ impl GameContent {
                 }
             }
         }
+
         Ok(view)
     }
 }
+
 fn history_key(content: &GameContent, key: ConversationKey) -> Result<dialogue::HistoryKey> {
     Ok(content
         .dialogue_contract(key.dialogue)?
         .history_key(key.participant, key.speaker))
 }
+
 fn record(
     content: &GameContent,
     state: &mut Tx,
@@ -128,6 +145,7 @@ fn record(
         .record(&event, time)?;
     Ok(())
 }
+
 /// A node can be reached when its speaker is taking part, its repeat policy allows it and its
 /// condition holds.
 fn eligible(
@@ -139,6 +157,7 @@ fn eligible(
     if !c.bindings.contains_key(&node.speaker) {
         return Ok(false);
     }
+
     let repeats = match node.repeat {
         Repeat::Always => true,
         Repeat::OncePerRun => !c.visited.contains(&node.id),
@@ -149,9 +168,11 @@ fn eligible(
                 == 0
         }
     };
+
     if !repeats {
         return Ok(false);
     }
+
     let Some(condition) = &node.condition else {
         return Ok(true);
     };
@@ -160,6 +181,7 @@ fn eligible(
         .evaluate_among(condition, state, c.participant, c.speaker, &others)?
         .matched)
 }
+
 /// The eligible choices under `after`, in authored order.
 fn choices<'a>(
     content: &GameContent,
@@ -169,14 +191,17 @@ fn choices<'a>(
     after: Option<&Key>,
 ) -> Result<Vec<&'a Node>> {
     let mut result = Vec::new();
+
     for id in graph.children(after)? {
         let node = graph.node(id)?;
         if node.kind == NodeKind::Choice && eligible(content, state, c, node)? {
             result.push(node);
         }
     }
+
     Ok(result)
 }
+
 /// Moves the run past `after`: the first eligible child decides whether a line plays, the
 /// player chooses, or the conversation is complete.
 fn proceed(
@@ -188,6 +213,7 @@ fn proceed(
     let graph = content.dialogue(key.dialogue)?;
     let c = state.conversation(key)?;
     let mut next = None;
+
     for id in graph.children(after.as_ref())? {
         let node = graph.node(id)?;
         if eligible(content, state, c, node)? {
@@ -198,7 +224,9 @@ fn proceed(
             break;
         }
     }
+
     let c = state.conversation_mut(key)?;
+
     match next {
         Some(position) => c.position = position,
         None => {
@@ -206,8 +234,10 @@ fn proceed(
             record(content, state, key, HistoryEvent::Completed)?;
         }
     }
+
     Ok(())
 }
+
 /// Runs a node the player acknowledged or picked, then moves on from it.
 fn take(
     content: &GameContent,
@@ -222,6 +252,7 @@ fn take(
         .values()
         .copied()
         .collect();
+
     for action in &node.actions {
         let (participant, speaker) = (key.participant, key.speaker);
         run_action(
@@ -234,12 +265,14 @@ fn take(
             events,
         )?;
     }
+
     let c = state.conversation_mut(key)?;
     c.bump()?;
     c.visited.insert(node.id.clone());
     record(content, state, key, HistoryEvent::Node(node.id.clone()))?;
     proceed(content, state, key, Some(node.id.clone()))
 }
+
 pub(crate) fn start(
     content: &GameContent,
     state: &mut Tx,
@@ -272,9 +305,11 @@ pub(crate) fn start(
         &state.party.members,
         run,
     )?;
+
     for id in next.bindings.values() {
         state.actor(*id)?;
     }
+
     record(content, state, key, HistoryEvent::Started)?;
     state.put_conversation(next);
     proceed(content, state, key, None)?;
@@ -284,6 +319,7 @@ pub(crate) fn start(
     });
     Ok(())
 }
+
 pub(crate) fn present(
     content: &GameContent,
     state: &mut Tx,
@@ -306,6 +342,7 @@ pub(crate) fn present(
     });
     Ok(())
 }
+
 pub(crate) fn choose(
     content: &GameContent,
     state: &mut Tx,
@@ -331,6 +368,7 @@ pub(crate) fn choose(
     });
     Ok(())
 }
+
 pub(crate) fn interrupt(
     content: &GameContent,
     state: &mut Tx,

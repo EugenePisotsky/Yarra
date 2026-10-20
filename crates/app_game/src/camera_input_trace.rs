@@ -3,12 +3,14 @@ use bevy::{
     prelude::*,
     window::{PrimaryWindow, RawHandleWrapper},
 };
+
 use block2::RcBlock;
 use engine::CameraInputDiagnostics;
 use objc2::{Message as _, rc::Retained, runtime::AnyObject};
 use objc2_app_kit::{NSEvent, NSEventMask, NSView};
 use objc2_foundation::NSProcessInfo;
 use raw_window_handle::RawWindowHandle;
+
 use std::{
     cell::RefCell,
     fs::{self, File},
@@ -80,6 +82,7 @@ fn start(world: &mut World) {
     let RawWindowHandle::AppKit(handle) = handle.get_window_handle() else {
         return;
     };
+
     // SAFETY: Startup runs on the main thread, and the primary window owns this view.
     let view = unsafe { handle.ns_view.cast::<NSView>().as_ref().retain() };
     let Some(window) = view.window() else { return };
@@ -89,9 +92,11 @@ fn start(world: &mut World) {
     let handler = RcBlock::new(move |event: NonNull<NSEvent>| {
         // SAFETY: AppKit supplies a valid event for the duration of the callback.
         let e = unsafe { event.as_ref() };
+
         if e.windowNumber() == number {
             let received = Instant::now();
             let pixel = e.hasPreciseScrollingDeltas();
+
             // Match winit's logical→physical conversion, including Retina scale.
             let scale = if pixel {
                 view.window().map_or(1.0, |w| w.backingScaleFactor())
@@ -101,9 +106,11 @@ fn start(world: &mut World) {
             let x = (e.scrollingDeltaX() * scale) as f32;
             let y = (e.scrollingDeltaY() * scale) as f32;
             let mut events = events.borrow_mut();
+
             if events.started.is_none() && (x != 0.0 || y != 0.0) {
                 events.started = Some(received);
             }
+
             if events.events.len() < MAX_EVENTS {
                 events.events.push(NativeEvent {
                     received,
@@ -119,9 +126,11 @@ fn start(world: &mut World) {
                 events.overflow = true;
             }
         }
+
         // Always pass the exact original event through to winit.
         event.as_ptr()
     });
+
     // SAFETY: the block returns the original live event; AppKit retains the block.
     let monitor = unsafe {
         NSEvent::addLocalMonitorForEventsMatchingMask_handler(NSEventMask::ScrollWheel, &handler)
@@ -153,12 +162,15 @@ fn start(world: &mut World) {
 
 fn record(trace: Option<NonSendMut<Trace>>, camera: Res<CameraInputDiagnostics>) {
     let Some(mut trace) = trace else { return };
+
     if trace.monitor.is_none() {
         return;
     }
+
     let now = Instant::now();
     let (started, native_end, overflow) = {
         let mut native = trace.native.borrow_mut();
+
         // Still capture if AppKit's monitor misses an event seen by the camera;
         // otherwise the very delivery mismatch we are investigating could keep
         // the trace from ever starting. Ignore phase-only zero wheel events.
@@ -167,8 +179,10 @@ fn record(trace: Option<NonSendMut<Trace>>, camera: Res<CameraInputDiagnostics>)
         {
             native.started = Some(now);
         }
+
         (native.started, native.events.len(), native.overflow)
     };
+
     // Don't grow a frame buffer while waiting for the user to start a gesture.
     if started.is_some() || native_end > trace.frames.last().map_or(0, |f| f.native_end) {
         if started.is_some() && !trace.announced {
@@ -182,6 +196,7 @@ fn record(trace: Option<NonSendMut<Trace>>, camera: Res<CameraInputDiagnostics>)
             camera: camera.clone(),
         });
     }
+
     if started.is_some_and(|s| now.duration_since(s) >= Duration::from_secs(RECORD_SECONDS))
         || overflow
         || trace.frames.len() >= MAX_FRAMES
@@ -195,8 +210,10 @@ impl Trace {
         let Some(monitor) = self.monitor.take() else {
             return;
         };
+
         // SAFETY: this is exactly the monitor token returned by AppKit, removed once on main.
         unsafe { NSEvent::removeMonitor(&monitor) };
+
         match self.save() {
             Ok(()) => warn!(
                 "CAMERA_INPUT_TRACE saved {} (native_events={}, frames={}, overflow={})",
@@ -218,6 +235,7 @@ impl Trace {
             events,
             "event,received_ms,event_uptime_s,dispatch_delay_ms,pixel,x,y,phase,momentum_phase"
         )?;
+
         for (i, e) in native.events.iter().enumerate() {
             writeln!(
                 events,
@@ -232,6 +250,7 @@ impl Trace {
                 e.momentum_phase
             )?;
         }
+
         events.flush()?;
         let mut frames = BufWriter::new(File::create(self.directory.join("frames.csv"))?);
         writeln!(
@@ -239,6 +258,7 @@ impl Trace {
             "frame,at_ms,wall_dt_ms,camera_dt_ms,input_read_dt_ms,native_end,native_count,camera_count,pixel_x,pixel_y,line_x,line_y,clipped,enabled,pointer_blocked,startup_guard,requested_orbit,applied_orbit,yaw_before,yaw_after,target_yaw,oldest_event_age_ms,newest_event_age_ms,oldest_dispatch_to_read_ms,newest_dispatch_to_read_ms"
         )?;
         let mut previous: Option<&Frame> = None;
+
         for f in &self.frames {
             let d = &f.camera;
             let begin = previous.map_or(0, |p| p.native_end);
@@ -291,6 +311,7 @@ impl Trace {
             )?;
             previous = Some(f);
         }
+
         frames.flush()
     }
 }

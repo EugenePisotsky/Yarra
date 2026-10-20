@@ -6,14 +6,17 @@ use super::super::impostor::{
     ImpostorBatch, ImpostorDescriptor, ImpostorFades, ImpostorMaterial, ImpostorMaterialInputs,
     ImpostorMaterials, TreeFormSpec, instanced_quad, quad_reach,
 };
+
 use super::super::material::{TreeWindMaterial, WindBoundsPending, WindChecked};
 use super::super::wind::WindBuffer;
 use super::MAX_REPRESENTATIONS;
 use atmosphere::environment::EnvironmentAssets;
+
 use bevy::{
     asset::RecursiveDependencyLoadState, camera::primitives::Aabb, gltf::GltfAssetLabel,
     prelude::*, render::renderer::RenderDevice,
 };
+
 use std::{collections::HashMap, sync::Arc};
 
 /// One primitive of a mesh LOD, with its bounds in object space as the material conversion
@@ -80,9 +83,11 @@ pub(super) fn register(
 ) {
     for batch in &batches {
         let spec = &batch.form;
+
         if forms.by_impostor.contains_key(&spec.impostor) {
             continue;
         }
+
         if spec.meshes.is_empty() || spec.meshes.len() + 1 > MAX_REPRESENTATIONS {
             warn_once!(
                 "GPU trees: {} has {} mesh LODs; 1 to {} are drawn",
@@ -92,9 +97,11 @@ pub(super) fn register(
             );
             continue;
         }
+
         if forms.quad == Handle::default() {
             forms.quad = meshes.add(instanced_quad());
         }
+
         let templates = spec
             .meshes
             .iter()
@@ -154,23 +161,28 @@ pub(super) fn harvest(
 ) {
     let forms = forms.as_mut();
     let mut readied = false;
+
     for form in forms.forms.iter_mut().filter(|f| !f.ready && !f.failed) {
         for (lod, &template) in form.templates.iter().enumerate() {
             if form.lods[lod].is_some() {
                 continue;
             }
+
             // Every mesh of the spawned scene has been seen by the material conversion, and
             // its bounds grown (the template stands at the origin, unturned and unscaled).
             let mut found = Vec::new();
             let mut pending = !children.contains(template);
+
             for entity in children.iter_descendants(template) {
                 let Ok((mesh, material, checked, aabb, growing)) = parts.get(entity) else {
                     continue;
                 };
+
                 if !checked || (material.is_some() && (aabb.is_none() || growing)) {
                     pending = true;
                     break;
                 }
+
                 match (material, aabb) {
                     (Some(material), Some(aabb)) => found.push(Part {
                         mesh: mesh.0.clone(),
@@ -186,10 +198,12 @@ pub(super) fn harvest(
                     ),
                 }
             }
+
             if !pending && !found.is_empty() {
                 form.lods[lod] = Some(found);
             }
         }
+
         if let RecursiveDependencyLoadState::Failed(error) =
             server.recursive_dependency_load_state(&form.descriptor)
         {
@@ -200,15 +214,18 @@ pub(super) fn harvest(
             form.failed = true;
             continue;
         }
+
         let (Some(descriptor), true) = (
             descriptors.get(&form.descriptor),
             server.is_loaded_with_dependencies(&form.descriptor),
         ) else {
             continue;
         };
+
         if form.lods.iter().any(Option::is_none) {
             continue;
         }
+
         let (
             Some(environment),
             Some(wind),
@@ -255,6 +272,7 @@ pub(super) fn harvest(
         form.ready = true;
         readied = true;
     }
+
     if readied {
         forms.revision += 1;
     }

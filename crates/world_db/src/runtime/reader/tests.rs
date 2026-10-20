@@ -11,6 +11,7 @@ fn runtime_cell_windows_are_bounded_and_seek_both_spatial_axes() {
             [atmosphere::encode(&Default::default()).unwrap()],
         )
         .unwrap();
+
     for x in -2..=2 {
         for z in [-10000, -2, -1, 0, 1, 2, 10000] {
             connection
@@ -21,6 +22,7 @@ fn runtime_cell_windows_are_bounded_and_seek_both_spatial_axes() {
                 .unwrap();
         }
     }
+
     let reader = RuntimeReader {
         connection,
         manifest: RuntimeManifest {

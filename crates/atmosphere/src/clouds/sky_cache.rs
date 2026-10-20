@@ -7,10 +7,13 @@ use std::time::Duration;
 /// them as sawtooth staircases. Twice that texel count at half the refresh rate traces the same
 /// rays per second with ~5.7 texels per degree of azimuth (the disk had ~4.2).
 pub(crate) const WIDTH: u32 = 2048;
+
 pub(crate) const HEIGHT: u32 = 256;
+
 /// Complete atlas refreshes per second, spread evenly over frames. The per-frame share
 /// varies with frame rate; total work per second does not.
 const REFRESH_HZ: f64 = 4.0;
+
 /// After a hitch, refresh at most this many rows instead of catching up: 65,536 rays, as
 /// one stripe of the former disk.
 const MAX_ROWS: u32 = HEIGHT / 8;
@@ -20,6 +23,7 @@ pub(crate) enum Region {
     Full,
     Rows { start: u32, count: u32 },
 }
+
 impl Region {
     /// Row ranges as (first, count). A refresh crossing the last row wraps to the top.
     pub fn ranges(self, height: u32) -> impl Iterator<Item = (u32, u32)> {
@@ -41,6 +45,7 @@ pub struct Refresh {
     cursor: u32,
     due: f64,
 }
+
 impl Refresh {
     /// Share of the current sweep already refreshed, for cross-fading complete images.
     pub fn progress(&self) -> f32 {
@@ -58,26 +63,32 @@ impl Refresh {
         // or crossing that seam is not a camera cut.
         let cut = self.previous_camera.is_some_and(|previous| {
             let mut delta = camera - previous;
+
             if period > 0. {
                 delta.x = (delta.x + period * 0.5).rem_euclid(period) - period * 0.5;
                 delta.z = (delta.z + period * 0.5).rem_euclid(period) - period * 0.5;
             }
+
             delta.length_squared() > 50. * 50.
         });
         self.previous_camera = Some(camera);
         let elapsed = self.last_update.map(|last| now.saturating_sub(last));
         self.last_update = Some(now);
+
         if invalidated || cut || elapsed.is_none_or(|e| e > Duration::from_millis(500)) {
             self.cursor = 0;
             self.due = 0.;
             return Some(Region::Full);
         }
+
         self.due += elapsed.unwrap().as_secs_f64() * REFRESH_HZ * f64::from(HEIGHT);
         let wanted = self.due.floor() as u32;
         let rows = wanted.min(MAX_ROWS);
+
         if rows == 0 {
             return None;
         }
+
         // No catch-up after a slow frame: drop the backlog instead of spreading a burst.
         self.due = if wanted > MAX_ROWS {
             self.due.fract()
@@ -105,6 +116,7 @@ mod tests {
             let mut rows = 0;
             let mut largest = 0;
             let mut expected_start = 0;
+
             for frame in 1..=fps * 10 {
                 let now = Duration::from_secs_f64(f64::from(frame) / f64::from(fps));
                 match refresh.next(now, Vec3::ZERO, 20000., false) {
@@ -117,6 +129,7 @@ mod tests {
                     other => panic!("{fps} fps: unexpected {other:?}"),
                 }
             }
+
             // Complete refreshes at a fixed rate, without stripe spikes. Very low frame
             // rates hit the per-frame bound first.
             let per_second = REFRESH_HZ as u32 * HEIGHT;
@@ -170,6 +183,7 @@ mod tests {
             refresh.next(Duration::from_secs(2), camera, 20000., false),
             Some(Region::Full)
         );
+
         // A 300 ms hitch refreshes one bounded block, without catching up afterwards.
         assert_eq!(
             refresh.next(Duration::from_millis(2300), camera, 20000., false),

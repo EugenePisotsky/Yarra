@@ -11,6 +11,7 @@ fn percentiles_use_frame_intervals_and_ignore_invalid_samples() {
     assert_eq!(s.mean, 14.0);
     assert_eq!(duration_stats([0.0, 0.0, 2.0, f64::NAN]).median, 0.0);
 }
+
 #[test]
 fn comparison_surfaces_multiple_changes() {
     let mut capture = Capture {
@@ -39,9 +40,11 @@ fn comparison_surfaces_multiple_changes() {
         })
         .collect();
     let mut b = capture.clone();
+
     for sample in &mut b.gpu {
         sample.elapsed_ms = 2.2;
     }
+
     b.settings.clouds = engine::CloudQuality::Off;
     b.frame_rate = FrameRate::new(60);
     b.settings.hide_objects = true;

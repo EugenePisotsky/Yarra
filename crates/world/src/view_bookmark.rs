@@ -36,15 +36,19 @@ impl WorldViewBookmark {
     pub fn route_position(&self, distance: f32) -> [f32; 3] {
         let mut previous = self.position;
         let mut remaining = distance.max(0.);
+
         for point in &self.route {
             let delta = std::array::from_fn::<_, 3, _>(|i| point[i] - previous[i]);
             let length = delta.iter().map(|v| v * v).sum::<f32>().sqrt();
+
             if length > 0. && remaining < length {
                 return std::array::from_fn(|i| previous[i] + delta[i] * remaining / length);
             }
+
             remaining -= length;
             previous = *point;
         }
+
         previous
     }
 }
@@ -52,6 +56,7 @@ impl WorldViewBookmark {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn routes_use_distance_and_stop_at_the_destination() {
         let mut view = WorldViewBookmark {

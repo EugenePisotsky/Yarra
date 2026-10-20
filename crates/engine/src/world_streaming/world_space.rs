@@ -44,6 +44,7 @@ pub(super) fn request_world_space_from_keyboard(
     {
         return;
     }
+
     let Some(manifest) = stream.manifest.as_ref() else {
         return;
     };
@@ -57,9 +58,11 @@ pub(super) fn request_world_space_from_keyboard(
     else {
         return;
     };
+
     if manifest.world_spaces.len() < 2 {
         return;
     }
+
     let next = &manifest.world_spaces[(current_index + 1) % manifest.world_spaces.len()];
     active_space.request(next.id, [0.0, 0.0, 0.0]);
 }
@@ -86,6 +89,7 @@ pub(super) fn apply_world_space_transition(
     if reload.active() {
         return;
     }
+
     // Terrain v2 refills its clipmaps for the new space on its own.
     if active_space
         .requested
@@ -94,13 +98,16 @@ pub(super) fn apply_world_space_transition(
     {
         return;
     }
+
     let Some(transition) = active_space.requested.take() else {
         return;
     };
+
     if !transition.local_position.iter().all(|v| v.is_finite()) {
         active_space.transition_error = Some("destination coordinates must be finite".into());
         return;
     }
+
     let Some(space) = stream
         .manifest
         .as_ref()
@@ -115,6 +122,7 @@ pub(super) fn apply_world_space_transition(
     };
 
     let changed_space = active_space.current != Some(transition.space);
+
     if changed_space {
         clear_streamed_pages(&mut commands, &mut stream, &mut residency);
     }
@@ -130,10 +138,12 @@ pub(super) fn apply_world_space_transition(
         space.cell_size,
     );
     viewpoint.set(position);
+
     if changed_space {
         origin.space = Some(transition.space);
         origin.cell = position.cell;
     }
+
     for (mut transform, mut intent, mut motor, mut motion) in &mut focuses {
         transform.translation =
             Vec3::from_array(position.relative_to(origin.cell, space.cell_size));
@@ -141,6 +151,7 @@ pub(super) fn apply_world_space_transition(
         motor.reset();
         *motion = CharacterMotion::default();
     }
+
     info!(
         "entered world space {} ({:?}) at {:?}",
         space.name, transition.space, transition.local_position
@@ -166,16 +177,20 @@ pub(crate) fn sync_world_atmosphere(
     let Some(state) = atmosphere.as_mut() else {
         return;
     };
+
     if state.owner != crate::AtmosphereOwner::Game {
         return;
     }
+
     let Some(space) = active.current.and_then(|id| catalog.world_space(id)) else {
         return;
     };
+
     if !*initialized {
         state.phase = space.atmosphere.initial_phase;
         *initialized = true;
     }
+
     if state.profile != space.atmosphere {
         state.profile = space.atmosphere.clone();
     }
@@ -184,6 +199,7 @@ pub(crate) fn sync_world_atmosphere(
 #[cfg(test)]
 mod atmosphere_tests {
     use super::*;
+
     #[test]
     fn world_changes_and_publication_keep_time_and_editor_ownership() {
         let mut app = App::new();

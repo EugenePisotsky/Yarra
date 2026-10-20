@@ -14,12 +14,14 @@ pub fn baltic(terrain: &TerrainPack) -> VegetationCatalog {
 /// The catalog of the grass pack `text` for the terrain pack's surfaces.
 pub fn catalog(text: &str, terrain: &TerrainPack) -> Result<VegetationCatalog, String> {
     let pack = GrassPack::parse(text)?;
+
     if pack.terrain != terrain.texture_set.key {
         return Err(format!(
             "grass pack is for terrain pack {}, not {}",
             pack.terrain, terrain.texture_set.key
         ));
     }
+
     pack.catalog(|key| {
         terrain
             .surfaces
@@ -47,6 +49,7 @@ mod tests {
         assert!(grass("meadow") > 0);
         assert_eq!(grass("rock"), 0);
         assert_eq!(grass("beach-sand"), 0);
+
         // Beaches keep their pebbles; every listed detail is in the catalog.
         assert!(
             catalog

@@ -19,6 +19,7 @@ pub(crate) fn plugin(app: &mut App) {
         Path::new(LIBRARY),
         include_str!("tonemapping.wesl").as_bytes(),
     );
+
     // Bevy queued its own copy's load when its plugin was built; load ours over it.
     if let Some(server) = app.world().get_resource::<AssetServer>() {
         server.reload(format!("embedded://{LIBRARY}"));

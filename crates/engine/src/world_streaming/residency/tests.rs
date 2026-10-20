@@ -4,6 +4,7 @@ use attachment::attach_terrain_source;
 use bevy::ecs::system::RunSystemOnce;
 use world::{CellCoord, PagePayload, TerrainHeightfield, WorldSpaceId};
 use world_db::RuntimeManifest;
+
 fn space(size: f32) -> world_db::WorldSpaceRecord {
     world_db::WorldSpaceRecord {
         atmosphere: Default::default(),
@@ -16,6 +17,7 @@ fn space(size: f32) -> world_db::WorldSpaceRecord {
         sea_level: None,
     }
 }
+
 pub(in crate::world_streaming) fn height_page(key: PageKey) -> PreparedPage {
     PreparedPage {
         terrain: None,
@@ -35,6 +37,7 @@ pub(in crate::world_streaming) fn height_page(key: PageKey) -> PreparedPage {
         },
     }
 }
+
 #[test]
 fn terrain_sources_preserve_relief_without_render_assets() {
     let mut world = World::new();
@@ -60,6 +63,7 @@ fn terrain_sources_preserve_relief_without_render_assets() {
     assert_eq!(surface.heightfield.heights, vec![1., 2., 4., 8.]);
     assert!((surface.sample_world([-22., 22.]).height - 4.25).abs() < 1e-5);
 }
+
 fn attachment_app(resident_bytes: u64) -> App {
     let mut app = App::new();
     app.add_plugins((bevy::app::TaskPoolPlugin::default(), AssetPlugin::default()))
@@ -97,6 +101,7 @@ fn queue_height(app: &mut App, order: i32, bytes: u64) -> PageKey {
         lod: 0,
     };
     let mut page = height_page(key);
+
     // Account large pages without allocating irrelevant payloads in this scheduling test.
     page.decoded.decoded_bytes = bytes;
     let mut stream = app.world_mut().resource_mut::<SourceResidency>();
@@ -116,15 +121,18 @@ fn budget_blocked_pages_do_not_starve_smaller_prepared_pages() {
     let small = [queue_height(&mut app, 2, 64), queue_height(&mut app, 3, 64)];
     app.update();
     let stream = app.world().resource::<SourceResidency>();
+
     for key in blocked {
         assert!(matches!(stream.pages[&key], PageState::Prepared(_)));
     }
+
     for key in small {
         assert!(
             matches!(stream.pages[&key], PageState::Resident(_)),
             "a fitting page must pass blocked larger pages"
         );
     }
+
     assert_eq!(stream.admission_blocked, 2);
 }
 
@@ -134,9 +142,11 @@ fn attachment_limit_still_bounds_successful_work_per_frame() {
     let keys: Vec<_> = (0..4).map(|i| queue_height(&mut app, i, 64)).collect();
     app.update();
     let stream = app.world().resource::<SourceResidency>();
+
     for key in &keys[..MAX_ATTACHMENTS_PER_FRAME] {
         assert!(matches!(stream.pages[key], PageState::Resident(_)));
     }
+
     for key in &keys[MAX_ATTACHMENTS_PER_FRAME..] {
         assert!(matches!(stream.pages[key], PageState::Prepared(_)));
     }
@@ -168,6 +178,7 @@ fn pages_sharing_an_asset_count_it_once_and_never_count_impostors() {
         key(PageDomain::StaticObjects, 0),
         key(PageDomain::StaticObjects, 1),
     ];
+
     for key in keys {
         let mut page = height_page(key);
         page.dependencies = vec![mesh.clone(), impostor.clone()];
@@ -183,14 +194,17 @@ fn pages_sharing_an_asset_count_it_once_and_never_count_impostors() {
         });
         queue_page(&mut app, page);
     }
+
     app.update();
     let stream = app.world().resource::<SourceResidency>();
+
     for key in keys {
         assert!(
             matches!(stream.pages[&key], PageState::Resident(_)),
             "{key:?} must attach"
         );
     }
+
     assert_eq!(stream.admission_blocked, 0);
 }
 
@@ -242,6 +256,7 @@ fn invalid_later_gameplay_object_does_not_leave_earlier_entities() {
             activation: world::ObjectActivationPolicy::Proximity,
         };
         page.definitions.push(definition.clone());
+
         if !missing_definition {
             page.definitions.push(RuntimeObjectDefinition {
                 id: ObjectDefinitionId([2; 16]),
@@ -249,6 +264,7 @@ fn invalid_later_gameplay_object_does_not_leave_earlier_entities() {
                 ..definition
             });
         }
+
         page.decoded.payload = PagePayload::GameplayObjects(world::GameplayObjectsPage {
             instances: (1..=2)
                 .map(|n| world::GameplayObjectInstance {
@@ -290,6 +306,7 @@ fn invalid_later_visual_object_does_not_leave_earlier_entities() {
             minimum_screen_height: 0.,
         };
         page.dependencies.push(dependency.clone());
+
         if failure > 0 {
             page.dependencies.push(PageDependency {
                 asset: world::AssetId([2; 32]),
@@ -301,6 +318,7 @@ fn invalid_later_visual_object_does_not_leave_earlier_entities() {
                 ..dependency.clone()
             });
         }
+
         if failure == 2 {
             page.dependencies.push(PageDependency {
                 asset: world::AssetId([2; 32]),
@@ -309,6 +327,7 @@ fn invalid_later_visual_object_does_not_leave_earlier_entities() {
                 ..dependency
             });
         }
+
         page.decoded.payload = PagePayload::StaticObjects(world::StaticObjectsPage {
             instances: (1..=2)
                 .map(|n| world::StaticObjectInstance {
@@ -433,10 +452,12 @@ fn clearing_sources_releases_resident_and_cooling_pages_and_rejects_old_replies(
     app.update();
     let (worker, requests, _replies) = WorldDatabaseWorker::test_channel_pair(2, 1);
     let pending = key(PageDomain::Terrain, 2);
+
     {
         let mut residency = app.world_mut().resource_mut::<SourceResidency>();
         residency.set_demand(BTreeMap::from([(pending, (0, 0.))]));
         residency.request_missing(&worker, "old").unwrap();
+
         // A pending decode also belongs to the old source lifetime.
         residency.decode_tasks.push(DecodeTask {
             key: first,
@@ -444,6 +465,7 @@ fn clearing_sources_releases_resident_and_cooling_pages_and_rejects_old_replies(
             task: AsyncComputeTaskPool::get().spawn(std::future::pending()),
         });
     }
+
     let (old_id, DatabaseRequest::ReadPage { .. }) = requests.recv().unwrap() else {
         unreachable!()
     };
@@ -489,6 +511,7 @@ fn decode_completion_requires_current_identity_and_demand_before_caching_or_prep
     app.add_plugins(bevy::app::TaskPoolPlugin::default())
         .init_resource::<SourceResidency>()
         .add_systems(Update, receive_decode_results);
+
     {
         let mut residency = app.world_mut().resource_mut::<SourceResidency>();
         for n in 0..3 {
@@ -501,9 +524,11 @@ fn decode_completion_requires_current_identity_and_demand_before_caching_or_prep
                 visual_asset: None,
                 activation: world::ObjectActivationPolicy::Proximity,
             });
+
             if n != 1 {
                 residency.desired.insert(key);
             }
+
             residency.pages.insert(
                 key,
                 PageState::Decoding {
@@ -517,7 +542,9 @@ fn decode_completion_requires_current_identity_and_demand_before_caching_or_prep
             });
         }
     }
+
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
+
     while !app
         .world()
         .resource::<SourceResidency>()
@@ -531,6 +558,7 @@ fn decode_completion_requires_current_identity_and_demand_before_caching_or_prep
         app.update();
         std::thread::yield_now();
     }
+
     let residency = app.world().resource::<SourceResidency>();
     assert!(matches!(
         residency.pages[&key(PageDomain::Terrain, 0)],

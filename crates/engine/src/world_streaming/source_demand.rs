@@ -8,16 +8,20 @@ pub(super) const PRELOAD_METERS: f64 = 16.;
 // Bevy culls resident meshes separately for the camera and each shadow cascade.
 // Meshes end within this bounded range; far-object blocks draw impostors beyond it.
 const OBJECT_VISIBILITY_METERS: f64 = crate::object_lod::OBJECT_RESIDENCY_METRES as f64;
+
 /// Terrain pages (CPU relief for picking, rain and the editor's tools; road wear for terrain
 /// v2's atlas) stay resident out to this many metres, and at most this many pages nearest first:
 /// with small cells the range ends sooner, which also keeps the source index within its query
 /// limit. iOS keeps the close 80 m.
 const TERRAIN_SOURCE_METRES: f64 = if cfg!(target_os = "ios") { 80. } else { 240. };
+
 const TERRAIN_SOURCE_PAGES: f64 = if cfg!(target_os = "ios") { 64. } else { 256. };
+
 fn terrain_detail_meters(cell_size: f32) -> f64 {
     let cells = (TERRAIN_SOURCE_PAGES / std::f64::consts::PI).sqrt();
     TERRAIN_SOURCE_METRES.min(cells * f64::from(cell_size)) + PRELOAD_METERS
 }
+
 pub(super) type Window = [CellCoord; 2];
 pub(super) type Priority = (u8, f64);
 
@@ -38,9 +42,11 @@ pub(super) fn collect_view(
     mut view: ResMut<SourceView>,
 ) {
     view.space = None;
+
     if !detail.enabled() {
         return;
     }
+
     let Some(space) = origin.space().and_then(|id| catalog.world_space(id)) else {
         return;
     };
@@ -58,6 +64,7 @@ pub(super) fn collect_view(
         f64::from(vegetation_render::PROCEDURAL_DISTANCE_METERS),
         |c| f64::from(vegetation_render::terrain_contact_radius(c, &wind)),
     ) + PRELOAD_METERS;
+
     if view.eye.is_finite() && view.radius.is_finite() {
         view.space = Some(space.id);
     }
@@ -81,6 +88,7 @@ pub(super) fn windows(
             z: c.z.saturating_add(INDEX_RADIUS_CELLS),
         },
     ]];
+
     // Query only cheap descriptors in XZ; use each compiled cell's actual height
     // bounds below. Authored world height ranges are not a culling certificate.
     if view.space == Some(position.space) {
@@ -107,12 +115,14 @@ pub(super) fn windows(
                 z: coordinate(view.eye.z + radius)?,
             },
         ];
+
         if contains(camera, windows[0]) {
             windows[0] = camera;
         } else if !contains(windows[0], camera) {
             windows.push(camera);
         }
     }
+
     let cells: u64 = windows
         .iter()
         .map(|w| {
@@ -120,14 +130,17 @@ pub(super) fn windows(
                 .saturating_mul((i64::from(w[1].z) - i64::from(w[0].z) + 1) as u64)
         })
         .fold(0, u64::saturating_add);
+
     if cells > world_db::MAX_CELL_DESCRIPTOR_QUERY as u64 {
         return Err(format!(
             "source index needs {cells} cells; limit is {}",
             world_db::MAX_CELL_DESCRIPTOR_QUERY
         ));
     }
+
     Ok(windows)
 }
+
 fn contains(a: Window, b: Window) -> bool {
     a[0].x <= b[0].x && a[0].z <= b[0].z && a[1].x >= b[1].x && a[1].z >= b[1].z
 }
@@ -156,6 +169,7 @@ pub(super) fn demand(
 ) -> BTreeMap<PageKey, Priority> {
     let mut result = BTreeMap::new();
     let ground_range = terrain_detail_meters(cell_size);
+
     for d in descriptors {
         let cell_distance = d.cell.chebyshev_distance(position.cell);
         let local = cell_distance <= VISUAL_SOURCE_RESIDENCY_RADIUS_CELLS;
@@ -166,6 +180,7 @@ pub(super) fn demand(
         let visible = object_near
             && detail
             && camera.is_some_and(|f| cell_intersects_frustum(f, d, origin, cell_size));
+
         // A tree behind the camera may still cast a shadow onto visible ground. Keep
         // the bounded object neighborhood resident, even across a long camera turn.
         // Frustum visibility prioritizes loading; it must not drive caster lifetime.
@@ -179,6 +194,7 @@ pub(super) fn demand(
         } else {
             (1, source_distance)
         };
+
         for (domain, needed) in [
             (PageDomain::Terrain, terrain),
             (PageDomain::Vegetation, near),
@@ -203,6 +219,7 @@ pub(super) fn demand(
             }
         }
     }
+
     result
 }
 
@@ -223,6 +240,7 @@ pub(super) fn request_cell_index(
     if !matches!(stream.phase, StreamPhase::Ready) || stream.requested_index.is_some() {
         return;
     }
+
     let Some(manifest) = stream.manifest.as_ref() else {
         return;
     };
@@ -253,9 +271,11 @@ pub(super) fn request_cell_index(
             return;
         }
     };
+
     if stream.index_windows.as_ref() == Some(&windows) {
         return;
     }
+
     let Some(worker) = worker else {
         return;
     };
@@ -264,6 +284,7 @@ pub(super) fn request_cell_index(
         space: space_id,
         windows: windows.clone(),
     };
+
     match worker.send(request) {
         Ok(id) => {
             stream.index_windows = Some(windows);
@@ -292,6 +313,7 @@ pub(super) fn calculate_page_demand(
     if !matches!(stream.phase, StreamPhase::Ready) {
         return;
     }
+
     let Some(manifest) = stream.manifest.as_ref() else {
         return;
     };
@@ -309,9 +331,11 @@ pub(super) fn calculate_page_demand(
     else {
         return;
     };
+
     if stream.demand_error.is_some() {
         return;
     }
+
     let priorities = source_demand::demand(
         &stream.descriptors,
         position,
@@ -327,6 +351,7 @@ pub(super) fn calculate_page_demand(
     let Some(worker) = worker else {
         return;
     };
+
     if let Err(error) = residency.request_missing(&worker, &generation) {
         stream.phase = StreamPhase::Failed(error);
     }
@@ -355,9 +380,11 @@ pub(super) fn cell_intersects_frustum(
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use crate::world_streaming::residency::{
         MAX_PENDING_SOURCE_PAGES, PageState, tests::height_page,
     };
+
     fn position() -> WorldPosition {
         WorldPosition {
             space: WorldSpaceId(1),
@@ -365,6 +392,7 @@ mod tests {
             local: [0.; 3],
         }
     }
+
     fn view(eye: DVec3) -> SourceView {
         SourceView {
             space: Some(WorldSpaceId(1)),
@@ -372,6 +400,7 @@ mod tests {
             radius: 112.,
         }
     }
+
     fn space(size: f32) -> world_db::WorldSpaceRecord {
         world_db::WorldSpaceRecord {
             atmosphere: Default::default(),
@@ -384,6 +413,7 @@ mod tests {
             sea_level: None,
         }
     }
+
     fn descriptor(cell: CellCoord) -> CellDescriptor {
         CellDescriptor {
             cell,
@@ -400,12 +430,14 @@ mod tests {
             .sum(),
         }
     }
+
     fn forest_frustum() -> Frustum {
         use bevy::camera::CameraProjection;
         PerspectiveProjection::default().compute_frustum(&GlobalTransform::from(
             Transform::from_xyz(-10., 5., 0.).looking_at(Vec3::new(200., 0., 0.), Vec3::Y),
         ))
     }
+
     #[test]
     fn unseen_casters_are_requested_but_visible_objects_load_first() {
         let front = descriptor(CellCoord { x: 20, z: 0 });
@@ -432,6 +464,7 @@ mod tests {
         assert_eq!(order[1].0.cell.x, -21);
         assert_eq!(order[1].1.0, 3);
     }
+
     #[test]
     fn offscreen_casters_survive_rotation_past_cooling_but_unload_outside_range() {
         use crate::world_streaming::residency::{
@@ -491,11 +524,13 @@ mod tests {
                 view,
             )
         };
+
         for camera in [&ahead, &behind, &ahead, &behind] {
             app.world_mut()
                 .resource_mut::<SourceResidency>()
                 .set_demand(select(&view, camera));
             app.update();
+
             // The reported failure waited for the existing two-second unload grace.
             app.world_mut()
                 .resource_mut::<Time>()
@@ -510,6 +545,7 @@ mod tests {
                 PageState::Resident(_)
             ));
         }
+
         view.eye.x += 500.;
         app.world_mut()
             .resource_mut::<SourceResidency>()
@@ -530,6 +566,7 @@ mod tests {
                 .contains_key(&key)
         );
     }
+
     #[test]
     fn small_cells_cover_forest_and_blade_ranges_without_distant_gameplay() {
         let view = view(DVec3::new(1., 2., 1.));
@@ -563,10 +600,12 @@ mod tests {
         assert!(!has(CellCoord { x: 10, z: 0 }, PageDomain::GameplayObjects));
         assert!(has(CellCoord::ZERO, PageDomain::GameplayObjects));
     }
+
     #[test]
     fn forest_range_is_in_metres_and_does_not_expand_grass_or_gameplay() {
         let view = view(DVec3::ZERO);
         let frustum = forest_frustum();
+
         for size in [8., 32.] {
             let inside = CellCoord {
                 x: (160. / size) as i32,
@@ -599,6 +638,7 @@ mod tests {
                 domain: PageDomain::StaticObjects,
                 lod: 0
             }));
+
             // Terrain for near ground detail: 32 m cells out to its end past both cells, 8 m
             // cells only as far as its pages reach.
             let terrain = selected
@@ -619,6 +659,7 @@ mod tests {
             assert!(disabled.is_empty());
         }
     }
+
     #[test]
     fn elevated_views_keep_local_consumers_but_do_not_load_valley_grass() {
         let view = view(DVec3::new(1., 1000., 1.));
@@ -643,6 +684,7 @@ mod tests {
                 .all(|k| k.cell == CellCoord::ZERO && k.domain != PageDomain::Vegetation)
         );
     }
+
     #[test]
     fn detached_camera_queries_separate_windows_and_rejects_oversized_ranges() {
         let view = view(DVec3::new(-100_000., 2., 100_000.));
@@ -658,6 +700,7 @@ mod tests {
         huge.radius = 1e20;
         assert!(super::windows(position(), &space(8.), &huge).is_err());
     }
+
     #[test]
     fn pending_work_is_prioritized_by_consumer_and_distance() {
         let view = view(DVec3::ZERO);

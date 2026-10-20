@@ -47,12 +47,14 @@ fn recording_app() -> App {
         });
     app
 }
+
 fn advance(app: &mut App, seconds: f64) {
     app.world_mut()
         .resource_mut::<Time<Real>>()
         .advance_by(std::time::Duration::from_secs_f64(seconds));
     app.update();
 }
+
 #[test]
 fn capture_without_probes_keeps_frame_data_and_explains_missing_timings() {
     let mut app = recording_app();
@@ -169,6 +171,7 @@ fn capture_is_bounded_and_restores_input_lock() {
     assert!(!app.world().resource::<RuntimeSettings>().controls_locked);
     assert!(app.world().resource::<RuntimeSettings>().gpu_pass_timings);
 }
+
 #[test]
 fn capture_aborts_if_loading_never_settles_or_focus_is_lost() {
     let mut app = recording_app();
@@ -213,6 +216,7 @@ fn restore_and_export_use_the_captured_configuration() {
         epoch: 7,
         ..default()
     };
+
     for (frame, epoch, ms, detailed) in [
         (90, 7, 9.0, false),
         (102, 6, 99.0, false),
@@ -234,7 +238,9 @@ fn restore_and_export_use_the_captured_configuration() {
                 scopes: vec![("cloud, \"test\"".into(), 0.5)],
             });
     }
+
     advance(&mut app, 10.1);
+
     {
         let mut settings = app.world_mut().resource_mut::<RuntimeSettings>();
         settings.hide_objects = true;
@@ -242,6 +248,7 @@ fn restore_and_export_use_the_captured_configuration() {
         settings.terrain_macro = settings.terrain_macro.toggled();
         settings.page_gizmos = true;
     }
+
     app.world_mut().resource_mut::<FramePacing>().rate = FrameRate::new(120);
     app.world_mut()
         .resource_scope(|world, mut session: Mut<CaptureSession>| {
@@ -329,6 +336,7 @@ fn capture_excludes_cpu_work_from_other_frames_and_changed_settings() {
         ..default()
     };
     advance(&mut app, 2.1);
+
     for (frame, epoch) in [(100, 7), (101, 7), (150, 8), (201, 7)] {
         app.world_mut()
             .resource_mut::<timing::History>()
@@ -344,6 +352,7 @@ fn capture_excludes_cpu_work_from_other_frames_and_changed_settings() {
                 systems: vec![],
             });
     }
+
     *app.world_mut().resource_mut::<timing::Stamp>() = timing::Stamp {
         frame: 200,
         epoch: 8,

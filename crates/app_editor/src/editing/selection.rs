@@ -21,6 +21,7 @@ impl EditorSelection {
         if objects.saving() {
             return false;
         }
+
         let id = record.object.id;
         objects.pin(record);
         self.selected.clear();
@@ -37,8 +38,10 @@ impl EditorSelection {
         if objects.saving() {
             return false;
         }
+
         let id = record.object.id;
         objects.pin(record);
+
         if let Some(index) = self.selected.iter().position(|selected| *selected == id) {
             self.selected.remove(index);
             if self.active == Some(id) {
@@ -48,6 +51,7 @@ impl EditorSelection {
             self.selected.push(id);
             self.active = Some(id);
         }
+
         true
     }
 
@@ -59,6 +63,7 @@ impl EditorSelection {
         if objects.saving() || objects.current_view(object).is_none() {
             return false;
         }
+
         self.selected.clear();
         self.selected.push(object);
         self.active = Some(object);
@@ -69,6 +74,7 @@ impl EditorSelection {
         if objects.saving() {
             return false;
         }
+
         self.selected.clear();
         self.active = None;
         true

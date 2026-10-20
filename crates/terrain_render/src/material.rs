@@ -188,9 +188,11 @@ impl Material for TerrainMaterial {
             TerrainShadingMode::SingleTexture => Some("TERRAIN_SINGLE_TEXTURE"),
             TerrainShadingMode::Flat => Some("TERRAIN_FLAT"),
         };
+
         if let (Some(fragment), Some(define)) = (descriptor.fragment.as_mut(), define) {
             fragment.shader_defs.push(define.into());
         }
+
         Ok(())
     }
 }

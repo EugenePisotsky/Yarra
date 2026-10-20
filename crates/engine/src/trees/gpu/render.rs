@@ -6,9 +6,11 @@ use super::super::material::TreeWindMaterial;
 use super::frame::TreeGpuFrame;
 use super::layout::{DrawEntry, Drawn, TreeDrawLayout};
 use super::pool::PoolData;
+
 use super::{
     DRAWS, GpuBucket, GpuCamera, GpuForm, GpuInstance, MAX_SHADOW_VIEWS, VIEWS, instance_layout,
 };
+
 use bevy::{
     core_pipeline::{
         core_3d::{AlphaMask3d, Opaque3d, Opaque3dBatchSetKey, Opaque3dBinKey},
@@ -60,6 +62,7 @@ use bevy::{
         view::{ExtractedView, RetainedViewEntity},
     },
 };
+
 use std::{
     any::TypeId,
     borrow::Cow,
@@ -69,6 +72,7 @@ use std::{
 
 const SHADER: &str = "shaders/tree/lod.wesl";
 const WORKGROUP: u32 = 64;
+
 /// Bytes of one indexed indirect draw's arguments.
 const ARGS_BYTES: u64 = 20;
 
@@ -170,9 +174,11 @@ impl Growing {
         bytes: u64,
     ) -> bool {
         let bytes = bytes.max(256);
+
         if self.buffer.is_some() && self.bytes >= bytes {
             return false;
         }
+
         let size = bytes.next_power_of_two();
         self.buffer = Some(device.create_buffer(&BufferDescriptor {
             label: Some(label),
@@ -269,6 +275,7 @@ fn log_counts(gpu: &mut TreeGpu, layout: &super::layout::Layout) {
         if !mapped.load(std::sync::atomic::Ordering::Acquire) {
             return;
         }
+
         let counts: Vec<u32> = {
             let view = buffer.slice(..).get_mapped_range().expect("mapped");
             bytemuck::cast_slice(&view).to_vec()
@@ -276,6 +283,7 @@ fn log_counts(gpu: &mut TreeGpu, layout: &super::layout::Layout) {
         buffer.unmap();
         gpu.readback.mapped = None;
         let buckets = layout.buckets.len();
+
         // Instances and triangles.
         let per_view = |view: usize, impostors: bool| -> (u32, u64) {
             layout
@@ -358,6 +366,7 @@ fn prepare(
         regroup |= grown || states_grown || origins_grown;
         let uploads = data.take_uploads(grown || states_grown || origins_grown);
         drop(data);
+
         for (start, instances) in &uploads.instances {
             queue.write_buffer(
                 gpu.instances.get(),
@@ -365,6 +374,7 @@ fn prepare(
                 bytemuck::cast_slice(instances),
             );
         }
+
         for range in &uploads.restart {
             let zeros = vec![0u32; range.len()];
             queue.write_buffer(
@@ -373,14 +383,17 @@ fn prepare(
                 bytemuck::cast_slice(&zeros),
             );
         }
+
         if let Some(origins) = &uploads.origins {
             queue.write_buffer(gpu.origins.get(), 0, bytemuck::cast_slice(origins));
         }
+
         gpu.instances_len = uploads.len;
     }
 
     // The layout: forms, entries and room for every view's records and counters.
     let next = layout.layout.clone();
+
     if gpu.layout.as_ref().is_none_or(|l| !Arc::ptr_eq(l, &next)) {
         let forms: Vec<GpuForm> = next.forms.clone();
         regroup |= gpu.forms.reserve(
@@ -389,9 +402,11 @@ fn prepare(
             BufferUsages::STORAGE,
             std::mem::size_of_val(forms.as_slice()) as u64,
         );
+
         if !forms.is_empty() {
             queue.write_buffer(gpu.forms.get(), 0, bytemuck::cast_slice(&forms));
         }
+
         let buckets: &[GpuBucket] = &next.buckets;
         regroup |= gpu.buckets.reserve(
             &device,
@@ -399,9 +414,11 @@ fn prepare(
             BufferUsages::STORAGE,
             std::mem::size_of_val(buckets) as u64,
         );
+
         if !buckets.is_empty() {
             queue.write_buffer(gpu.buckets.get(), 0, bytemuck::cast_slice(buckets));
         }
+
         let views = VIEWS as u64;
         regroup |= gpu.counters.reserve(
             &device,
@@ -424,6 +441,7 @@ fn prepare(
         gpu.entries_len = next.entries.len() as u32;
         gpu.layout = Some(next.clone());
         gpu.args_written.clear();
+
         if gpu.readback.mapped.is_none() {
             gpu.readback.buffer = Some(device.create_buffer(&BufferDescriptor {
                 label: Some("tree bucket counts readback"),
@@ -434,12 +452,14 @@ fn prepare(
             gpu.readback.copied = false;
         }
     }
+
     if bevy::log::tracing::enabled!(bevy::log::Level::DEBUG) {
         log_counts(gpu, &next);
     }
 
     // The draws' fixed arguments, rewritten whenever a mesh moves or arrives.
     let mut args = Vec::with_capacity(VIEWS * next.entries.len());
+
     for view in 0..VIEWS as u32 {
         for (entry, bucket) in next.entries.iter().zip(&next.buckets) {
             let (count, first, base) =
@@ -453,6 +473,7 @@ fn prepare(
             ]);
         }
     }
+
     if args != gpu.args_written && !args.is_empty() {
         queue.write_buffer(gpu.args.get(), 0, bytemuck::cast_slice(&args));
         gpu.args_written = args;
@@ -474,21 +495,27 @@ fn prepare(
         sizes: [next.buckets.len() as u32, 0, u32::from(frame.hidden), 0],
     };
     gpu.shadow_views.clear();
+
     if let Some(view) = &frame.view {
         camera.eye_dt = view.eye.extend(frame.dt).to_array();
         camera.planes = view.planes.map(|p| p.to_array());
+
         for (i, cascade) in view.cascades.iter().enumerate() {
             for (p, plane) in cascade.planes.iter().enumerate() {
                 camera.shadow_planes[i * 6 + p] = plane.to_array();
             }
+
             for (p, plane) in cascade.receivers.iter().enumerate() {
                 camera.shadow_receivers[i * 3 + p] = plane.to_array();
             }
+
             gpu.shadow_views.insert(cascade.retained, i);
         }
+
         camera.counts[0] = gpu.instances_len;
         camera.counts[1] = view.cascades.len() as u32;
     }
+
     queue.write_buffer(gpu.camera.get(), 0, bytemuck::bytes_of(&camera));
 
     if regroup || gpu.compute_group.is_none() {
@@ -520,6 +547,7 @@ fn prepare(
             )),
         ));
     }
+
     gpu.active = frame.view.is_some()
         && gpu.entries_len > 0
         && cache.get_compute_pipeline(pipelines.lod).is_some()
@@ -536,6 +564,7 @@ fn cull(
     if !gpu.active {
         return;
     }
+
     let (Some(group), Some(lod), Some(finalize)) = (
         gpu.compute_group.as_ref(),
         cache.get_compute_pipeline(pipelines.lod),
@@ -562,9 +591,11 @@ fn cull(
     pass.dispatch_workgroups((gpu.entries_len * VIEWS as u32).div_ceil(WORKGROUP), 1, 1);
     span.end(&mut pass);
     drop(pass);
+
     // Now and then, the counts go back for the debug line (`log_counts`).
     let gpu = gpu.as_mut();
     gpu.readback.countdown = gpu.readback.countdown.saturating_sub(1);
+
     if gpu.readback.countdown == 0
         && bevy::log::tracing::enabled!(bevy::log::Level::DEBUG)
         && gpu.readback.mapped.is_none()
@@ -588,11 +619,13 @@ fn cull(
 fn draw_entities(world: &mut World, count: usize) -> Vec<Option<(Entity, MainEntity)>> {
     let mut draws = world.query::<(Entity, &MainEntity, &TreeDraw)>();
     let mut entities = vec![None; count.min(DRAWS)];
+
     for (entity, main, draw) in draws.iter(world) {
         if let Some(slot) = entities.get_mut(draw.0) {
             *slot = Some((entity, *main));
         }
     }
+
     entities
 }
 
@@ -625,6 +658,7 @@ fn queue(
         .iter(world)
         .map(|(view, msaa)| (view.retained_view_entity, *msaa))
         .collect();
+
     // Items of every entry queued last frame go, whatever this frame's layout holds.
     let draw_entities = draw_entities(world, layout.entries.len().max(*queued));
     *queued = layout.entries.len();
@@ -641,16 +675,19 @@ fn queue(
         opaque_prepass: function::<Opaque3dPrepass, DrawTreeDepth>(world),
         mask_prepass: function::<AlphaMask3dPrepass, DrawTreeDepth>(world),
     };
+
     for (view, msaa) in views {
         let Some(view_key) = world.resource::<ViewKeyCache>().get(&view).copied() else {
             continue;
         };
+
         if !world
             .resource::<ViewBinnedRenderPhases<Opaque3d>>()
             .contains_key(&view)
         {
             continue;
         }
+
         let prepass_key = world
             .resource::<ViewKeyPrepassCache>()
             .get(&view)
@@ -660,6 +697,7 @@ fn queue(
                     .resource::<ViewBinnedRenderPhases<Opaque3dPrepass>>()
                     .contains_key(&view)
             });
+
         // Last frame's items go; this frame's entries come back below.
         for (_, main) in draw_entities.iter().flatten() {
             remove::<Opaque3d>(world, &view, *main);
@@ -667,26 +705,32 @@ fn queue(
             remove::<Opaque3dPrepass>(world, &view, *main);
             remove::<AlphaMask3dPrepass>(world, &view, *main);
         }
+
         for (index, entry) in layout.entries.iter().enumerate().take(DRAWS) {
             let Some(item) = draw_entities[index] else {
                 continue;
             };
+
             if !has(&drawn, entry) {
                 continue;
             }
+
             for (pass, key) in [(Pass::Main, Some(view_key)), (Pass::Prepass, prepass_key)] {
                 let Some(key) = key else {
                     continue;
                 };
+
                 if pass == Pass::Prepass && matches!(entry.drawn, Drawn::Impostor { .. }) {
                     continue;
                 }
+
                 let Some((pipeline, phase)) =
                     specialize(world, &mut pipelines, view, pass, key, msaa, entry)
                 else {
                     continue;
                 };
                 let mesh = entry_mesh(entry).untyped();
+
                 match (pass, phase) {
                     (Pass::Main, RenderPhaseType::Opaque) => {
                         if let Some(phase) = world
@@ -859,9 +903,11 @@ fn specialize(
         mesh: entry_mesh(entry),
         material: entry_material(entry),
     };
+
     if let Some(&pipeline) = pipelines.get(&at) {
         return Some((pipeline, phase));
     }
+
     let mesh = world
         .resource::<RenderAssets<RenderMesh>>()
         .get(entry_mesh(entry))?;
@@ -869,12 +915,14 @@ fn specialize(
     let mut mesh_key = view_key
         | MeshPipelineKey::from_bits_retain(mesh.key_bits.bits())
         | alpha_mode_pipeline_key(properties.alpha_mode, &msaa);
+
     // Tree meshes fade by their record's dither level: Bevy's main and prepass pipelines
     // dither them as visibility ranges do, without the shadows' overlap. Impostors dither in
     // their own shader.
     if matches!(entry.drawn, Drawn::Mesh { .. }) {
         mesh_key |= MeshPipelineKey::VISIBILITY_RANGE_DITHER;
     }
+
     let specialized = match pass {
         Pass::Main => {
             mesh_key |= properties.mesh_pipeline_key_bits.downcast();
@@ -885,12 +933,14 @@ fn specialize(
             if !matches!(phase, RenderPhaseType::Opaque | RenderPhaseType::AlphaMask) {
                 return None;
             }
+
             // The tree material has its own prepass shaders (`specialize_shadow`).
             mesh_key |= MeshPipelineKey::PREPASS_READS_MATERIAL;
             let key = instanced_key(&entry.drawn, &properties, mesh_key);
             (properties.prepass_specialize?)(world, &key, &layout, &properties)
         }
     };
+
     match specialized {
         Ok(pipeline) => {
             pipelines.insert(at, pipeline);
@@ -937,6 +987,7 @@ fn queue_shadows(
     let draw_entities = draw_entities(world, layout.entries.len().max(*queued));
     *queued = layout.entries.len();
     let draw_function = function::<Shadow, DrawTreeDepth>(world);
+
     for view in views {
         let Some(phase) = world
             .resource_mut::<ViewBinnedRenderPhases<Shadow>>()
@@ -945,25 +996,31 @@ fn queue_shadows(
         else {
             continue;
         };
+
         for (_, main) in draw_entities.iter().flatten() {
             phase.remove(*main);
         }
+
         let Some(shadow) = shadow_views.iter().position(|v| *v == view) else {
             continue;
         };
+
         for (index, entry) in layout.entries.iter().enumerate().take(DRAWS) {
             let Drawn::Mesh { mesh, material } = entry.drawn else {
                 continue;
             };
+
             if !has(&cast[shadow], entry) {
                 continue;
             }
+
             let Some((entity, main)) = draw_entities[index] else {
                 continue;
             };
             let Some(pipeline) = specialize_shadow(world, &mut pipelines, mesh, material) else {
                 continue;
             };
+
             if let Some(phase) = world
                 .resource_mut::<ViewBinnedRenderPhases<Shadow>>()
                 .get_mut(&view)
@@ -996,12 +1053,14 @@ fn specialize_shadow(
     if let Some(&pipeline) = pipelines.get(&(mesh_id, material_id.untyped())) {
         return Some(pipeline);
     }
+
     let material = world
         .resource::<ErasedRenderAssets<PreparedMaterial>>()
         .get(material_id.untyped())?;
     let properties = material.properties.clone();
     let mesh = world.resource::<RenderAssets<RenderMesh>>().get(mesh_id)?;
     let layout = mesh.layout.clone();
+
     // A directional light's key (`check_views_lights_need_specialization`); the tree material
     // has its own prepass shaders, so its shadow pipeline always reads the material.
     let mut mesh_key = MeshPipelineKey::DEPTH_PREPASS
@@ -1009,15 +1068,18 @@ fn specialize_shadow(
         | MeshPipelineKey::UNCLIPPED_DEPTH_ORTHO
         | MeshPipelineKey::PREPASS_READS_MATERIAL
         | MeshPipelineKey::from_bits_retain(mesh.key_bits.bits());
+
     if !matches!(properties.alpha_mode, AlphaMode::Opaque) {
         mesh_key |= MeshPipelineKey::MAY_DISCARD;
     }
+
     let drawn = Drawn::Mesh {
         mesh: mesh_id,
         material: material_id,
     };
     let key = instanced_key(&drawn, &properties, mesh_key);
     let prepass_specialize = properties.prepass_specialize?;
+
     match prepass_specialize(world, &key, &layout, &properties) {
         Ok(pipeline) => {
             pipelines.insert((mesh_id, material_id.untyped()), pipeline);
@@ -1058,6 +1120,7 @@ impl<P: PhaseItem> RenderCommand<P> for DrawTreeEntry {
         SRes<MeshMetadataFallbackBuffer>,
         SRes<RenderAssets<RenderMesh>>,
     );
+
     type ViewQuery = &'static ExtractedView;
     type ItemQuery = &'static TreeDraw;
 
@@ -1083,10 +1146,12 @@ impl<P: PhaseItem> RenderCommand<P> for DrawTreeEntry {
             return RenderCommandResult::Skip;
         };
         let layout = &layout.into_inner().layout;
+
         // The arguments were written for the layout the buffers hold.
         if gpu.layout.as_ref().is_none_or(|l| !Arc::ptr_eq(l, layout)) {
             return RenderCommandResult::Skip;
         }
+
         let Some(entry) = layout.entries.get(draw.0) else {
             return RenderCommandResult::Skip;
         };
@@ -1109,6 +1174,7 @@ impl<P: PhaseItem> RenderCommand<P> for DrawTreeEntry {
         else {
             return RenderCommandResult::Skip;
         };
+
         // The instanced shaders read nothing from the mesh uniforms, but their layout has them;
         // any phase's bind group fits when this phase has none of its own.
         let phase_groups = match mesh_bind_groups.into_inner() {
@@ -1117,6 +1183,7 @@ impl<P: PhaseItem> RenderCommand<P> for DrawTreeEntry {
                 .get(&TypeId::of::<P>())
                 .or_else(|| groups.values().next()),
         };
+
         // Since Bevy 0.20 mesh bind groups are per metadata slab, as in `SetMeshBindGroup`.
         let mesh_allocator = mesh_allocator.into_inner();
         let metadata_slab = mesh_allocator
@@ -1140,11 +1207,14 @@ impl<P: PhaseItem> RenderCommand<P> for DrawTreeEntry {
         ) else {
             return RenderCommandResult::Skip;
         };
+
         // Its arguments name no indices until its mesh is allocated.
         let at = gpu.view_index(&view.retained_view_entity) * layout.entries.len() + draw.0;
+
         if gpu.args_written.get(at).is_none_or(|args| args[0] == 0) {
             return RenderCommandResult::Skip;
         }
+
         let Some(RenderMeshBufferInfo::Indexed { index_format, .. }) =
             meshes.into_inner().get(mesh).map(|m| &m.buffer_info)
         else {

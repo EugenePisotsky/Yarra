@@ -16,6 +16,7 @@ pub enum ScriptAnalysis {
         warnings: Vec<String>,
     },
 }
+
 impl LoadedProject {
     /// Type errors fail; lints are returned as warnings. Locations refer to the script as
     /// authored.
@@ -32,17 +33,21 @@ impl LoadedProject {
             let offset = prelude.lines().count();
             let mut command = Command::new(&analyzer);
             command.current_dir(&directory).arg("--mode=strict");
+
             for module in modules.values() {
                 let file = format!("{}.luau", module.name.as_str());
                 let mut text = String::with_capacity(prelude.len() + module.source.len() + 1);
                 text.push_str(prelude);
+
                 if !prelude.ends_with('\n') {
                     text.push('\n');
                 }
+
                 text.push_str(&module.source);
                 std::fs::write(directory.join(&file), text)?;
                 command.arg(file);
             }
+
             let output = match command.output() {
                 Ok(output) => output,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -53,6 +58,7 @@ impl LoadedProject {
             let mut errors = Vec::new();
             let mut warnings = Vec::new();
             let text = [output.stdout, output.stderr].concat();
+
             for line in String::from_utf8_lossy(&text).lines() {
                 let line = relocate(line.trim_start_matches("./"), offset);
                 if line.contains("): TypeError:") || line.contains("): SyntaxError:") {
@@ -61,18 +67,21 @@ impl LoadedProject {
                     warnings.push(line);
                 }
             }
+
             if !errors.is_empty() {
                 return Err(ContentError::Validation {
                     context: "scripts".into(),
                     message: errors.join("\n"),
                 });
             }
+
             if !output.status.success() && warnings.is_empty() {
                 return Err(ContentError::Validation {
                     context: "scripts".into(),
                     message: format!("{} failed", analyzer.to_string_lossy()),
                 });
             }
+
             Ok(ScriptAnalysis::Checked {
                 modules: modules.len(),
                 warnings,
@@ -82,6 +91,7 @@ impl LoadedProject {
         result
     }
 }
+
 /// `name.luau(line,column): message`, with the line moved back past the definitions.
 fn relocate(line: &str, offset: usize) -> String {
     let moved = (|| {

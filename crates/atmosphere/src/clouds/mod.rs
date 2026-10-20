@@ -4,7 +4,9 @@
 mod noise;
 mod render;
 mod sky_cache;
+
 use crate::environment::{EnvironmentAssets, EnvironmentParams};
+
 use bevy::{
     prelude::*,
     render::{
@@ -12,6 +14,7 @@ use bevy::{
         render_resource::*,
     },
 };
+
 pub(crate) use noise::generate as noise;
 pub(crate) use render::{CloudTarget, Pipelines as CloudPipelines, refresh as refresh_clouds};
 
@@ -21,6 +24,7 @@ pub struct CloudClock {
     /// Editor owns preview transport; the standalone game advances automatically.
     pub playing: bool,
 }
+
 /// Presentation quality, independent of the authored weather profile.
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq, ExtractResource)]
 #[extract_app(bevy::render::RenderApp)]
@@ -30,11 +34,13 @@ pub enum CloudQuality {
     Balanced,
     High,
 }
+
 impl CloudQuality {
     pub(super) fn target_size(self, full: UVec2) -> UVec2 {
         if self == Self::Balanced {
             return UVec2::new(sky_cache::WIDTH, sky_cache::HEIGHT);
         }
+
         let divisor = 2;
         UVec2::new(
             full.x.div_ceil(divisor).max(1),
@@ -42,19 +48,24 @@ impl CloudQuality {
         )
     }
 }
+
 /// A world view that shows clouds this frame.
 #[derive(Component, Clone, bevy::render::extract_component::ExtractComponent)]
 #[extract_app(bevy::render::RenderApp)]
 pub(crate) struct CloudView;
+
 pub(crate) struct CloudsPlugin;
+
 impl Plugin for CloudsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CloudClock>()
             .init_resource::<CloudQuality>();
+
         // Pure ECS atmosphere tests/tools do not install GPU or asset services.
         if app.get_sub_app(bevy::render::RenderApp).is_none() {
             return;
         }
+
         app.add_plugins((
             ExtractResourcePlugin::<CloudQuality>::default(),
             bevy::render::extract_component::ExtractComponentPlugin::<CloudView>::default(),
@@ -66,6 +77,7 @@ impl Plugin for CloudsPlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn cached_sky_has_a_fixed_budget_and_high_handles_odd_or_tiny_views() {
         assert_eq!(

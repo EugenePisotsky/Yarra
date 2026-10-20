@@ -7,18 +7,23 @@ use crate::{GrassClumps, VegetationFieldPage};
 pub trait Lattice {
     /// Every type grows on its own world-aligned lattice.
     fn seed(&self) -> u32;
+
     /// Metres between lattice candidates.
     fn spacing(&self) -> f32;
+
     fn clumps(&self) -> GrassClumps;
 }
 
 /// Clump feature points sit this far from their cell centres, as a share of the cell.
 pub const CLUMP_JITTER: f32 = 0.9;
+
 /// Width of the fade between neighbouring clumps, as a share of the clump size. Roots near a
 /// boundary keep their own place and facing.
 pub const CLUMP_SOFTNESS: f32 = 0.25;
+
 /// Share of clumps' density that varies from clump to clump.
 pub const CLUMP_DENSITY_VARIATION: f32 = 0.2;
+
 /// Radians of random turn added to each blade's facing.
 pub const FACING_JITTER: f32 = 0.35;
 
@@ -96,6 +101,7 @@ pub fn sample_candidate(
     if index >= domain.candidate_count() {
         return None;
     }
+
     let type_seed = grass.seed();
     let cell_x = domain.cell_min[0] + (index % domain.cell_count[0]) as i32;
     let cell_z = domain.cell_min[1] + (index / domain.cell_count[0]) as i32;
@@ -110,6 +116,7 @@ pub fn sample_candidate(
         jittered[0] + (clump.center_xz[0] - jittered[0]) * pull,
         jittered[1] + (clump.center_xz[1] - jittered[1]) * pull,
     ];
+
     // Four neighbouring cells hold one of each LOD lane, rotated per block, so keeping the
     // lowest quarter of ranks keeps one root in every 2×2 block.
     let block = [cell_x.div_euclid(2), cell_z.div_euclid(2)];
@@ -141,9 +148,11 @@ pub fn patch_rank(blade: f32, clump: f32, patches: f32) -> f32 {
     let value = clump * patches + blade * (1.0 - patches);
     let wide = patches.max(1.0 - patches);
     let narrow = 1.0 - wide;
+
     if narrow < 1e-4 {
         return value;
     }
+
     if value < narrow {
         value * value / (2.0 * wide * narrow)
     } else if value < wide {
@@ -182,6 +191,7 @@ pub fn sample_clump(grass: &impl Lattice, type_seed: u32, root: [f32; 2]) -> Clu
     ];
     let mut nearest = (f32::INFINITY, root, type_seed);
     let mut second = f32::INFINITY;
+
     for dz in -1..=1 {
         for dx in -1..=1 {
             let cell = [base[0] + dx, base[1] + dz];
@@ -191,6 +201,7 @@ pub fn sample_clump(grass: &impl Lattice, type_seed: u32, root: [f32; 2]) -> Clu
                 (cell[1] as f32 + 0.5 + (random01(key ^ 0x85eb_ca6b) - 0.5) * CLUMP_JITTER) * size,
             ];
             let d = (root[0] - center[0]).powi(2) + (root[1] - center[1]).powi(2);
+
             if d < nearest.0 {
                 second = nearest.0;
                 nearest = (d, center, key);
@@ -199,9 +210,11 @@ pub fn sample_clump(grass: &impl Lattice, type_seed: u32, root: [f32; 2]) -> Clu
             }
         }
     }
+
     let (distance, center, key) = (nearest.0.sqrt(), nearest.1, nearest.2);
     let influence = smoothstep01((second.sqrt() - distance) / (size * CLUMP_SOFTNESS));
     let normalized = (distance / (size * std::f32::consts::SQRT_2)).clamp(0.0, 1.0);
+
     // Tufted types thin out between clumps; even ones barely do.
     let edge = 1.0 - 0.6 * grass.clumps().pull;
     let spatial = 1.0 + (edge - 1.0) * normalized.powf(1.5);
@@ -236,9 +249,11 @@ pub fn random01(value: u32) -> f32 {
 
 fn normalize_or(value: [f32; 2], fallback: [f32; 2]) -> [f32; 2] {
     let length_squared = value[0] * value[0] + value[1] * value[1];
+
     if length_squared <= 1e-10 {
         return fallback;
     }
+
     let inverse_length = length_squared.sqrt().recip();
     [value[0] * inverse_length, value[1] * inverse_length]
 }
@@ -260,6 +275,7 @@ mod tests {
         let right = candidate_domain([16.0, 0.0], 16.0, &grass);
         assert_eq!(left.spacing, right.spacing);
         assert!(left.cell_min[0] < right.cell_min[0]);
+
         // The margin covers roots pulled across the page edge.
         assert!((left.cell_min[0] as f32) * left.spacing < -grass.clumps.size * grass.clumps.pull);
     }
@@ -279,6 +295,7 @@ mod tests {
         let grass = fixtures::tufts();
         let domain = candidate_domain([0.0, 0.0], 8.0, &grass);
         let mut closer = 0;
+
         for index in 0..domain.candidate_count() {
             let c = sample_candidate(&grass, domain, index).unwrap();
             let k = c.clump;
@@ -289,6 +306,7 @@ mod tests {
             closer +=
                 usize::from(d <= k.distance * grass.clumps.size * std::f32::consts::SQRT_2 + 1e-4);
         }
+
         assert_eq!(closer, domain.candidate_count() as usize);
     }
 
@@ -310,11 +328,13 @@ mod tests {
     fn patch_rank_stays_uniform_for_every_blend() {
         for patches in [0.0, 0.2, 0.5, 0.8, 1.0] {
             let mut buckets = [0u32; 10];
+
             for i in 0..20_000u32 {
                 let rank = patch_rank(random01(i), random01(hash32(i ^ 0x55)), patches);
                 assert!((0.0..=1.0).contains(&rank));
                 buckets[((rank * 10.0) as usize).min(9)] += 1;
             }
+
             assert!(
                 buckets.iter().all(|&n| (1_700..=2_300).contains(&n)),
                 "{patches}: {buckets:?}"
@@ -328,10 +348,12 @@ mod tests {
         grass.clumps.patches = 1.0;
         let domain = candidate_domain([0.0, 0.0], 8.0, &grass);
         let mut ranks = std::collections::HashMap::new();
+
         for index in 0..domain.candidate_count() {
             let c = sample_candidate(&grass, domain, index).unwrap();
             assert_eq!(*ranks.entry(c.clump.key).or_insert(c.rank), c.rank);
         }
+
         assert!(ranks.len() > 20);
     }
 }

@@ -19,12 +19,14 @@ use crate::{
         },
     },
 };
+
 use bevy::{
     gizmos::transform_gizmo::{TransformGizmoMode, TransformGizmoSettings, TransformGizmoState},
     picking::mesh_picking::ray_cast::{MeshRayCast, MeshRayCastSettings},
     prelude::*,
     window::PrimaryWindow,
 };
+
 use engine::{StreamedVisualObject, WorldCatalog, WorldOrigin, WorldViewCamera, WorldViewpoint};
 use std::collections::HashSet;
 use world::StableObjectId;
@@ -56,6 +58,7 @@ pub(crate) fn handle_editor_shortcuts(
     let object_tool_active = tools
         .active(EditorWorkspace::World)
         .is_some_and(|tool| tool.id == OBJECT_TOOL.id);
+
     if capture.wants_keyboard
         || paint.has_unapplied_changes()
         || presets.dirty()
@@ -126,6 +129,7 @@ pub(crate) fn pick_source_object(
     {
         return;
     }
+
     let Some(cursor) = window.cursor_position() else {
         return;
     };
@@ -175,15 +179,19 @@ pub(crate) fn pick_source_object(
             .filter_map(|record| {
                 let transform = source_object_transform(&record, origin.cell(), space.cell_size);
                 let center = transform.translation;
+
                 if let Some(bounds) = record.visual_bounds {
                     let mut minimum = Vec2::splat(f32::INFINITY);
                     let mut maximum = Vec2::splat(f32::NEG_INFINITY);
+
                     for corner in visual_bounds_corners(&transform, bounds) {
                         let screen = camera.0.world_to_viewport(camera.1, corner).ok()?;
                         minimum = minimum.min(screen);
                         maximum = maximum.max(screen);
                     }
+
                     let padding = Vec2::splat(6.0);
+
                     if cursor.cmpge(minimum - padding).all()
                         && cursor.cmple(maximum + padding).all()
                     {
@@ -201,6 +209,7 @@ pub(crate) fn pick_source_object(
             .min_by(|left, right| left.0.total_cmp(&right.0))
             .map(|(_, record)| record)
     };
+
     if let Some(record) = mesh_record.or_else(bounds_record) {
         if multi_select_pressed(&keys) {
             selection.toggle(record, &mut objects);
@@ -220,9 +229,11 @@ fn stable_object_ancestor(
         if let Ok(root) = promoted_roots.get(entity) {
             return Some(root.id);
         }
+
         if let Ok(root) = cooked_roots.get(entity) {
             return Some(root.id);
         }
+
         entity = parents.get(entity).ok()?.parent();
     }
     None

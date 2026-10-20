@@ -9,12 +9,14 @@ pub(crate) struct DirtyDefinitionSnapshot {
     pub(crate) base: EnvironmentDefinition,
     pub(crate) current: EnvironmentDefinition,
 }
+
 #[derive(Debug, Clone)]
 pub(super) struct DefinitionEntry<T = EnvironmentDefinition> {
     pub(super) base: T,
     pub(super) current: T,
     pub(super) state: DefinitionSaveState<T>,
 }
+
 #[derive(Debug, Clone)]
 pub(super) enum DefinitionSaveState<T = EnvironmentDefinition> {
     Idle,
@@ -22,25 +24,31 @@ pub(super) enum DefinitionSaveState<T = EnvironmentDefinition> {
     Conflict(Option<T>),
     Failed(String),
 }
+
 impl<T: PartialEq> DefinitionEntry<T> {
     pub(super) fn dirty(&self) -> bool {
         self.base != self.current
     }
 }
+
 impl SourceWorkingSets {
     pub(crate) fn definition(&self, space: WorldSpaceId) -> Option<&EnvironmentDefinition> {
         self.definitions.get(&space).map(|e| &e.current)
     }
+
     pub(crate) fn definitions(&self) -> impl Iterator<Item = &EnvironmentDefinition> {
         self.definitions.values().map(|e| &e.current)
     }
+
     pub(crate) fn definition_edit_revision(&self) -> u64 {
         self.definition_revision
     }
+
     pub(crate) fn definition_dirty_count(&self) -> usize {
         self.definitions.values().filter(|e| e.dirty()).count()
             + usize::from(self.presets.as_ref().is_some_and(|p| p.dirty()))
     }
+
     pub(super) fn definitions_saving(&self) -> bool {
         self.presets
             .as_ref()
@@ -50,6 +58,7 @@ impl SourceWorkingSets {
                 .values()
                 .any(|e| matches!(e.state, DefinitionSaveState::Saving(_)))
     }
+
     pub(super) fn definition_conflict_count(&self) -> usize {
         usize::from(
             self.presets
@@ -61,6 +70,7 @@ impl SourceWorkingSets {
             .filter(|e| matches!(e.state, DefinitionSaveState::Conflict(_)))
             .count()
     }
+
     pub(crate) fn definition_status(&self) -> Option<String> {
         if let Some(status) = self.preset_status() {
             return Some(status);
@@ -71,6 +81,7 @@ impl SourceWorkingSets {
             _ => None,
         })
     }
+
     pub(crate) fn dirty_definition_snapshots(&self) -> Vec<DirtyDefinitionSnapshot> {
         self.definitions
             .values()
@@ -81,6 +92,7 @@ impl SourceWorkingSets {
             })
             .collect()
     }
+
     pub(crate) fn restore_definition_snapshot(
         &mut self,
         snapshot: DirtyDefinitionSnapshot,
@@ -96,6 +108,7 @@ impl SourceWorkingSets {
         {
             return false;
         }
+
         self.definitions.insert(
             snapshot.current.space,
             DefinitionEntry {
@@ -108,6 +121,7 @@ impl SourceWorkingSets {
         self.bump_definitions();
         true
     }
+
     pub(super) fn reconcile_definitions(
         &mut self,
         project: &ProjectEditorStore,
@@ -118,8 +132,10 @@ impl SourceWorkingSets {
         {
             self.plants = Some(plants.clone());
         }
+
         self.reconcile_presets(project);
         let mut changed = false;
+
         for definition in project.environments() {
             match self.definitions.get_mut(&definition.space) {
                 Some(entry)
@@ -130,12 +146,14 @@ impl SourceWorkingSets {
                         .entries
                         .iter()
                         .any(|(key, cell)| key.space == definition.space && cell.pinned());
+
                     if entry.dirty() || pinned {
                         entry.state = DefinitionSaveState::Conflict(Some(definition.clone()));
                     } else {
                         entry.base = definition.clone();
                         entry.current = definition.clone();
                     }
+
                     changed = true;
                 }
                 None => {
@@ -152,10 +170,12 @@ impl SourceWorkingSets {
                 _ => {}
             }
         }
+
         if changed {
             self.bump_definitions();
         }
     }
+
     pub(crate) fn apply_environment(
         &mut self,
         replacement: &EnvironmentDefinition,
@@ -164,28 +184,34 @@ impl SourceWorkingSets {
         if self.presets.is_none() {
             return Err("Presets are still loading".into());
         }
+
         if self.saving() || self.has_any_conflict() || self.gesture_active {
             return Err("Finish the stroke or save before editing layers".into());
         }
+
         let entry = self
             .definitions
             .get(&replacement.space)
             .ok_or("Environment is still loading")?;
+
         if entry.current.cell_size != replacement.cell_size
             || entry.current.mask_resolution != replacement.mask_resolution
             || entry.current.surfaces != replacement.surfaces
         {
             return Err("Layer editing cannot change the world grid or terrain pack".into());
         }
+
         let plants = self
             .plants
             .as_ref()
             .ok_or("Vegetation assets are still loading")?;
         self.validate_preset_edit(library, Some(replacement))?;
         validate(replacement, plants, library)?;
+
         if !self.coverage_fits_definition(replacement) {
             return Err("Undo or erase this layer's local paint before removing the layer".into());
         }
+
         let mut current = replacement.clone();
         normalize_revisions(&mut current, &entry.base);
         let dirty_bytes = self
@@ -199,20 +225,25 @@ impl SourceWorkingSets {
             } else {
                 0
             };
+
         if dirty_bytes > 4 * 1024 * 1024 {
             return Err(
                 "Save the current layer edits before editing more definitions (4 MiB limit)".into(),
             );
         }
+
         self.install_preset_edit(library);
         let entry = self.definitions.get_mut(&replacement.space).unwrap();
+
         if current != entry.current {
             entry.current = current;
             entry.state = DefinitionSaveState::Idle;
             self.bump_definitions();
         }
+
         Ok(())
     }
+
     pub(super) fn definition_writes(&self) -> Vec<world_db::EnvironmentDefinitionWrite> {
         self.definitions
             .values()
@@ -223,6 +254,7 @@ impl SourceWorkingSets {
             })
             .collect()
     }
+
     pub(super) fn mark_definitions_saving(&mut self, request: u64) {
         if let Some(p) = &mut self.presets
             && p.dirty()
@@ -233,8 +265,10 @@ impl SourceWorkingSets {
             entry.state = DefinitionSaveState::Saving(request);
         }
     }
+
     pub(super) fn finish_definitions(&mut self, request: u64, outcome: &DenseSaveOutcome) {
         self.finish_presets(request, outcome);
+
         for entry in self.definitions.values_mut() {
             if matches!(entry.state,DefinitionSaveState::Saving(id) if id==request) {
                 entry.state = match outcome {
@@ -243,6 +277,7 @@ impl SourceWorkingSets {
                 };
             }
         }
+
         match outcome {
             DenseSaveOutcome::Committed(commit) => {
                 for definition in &commit.definitions {
@@ -265,12 +300,15 @@ impl SourceWorkingSets {
             _ => {}
         }
     }
+
     pub(super) fn can_keep_definition_conflicts(&self) -> bool {
         self.can_resolve_presets(true) || self.definitions.values().any(|e|matches!(&e.state,DefinitionSaveState::Conflict(Some(actual)) if same_grid(actual,&e.current)))
     }
+
     pub(super) fn can_accept_definition_conflicts(&self) -> bool {
         self.can_resolve_presets(false) || self.definitions.values().any(|e|matches!(&e.state,DefinitionSaveState::Conflict(Some(actual)) if same_grid(actual,&e.current) && self.coverage_fits_definition(actual) && self.presets().is_some_and(|p|actual.validate_layers(p).is_ok())))
     }
+
     pub(super) fn resolve_definition_conflicts(&mut self, keep_local: bool) -> usize {
         let library_resolved = self.resolve_preset_conflict(keep_local);
         let spaces = self
@@ -290,26 +328,32 @@ impl SourceWorkingSets {
                 _ => None,
             })
             .collect::<Vec<_>>();
+
         for space in &spaces {
             let entry = self.definitions.get_mut(space).unwrap();
             let DefinitionSaveState::Conflict(Some(actual)) = &entry.state else {
                 unreachable!()
             };
             let actual = actual.clone();
+
             if keep_local {
                 normalize_revisions(&mut entry.current, &actual);
             } else {
                 entry.current = actual.clone();
             }
+
             entry.base = actual.clone();
             entry.state = DefinitionSaveState::Idle;
             self.retarget_definition(*space, actual.revision);
         }
+
         if !spaces.is_empty() {
             self.bump_definitions();
         }
+
         spaces.len() + library_resolved
     }
+
     fn retarget_definition(&mut self, space: WorldSpaceId, revision: u64) {
         for entry in self.entries.values_mut() {
             for record in entry
@@ -324,6 +368,7 @@ impl SourceWorkingSets {
             }
         }
     }
+
     fn coverage_fits_definition(&self, definition: &EnvironmentDefinition) -> bool {
         self.entries.values().all(|e| {
             let record = &e.current;
@@ -334,14 +379,17 @@ impl SourceWorkingSets {
                 })
         })
     }
+
     pub(super) fn bump_definitions(&mut self) {
         self.definition_revision = self.definition_revision.wrapping_add(1).max(1);
         self.bump_revision();
     }
 }
+
 fn same_grid(a: &EnvironmentDefinition, b: &EnvironmentDefinition) -> bool {
     a.cell_size == b.cell_size && a.mask_resolution == b.mask_resolution && a.surfaces == b.surfaces
 }
+
 fn validate(
     definition: &EnvironmentDefinition,
     plants: &VegetationCatalog,
@@ -350,16 +398,21 @@ fn validate(
     if definition.layers.iter().any(|l| l.name.len() > 256) {
         return Err("Names must fit in 256 bytes".into());
     }
+
     environment_compile::CompilePlan::new(definition, plants, presets, Default::default())
         .map_err(|e| e.to_string())?;
+
     if definition_bytes(definition) > 1024 * 1024 {
         return Err("Environment definition exceeds the size budget".into());
     }
+
     Ok(())
 }
+
 pub(crate) fn definition_bytes(definition: &EnvironmentDefinition) -> usize {
     ron::ser::to_string(definition).map_or(usize::MAX, |s| s.len())
 }
+
 fn normalize_revisions(definition: &mut EnvironmentDefinition, base: &EnvironmentDefinition) {
     definition.revision = base.revision;
     for layer in &mut definition.layers {
@@ -388,9 +441,11 @@ mod tests {
             })
             .collect::<Vec<_>>();
         dense.mark_definitions_saving(1);
+
         for entry in dense.entries.values_mut().filter(|e| e.dirty()) {
             entry.save_state = DenseSaveState::Saving(1);
         }
+
         let EnvironmentSourceWriteResult::Committed(commit) = writer
             .apply_environment_source_transaction(
                 dense.preset_base_revision(),
@@ -557,6 +612,7 @@ mod tests {
             panic!()
         };
         assert_eq!(live[0].vegetation, vegetation);
+
         // Definition-only saves are also real transactions and remain undoable.
         let mut renamed = reloaded.definition;
         renamed.layers.last_mut().unwrap().name = "Saved name".into();
@@ -565,6 +621,7 @@ mod tests {
         save(&mut dense, &mut writer);
         assert!(history.undo(&mut objects, &mut dense));
         assert_eq!(dense.definition_dirty_count(), 1);
+
         // A layer-only undo never restores an old snapshot of unrelated shared presets.
         assert!(history.redo(&mut objects, &mut dense));
         let mut external = dense.presets().unwrap().clone();

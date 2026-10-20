@@ -4,12 +4,14 @@ use crate::*;
 use fluent_syntax::ast::*;
 
 pub(crate) type Patterns = BTreeMap<String, Pattern<String>>;
+
 pub(crate) fn parse(source: &str, patterns: &mut Patterns) -> Result<()> {
     // Bound recursion before invoking Fluent's recursive parser. Braces inside quoted
     // expression literals/comments do not count; quotes in ordinary prose are plain text.
     let mut depth = 0usize;
     let mut quoted = false;
     let mut escaped = false;
+
     for line in source.lines() {
         if depth == 0 && line.trim_start().starts_with('#') {
             continue;
@@ -38,8 +40,10 @@ pub(crate) fn parse(source: &str, patterns: &mut Patterns) -> Result<()> {
             }
         }
     }
+
     let resource = fluent_syntax::parser::parse(source.to_owned())
         .map_err(|(_, e)| LocalizationError::Resource(format!("Fluent syntax: {e:?}")))?;
+
     for entry in resource.body {
         let (id, value, attributes) = match entry {
             Entry::Message(m) => (m.id.name, m.value, m.attributes),
@@ -47,26 +51,32 @@ pub(crate) fn parse(source: &str, patterns: &mut Patterns) -> Result<()> {
             Entry::Comment(_) | Entry::GroupComment(_) | Entry::ResourceComment(_) => continue,
             Entry::Junk { .. } => return Err(resource_error("Fluent junk")),
         };
+
         if let Some(value) = value {
             insert(patterns, id.clone(), value)?;
         }
+
         for attr in attributes {
             insert(patterns, format!("{id}.{}", attr.id.name), attr.value)?;
         }
     }
+
     Ok(())
 }
+
 fn insert(patterns: &mut Patterns, id: String, value: Pattern<String>) -> Result<()> {
     if patterns.insert(id.clone(), value).is_some() {
         return Err(resource_error(format!("duplicate Fluent key {id}")));
     }
     Ok(())
 }
+
 fn reference(id: &str, attribute: &Option<Identifier<String>>) -> String {
     attribute
         .as_ref()
         .map_or_else(|| id.to_owned(), |a| format!("{id}.{}", a.name))
 }
+
 #[derive(Clone)]
 enum ValueType {
     Text,
@@ -74,6 +84,7 @@ enum ValueType {
     Select(BTreeSet<String>),
     LiteralText(String),
 }
+
 impl ValueType {
     fn declared(kind: &ArgumentType) -> Self {
         match kind {
@@ -82,6 +93,7 @@ impl ValueType {
             ArgumentType::Select(values) => Self::Select(values.clone()),
         }
     }
+
     fn compatible(&self, expected: &ArgumentType) -> bool {
         match (self, expected) {
             (Self::Number, ArgumentType::Number) => true,
@@ -95,6 +107,7 @@ impl ValueType {
         }
     }
 }
+
 struct Walk<'a> {
     patterns: &'a Patterns,
     contracts: &'a BTreeMap<TextKey, MessageContract>,
@@ -102,15 +115,19 @@ struct Walk<'a> {
     used: BTreeSet<String>,
     remaining: usize,
 }
+
 impl Walk<'_> {
     fn node(&mut self, id: &str, args: &BTreeMap<String, ValueType>) -> Result<()> {
         if self.active.len() >= 64 || self.remaining == 0 {
             return Err(resource_error("Fluent expression budget exceeded"));
         }
+
         if !self.active.insert(id.into()) {
             return Err(resource_error(format!("Fluent reference cycle: {id}")));
         }
+
         self.used.insert(id.into());
+
         if !id.starts_with('-') {
             let key = TextKey::new(id.split('.').next().unwrap())
                 .map_err(|e| resource_error(e.to_string()))?;
@@ -118,6 +135,7 @@ impl Walk<'_> {
                 .contracts
                 .get(&key)
                 .ok_or_else(|| resource_error(format!("undeclared message {id}")))?;
+
             for (name, expected) in &contract.arguments {
                 if !args
                     .get(name)
@@ -129,6 +147,7 @@ impl Walk<'_> {
                 }
             }
         }
+
         let pattern = self
             .patterns
             .get(id)
@@ -137,6 +156,7 @@ impl Walk<'_> {
         self.active.remove(id);
         Ok(())
     }
+
     fn pattern(
         &mut self,
         pattern: &Pattern<String>,
@@ -153,6 +173,7 @@ impl Walk<'_> {
         }
         Ok(())
     }
+
     fn expression(
         &mut self,
         expr: &Expression<String>,
@@ -162,6 +183,7 @@ impl Walk<'_> {
             Expression::Inline(inline) => self.inline(inline, args),
             Expression::Select { selector, variants } => {
                 let kind = self.inline(selector, args)?;
+
                 for variant in variants {
                     let valid = match (&kind, &variant.key) {
                         (ValueType::Number, VariantKey::NumberLiteral { .. }) => true,
@@ -174,17 +196,21 @@ impl Walk<'_> {
                         (ValueType::LiteralText(_), VariantKey::Identifier { .. }) => true,
                         _ => false,
                     };
+
                     if !valid {
                         return Err(resource_error(
                             "selector variant does not match argument contract",
                         ));
                     }
+
                     self.pattern(&variant.value, args)?;
                 }
+
                 Ok(ValueType::Text)
             }
         }
     }
+
     fn inline(
         &mut self,
         expr: &InlineExpression<String>,
@@ -211,6 +237,7 @@ impl Walk<'_> {
                 arguments,
             } => {
                 let mut local = BTreeMap::new();
+
                 if let Some(arguments) = arguments {
                     if !arguments.positional.is_empty() {
                         return Err(resource_error("positional term arguments are unsupported"));
@@ -220,6 +247,7 @@ impl Walk<'_> {
                         local.insert(named.name.name.clone(), kind);
                     }
                 }
+
                 // Term parameters have local scope; ambient caller variables cannot leak in.
                 self.node(&reference(&format!("-{}", id.name), attribute), &local)?;
                 Ok(ValueType::Text)
@@ -232,6 +260,7 @@ impl Walk<'_> {
         }
     }
 }
+
 pub(crate) fn dependencies(
     patterns: &Patterns,
     contracts: &BTreeMap<TextKey, MessageContract>,
@@ -252,6 +281,7 @@ pub(crate) fn dependencies(
     walk.node(key, &args)?;
     Ok(walk.used)
 }
+
 /// Structural validation includes unused terms/attributes and every branch. Missing translated
 /// dependencies are allowed only when the source scope defines them (whole-message fallback).
 pub(crate) fn validate_graph(patterns: &Patterns, source: Option<&Patterns>) -> Result<()> {
@@ -263,6 +293,7 @@ pub(crate) fn validate_graph(patterns: &Patterns, source: Option<&Patterns>) -> 
         *budget = budget
             .checked_sub(1)
             .ok_or_else(|| resource_error("Fluent graph budget exceeded"))?;
+
         match expr {
             InlineExpression::FunctionReference { id, .. } => {
                 return Err(resource_error(format!(
@@ -283,7 +314,9 @@ pub(crate) fn validate_graph(patterns: &Patterns, source: Option<&Patterns>) -> 
                     if !args.positional.is_empty() {
                         return Err(resource_error("positional term arguments are unsupported"));
                     }
+
                     let mut names = BTreeSet::new();
+
                     for arg in &args.named {
                         if !names.insert(&arg.name.name) {
                             return Err(resource_error("duplicate term argument"));
@@ -295,6 +328,7 @@ pub(crate) fn validate_graph(patterns: &Patterns, source: Option<&Patterns>) -> 
             InlineExpression::Placeable { expression: value } => expression(value, edges, budget)?,
             _ => {}
         }
+
         Ok(())
     }
     fn expression(
@@ -307,16 +341,20 @@ pub(crate) fn validate_graph(patterns: &Patterns, source: Option<&Patterns>) -> 
             Expression::Select { selector, variants } => {
                 inline(selector, edges, budget)?;
                 let mut keys = BTreeSet::new();
+
                 for variant in variants {
                     let key = match &variant.key {
                         VariantKey::Identifier { name } => format!("s:{name}"),
                         VariantKey::NumberLiteral { value } => format!("n:{value}"),
                     };
+
                     if !keys.insert(key) {
                         return Err(resource_error("duplicate selector variant"));
                     }
+
                     pattern(&variant.value, edges, budget)?;
                 }
+
                 Ok(())
             }
         }
@@ -342,43 +380,55 @@ pub(crate) fn validate_graph(patterns: &Patterns, source: Option<&Patterns>) -> 
         if active.contains(key) {
             return Err(resource_error(format!("Fluent reference cycle: {key}")));
         }
+
         if done.contains(key) {
             return Ok(());
         }
+
         if active.len() >= 64 {
             return Err(resource_error("Fluent reference depth exceeded"));
         }
+
         active.insert(key);
+
         if let Some(edges) = graph.get(key) {
             for edge in edges {
                 visit(edge, graph, active, done)?;
             }
         }
+
         active.remove(key);
         done.insert(key);
         Ok(())
     }
     let mut graph = BTreeMap::new();
     let mut budget = 100_000;
+
     for (key, value) in patterns {
         let mut edges = BTreeSet::new();
         pattern(value, &mut edges, &mut budget)?;
+
         for edge in &edges {
             if !patterns.contains_key(edge) && !source.is_some_and(|p| p.contains_key(edge)) {
                 return Err(resource_error(format!("unknown Fluent dependency {edge}")));
             }
         }
+
         graph.insert(key.clone(), edges);
     }
+
     let mut done = BTreeSet::new();
+
     for key in graph.keys() {
         visit(key, &graph, &mut BTreeSet::new(), &mut done)?;
     }
+
     Ok(())
 }
 
 /// Plural categories: a selector whose named variants are only these chooses on a number.
 const PLURALS: [&str; 6] = ["zero", "one", "two", "few", "many", "other"];
+
 /// How one entry uses an argument.
 #[derive(Default, Clone)]
 struct Usage {
@@ -388,12 +438,14 @@ struct Usage {
     numeric: bool,
     selected: bool,
 }
+
 impl Usage {
     fn merge(&mut self, other: &Usage) {
         self.names.extend(other.names.iter().cloned());
         self.numeric |= other.numeric;
         self.selected |= other.selected;
     }
+
     fn kind(&self) -> ArgumentType {
         if !self.selected {
             ArgumentType::Text
@@ -404,6 +456,7 @@ impl Usage {
         }
     }
 }
+
 /// What one message, attribute or term uses directly.
 #[derive(Default)]
 struct Uses {
@@ -411,6 +464,7 @@ struct Uses {
     /// Messages and attributes it refers to; they are given the same arguments.
     messages: BTreeSet<String>,
 }
+
 impl Uses {
     fn pattern(&mut self, pattern: &Pattern<String>) {
         for element in &pattern.elements {
@@ -419,6 +473,7 @@ impl Uses {
             }
         }
     }
+
     fn expression(&mut self, expression: &Expression<String>) {
         match expression {
             Expression::Inline(inline) => self.inline(inline),
@@ -426,6 +481,7 @@ impl Uses {
                 if let InlineExpression::VariableReference { id } = selector {
                     let usage = self.arguments.entry(id.name.clone()).or_default();
                     usage.selected = true;
+
                     for variant in variants {
                         match &variant.key {
                             VariantKey::Identifier { name }
@@ -445,6 +501,7 @@ impl Uses {
             }
         }
     }
+
     fn inline(&mut self, inline: &InlineExpression<String>) {
         match inline {
             InlineExpression::VariableReference { id } => {
@@ -467,6 +524,7 @@ impl Uses {
         }
     }
 }
+
 /// The contract of a source-language resource: each message and the arguments it, its
 /// attributes and the messages it refers to use.
 pub(crate) fn infer(id: TextResourceId, source: &str) -> Result<TextContract> {
@@ -490,23 +548,28 @@ pub(crate) fn infer(id: TextResourceId, source: &str) -> Result<TextContract> {
         let Some(found) = uses.get(entry) else {
             return;
         };
+
         if !seen.insert(entry) {
             return;
         }
+
         for (name, usage) in &found.arguments {
             into.entry(name.clone()).or_default().merge(usage);
         }
+
         for message in &found.messages {
             gather(message, uses, seen, into);
         }
     }
     let mut messages = BTreeMap::new();
+
     for entry in patterns.keys().filter(|entry| !entry.starts_with('-')) {
         let name = entry.split('.').next().unwrap();
         let key = TextKey::new(name).map_err(|e| resource_error(e.to_string()))?;
         let mut arguments = BTreeMap::new();
         gather(entry, &uses, &mut BTreeSet::new(), &mut arguments);
         let contract: &mut MessageContract = messages.entry(key).or_default();
+
         for (argument, usage) in arguments {
             let merged = match contract.arguments.remove(&argument) {
                 Some(ArgumentType::Select(names)) => Usage {
@@ -524,6 +587,7 @@ pub(crate) fn infer(id: TextResourceId, source: &str) -> Result<TextContract> {
             contract.arguments.insert(argument, merged.kind());
         }
     }
+
     let contract = TextContract { id, messages };
     contract
         .validate()

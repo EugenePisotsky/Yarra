@@ -1,5 +1,6 @@
 use crate::*;
 use backends::{Spatial, linear::Linear};
+
 use bevy::{
     core_pipeline::{schedule::Core3d, upscaling::upscaling as finish_camera},
     render::{
@@ -24,6 +25,7 @@ pub(crate) fn install(app: &mut App, bridge: Bridge) {
         .add_systems(Render, prepare.in_set(RenderSystems::PrepareBindGroups))
         .add_systems(Core3d, upscale.after(finish_camera));
 }
+
 #[derive(PartialEq, Eq)]
 struct Key(
     TextureId,
@@ -32,6 +34,7 @@ struct Key(
     TextureViewId,
     UpscaleMethod,
 );
+
 struct Prepared {
     key: Key,
     input: GpuImage,
@@ -40,12 +43,14 @@ struct Prepared {
     spatial: Option<Spatial>,
     status: UpscaleStatus,
 }
+
 #[derive(Resource)]
 struct State {
     linear: Linear,
     capabilities: UpscalingCapabilities,
     views: HashMap<Entity, Prepared>,
 }
+
 impl FromWorld for State {
     fn from_world(world: &mut World) -> Self {
         let device = world.resource::<RenderDevice>();
@@ -56,6 +61,7 @@ impl FromWorld for State {
         }
     }
 }
+
 fn prepare(
     mut state: ResMut<State>,
     views: Query<(Entity, &MainEntity, &UpscaleView), Without<temporal::TemporalView>>,
@@ -79,6 +85,7 @@ fn prepare(
             );
             continue;
         }
+
         let (Some(input), Some(output)) = (images.get(&view.input), images.get(&view.output))
         else {
             state.views.remove(&entity);
@@ -98,9 +105,11 @@ fn prepare(
             output.texture_view.id(),
             view.method,
         );
+
         if state.views.get(&entity).is_some_and(|p| p.key == key) {
             continue;
         }
+
         // The public output helper establishes this format contract, shared by all backends.
         if !valid_images(input, output) {
             state.views.remove(&entity);
@@ -114,18 +123,22 @@ fn prepare(
             );
             continue;
         }
+
         let input_size = UVec2::new(input.texture.width(), input.texture.height());
         let output_size = UVec2::new(output.texture.width(), output.texture.height());
         let (mut active, mut reason) = state.capabilities.select(view.method);
+
         if active == UpscaleMethod::MetalFxTemporal {
             active = UpscaleMethod::Linear;
             reason =
                 Some("Temporal requires a TemporalView with HDR, depth and motion inputs".into());
         }
+
         if input_size.cmpge(output_size).any() {
             active = UpscaleMethod::Linear;
             reason = Some("No enlargement requested".into());
         }
+
         let spatial = if active == UpscaleMethod::MetalFxSpatial {
             match Spatial::new(&device, input, output) {
                 Ok(s) => Some(s),
@@ -186,6 +199,7 @@ fn valid_images(input: &GpuImage, output: &GpuImage) -> bool {
             .and_then(|v| v.format)
             == Some(TextureFormat::Rgba8UnormSrgb)
 }
+
 fn upscale(
     view: ViewQuery<(
         &MainEntity,
@@ -198,16 +212,20 @@ fn upscale(
 ) {
     let entity = view.entity();
     let (main, request, temporal) = view.into_inner();
+
     if temporal.is_some() {
         return;
     }
+
     if request.is_none_or(|v| !v.enabled) {
         return;
     }
+
     let State { linear, views, .. } = &mut *state;
     let Some(prepared) = views.get_mut(&entity) else {
         return;
     };
+
     if let Some(spatial) = &mut prepared.spatial {
         match spatial.encode(ctx.render_device(), &prepared.input, &prepared.output) {
             Ok(buffers) => {
@@ -222,9 +240,11 @@ fn upscale(
             }
         }
     }
+
     if prepared.spatial.is_none() {
         linear.encode(ctx.command_encoder(), &prepared.bind, &prepared.output);
     }
+
     let mut messages = bridge.0.lock().unwrap();
     messages.statuses.insert(main.id(), prepared.status.clone());
 }

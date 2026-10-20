@@ -4,17 +4,21 @@ use yarra_gameplay::inventory::fixtures::*;
 use yarra_gameplay::{fixtures::*, *};
 
 type Result<T> = yarra_gameplay::Result<T>;
+
 const TALK: ConversationKey = ConversationKey {
     dialogue: GATE_DIALOGUE,
     participant: HERO,
     speaker: MERCHANT,
 };
+
 fn new(content: GameContent) -> GameSession {
     GameSession::new(ToolContent::new(content).unwrap(), state()).unwrap()
 }
+
 fn session() -> GameSession {
     new(content())
 }
+
 /// The fixture conversation with its one choice doing `actions`, always on offer.
 fn offering(actions: Vec<Action>) -> GameContent {
     let mut content = content();
@@ -27,6 +31,7 @@ fn offering(actions: Vec<Action>) -> GameContent {
     refresh_contracts(&mut content);
     content
 }
+
 /// Talks to the merchant and picks the choice, running its actions for the hero.
 fn pick(session: &mut GameSession) -> Result<CommandOutcome> {
     // A choice that was refused is still on offer; otherwise the conversation starts over.
@@ -35,6 +40,7 @@ fn pick(session: &mut GameSession) -> Result<CommandOutcome> {
         .conversations
         .get(&TALK)
         .is_some_and(|c| c.status == dialogue::RunStatus::Active);
+
     if !waiting {
         session.apply(Command::StartDialogue {
             bindings: Default::default(),
@@ -48,6 +54,7 @@ fn pick(session: &mut GameSession) -> Result<CommandOutcome> {
             expected,
         })?;
     }
+
     let expected = session.conversation_view(TALK)?.token;
     session.apply(Command::Choose {
         expected,
@@ -57,21 +64,25 @@ fn pick(session: &mut GameSession) -> Result<CommandOutcome> {
         choice: key("return-key"),
     })
 }
+
 /// Runs actions for the hero through a conversation choice.
 fn run(session: &mut GameSession, actions: Vec<Action>) -> Result<CommandOutcome> {
     let state = session.state().clone();
     *session = GameSession::new(ToolContent::new(offering(actions)).unwrap(), state).unwrap();
     pick(session)
 }
+
 fn stat(session: &GameSession, actor: ActorId, name: &str) -> i32 {
     session.stat(actor, &key(name)).unwrap()
 }
+
 fn rejected(result: Result<CommandOutcome>) -> Rejection {
     match result {
         Err(GameplayError::Rejected(rejection)) => rejection,
         other => panic!("expected a rejection, got {other:?}"),
     }
 }
+
 fn effect(name: &str, duration_ms: Option<u64>) -> Action {
     Action::ApplyEffect {
         of: Participant::Player,
@@ -79,9 +90,11 @@ fn effect(name: &str, duration_ms: Option<u64>) -> Action {
         duration_ms,
     }
 }
+
 fn award(amount: u64) -> Action {
     Action::AwardExperience { amount }
 }
+
 fn join(session: &mut GameSession, actor: ActorId) -> Result<CommandOutcome> {
     session.apply(Command::Party {
         actor,
@@ -92,6 +105,7 @@ fn join(session: &mut GameSession, actor: ActorId) -> Result<CommandOutcome> {
 #[test]
 fn stats_come_from_base_values_equipment_effects_and_the_rules_formula() {
     let mut session = session();
+
     // Level 1 with vitality 10: 40 + 10 * 5 + 1 * 10.
     assert_eq!(stat(&session, HERO, "max-health"), 100);
     assert_eq!(stat(&session, HERO, "health"), 50);
@@ -111,11 +125,13 @@ fn stats_come_from_base_values_equipment_effects_and_the_rules_formula() {
             item: sword,
         })
         .unwrap();
+
     // The sword adds to a primary stat, and the derived one follows it.
     assert_eq!(stat(&session, HERO, "strength"), 12);
     assert_eq!(stat(&session, HERO, "attack"), 12);
     run(&mut session, vec![effect("fortified", None)]).unwrap();
     assert_eq!(stat(&session, HERO, "attack"), 15);
+
     // Each change to a stat can be traced to where it comes from.
     let state = session.state();
     assert_eq!(
@@ -137,6 +153,7 @@ fn stats_come_from_base_values_equipment_effects_and_the_rules_formula() {
         })
         .unwrap();
     assert_eq!(stat(&session, HERO, "attack"), 13);
+
     // What the character is built of did not change.
     assert_eq!(
         session.state().actor(HERO).unwrap().base[&key("strength")],
@@ -163,6 +180,7 @@ fn effects_tick_and_end_in_order_of_time_and_only_their_bearers_are_looked_at() 
         .apply(Command::AdvanceTime { millis: 1000 })
         .unwrap();
     assert_eq!(stat(&session, HERO, "health"), 45);
+
     // One step across two ticks and both endings.
     let outcome = session
         .apply(Command::AdvanceTime { millis: 2500 })
@@ -180,6 +198,7 @@ fn effects_tick_and_end_in_order_of_time_and_only_their_bearers_are_looked_at() 
     assert_eq!(ended, ["fortified", "poisoned"]);
     assert!(session.state().actor(HERO).unwrap().effects.is_empty());
     assert!(session.state().timed.is_empty());
+
     // Applying an effect again starts it over instead of stacking it.
     run(&mut session, vec![effect("fortified", Some(1000))]).unwrap();
     session.apply(Command::AdvanceTime { millis: 900 }).unwrap();
@@ -211,6 +230,7 @@ fn a_step_of_time_carries_out_everything_due_in_it_however_much() {
         .unwrap();
     assert_eq!(session.state().time, GameTime(time.0 + 20_000));
     assert_eq!(stat(&session, HERO, "health"), 100);
+
     // Only something that takes no time at all could keep a step from ending, and the
     // rules refuse it.
     let mut content = content();
@@ -218,6 +238,7 @@ fn a_step_of_time_carries_out_everything_due_in_it_however_much() {
     let error = ToolContent::new(content).err().unwrap().to_string();
     assert!(error.contains("takes 1 ms"), "{error}");
 }
+
 #[test]
 fn a_conditional_action_does_one_thing_or_the_other() {
     let mut session = session();
@@ -230,6 +251,7 @@ fn a_conditional_action_does_one_thing_or_the_other() {
         then: vec![award(then)],
         otherwise: vec![award(otherwise)],
     };
+
     // The hero carries one key, not two.
     run(
         &mut session,
@@ -238,9 +260,11 @@ fn a_conditional_action_does_one_thing_or_the_other() {
     .unwrap();
     assert_eq!(session.state().party.experience, 15);
 }
+
 #[test]
 fn losing_the_last_of_the_life_resource_is_death() {
     let mut content = content();
+
     // A trigger hears of the death like any other event.
     content.game.world.triggers.add(TriggerDefinition {
         id: TriggerId::named("old_gate/mourn"),
@@ -272,6 +296,7 @@ fn losing_the_last_of_the_life_resource_is_death() {
         .unwrap();
     assert!(outcome.events.contains(&GameEvent::Died { actor: HERO }));
     assert_eq!(stat(&session, HERO, "health"), 0);
+
     // Nothing lingers on the dead, and the dead do nothing.
     assert!(session.state().actor(HERO).unwrap().effects.is_empty());
     assert!(session.state().timed.is_empty());
@@ -281,6 +306,7 @@ fn losing_the_last_of_the_life_resource_is_death() {
         item: potion,
     });
     assert_eq!(rejected(refused), Rejection::Dead(HERO));
+
     // The trigger listening for the death ran as part of the command that caused it.
     assert!(!session.world_work_pending());
     assert_eq!(
@@ -312,10 +338,12 @@ fn experience_is_shared_and_levels_grant_points_and_bonuses() {
     );
     let hero = session.state().actor(HERO).unwrap().clone();
     assert_eq!((hero.attribute_points, hero.learning_points), (4, 6));
+
     // Level 3 adds one vitality outright: 40 + 11 * 5 + 3 * 10. Health is not refilled.
     assert_eq!(hero.base[&key("vitality")], 11);
     assert_eq!(stat(&session, HERO, "max-health"), 125);
     assert_eq!(stat(&session, HERO, "health"), 50);
+
     // The merchant is not travelling with them; on joining he catches up.
     assert_eq!(session.state().actor(MERCHANT).unwrap().level, 1);
     join(&mut session, MERCHANT).unwrap();
@@ -342,15 +370,18 @@ fn experience_is_shared_and_levels_grant_points_and_bonuses() {
         rejected(spend(&mut session, MERCHANT, "strength")),
         Rejection::NotInParty(MERCHANT)
     );
+
     for _ in 0..3 {
         spend(&mut session, HERO, "wisdom").unwrap();
     }
+
     let before = session.state().clone();
     assert_eq!(
         rejected(spend(&mut session, HERO, "wisdom")),
         Rejection::NoAttributePoints
     );
     assert_eq!(session.state(), &before);
+
     // There is a highest level.
     run(&mut session, vec![award(1_000_000)]).unwrap();
     assert_eq!(session.state().actor(HERO).unwrap().level, 4);
@@ -396,10 +427,12 @@ fn a_trainer_teaches_what_the_class_allows_for_learning_points() {
         (hero.skill(&key("persuasion")), hero.learning_points),
         (2, 0)
     );
+
     // A skill rank can feed a derived stat: the formula adds two attack per rank.
     run(&mut session, vec![award(200), teach("swordsmanship")]).unwrap();
     assert_eq!(stat(&session, HERO, "attack"), 12);
     run(&mut session, vec![teach("swordsmanship")]).unwrap();
+
     // The adventurer's trainers stop at rank two of three.
     run(&mut session, vec![award(300)]).unwrap();
     assert_eq!(
@@ -415,9 +448,11 @@ fn a_trainer_teaches_what_the_class_allows_for_learning_points() {
     let mut content = offering(vec![award(100), teach("swordsmanship")]);
     content.game.actors.get_mut(&TRAVELLER).unwrap().class = key("scholar");
     let mut state = SessionState::empty(1);
+
     for id in [HERO, MERCHANT] {
         state.spawn(&content, TRAVELLER, id).unwrap();
     }
+
     state.party.members.insert(HERO);
     let mut scholar = GameSession::new(ToolContent::new(content).unwrap(), state).unwrap();
     assert!(matches!(
@@ -456,6 +491,7 @@ fn gold_is_paid_from_the_party_purse() {
             available: 70
         }
     );
+
     // The experience given before the payment failed is taken back with it.
     assert_eq!(session.state().wallets, before);
     assert_eq!(session.state().party.experience, 0);
@@ -466,13 +502,17 @@ fn the_party_holds_four_and_one_of_them_is_steered() {
     let content = content();
     let mut state = state();
     let extras: Vec<ActorId> = (1..=3u8).map(|n| ActorId([n; 16])).collect();
+
     for id in &extras {
         state.spawn(&content, TRAVELLER, *id).unwrap();
     }
+
     let mut session = GameSession::new(ToolContent::new(content).unwrap(), state).unwrap();
+
     for actor in [COMPANION, extras[0], extras[1]] {
         join(&mut session, actor).unwrap();
     }
+
     // Joining twice is not joining again.
     join(&mut session, COMPANION).unwrap();
     assert_eq!(session.state().party.members.len(), 4);
@@ -490,6 +530,7 @@ fn the_party_holds_four_and_one_of_them_is_steered() {
         rejected(session.apply(Command::Control { actor: MERCHANT })),
         Rejection::NotInParty(MERCHANT)
     );
+
     // The steered character cannot be sent away; anyone else can.
     let leave = |session: &mut GameSession, actor| {
         session.apply(Command::Party {
@@ -532,9 +573,11 @@ fn a_check_is_decided_by_the_rules_formula_and_reports_what_it_rolled() {
     assert!(rolls.len() == 1 && (1..=20).contains(&rolls[0]));
     assert_ne!(session.state().random, random);
     assert_eq!(session.state().party.experience, 1);
+
     // Out of reach for an untrained character with average wisdom: 20 at most.
     run(&mut session, vec![check(21)]).unwrap();
     assert_eq!(session.state().party.experience, 1);
+
     // Two ranks add four.
     run(&mut session, vec![award(99)]).unwrap();
     let persuasion = Action::Teach {
@@ -560,6 +603,7 @@ fn a_saved_character_is_brought_in_line_with_the_rules_or_refused_on_load() {
         change(state.actors.get_mut(&HERO).unwrap());
         GameSession::new(ToolContent::new(content.clone()).unwrap(), state)
     };
+
     // What follows from the rules is worked out again...
     let hero = &good.actors[&HERO];
     let restored = open(|a| {
@@ -579,6 +623,7 @@ fn a_saved_character_is_brought_in_line_with_the_rules_or_refused_on_load() {
     state.party.experience = 100;
     let restored = GameSession::new(ToolContent::new(content.clone()).unwrap(), state).unwrap();
     assert_eq!(restored.state().actors[&HERO].level, 2);
+
     // ...and what the rules cannot account for is refused.
     assert!(open(|a| a.level = 9).is_err());
     assert!(open(|a| a.class = key("paladin")).is_err());
@@ -701,6 +746,7 @@ mod unopened {
     const GUARD: ActorTemplateId = ActorTemplateId::named("armed_guard");
     const TRUNK: ObjectId = ObjectId::named("old_gate/trunk");
     const TRUNK_BAG: InventoryId = InventoryId::named("old_gate/trunk");
+
     fn armed() -> GameContent {
         let mut content = content();
         content.game.loot.add(LootTable {
@@ -734,22 +780,28 @@ mod unopened {
         });
         content
     }
+
     fn start(count: u8) -> (SessionState, Vec<ActorId>) {
         let content = armed();
         let mut state = state();
         let ids: Vec<ActorId> = (1..=count).map(|n| ActorId([n; 16])).collect();
+
         for id in &ids {
             state.spawn(&content, GUARD, *id).unwrap();
         }
+
         (state, ids)
     }
+
     fn open(state: SessionState) -> GameSession {
         GameSession::new(ToolContent::new(armed()).unwrap(), state).unwrap()
     }
+
     fn guards(count: u8) -> (GameSession, Vec<ActorId>) {
         let (state, ids) = start(count);
         (open(state), ids)
     }
+
     fn potions(session: &GameSession, actor: ActorId) -> u64 {
         let state = session.state();
         state.item_count(session.content(), actor, POTION).unwrap()
@@ -760,6 +812,7 @@ mod unopened {
         let (mut session, ids) = guards(3);
         let guard = ids[0];
         let before = session.state().inventories.len();
+
         // No inventory yet, but the sword the template wields already counts, and what the
         // inventory will hold can be asked.
         assert!(session.state().carried(guard).is_err());
@@ -777,6 +830,7 @@ mod unopened {
         let worn = state.actor(guard).unwrap().equipment[&key("hand")];
         assert_eq!(bag.entry(worn).unwrap().definition, SWORD);
         assert_eq!(stat(&session, guard, "strength"), 12);
+
         // Opening again changes nothing.
         let opened = session.state().clone();
         session
@@ -800,16 +854,20 @@ mod unopened {
         let found = |order: [usize; 3], trunk_first: bool| {
             let mut session = open(state.clone());
             let trunk = Command::World(WorldCommand::Open { object: TRUNK });
+
             if trunk_first {
                 session.apply(trunk.clone()).unwrap();
             }
+
             for index in order {
                 let actor = ids[index];
                 session.apply(Command::OpenInventory { actor }).unwrap();
             }
+
             if !trunk_first {
                 session.apply(trunk).unwrap();
             }
+
             let state = session.state();
             let list = |bag: &inventory::Inventory| -> Vec<(ItemDefinitionId, u32)> {
                 let entries = bag.entries.iter();
@@ -820,12 +878,14 @@ mod unopened {
                 .map(|id| list(state.carried(*id).unwrap()))
                 .collect();
             found.push(list(state.inventory(TRUNK_BAG).unwrap()));
+
             // Loot has its own stream: the one checks and abilities roll from is untouched.
             assert_eq!(state.random, self::state().random);
             found
         };
         let forwards = found([0, 1, 2], false);
         assert_eq!(found([2, 0, 1], true), forwards);
+
         // Four owners with the same table do not all find the same.
         let potions: std::collections::BTreeSet<u32> = forwards
             .iter()
@@ -879,6 +939,7 @@ mod unopened {
         let (mut session, _) = guards(0);
         assert!(session.state().inventory(TRUNK_BAG).is_err());
         let open = Command::World(WorldCommand::Open { object: TRUNK });
+
         // Shut and locked containers say which of the two they are.
         let contents = |session: &GameSession| {
             let refused = session.container_contents(TRUNK).unwrap_err();
@@ -901,9 +962,11 @@ mod unopened {
         session.apply(open.clone()).unwrap();
         let first = session.container_contents(TRUNK).unwrap().clone();
         assert!(first.entries.iter().any(|e| e.definition == POTION));
+
         // Emptied and opened again, it stays empty: it is filled once.
         let entries: Vec<(ItemId, u32)> =
             first.entries.iter().map(|e| (e.id, e.quantity)).collect();
+
         for (item, quantity) in entries {
             session
                 .apply(Command::Transfer {
@@ -914,6 +977,7 @@ mod unopened {
                 })
                 .unwrap();
         }
+
         session
             .apply(Command::World(WorldCommand::Close { object: TRUNK }))
             .unwrap();
@@ -925,6 +989,7 @@ mod unopened {
                 .entries
                 .is_empty()
         );
+
         // The save holds the opened inventory like any other.
         let saved = serde_json::to_string(session.state()).unwrap();
         let restored: SessionState = serde_json::from_str(&saved).unwrap();
@@ -936,6 +1001,7 @@ mod unopened {
 fn item_commands_cost_the_same_in_a_large_catalog() {
     let mut content = content();
     let template = content.items.items.values().next().unwrap().clone();
+
     // As many as a catalog may hold.
     for n in 0..9_997u32 {
         let mut item = template.clone();
@@ -944,9 +1010,11 @@ fn item_commands_cost_the_same_in_a_large_catalog() {
         item.id = ItemDefinitionId(id);
         content.items.items.add(item);
     }
+
     let mut session = GameSession::new(ToolContent::new(content).unwrap(), state()).unwrap();
     let potion = session.state().carried(HERO).unwrap().entries[0].id;
     let started = std::time::Instant::now();
+
     for _ in 0..3 {
         let use_item = Command::UseItem {
             actor: HERO,
@@ -954,8 +1022,10 @@ fn item_commands_cost_the_same_in_a_large_catalog() {
         };
         session.apply(use_item).unwrap();
     }
+
     let elapsed = started.elapsed();
     println!("three item commands against 10,000 item definitions: {elapsed:?}");
+
     // Checking the whole catalog on every item operation took about 3 ms per command in
     // this unoptimised build; with definitions found by bisection it is tens of microseconds.
     assert!(elapsed.as_millis() < 5, "{elapsed:?}");

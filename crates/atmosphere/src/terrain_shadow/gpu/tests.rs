@@ -1,6 +1,7 @@
 //! The GPU searches against the CPU reference (`terrain_shadow::reference`).
 use super::*;
 use crate::terrain_shadow::{TerrainRelief, reference};
+
 use bevy::render::{
     render_resource::{
         BindGroupDescriptor, BindGroupEntry, BindingResource, BufferInitDescriptor,
@@ -36,15 +37,18 @@ fn gpu_searches_match_the_cpu_reference() {
         let expected = reference::map(&relief, azimuth);
         let got = run(&relief, azimuth);
         let mut far = 0;
+
         for (i, (e, g)) in expected.iter().zip(&got).enumerate() {
             // Half floats: about 0.1% of the value.
             let close = |a: f32, b: f32, abs: f32| (a - b).abs() <= abs + 0.002 * a.abs();
             assert!(close(e[0], g[0], 0.01), "tangent at {i}: {e:?} vs {g:?}");
             assert!(close(e[1], g[1], 0.05), "height at {i}: {e:?} vs {g:?}");
             assert!(close(e[2], g[2], 0.004), "sky at {i}: {e:?} vs {g:?}");
+
             // Two nearly equal peaks may swap the distance.
             far += usize::from(!close(e[3], g[3], 4.0));
         }
+
         assert!(far * 200 <= got.len(), "{far} distances differ");
     }
 }
@@ -156,12 +160,14 @@ fn run(relief: &TerrainRelief, azimuth: Vec2) -> Vec<[f32; 4]> {
         mapped_at_creation: false,
     });
     let mut encoder = wgpu.create_command_encoder(&CommandEncoderDescriptor::default());
+
     for (pipeline, group) in [(&sky, &sky_group), (&horizon, &horizon_group)] {
         let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
         pass.set_pipeline(pipeline);
         pass.set_bind_group(0, group, &[]);
         pass.dispatch_workgroups(w.div_ceil(8), h.div_ceil(8), 1);
     }
+
     encoder.copy_texture_to_buffer(
         TexelCopyTextureInfo {
             texture: &map,

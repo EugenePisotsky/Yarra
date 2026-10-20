@@ -11,6 +11,7 @@
 //! publication of the drawn space is read again in place: the old ground stays drawn until each
 //! node's new version replaces it.
 mod preview;
+
 pub(crate) use preview::apply as apply_preview;
 pub use preview::{LiveTerrainPreview, TerrainPreviewRequest};
 
@@ -20,6 +21,7 @@ use super::{
         DatabaseRequest, NotSent, RequestId, TerrainQuery, TerrainReply, WorldDatabaseWorker,
     },
 };
+
 use bevy::{
     camera::{primitives::Aabb, visibility::NoAutoAabb},
     math::DVec3,
@@ -27,35 +29,46 @@ use bevy::{
     prelude::*,
     tasks::{AsyncComputeTaskPool, Task, block_on, poll_once},
 };
+
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
 };
+
 use terrain_render::clipmap::{
     self, ClipmapFrame, ClipmapLayout, ClipmapTerrainMaterial, ClipmapTextures, ClipmapUploads,
     LodRanges, NodeBlock, NodeWindow, Residency,
 };
+
 use world::{
     TerrainHeightfield, TerrainNode, TerrainNodeKey, TerrainPreviewProducts, WorldSpaceId,
 };
+
 use world_db::{EncodedTerrainNode, TerrainNodeDescriptor};
 
 /// Texels per side of a level: 32 nodes' blocks, of which 31 are a window and one its guard.
 const SIDE: u32 = if cfg!(target_os = "ios") { 512 } else { 1024 };
+
 /// The top level: 1 km nodes with 32 m cells, a 31 km window. Roots above it start at it.
 const TOP: u8 = 5;
+
 /// Level 0 draws within this many metres of the camera; every coarser level doubles it. At
 /// 1 m leaf spacing a triangle is 6–13 px across at 1440p wherever it is drawn. The window
 /// must hold a level's patches past its parent's range: (31 − 1) / 2 − HYSTERESIS nodes.
 const LEAF_RANGE: f64 = if cfg!(target_os = "ios") { 96.0 } else { 192.0 };
+
 /// Nodes are read ahead out to this multiple of the range that draws them, so the next finer
 /// level's normals are resident where the fragment shader asks for them.
 const PREFETCH: f64 = 2.0;
+
 /// A window follows the camera once it is more than this many nodes off its centre.
 const HYSTERESIS: i32 = 2;
+
 /// Nodes per database request, and requests in flight.
 const BATCH: usize = 48;
+
 const IN_FLIGHT: usize = 2;
+
 /// Samples per node side the clipmap is laid out for.
 const NODE_SAMPLES: u16 = 33;
 
@@ -145,9 +158,11 @@ impl ClipmapTerrain {
         if self.dropped.remove(&id) {
             return;
         }
+
         let Some(query) = self.pending.remove(&id) else {
             return;
         };
+
         match (query, reply) {
             (TerrainQuery::Roots(_), Ok(TerrainReply::Metadata(roots))) => self.adopt_roots(&roots),
             (TerrainQuery::Surfaces(_), Ok(TerrainReply::Surfaces(resources))) => {
@@ -158,14 +173,17 @@ impl ClipmapTerrain {
             }
             (TerrainQuery::Nodes(keys), Ok(TerrainReply::Nodes(nodes))) => {
                 let found: HashSet<_> = nodes.iter().map(|(n, _)| n.descriptor.key).collect();
+
                 for key in keys.into_iter().filter(|k| !found.contains(k)) {
                     self.requested.remove(&key);
                     self.absent.insert(key);
+
                     // A new publication without it.
                     if self.stale.remove(&key) {
                         self.evict(key);
                     }
                 }
+
                 self.received.push(nodes);
             }
             (_, Err(e)) => self.fail(e),
@@ -185,6 +203,7 @@ impl ClipmapTerrain {
             self.fail("the world space has no terrain".into());
             return;
         };
+
         if roots
             .iter()
             .any(|r| r.resolution.is_some_and(|n| n != NODE_SAMPLES))
@@ -192,6 +211,7 @@ impl ClipmapTerrain {
             self.fail(format!("terrain v2 needs {NODE_SAMPLES}-sample nodes"));
             return;
         }
+
         let layout = ClipmapLayout::new(
             SIDE,
             top + 1,
@@ -211,11 +231,13 @@ impl ClipmapTerrain {
                 })
             })
             .collect();
+
         if self.layout.is_some() {
             // A new publication: kept as it is, unless its extent changed.
             self.rebuild |= self.layout != Some(layout) || self.starts != starts;
             return;
         }
+
         self.starts = starts;
         self.space = roots.first().map(|r| r.key.space);
         self.residency = Residency::new(layout.levels);
@@ -255,25 +277,32 @@ impl ClipmapTerrain {
     /// Follows the eye; nodes leaving a window leave the clipmap.
     fn move_windows(&mut self, layout: &ClipmapLayout, xz: [f64; 2]) {
         let mut moved = false;
+
         for level in 0..layout.levels {
             let at = NodeWindow::node_at(layout, level, xz);
             let keep = self.window(level).is_some_and(|w| {
                 let c = w.centre();
                 (at[0] - c[0]).abs() <= HYSTERESIS && (at[1] - c[1]).abs() <= HYSTERESIS
             });
+
             if keep {
                 continue;
             }
+
             let window = NodeWindow::around(layout, level, at);
+
             match self.windows.get_mut(usize::from(level)) {
                 Some(w) => *w = window,
                 None => self.windows.push(window),
             }
+
             moved = true;
         }
+
         if !moved {
             return;
         }
+
         let gone: Vec<_> = self
             .resident
             .bounds
@@ -281,9 +310,11 @@ impl ClipmapTerrain {
             .copied()
             .filter(|&k| !self.in_window(k))
             .collect();
+
         for key in gone {
             self.evict(key);
         }
+
         let windows = self.windows.clone();
         let inside = |k: &TerrainNodeKey| {
             windows
@@ -297,6 +328,7 @@ impl ClipmapTerrain {
     fn evict(&mut self, key: TerrainNodeKey) {
         self.resident.bounds.remove(&key);
         self.resident.leaves.remove(&key);
+
         if let Some(layout) = &self.layout {
             self.residency.set(layout, key, false);
         }
@@ -327,15 +359,19 @@ impl ClipmapTerrain {
                 )
             })
             .collect();
+
         while !level_nodes.is_empty() {
             let mut next = Vec::new();
+
             for &(key, bounds) in &level_nodes {
                 let bounds = self.resident.bounds.get(&key).copied().unwrap_or(bounds);
                 let d = clipmap::distance(layout, key, bounds, eye);
                 out.push((d / layout.node_metres(key.level), key));
+
                 if key.level == 0 || d >= PREFETCH * ranges.range(key.level - 1) {
                     continue;
                 }
+
                 let Ok(Some(children)) = key.children() else {
                     continue;
                 };
@@ -346,8 +382,10 @@ impl ClipmapTerrain {
                         .map(|c| (c, bounds)),
                 );
             }
+
             level_nodes = next;
         }
+
         out.sort_by(|a, b| a.0.total_cmp(&b.0));
         out.into_iter().map(|(_, k)| k).collect()
     }
@@ -356,9 +394,11 @@ impl ClipmapTerrain {
     fn accept(&mut self, layout: &ClipmapLayout, uploads: &mut ClipmapUploads, mut node: Decoded) {
         self.requested.remove(&node.key);
         self.stale.remove(&node.key);
+
         if !self.in_window(node.key) {
             return;
         }
+
         if let Some(overlay) = self.overlay.clone() {
             if let Some(n) = overlay.nodes.get(&node.key) {
                 match relief(n, layout.intervals) {
@@ -378,14 +418,17 @@ impl ClipmapTerrain {
                 node.block.control = Some(control.to_vec());
             }
         }
+
         self.place(layout, uploads, node);
     }
 
     fn place(&mut self, layout: &ClipmapLayout, uploads: &mut ClipmapUploads, node: Decoded) {
         self.resident.bounds.insert(node.key, node.bounds);
+
         if let Some(leaf) = node.leaf {
             self.resident.leaves.insert(node.key, leaf);
         }
+
         self.residency.set(layout, node.key, true);
         uploads.push(node.block);
     }
@@ -394,6 +437,7 @@ impl ClipmapTerrain {
         for (_, (entity, _)) in self.patches.drain() {
             commands.entity(entity).despawn();
         }
+
         uploads.clear();
         *self = Self::default();
     }
@@ -489,12 +533,14 @@ fn relief(node: &TerrainNode, intervals: u32) -> Result<Decoded, String> {
         .heightfield
         .as_ref()
         .ok_or_else(|| format!("terrain node {:?} holds no heights", node.key))?;
+
     if u32::from(field.resolution) != intervals + 1 {
         return Err(format!(
             "terrain node {:?} is not {NODE_SAMPLES}²",
             node.key
         ));
     }
+
     let n = usize::from(field.resolution);
     let normals: Vec<_> = (0..n * n).map(|i| field.normal_at(i % n, i / n)).collect();
     Ok(Decoded {
@@ -531,12 +577,15 @@ fn follow_wear(
             &super::StreamedTerrainWear,
         ),
     > = HashMap::new();
+
     for (entity, source) in sources {
         let changed = source.is_changed();
         let source = Ref::into_inner(source);
+
         if source.key.space != space || source.key.lod != 0 || !window(source.key.cell) {
             continue;
         }
+
         if let Some(wear) = source
             .wear
             .as_ref()
@@ -545,7 +594,9 @@ fn follow_wear(
             pages.insert(source.key.cell, (entity, changed, wear, source));
         }
     }
+
     let n = clipmap::WEAR_WINDOW;
+
     for dz in -half..=half {
         for dx in -half..=half {
             let cell = world::CellCoord {
@@ -553,11 +604,13 @@ fn follow_wear(
                 z: at.z + dz,
             };
             let slot = (cell.x.rem_euclid(n) + n * cell.z.rem_euclid(n)) as usize;
+
             match pages.get(&cell) {
                 Some(&(entity, changed, wear, source)) => {
                     if changed || terrain.wear[slot] != Some((cell, entity)) {
                         uploads.push_wear(slot, wear);
                         terrain.wear[slot] = Some((cell, entity));
+
                         // The page's surfaces its roads wear bare to.
                         terrain.bare.extend(wear.worn.iter().flatten().filter_map(
                             |&(to, share)| {
@@ -589,6 +642,7 @@ fn ground(
             grass: grass.map_or([0.0; 4], |g| g.cover(s.surface.id.0).rgba()),
         })
         .collect();
+
     for l in &layers {
         info!(
             "terrain v2 surface {:>2} {:<18} grass cover {:.2}{}",
@@ -602,6 +656,7 @@ fn ground(
             }
         );
     }
+
     clipmap::ClipmapGround::new(
         asset_server,
         &resources.profile,
@@ -655,6 +710,7 @@ pub(super) fn update(
     };
     let identity = (catalog.generation_id().to_owned(), space);
     let changed = terrain.identity.as_ref() != Some(&identity);
+
     // Another space or cell size, a failed load or a new layout start over; a new publication
     // of the same space is read again in place.
     if terrain.rebuild
@@ -666,28 +722,35 @@ pub(super) fn update(
     {
         terrain.clear(&mut commands, &mut uploads);
     }
+
     if terrain.identity.as_ref() != Some(&identity) {
         if terrain.identity.is_some() {
             terrain.republish();
         }
+
         terrain.identity = Some(identity);
         terrain.cell_size = info.cell_size;
         terrain.started = Some(time.elapsed_secs_f64());
         terrain.wanted_roots = true;
         terrain.wanted_surfaces = true;
     }
+
     if terrain.wanted_roots && terrain.request(&worker, TerrainQuery::Roots(space)) {
         terrain.wanted_roots = false;
     }
+
     if terrain.wanted_surfaces && terrain.request(&worker, TerrainQuery::Surfaces(space)) {
         terrain.wanted_surfaces = false;
     }
+
     if terrain.failure.is_some() {
         return;
     }
+
     let (Some(layout), Some(ranges)) = (terrain.layout, terrain.ranges) else {
         return;
     };
+
     if terrain.gpu.is_none() {
         let Some(resources) = &terrain.surfaces else {
             return;
@@ -705,6 +768,7 @@ pub(super) fn update(
         terrain.gpu = Some(textures);
         terrain.mesh = Some(meshes.add(clipmap::patch_mesh(&layout)));
     }
+
     let Some((_, camera)) = camera.iter().find(|(c, _)| c.is_active) else {
         return;
     };
@@ -728,6 +792,7 @@ pub(super) fn update(
             }
             None => true,
         });
+
     for result in finished {
         match result {
             Ok(nodes) => {
@@ -738,7 +803,9 @@ pub(super) fn update(
             Err(e) => terrain.fail(e),
         }
     }
+
     let intervals = layout.intervals;
+
     for batch in std::mem::take(&mut terrain.received) {
         terrain
             .decoding
@@ -753,16 +820,19 @@ pub(super) fn update(
         .copied()
         .filter(|k| !terrain.resident.bounds.contains_key(k) || terrain.stale.contains(k))
         .collect();
+
     if !terrain.stale.is_empty() {
         let demanded: HashSet<_> = demand.iter().collect();
         missing.extend(terrain.stale.iter().filter(|k| !demanded.contains(k)));
     }
+
     terrain.stats.demand = demand.len();
     terrain.stats.missing = missing.len();
     let wanted: Vec<_> = missing
         .into_iter()
         .filter(|k| !terrain.requested.contains(k))
         .collect();
+
     for batch in wanted.chunks(BATCH) {
         if terrain.pending.len() >= IN_FLIGHT
             || !terrain.request(&worker, TerrainQuery::Nodes(batch.to_vec()))
@@ -783,16 +853,20 @@ pub(super) fn update(
     );
     let selected: HashMap<_, _> = patches.iter().map(|p| (p.key, p.bounds)).collect();
     let mut unselected = Vec::new();
+
     for (key, (entity, _)) in &terrain.patches {
         if !selected.contains_key(key) {
             unselected.push(*key);
             commands.entity(*entity).despawn();
         }
     }
+
     for key in unselected {
         terrain.patches.remove(&key);
     }
+
     let replace = terrain.placed != Some(origin.cell());
+
     if replace {
         terrain.placed = Some(origin.cell());
         for (&key, &(entity, _)) in &terrain.patches {
@@ -802,6 +876,7 @@ pub(super) fn update(
                 .insert((transform, GlobalTransform::from(transform)));
         }
     }
+
     let (mesh, material) = (
         terrain.mesh.clone().unwrap(),
         terrain.gpu.as_ref().unwrap().material.clone(),
@@ -810,6 +885,7 @@ pub(super) fn update(
     let aabb = |bounds: [f32; 2]| {
         Aabb::from_min_max(Vec3::new(0.0, bounds[0], 0.0), Vec3::new(n, bounds[1], n))
     };
+
     for patch in &patches {
         // An edit or a new publication may have moved a drawn patch's bounds.
         if let Some((entity, bounds)) = terrain.patches.get_mut(&patch.key) {
@@ -819,6 +895,7 @@ pub(super) fn update(
             }
             continue;
         }
+
         let transform = patch_transform(&layout, patch.key, offset);
         let entity = commands
             .spawn((
@@ -848,9 +925,11 @@ pub(super) fn update(
         info.cell_size,
     );
     let bare = std::mem::take(&mut terrain.bare);
+
     if let Some(gpu) = terrain.gpu.as_mut() {
         gpu.mark_bare_ground(bare, &mut buffers);
     }
+
     let cells = origin.cell();
     let samples = |c: i32| i64::from(c) * i64::from(layout.intervals);
     let wear = terrain.wear.map(|slot| slot.map(|(cell, _)| cell));
@@ -861,6 +940,7 @@ pub(super) fn update(
         residency: &terrain.residency,
         wear: &wear,
     });
+
     if !terrain.ready_logged && terrain.stats.missing == 0 && terrain.decoding.is_empty() {
         terrain.ready_logged = true;
         let seconds = terrain.started.map_or(0.0, |s| time.elapsed_secs_f64() - s);
@@ -1012,6 +1092,7 @@ mod tests {
         assert_eq!(ground(&terrain), Some(1.0));
         terrain.adopt_roots(&[root(space, 0)]);
         assert!(!terrain.rebuild, "the same extent keeps the clipmap");
+
         // A node the new publication lacks leaves the clipmap.
         terrain.pending.insert(10, TerrainQuery::Nodes(vec![key]));
         terrain.receive(10, Ok(TerrainReply::Nodes(vec![])));

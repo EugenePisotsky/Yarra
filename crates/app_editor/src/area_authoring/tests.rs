@@ -10,9 +10,11 @@ fn area(name: &str, points: &[[f64; 2]]) -> GameplayArea {
         height: None,
     }
 }
+
 fn yard() -> GameplayArea {
     area("yard", &[[0., 0.], [20., 0.], [20., 20.], [0., 20.]])
 }
+
 fn loaded(areas: Vec<GameplayArea>) -> SourceWorkingSets {
     let mut dense = SourceWorkingSets::default();
     dense.areas.pin(&GameplayAreasRecord {
@@ -28,11 +30,13 @@ fn a_drag_is_one_undo_step_that_survives_a_save() {
     let mut history = EditorHistory::default();
     let mut state = AreaToolState::default();
     assert_eq!(dense.dirty_count(), 0);
+
     for x in [21., 24., 30.] {
         let moved = with_area(dense.areas.areas(), 0, |area| area.points[1] = [x, 0.]);
         assert!(state.edit(&mut dense, moved));
         assert!(dense.gesture_active);
     }
+
     assert_eq!(history.undo_len(), 0);
     state.finish(&mut dense, &mut history, false);
     assert!(!dense.gesture_active);
@@ -97,6 +101,7 @@ fn unsaved_work_is_recovered_and_kept_through_a_conflict() {
     });
     assert_eq!(recovered.areas()[1], gate);
     assert_eq!(recovered.dirty_count(), 1);
+
     // Clean state has nothing to journal.
     assert!(loaded(vec![yard()]).areas.journal().is_none());
 
@@ -133,6 +138,7 @@ fn picking_prefers_the_nearest_corner_the_nearest_edge_and_the_inner_area() {
         Some(0)
     );
     assert_eq!(viewport::pick_edge(&corners, Vec2::new(96., 150.)), Some(3));
+
     // Edges to the unseen corner cannot be picked.
     assert_eq!(viewport::pick_edge(&corners, Vec2::new(200., 150.)), None);
 
@@ -160,6 +166,7 @@ fn frame(
 ) {
     viewport::act(state, dense, history, WorldSpaceId(1), gesture);
 }
+
 fn click(hit: [f64; 2]) -> viewport::Gesture {
     viewport::Gesture {
         hit: Some(hit),
@@ -181,11 +188,13 @@ fn a_shape_is_drawn_corner_by_corner_and_closed_into_a_named_area() {
         close: true,
         ..Default::default()
     };
+
     for point in [[0., 0.], [10., 0.]] {
         frame(&mut state, &mut dense, &mut history, click(point));
         // Two corners are not a shape yet.
         frame(&mut state, &mut dense, &mut history, enter);
     }
+
     // A misplaced third corner is taken back before the shape is closed.
     frame(&mut state, &mut dense, &mut history, click([99., 99.]));
     let back = viewport::Gesture {
@@ -210,6 +219,7 @@ fn a_shape_is_drawn_corner_by_corner_and_closed_into_a_named_area() {
         dense.areas.areas()[0],
         area("area-1", &[[0., 0.], [10., 0.], [10., 10.], [0., 10.]])
     );
+
     // Drawing a whole area is one step to undo.
     assert_eq!(history.undo_len(), 1);
     assert!(history.undo(&mut EditorObjectWorkingSet::default(), &mut dense));
@@ -221,6 +231,7 @@ fn corners_are_dragged_added_on_an_edge_and_removed() {
     let mut dense = loaded(vec![yard()]);
     let mut history = EditorHistory::default();
     let mut state = AreaToolState::default();
+
     // A click on the ground selects what is there; elsewhere it deselects.
     frame(&mut state, &mut dense, &mut history, click([5., 5.]));
     assert_eq!(state.selected.as_deref(), Some("yard"));
@@ -317,6 +328,7 @@ fn leaving_the_world_workspace_mid_gesture_ends_it_so_saving_can_go_on() {
     world.resource_scope(|world, mut state: Mut<AreaToolState>| {
         assert!(state.edit(&mut world.resource_mut::<SourceWorkingSets>(), moved));
     });
+
     // Still in the World workspace, the window ends it; nothing else does.
     app.update();
     assert!(app.world().resource::<SourceWorkingSets>().gesture_active);

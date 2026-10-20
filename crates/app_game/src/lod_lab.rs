@@ -14,10 +14,12 @@ mod panel;
 use crate::launch::{LaunchOptions, LodLabOptions};
 use crate::runtime_settings::RuntimeSettings;
 use bevy::prelude::*;
+
 use engine::{
     GameplaySystems, LabAsset, LabRepresentation, LabTree, PlayerControlled,
     StreamedTerrainSurface, WorldCatalog, WorldOrigin, WorldStartView, WorldSun, WorldViewCamera,
 };
+
 use std::{path::Path, sync::Arc};
 
 /// Ordering for systems that read the lab's view after it is applied.
@@ -61,13 +63,16 @@ pub(crate) fn install(app: &mut App) -> Result<(), String> {
         .as_ref()
         .map(|(key, ..)| LabAsset::find(&packs, key).map(Arc::new))
         .transpose()?;
+
     {
         let mut settings = app.world_mut().resource_mut::<RuntimeSettings>();
         settings.controls_locked = true;
+
         if options.capture.is_some() {
             settings.show_ui = false;
         }
     }
+
     let view = LabView {
         bearing: options.yaws[0].to_radians(),
         pitch: options.pitch.to_radians(),
@@ -95,17 +100,20 @@ pub(crate) fn install(app: &mut App) -> Result<(), String> {
                 .after(GameplaySystems::CameraFollow),
         )
         .add_systems(PostUpdate, freeze_wind.before(engine::TreeWindSystems));
+
     match capture {
         Some(dir) => capture::install(app, dir),
         None => {
             panel::install(app);
             app.add_systems(Update, (keys, blink).chain().before(LabCameraSet));
+
             if let Some(path) = app.world().resource::<LodLab>().options.screenshot.clone() {
                 app.insert_resource(Snapshot { path, frames: 0 })
                     .add_systems(Update, snapshot.after(LabCameraSet));
             }
         }
     }
+
     Ok(())
 }
 
@@ -121,16 +129,19 @@ fn stand_layout(count: usize, spacing: f32) -> Vec<(Vec2, f32, f32)> {
     };
     let rings = (count as f32).sqrt().ceil() as i32 + 2;
     let mut points = Vec::new();
+
     for q in -rings..=rings {
         for r in -rings..=rings {
             if (q, r) == (0, 0) {
                 continue;
             }
+
             let x = spacing * (q as f32 + r as f32 * 0.5);
             let z = spacing * r as f32 * 3f32.sqrt() * 0.5;
             points.push(Vec2::new(x, z));
         }
     }
+
     points.sort_by(|a, b| a.length().total_cmp(&b.length()));
     points
         .into_iter()
@@ -161,6 +172,7 @@ fn place(
     if lab.tree.is_some() {
         return;
     }
+
     let (Some(view), Some(space)) = (start.0.as_ref(), origin.space()) else {
         return;
     };
@@ -173,6 +185,7 @@ fn place(
         (f64::from(view.position[2]) - offset[1]) as f32,
     );
     let mut trees = vec![(focus, 0.0, lab.options.scale, lab.subject.clone())];
+
     if let (Some(stand), Some((_, count, spacing))) = (&lab.stand, &lab.options.stand) {
         trees.extend(
             stand_layout(*count, *spacing)
@@ -180,6 +193,7 @@ fn place(
                 .map(|(p, yaw, scale)| (focus + p, yaw, scale, stand.clone())),
         );
     }
+
     let heights: Option<Vec<f32>> = trees
         .iter()
         .map(|(p, ..)| {
@@ -189,9 +203,11 @@ fn place(
         .collect();
     let Some(heights) = heights else {
         let since = *lab.waiting_since.get_or_insert(time.elapsed_secs());
+
         if time.elapsed_secs() - since > 60.0 {
             panic!("LOD lab: the ground under the trees never became resident");
         }
+
         return;
     };
     let mut placed = trees
@@ -303,24 +319,31 @@ fn keys(
     };
     let dt = time.delta_secs();
     let mut view = lab.view;
+
     if input.pressed(KeyCode::ArrowUp) {
         view.distance /= 1.0 + dt * 0.8;
     }
+
     if input.pressed(KeyCode::ArrowDown) {
         view.distance *= 1.0 + dt * 0.8;
     }
+
     if input.pressed(KeyCode::ArrowLeft) {
         view.bearing -= dt;
     }
+
     if input.pressed(KeyCode::ArrowRight) {
         view.bearing += dt;
     }
+
     if input.pressed(KeyCode::PageUp) {
         view.pitch = (view.pitch + dt * 0.5).min(1.4);
     }
+
     if input.pressed(KeyCode::PageDown) {
         view.pitch = (view.pitch - dt * 0.5).max(-0.2);
     }
+
     if input.just_pressed(KeyCode::KeyF) {
         let next = switches(tree)
             .into_iter()
@@ -330,6 +353,7 @@ fn keys(
             view.distance = switch;
         }
     }
+
     view.distance = view.distance.clamp(2.0, 4000.0);
     lab.view = view;
     let digits = [
@@ -344,27 +368,35 @@ fn keys(
         KeyCode::Digit9,
     ];
     let mut chosen = None;
+
     if input.just_pressed(KeyCode::Digit0) {
         chosen = Some(LabRepresentation::Auto);
     }
+
     for (lod, key) in digits.iter().enumerate() {
         if input.just_pressed(*key) && lod < tree.asset.meshes() {
             chosen = Some(LabRepresentation::Mesh(lod));
         }
     }
+
     if input.just_pressed(KeyCode::KeyI) && tree.asset.impostor().is_some() {
         chosen = Some(LabRepresentation::Impostor);
     }
+
     if input.just_pressed(KeyCode::KeyH) {
         chosen = Some(LabRepresentation::Hidden);
     }
+
     if let Some(chosen) = chosen {
         lab.blink = None;
+
         if chosen != LabRepresentation::Auto && chosen != lab.forced[1] {
             lab.forced = [lab.forced[1], chosen];
         }
+
         representation.set_if_neq(chosen);
     }
+
     if input.just_pressed(KeyCode::KeyB) {
         lab.blink = match lab.blink {
             Some(_) => None,
@@ -385,9 +417,11 @@ fn blink(
     let Some(timer) = lab.blink.as_mut() else {
         return;
     };
+
     if !timer.tick(time.delta()).just_finished() {
         return;
     }
+
     if let Ok(mut representation) = trees.get_mut(entity) {
         let next = if *representation == forced[1] {
             forced[0]
@@ -414,13 +448,16 @@ fn snapshot(
     if trees.is_empty() || !trees.iter().all(|t| t.ready) {
         return;
     }
+
     snapshot.frames += 1;
+
     if snapshot.frames == 240 {
         use bevy::render::view::screenshot::{Screenshot, save_to_disk};
         commands
             .spawn(Screenshot::primary_window())
             .observe(save_to_disk(snapshot.path.clone()));
     }
+
     if snapshot.frames == 300 {
         exit.write(AppExit::Success);
     }
@@ -434,11 +471,13 @@ mod tests {
     fn stand_layout_is_nearest_first_and_leaves_the_centre_free() {
         let layout = stand_layout(24, 6.0);
         assert_eq!(layout.len(), 24);
+
         for (p, yaw, scale) in &layout {
             assert!(p.length() >= 6.0 * 0.6, "{p:?} crowds the tree under study");
             assert!((0.0..std::f32::consts::TAU).contains(yaw));
             assert!((0.9..=1.1).contains(scale));
         }
+
         assert_eq!(layout, stand_layout(24, 6.0));
     }
 

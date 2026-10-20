@@ -30,12 +30,14 @@ impl EncodedPage {
                 decoder
                     .take(MAX_DECODED_PAGE_BYTES + 1)
                     .read_to_end(&mut bytes)?;
+
                 if bytes.len() as u64 > MAX_DECODED_PAGE_BYTES {
                     return Err(WorldDbError::PageTooLarge {
                         actual: bytes.len() as u64,
                         maximum: MAX_DECODED_PAGE_BYTES,
                     });
                 }
+
                 bytes
             }
         };
@@ -46,11 +48,15 @@ impl EncodedPage {
                 actual: bytes.len() as u64,
             });
         }
+
         let actual_checksum = *blake3::hash(&bytes).as_bytes();
+
         if actual_checksum != self.checksum {
             return Err(WorldDbError::ChecksumMismatch(self.key));
         }
+
         let payload = decode_page_payload(&bytes)?;
+
         if payload.domain() != self.key.domain {
             return Err(WorldDbError::DomainMismatch {
                 expected: self.key.domain,

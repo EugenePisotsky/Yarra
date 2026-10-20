@@ -15,6 +15,7 @@ use super::wind::WindBuffer;
 use crate::object_lod::{IMPOSTOR_HANDOFF_METRES, LodProjection};
 use crate::{WorldCatalog, WorldOrigin};
 use atmosphere::environment::{EnvironmentAssets, EnvironmentExtension, EnvironmentMaterial};
+
 use bevy::{
     asset::{AssetLoader, LoadContext, RenderAssetUsages, io::Reader},
     camera::{primitives::Aabb, visibility::NoAutoAabb},
@@ -39,10 +40,12 @@ use bevy::{
     },
     shader::ShaderRef,
 };
+
 use serde::Deserialize;
 use std::{collections::HashMap, sync::Arc};
 
 const SHADER: &str = "shaders/tree_impostor.wesl";
+
 /// Per-vertex instance data: yaw, uniform scale, switch (height over threshold) and the
 /// quad corner (0-5) plus eight times the instance's index within the batch.
 const ATTRIBUTE_INSTANCE: MeshVertexAttribute = MeshVertexAttribute::new(
@@ -50,23 +53,28 @@ const ATTRIBUTE_INSTANCE: MeshVertexAttribute = MeshVertexAttribute::new(
     0x5952_5241_494d_0001,
     VertexFormat::Float32x4,
 );
+
 const INSTANCE_LOCATION: u32 = 10;
 
 pub(crate) struct TreeImpostorPlugin;
+
 impl Plugin for TreeImpostorPlugin {
     fn build(&self, app: &mut App) {
         // Headless LOD tests run without assets or rendering; there is nothing to draw.
         if !app.world().contains_resource::<AssetServer>() {
             return;
         }
+
         app.init_asset::<ImpostorDescriptor>()
             .init_asset_loader::<ImpostorLoader>()
             .init_resource::<ImpostorMaterials>()
             .init_resource::<ImpostorFades>()
             .add_observer(release_slots);
+
         if app.get_sub_app(bevy::render::RenderApp).is_none() {
             return;
         }
+
         app.add_plugins(MaterialPlugin::<ImpostorMaterial>::default())
             .add_systems(
                 PostUpdate,
@@ -117,6 +125,7 @@ pub struct ImpostorCrown {
     /// Share of the crown's silhouette that foliage covers.
     pub opacity: f32,
 }
+
 impl ImpostorCrown {
     fn valid(&self) -> bool {
         [
@@ -166,10 +175,12 @@ struct DescriptorFile {
 
 #[derive(Default, TypePath)]
 struct ImpostorLoader;
+
 impl AssetLoader for ImpostorLoader {
     type Asset = ImpostorDescriptor;
     type Settings = ();
     type Error = std::io::Error;
+
     async fn load(
         &self,
         reader: &mut dyn Reader,
@@ -182,6 +193,7 @@ impl AssetLoader for ImpostorLoader {
             |message: String| std::io::Error::new(std::io::ErrorKind::InvalidData, message);
         let file: DescriptorFile =
             serde_json::from_slice(&bytes).map_err(|e| invalid(e.to_string()))?;
+
         if file.version != 3
             || !(2..=32).contains(&file.views)
             || file.cell == 0
@@ -202,6 +214,7 @@ impl AssetLoader for ImpostorLoader {
                 "invalid impostor descriptor (version 3, 2-32 views, a view's size, positive radius, crop within a view, 0.5 cut-out, wind)".into(),
             ));
         }
+
         let c = &file.crown;
         let crown = ImpostorCrown {
             centre: Vec2::from(c.centre),
@@ -210,9 +223,11 @@ impl AssetLoader for ImpostorLoader {
             radius: c.radius,
             opacity: c.opacity,
         };
+
         if !crown.valid() {
             return Err(invalid("invalid impostor crown".into()));
         }
+
         let folder = context
             .path()
             .path()
@@ -239,6 +254,7 @@ impl AssetLoader for ImpostorLoader {
                 .load(folder.join(file.normal)),
         })
     }
+
     fn extensions(&self) -> &[&str] {
         &["impostor.json"]
     }
@@ -327,6 +343,7 @@ pub(crate) struct ImpostorKey {
     /// batch mesh; only that path specializes with it.
     pub(crate) instanced: bool,
 }
+
 impl From<&ImpostorExtension> for ImpostorKey {
     fn from(_: &ImpostorExtension) -> Self {
         Self { instanced: false }
@@ -335,6 +352,7 @@ impl From<&ImpostorExtension> for ImpostorKey {
 
 /// Instances whose fades the buffer holds; beyond it, new batches draw without fades.
 const FADE_CAPACITY: u32 = 1 << 18;
+
 /// The mesh tag of a batch that got no slots.
 const NO_SLOTS: u32 = u32::MAX;
 
@@ -382,11 +400,13 @@ impl ImpostorFades {
     fn allocate(&mut self, count: u32) -> Option<u32> {
         let i = self.free.iter().position(|(s, e)| e - s >= count)?;
         let (start, end) = self.free[i];
+
         if end - start == count {
             self.free.remove(i);
         } else {
             self.free[i].0 += count;
         }
+
         Some(start)
     }
 
@@ -394,15 +414,18 @@ impl ImpostorFades {
         for slot in base..base + count {
             self.set(slot, None);
         }
+
         self.free.push((base, base + count));
         self.free.sort_unstable();
         let mut merged: Vec<(u32, u32)> = Vec::with_capacity(self.free.len());
+
         for (s, e) in self.free.drain(..) {
             match merged.last_mut() {
                 Some(last) if last.1 == s => last.1 = e,
                 _ => merged.push((s, e)),
             }
         }
+
         self.free = merged;
     }
 
@@ -426,6 +449,7 @@ impl ImpostorFades {
             return;
         };
         let new = level.map_or(0, |l| (64 + l.clamp(-16, 16)) as u32);
+
         if *value != new {
             *value = new;
             let i = slot as usize;
@@ -453,11 +477,13 @@ fn release_slots(
     let Ok(slots) = slots.get(removed.entity) else {
         return;
     };
+
     for (i, key) in slots.keys.iter().enumerate() {
         if fades.by_position.get(key) == Some(&(slots.base + i as u32)) {
             fades.by_position.remove(key);
         }
     }
+
     fades.release(slots.base, slots.count);
     fades.generation += 1;
 }
@@ -503,6 +529,7 @@ impl MaterialExtension for ImpostorExtension {
     fn enable_prepass() -> bool {
         false
     }
+
     fn enable_shadows() -> bool {
         false
     }
@@ -510,9 +537,11 @@ impl MaterialExtension for ImpostorExtension {
     fn vertex_shader() -> ShaderRef {
         SHADER.into()
     }
+
     fn fragment_shader() -> ShaderRef {
         SHADER.into()
     }
+
     fn specialize(
         _pipeline: &MaterialExtensionPipeline,
         descriptor: &mut RenderPipelineDescriptor,
@@ -535,15 +564,19 @@ impl MaterialExtension for ImpostorExtension {
                 buffer.attributes.extend(attributes.attributes);
             }
         }
+
         // Quads always face the camera; lit with the trees' crown shading.
         descriptor.primitive.cull_mode = None;
+
         if let Some(fragment) = descriptor.fragment.as_mut() {
             fragment.shader_defs.push("TREE_CROWN_SHADING".into());
+
             // Impostors carry their mesh's crown occlusion: linear sky visibility since every
             // impostor-baked tree exports crown_sky_v2.
             fragment.shader_defs.push("TREE_CROWN_SKY".into());
             fragment.shader_defs.push("IMPOSTOR_SELF_SHADOW".into());
         }
+
         Ok(())
     }
 }
@@ -639,15 +672,18 @@ fn follow_projection(
         projection.orthographic(),
         projection.output_scale(),
     );
+
     if ppm == cache.pixels_per_metre
         && orthographic == cache.orthographic
         && output_scale == cache.output_scale
     {
         return;
     }
+
     cache.pixels_per_metre = ppm;
     cache.orthographic = orthographic;
     cache.output_scale = output_scale;
+
     for handle in cache.by_descriptor.values() {
         if let Some(mut material) = materials.get_mut(handle) {
             let params = &mut material.extension.params;
@@ -682,6 +718,7 @@ fn complete_batches(
         return;
     };
     let fade_buffer = fades.buffer(&device);
+
     for (entity, batch, transform) in &batches {
         match server.recursive_dependency_load_state(&batch.descriptor) {
             bevy::asset::RecursiveDependencyLoadState::Loaded => {}
@@ -695,14 +732,17 @@ fn complete_batches(
             }
             _ => continue,
         }
+
         let Some(descriptor) = descriptors.get(&batch.descriptor) else {
             continue;
         };
+
         if gpu_trees.as_ref().is_some_and(|trees| trees.enabled) {
             // The GPU trees draw it ([`super::gpu`]); the batch still feeds forest shadows.
             commands.entity(entity).insert(ImpostorBatchDone);
             continue;
         }
+
         let material = cache.get_or_add(
             &mut materials,
             &batch.descriptor,
@@ -714,11 +754,13 @@ fn complete_batches(
                 handoff: IMPOSTOR_HANDOFF_METRES,
             },
         );
+
         // Register every instance's slot by world position, for its object's mesh LODs.
         let count = batch.instances.len() as u32;
         let base = match fades.allocate(count) {
             Some(base) => {
                 let mut keys = Vec::with_capacity(batch.instances.len());
+
                 for (i, instance) in batch.instances.iter().enumerate() {
                     let render = transform.translation() + instance.translation;
                     let key = origin
@@ -729,6 +771,7 @@ fn complete_batches(
                     fades.by_position.insert(key, base + i as u32);
                     keys.push(key);
                 }
+
                 commands
                     .entity(entity)
                     .insert(ImpostorSlots { base, count, keys });
@@ -756,6 +799,7 @@ fn complete_batches(
 /// Quad vertices per instance: bottom, middle and top rows of two, so the quad bends along
 /// its height as a trunk does in the wind, not just shears.
 const QUAD_VERTICES: usize = 6;
+
 /// The farthest a point moves in the wind, as a share of its height (the shader's lean is
 /// clamped to 0.8 rad, which moves a point on the bent stem at most 0.39 of its height).
 const WIND_REACH: f32 = 0.4;
@@ -789,8 +833,10 @@ fn batch_mesh(instances: &[ImpostorInstance], descriptor: &ImpostorDescriptor) -
     let mut indices = Vec::with_capacity(instances.len() * 12);
     let (mut lo, mut hi) = (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY));
     let reach = quad_reach(descriptor);
+
     for (i, instance) in instances.iter().enumerate() {
         let base = (i * QUAD_VERTICES) as u32;
+
         for corner in 0..QUAD_VERTICES {
             positions.push(instance.translation.to_array());
             // The corner, and the instance within the batch (its fade slot after the batch's).
@@ -801,14 +847,17 @@ fn batch_mesh(instances: &[ImpostorInstance], descriptor: &ImpostorDescriptor) -
                 (corner + 8 * i) as f32,
             ]);
         }
+
         // Corners 0-1 bottom, 2-3 middle, 4-5 top; even ones on the left.
         for row in [base, base + 2] {
             indices.extend([row, row + 3, row + 1, row, row + 2, row + 3]);
         }
+
         let r = Vec3::splat(reach * instance.scale);
         lo = lo.min(instance.translation - r);
         hi = hi.max(instance.translation + r);
     }
+
     let mut mesh = Mesh::new(
         PrimitiveTopology::TriangleList,
         RenderAssetUsages::RENDER_WORLD,

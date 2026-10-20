@@ -2,6 +2,7 @@ use super::DialogueContract;
 use game_types::*;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ScopeSelector {
     Playthrough,
@@ -9,12 +10,14 @@ pub enum ScopeSelector {
     Speaker,
     Interaction,
 }
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum Scope {
     Playthrough,
     Actor(ActorId),
     Interaction { player: ActorId, speaker: ActorId },
 }
+
 impl ScopeSelector {
     pub fn resolve(self, player: ActorId, speaker: ActorId) -> Scope {
         match self {
@@ -24,6 +27,7 @@ impl ScopeSelector {
             Self::Interaction => Scope::Interaction { player, speaker },
         }
     }
+
     pub fn accepts(self, scope: Scope) -> bool {
         matches!(
             (self, scope),
@@ -33,6 +37,7 @@ impl ScopeSelector {
         )
     }
 }
+
 impl Scope {
     pub fn validate(self) -> Result<()> {
         if let Self::Interaction { player, speaker } = self {
@@ -52,12 +57,14 @@ impl Scope {
         }
     }
 }
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RepeatPolicy {
     Always,
     OnceCompleted,
     Cooldown { millis: u64 },
 }
+
 impl RepeatPolicy {
     pub fn validate(self) -> Result<()> {
         if let Self::Cooldown { millis } = self {
@@ -68,6 +75,7 @@ impl RepeatPolicy {
         }
         Ok(())
     }
+
     pub fn eligible(self, history: &History, now: GameTime) -> bool {
         match self {
             Self::Always => true,
@@ -78,11 +86,13 @@ impl RepeatPolicy {
         }
     }
 }
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct HistoryKey {
     pub dialogue: DialogueId,
     pub scope: Scope,
 }
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum HistoryEvent {
     Started,
@@ -91,6 +101,7 @@ pub enum HistoryEvent {
     /// A line acknowledged or a choice picked.
     Node(Key),
 }
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct History {
@@ -102,6 +113,7 @@ pub struct History {
     #[serde(deserialize_with = "game_types::deserialize_unique_map")]
     pub nodes: BTreeMap<Key, u64>,
 }
+
 impl History {
     pub fn empty(key: HistoryKey) -> Self {
         Self {
@@ -113,6 +125,7 @@ impl History {
             nodes: BTreeMap::new(),
         }
     }
+
     pub fn count(&self, event: &HistoryEvent) -> u64 {
         match event {
             HistoryEvent::Started => self.started,
@@ -121,11 +134,13 @@ impl History {
             HistoryEvent::Node(id) => self.nodes.get(id).copied().unwrap_or(0),
         }
     }
+
     pub fn record(&mut self, event: &HistoryEvent, time: GameTime) -> Result<()> {
         let count = self
             .count(event)
             .checked_add(1)
             .ok_or_else(|| Invalid("dialogue history overflow".into()))?;
+
         match event {
             HistoryEvent::Started => self.started = count,
             HistoryEvent::Completed => self.completed = count,
@@ -134,11 +149,14 @@ impl History {
                 self.nodes.insert(id.clone(), count);
             }
         }
+
         if matches!(event, HistoryEvent::Started) {
             self.last_started = Some(time);
         }
+
         Ok(())
     }
+
     pub fn validate(&self, contract: &DialogueContract, now: GameTime) -> Result<()> {
         self.key.scope.validate()?;
         require(
@@ -154,12 +172,14 @@ impl History {
                 && self.last_started.is_none_or(|t| t <= now),
             "invalid history time",
         )?;
+
         for (key, count) in &self.nodes {
             require(
                 *count > 0 && contract.nodes.contains(key),
                 "invalid node history",
             )?;
         }
+
         require(
             self.started > 0 || self.nodes.is_empty(),
             "unstarted history has events",

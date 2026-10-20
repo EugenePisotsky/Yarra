@@ -110,12 +110,14 @@ pub(crate) struct ReproOptions {
 impl LaunchOptions {
     pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Self, String> {
         let args = Args::collect(args)?;
+
         if args.has("--help") {
             return Ok(Self {
                 help: true,
                 ..default()
             });
         }
+
         let diagnostics = args.choice(
             "--diagnostics",
             "full",
@@ -127,12 +129,15 @@ impl LaunchOptions {
         )?;
         args.check_needs(diagnostics)?;
         let mode = RunMode::of(&args)?;
+
         if args.has("--gpu-timing-off") && args.has("--gpu-timing-detail") {
             return Err("GPU timing off conflicts with detailed GPU timing".into());
         }
+
         if args.has("--trace-camera-input") && !cfg!(target_os = "macos") {
             return Err("Camera input tracing requires macOS".into());
         }
+
         let resolution_scale = resolution_scale(&args)?;
         let upscaler = args.choice(
             "--upscaler",
@@ -148,18 +153,22 @@ impl LaunchOptions {
             ],
         )?;
         let profile = crate::profile::ProfileSettings::parse(&args, resolution_scale)?;
+
         if profile.is_some() && args.has("--fps") && !args.has("--profile-native-pacing") {
             return Err(
                 "Use --profile-fps for a profile, or --profile-native-pacing to preserve --fps"
                     .into(),
             );
         }
+
         if args.has("--profile-temporal-bypass")
             && upscaler != upscaling::UpscaleMethod::MetalFxTemporal
         {
             return Err("--profile-temporal-bypass requires --upscaler metalfx-temporal".into());
         }
+
         let repro = ReproOptions::parse(&args)?;
+
         // Measurements and regressions must not change weather or time unless asked explicitly.
         let measured = mode != RunMode::Play || args.has("--metal-capture");
         Ok(Self {
@@ -234,6 +243,7 @@ impl RunMode {
         .filter(|(flag, _)| args.has(flag))
         .collect();
         let profile = args.has("--profile-seconds") || args.has("--profile-diagnostic");
+
         match owners.as_slice() {
             [] if profile => Ok(Self::Profile),
             [] => Ok(Self::Play),
@@ -244,11 +254,13 @@ impl RunMode {
                         "{flag} holds the camera and ends the run; it cannot share a profile"
                     ));
                 }
+
                 if args.has("--metal-capture") {
                     return Err(format!(
                         "{flag} holds the camera and ends the run; it cannot share a Metal capture"
                     ));
                 }
+
                 Ok(*mode)
             }
             [(first, _), (second, _), ..] => Err(format!(
@@ -323,18 +335,23 @@ fn metal_capture(args: &Args) -> Result<Option<PathBuf>, String> {
     let Some(capture) = args.path("--metal-capture") else {
         return Ok(None);
     };
+
     if !cfg!(target_vendor = "apple") {
         return Err("Metal capture requires an Apple device".into());
     }
+
     if capture.extension().and_then(|s| s.to_str()) != Some("gputrace") {
         return Err("Metal capture requires a .gputrace path".into());
     }
+
     if !(capture.is_absolute() || cfg!(target_os = "ios") && capture.components().count() == 1) {
         return Err("Metal capture requires an absolute path (or a plain filename on iOS)".into());
     }
+
     if capture.is_absolute() && capture.exists() {
         return Err("Metal capture output already exists".into());
     }
+
     Ok(Some(capture))
 }
 
@@ -342,9 +359,11 @@ fn look_capture(args: &Args) -> Result<Option<crate::look_capture::LookCaptureOp
     let Some(dir) = args.path("--look-capture") else {
         return Ok(None);
     };
+
     if !args.has("--start-view") {
         return Err("--look-capture shows the --start-view".into());
     }
+
     Ok(Some(crate::look_capture::LookCaptureOptions {
         dir,
         variants: crate::look_capture::parse_variants(
@@ -361,9 +380,11 @@ impl ReproOptions {
             return Ok(None);
         };
         let route = crate::repro::Route::parse(name)?;
+
         if route.needs_start_view() && !args.has("--start-view") {
             return Err(format!("{name} requires --start-view"));
         }
+
         let frames = args
             .has("--render-frames")
             .then(|| args.number("--render-frames", 0, 900..=u32::MAX))
@@ -377,12 +398,14 @@ impl ReproOptions {
                     .map_err(|_| "Snapshot frames must be comma-separated integers")
             })
             .collect::<Result<Vec<_>, _>>()?;
+
         if snapshot_frames
             .iter()
             .any(|&n| n < 300 || frames.is_some_and(|end| n >= end))
         {
             return Err("Snapshot frames must follow warmup (>=300) and precede exit".into());
         }
+
         Ok(Some(Self {
             route,
             prepass: args.has("--render-prepass"),
@@ -410,21 +433,26 @@ impl LodLabOptions {
         let Some(asset) = args.value("--lod-lab")? else {
             return Ok(None);
         };
+
         if !args.has("--start-view") {
             return Err("--lod-lab places the tree at the --start-view focus".into());
         }
+
         if args.has("--lod-lab-capture") && args.has("--lod-lab-screenshot") {
             return Err(
                 "--lod-lab-screenshot shows the interactive lab; drop --lod-lab-capture".into(),
             );
         }
+
         let distances = args.list(
             "--lod-lab-distances",
             &[10., 25., 50., 100., 200., 400., 800.],
         )?;
+
         if distances.iter().any(|d| !(2.0..=4000.0).contains(d)) {
             return Err("--lod-lab-distances must lie within 2..4000 metres".into());
         }
+
         Ok(Some(Self {
             asset: asset.to_owned(),
             stand: args

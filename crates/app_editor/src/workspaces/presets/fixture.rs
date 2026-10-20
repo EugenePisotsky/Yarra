@@ -6,6 +6,7 @@ use vegetation::{VegetationCatalog, VegetationFieldPage, VegetationScene, Vegeta
 use world::{CellCoord, TerrainSurfaceId, WorldSpaceId};
 
 pub(super) const SEED: u32 = 0x50a7_2026;
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(super) enum Footprint {
     Full,
@@ -13,6 +14,7 @@ pub(super) enum Footprint {
     Patch,
     Hole,
 }
+
 impl Footprint {
     pub(super) fn label(self) -> &'static str {
         match self {
@@ -21,6 +23,7 @@ impl Footprint {
             Self::Hole => "Patch with hole",
         }
     }
+
     fn sample(self, x: f64, z: f64, size: f64) -> u8 {
         let radius = ((x - size / 2.0).powi(2) + (z - size / 2.0).powi(2)).sqrt() / size;
         let outer = ((0.44 - radius) / 0.09).clamp(0.0, 1.0);
@@ -32,6 +35,7 @@ impl Footprint {
         (value * 255.0).round() as u8
     }
 }
+
 #[derive(Clone)]
 pub(super) struct RoadFixture {
     pub profile: CartTrackProfile,
@@ -39,6 +43,7 @@ pub(super) struct RoadFixture {
     pub width: f32,
     pub traffic: f32,
 }
+
 impl RoadFixture {
     fn snapshot(&self, size: f32) -> RoadSnapshot {
         let size64 = f64::from(size);
@@ -89,6 +94,7 @@ impl RoadFixture {
         }
     }
 }
+
 #[derive(Clone)]
 pub(super) struct Request {
     pub road: Option<RoadFixture>,
@@ -103,6 +109,7 @@ pub(super) struct Request {
     pub footprint: Footprint,
     pub underlay: Option<PresetId>,
 }
+
 pub(super) struct Product {
     pub objects: Vec<world::StaticObjectInstance>,
     pub asset_ids: Vec<world::AssetId>,
@@ -113,6 +120,7 @@ pub(super) struct Product {
     pub size: f32,
     pub candidates: u32,
 }
+
 impl Request {
     pub(super) fn compile(mut self) -> Result<Product, String> {
         // Naming is validated when applying authoring changes. A temporarily empty
@@ -125,12 +133,15 @@ impl Request {
                 }
             }
         }
+
         if let Some(road) = &mut self.road {
             road.profile.name = "Preview road".into();
         }
+
         if ![8, 16].contains(&self.size) {
             return Err("Preview patch must be 8 or 16 metres".into());
         }
+
         let layer = |id, order, preset| Layer {
             id: LayerId([id; 16]),
             revision: 1,
@@ -144,6 +155,7 @@ impl Request {
             imported_mask: None,
         };
         let mut layers = vec![];
+
         if let Some(p) = self.underlay {
             if !matches!(
                 self.library.get(p).map(|p| &p.kind),
@@ -153,9 +165,11 @@ impl Request {
             }
             layers.push(layer(80, 0, p));
         }
+
         if self.road.is_none() {
             layers.push(layer(81, 1, self.preset));
         }
+
         let definition = EnvironmentDefinition {
             space: WorldSpaceId(0),
             revision: 1,
@@ -187,6 +201,7 @@ impl Request {
         .map_err(|e| e.to_string())?;
         let size = f64::from(self.size);
         let mut cells = vec![];
+
         for x in -1..=1 {
             for z in -1..=1 {
                 cells.push(CoverageCell {
@@ -215,6 +230,7 @@ impl Request {
                 });
             }
         }
+
         let coverage = CoverageSnapshot {
             space: definition.space,
             cells,
@@ -292,9 +308,11 @@ impl Request {
                 })
             })
             .fold(0u32, u32::saturating_add);
+
         if candidates > 250_000 {
             return Err("Preview exceeds 250,000 candidates; reduce the patch size".into());
         }
+
         Ok(Product {
             objects: cell.objects,
             asset_ids: plan.collection_assets(),
@@ -327,6 +345,7 @@ fn worn_ground(
         return ground;
     };
     let count = ground.surfaces.len();
+
     for z in 0..n {
         for x in 0..n {
             let texel = (z * n + x) * 4;
@@ -336,10 +355,12 @@ fn worn_ground(
             let uv = [x, z].map(|v| v as f64 / (n - 1) as f64);
             let w = wear.sample(uv).wear;
             wear.lay(&mut weights, w, world::bare_share(w, uv.map(|v| v * size)));
+
             for (i, w) in weights.into_iter().enumerate() {
                 ground.weight_pages[i / 4].rgba[texel + i % 4] = (w * 255.0).round() as u8;
             }
         }
     }
+
     ground
 }

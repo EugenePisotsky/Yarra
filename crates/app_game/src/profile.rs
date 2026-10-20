@@ -42,17 +42,21 @@ impl ProfileSettings {
     pub(crate) fn parse(args: &Args, scale: Option<f32>) -> Result<Option<Self>, String> {
         let diagnostic = args.has("--profile-diagnostic");
         let timed = args.has("--profile-seconds");
+
         if diagnostic && timed {
             return Err("Diagnostic captures cannot be combined with timed power runs".into());
         }
+
         if !diagnostic && !timed {
             return Ok(None);
         }
+
         if diagnostic && !args.has("--metal-capture") && !args.has("--render-frames") {
             return Err(
                 "Diagnostic presentation requires --metal-capture or --render-frames".into(),
             );
         }
+
         if timed
             && ["--render-frames", "--render-snapshot", "--metal-capture"]
                 .iter()
@@ -63,16 +67,19 @@ impl ProfileSettings {
                     .into(),
             );
         }
+
         let size = match args.value("--profile-size")?.unwrap_or("2560x1440") {
             "game" => None,
             size => Some(dimensions(size, "--profile-size")?),
         };
+
         if size.is_some() && scale.is_some() {
             return Err(
                 "--resolution-scale scales --profile-size game; an explicit size sets the pixels"
                     .into(),
             );
         }
+
         let fps = args.value("--profile-fps")?.unwrap_or("60");
         let fps = fps
             .parse::<u32>()
@@ -163,14 +170,17 @@ pub(crate) fn install(app: &mut App) {
         return;
     };
     let diagnostic = settings.diagnostic;
+
     if !settings.native_pacing {
         crate::frame_pacing::set_fps(app, settings.fps);
     }
+
     // A timed/diagnostic profile describes one launch rate, not a changing UI cap.
     app.world_mut()
         .resource_mut::<crate::frame_pacing::FramePacing>()
         .profile_locked = true;
     app.insert_resource(settings).add_systems(Startup, setup);
+
     // Captures use the existing deterministic frame-based camera/wind, not a timed run.
     // No measure_start/sample/complete events are emitted for diagnostic presentation.
     if !diagnostic {
@@ -195,10 +205,13 @@ fn setup(settings: Res<ProfileSettings>, mut window: Single<&mut Window, With<Pr
                 .set(720.0 * size.x as f32 / size.y as f32, 720.0);
         }
     }
+
     window.resizable = false;
+
     if settings.fps == 0 && !settings.native_pacing {
         window.present_mode = PresentMode::AutoNoVsync;
     }
+
     let pacing = if settings.native_pacing {
         "native"
     } else {
@@ -212,6 +225,7 @@ fn setup(settings: Res<ProfileSettings>, mut window: Single<&mut Window, With<Pr
     } else {
         "windowed"
     };
+
     if settings.diagnostic {
         warn!(
             "GRASS_PROFILE event=diagnostic_config unix_ms={} size={size} window={presentation} resolution_scale={} fps={} msaa={} grass={} pacing={pacing} clock=frame-based",
@@ -223,6 +237,7 @@ fn setup(settings: Res<ProfileSettings>, mut window: Single<&mut Window, With<Pr
         );
         return;
     }
+
     warn!(
         "GRASS_PROFILE event=config unix_ms={} size={size} window={presentation} resolution_scale={} fps={} warmup_s={} seconds={} msaa={} grass={} pacing={pacing} clock=real-time",
         unix_ms(),
@@ -245,10 +260,13 @@ fn tick(
     if clock.finished {
         return;
     }
+
     let now = time.elapsed_secs_f64();
+
     if now < settings.warmup {
         return;
     }
+
     let Some(start) = clock.started else {
         clock.started = Some(now);
         clock.last_tick = Some(now);
@@ -262,12 +280,15 @@ fn tick(
         return;
     };
     clock.route_seconds = now - start;
+
     if let Some(last) = clock.last_tick.replace(now) {
         clock.intervals.push((now - last) * 1000.0);
     }
+
     clock.total_frames += 1;
     clock.focused &= window.focused;
     let finished = clock.route_seconds >= settings.seconds;
+
     if now - clock.last_sample.unwrap_or(now) >= 1.0 || finished {
         let span = now - clock.last_sample.unwrap_or(now);
         let count = clock.intervals.len();
@@ -299,6 +320,7 @@ fn tick(
         clock.intervals.clear();
         clock.focused = window.focused;
     }
+
     if finished {
         warn!(
             "GRASS_PROFILE event=complete unix_ms={} elapsed_s={now:.6} measured_s={:.6} frames={}",
@@ -327,9 +349,11 @@ pub(crate) fn apply_runtime_settings(app: &mut App) {
     settings.fog = profile.fog;
     settings.particles = profile.particles;
     settings.light_shafts = profile.light_shafts;
+
     if profile.temporal_bypass {
         settings.temporal_debug = upscaling::temporal::TemporalDebug::Bypass;
     }
+
     settings.grass = if profile.grass {
         vegetation_render::VegetationProfileMode::Full
     } else {
@@ -342,13 +366,16 @@ pub(crate) fn apply_runtime_settings(app: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     fn parse(s: &str) -> Result<Option<ProfileSettings>, String> {
         let args = Args::collect(s.split_whitespace().map(std::ffi::OsString::from))?;
         ProfileSettings::parse(&args, None)
     }
+
     #[test]
     fn profiling_is_opt_in_and_rejects_invalid_or_contaminated_runs() {
         assert!(parse("").unwrap().is_none());
+
         for args in [
             "--profile-seconds NaN",
             "--profile-seconds -1",
@@ -365,6 +392,7 @@ mod tests {
         ] {
             assert!(parse(args).is_err(), "{args}");
         }
+
         let p = parse("--profile-seconds 10 --profile-fps 120 --profile-grass off")
             .unwrap()
             .unwrap();
@@ -386,6 +414,7 @@ mod tests {
         assert!(p.fullscreen);
         assert_eq!(p.size, None);
     }
+
     #[test]
     fn fullscreen_game_size_uses_normal_resolution_scale() {
         let p = parse("--profile-seconds 10 --profile-size game --profile-window fullscreen")
@@ -395,6 +424,7 @@ mod tests {
         assert_eq!(p.size, None);
         assert_eq!(p.resolution_scale(), 0.5);
     }
+
     #[test]
     fn physical_surface_does_not_override_scene_resolution() {
         let p = parse("--profile-seconds 10 --profile-size game --profile-surface 3456x1942 --profile-bloom off --profile-temporal-bypass")
@@ -409,6 +439,7 @@ mod tests {
         assert!(!default.temporal_bypass);
         assert!(default.surface.is_none());
     }
+
     #[test]
     fn route_position_depends_on_elapsed_time_not_update_count() {
         let mut clock = ProfileClock::default();

@@ -9,6 +9,7 @@ use crate::{
     environment::{EnvironmentAssets, EnvironmentParams},
     sky::SkyCompositeView,
 };
+
 use bevy::{
     camera::MainPassResolutionOverride,
     core_pipeline::{Core3d, Core3dSystems},
@@ -27,8 +28,10 @@ use bevy::{
 
 /// Main-pass pixels per shaft texel along each axis.
 pub(crate) const SCALE: u32 = 4;
+
 /// Steps along each ray, packed towards the camera where beams are widest on screen.
 const STEPS: u32 = 32;
+
 const WORKGROUP: u32 = 8;
 
 /// Per view, this frame's shafts: light added and transmittance of the air under crowns, and
@@ -42,6 +45,7 @@ pub(crate) struct LightShaftTargets {
 }
 
 pub(crate) struct LightShaftsPlugin;
+
 impl Plugin for LightShaftsPlugin {
     fn build(&self, app: &mut App) {
         let Some(render) = app.get_sub_app_mut(RenderApp) else {
@@ -82,6 +86,7 @@ fn prepare(
             commands.entity(entity).remove::<LightShaftTargets>();
             continue;
         }
+
         let main = resolution.map_or(
             UVec2::new(
                 target.main_texture().width(),
@@ -202,9 +207,11 @@ fn init(
             bevy::shader::ShaderDefVal::UInt("SHAFT_STEPS".into(), STEPS),
             crate::environment::mist_noise_period_def(),
         ];
+
         if multisampled == 1 {
             defs.push("MULTISAMPLED".into());
         }
+
         compute(
             "light shaft march",
             &march_layout[multisampled],

@@ -1,7 +1,9 @@
 use super::wind::{MAX_DISPLACEMENT, WindBuffer};
+
 use atmosphere::environment::{
     EnvironmentMaterial, EnvironmentMaterialOptIn, EnvironmentMaterialSystems,
 };
+
 use bevy::{
     asset::AssetEventSystems,
     camera::{primitives::Aabb, visibility::VisibilitySystems},
@@ -20,9 +22,11 @@ use bevy::{
     },
     shader::ShaderRef,
 };
+
 use std::collections::{HashMap, HashSet};
 
 pub(super) type TreeWindMaterial = ExtendedMaterial<EnvironmentMaterial, TreeWindExtension>;
+
 #[derive(Asset, AsBindGroup, TypePath, Clone, Debug)]
 #[bind_group_data(TreeWindKey)]
 pub(super) struct TreeWindExtension {
@@ -43,6 +47,7 @@ pub(super) struct TreeWindExtension {
     #[texture(104)]
     upper_metallic_roughness: Option<Handle<Image>>,
 }
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(super) struct TreeWindKey {
     crown_shading: bool,
@@ -53,6 +58,7 @@ pub(super) struct TreeWindKey {
     /// that path specializes with it.
     pub(super) instanced: bool,
 }
+
 impl From<&TreeWindExtension> for TreeWindKey {
     fn from(material: &TreeWindExtension) -> Self {
         Self {
@@ -64,6 +70,7 @@ impl From<&TreeWindExtension> for TreeWindKey {
         }
     }
 }
+
 impl MaterialExtension for TreeWindExtension {
     fn specialize(
         _pipeline: &MaterialExtensionPipeline,
@@ -79,23 +86,29 @@ impl MaterialExtension for TreeWindExtension {
                 fragment.shader_defs.push("TREE_CROWN_SKY".into());
             }
         }
+
         if key.bind_group_data.bark_blend
             && let Some(fragment) = descriptor.fragment.as_mut()
         {
             fragment.shader_defs.push("TREE_BARK_BLEND".into());
         }
+
         if key.bind_group_data.bark_sky
             && let Some(fragment) = descriptor.fragment.as_mut()
         {
             fragment.shader_defs.push("TREE_BARK_SKY".into());
         }
+
         if key.bind_group_data.instanced {
             descriptor.vertex.shader_defs.push("TREE_INSTANCED".into());
+
             if let Some(fragment) = descriptor.fragment.as_mut() {
                 fragment.shader_defs.push("TREE_INSTANCED".into());
             }
+
             descriptor.layout.push(super::gpu::instance_layout());
         }
+
         // LODs faded over time (object_lod) dither by their mesh tag in every pass. Bevy
         // enables the dither only where visibility ranges crossfade, and never in shadows.
         if !key
@@ -109,23 +122,29 @@ impl MaterialExtension for TreeWindExtension {
                 defs.push("TREE_TAG_FADE".into());
             }
         }
+
         super::cards::specialize(descriptor, layout)
     }
+
     fn prepass_fragment_shader() -> ShaderRef {
         "shaders/tree_wind_prepass.wesl".into()
     }
+
     fn vertex_shader() -> ShaderRef {
         "shaders/tree_wind.wesl".into()
     }
+
     fn prepass_vertex_shader() -> ShaderRef {
         "shaders/tree_wind.wesl".into()
     }
+
     fn deferred_vertex_shader() -> ShaderRef {
         "shaders/tree_wind.wesl".into()
     }
 }
 
 pub(super) struct TreeWindMaterialPlugin;
+
 impl Plugin for TreeWindMaterialPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(MaterialPlugin::<TreeWindMaterial>::default())
@@ -147,8 +166,10 @@ impl Plugin for TreeWindMaterialPlugin {
 
 #[derive(Component)]
 pub(super) struct WindChecked;
+
 #[derive(Component)]
 pub(super) struct WindBoundsPending;
+
 #[derive(Component)]
 struct SourceMaterial(Handle<EnvironmentMaterial>);
 
@@ -166,6 +187,7 @@ fn uses_wind(extras: &str) -> bool {
 pub(super) fn structural_tag(extras: &str) -> bool {
     extra_is(extras, "yarra_wind", "hierarchy_v2")
 }
+
 fn wind_profile(extras: &str) -> Vec4 {
     serde_json::from_str::<serde_json::Value>(extras)
         .ok()
@@ -207,6 +229,7 @@ fn foliage_shading(extras: &str) -> FoliageShading {
 
 fn foliage_base(source: &EnvironmentMaterial, shading: FoliageShading) -> EnvironmentMaterial {
     let mut material = source.clone();
+
     if matches!(
         shading,
         FoliageShading::Crown | FoliageShading::CrownOcclusion
@@ -214,6 +237,7 @@ fn foliage_base(source: &EnvironmentMaterial, shading: FoliageShading) -> Enviro
         material.base.double_sided = false;
         material.base.cull_mode = None;
     }
+
     material
 }
 
@@ -263,6 +287,7 @@ fn convert(
     let Some(buffer) = buffer else {
         return;
     };
+
     for event in events.read() {
         if let AssetEvent::Modified { id } = event
             && let (Some(material), Some(&(ref handle, shading))) = (source.get(*id), cache.get(id))
@@ -271,17 +296,21 @@ fn convert(
             converted.base = foliage_base(material, shading);
         }
     }
+
     // Only live scene instances retain material handles; unloading pages/LODs releases them.
     let live: HashSet<_> = retained.iter().map(|m| m.0.id()).collect();
     cache.retain(|id, _| live.contains(id));
+
     for (entity, extras, mesh, handle) in &candidates {
         let (Some(mesh), Some(material)) = (meshes.get(mesh), source.get(handle)) else {
             continue;
         };
         commands.entity(entity).insert(WindChecked);
+
         if !uses_wind(&extras.value) {
             continue;
         }
+
         if !mesh.contains_attribute(Mesh::ATTRIBUTE_UV_1)
             || mesh.contains_attribute(Mesh::ATTRIBUTE_JOINT_INDEX)
             || mesh.has_morph_targets()
@@ -294,6 +323,7 @@ fn convert(
             );
             continue;
         }
+
         let converted = cache
             .entry(handle.id())
             .or_insert_with(|| {
@@ -326,6 +356,7 @@ fn convert(
             })
             .0
             .clone();
+
         // Publish the final material before AssetEventSystems, so its GPU asset and
         // specialization are available in the same frame as the replacement mesh.
         // CalculateBounds runs after those events; waiting for Aabb here used to
@@ -350,6 +381,7 @@ fn expand_bounds(
         let Some(mesh) = assets.get(&handle.0) else {
             continue;
         };
+
         // Bounds are calculated after transform propagation. Keep this separate
         // from early material conversion and expand exactly once, before culling.
         let scale = transform
@@ -370,6 +402,7 @@ fn expand_bounds(
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn metadata_opt_in_is_explicit_and_versioned() {
         assert!(uses_wind(r#"{"yarra_wind":"foliage_uv1_v1","other":true}"#));

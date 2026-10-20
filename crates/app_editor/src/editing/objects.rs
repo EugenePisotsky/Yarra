@@ -3,12 +3,14 @@
 use bevy::prelude::*;
 use std::collections::{HashMap, HashSet};
 use world::StableObjectId;
+
 use world_db::{
     MAX_OBJECT_WRITES_PER_TRANSACTION, SourceObjectRecord, SourceObjectTransform,
     SourceObjectViewRecord, SourceObjectWrite, SourceObjectWriteCommit,
 };
 
 use super::history::EditorHistory;
+
 use crate::{
     project_store::{ObjectSaveOutcome, ProjectEditorStore},
     saving::EditorSaveCoordinator,
@@ -124,8 +126,10 @@ impl EditorObjectWorkingSet {
         if self.saving() {
             return false;
         }
+
         let id = snapshot.presentation.object.id;
         let definition = snapshot.presentation.object.definition;
+
         if snapshot
             .base
             .iter()
@@ -135,11 +139,13 @@ impl EditorObjectWorkingSet {
         {
             return false;
         }
+
         if self.entries.get(&id).is_some_and(|entry| {
             entry.dirty() || matches!(entry.save_state, EditorSaveState::Saving(_))
         }) {
             return false;
         }
+
         self.entries.insert(
             id,
             ObjectEditEntry {
@@ -161,10 +167,12 @@ impl EditorObjectWorkingSet {
     pub(crate) fn pin(&mut self, fresh: SourceObjectViewRecord) {
         let id = fresh.object.id;
         let mut changed = false;
+
         if let Some(entry) = self.entries.get_mut(&id) {
             entry.presentation.definition = fresh.definition;
             entry.presentation.visual_uri = fresh.visual_uri;
             entry.presentation.visual_bounds = fresh.visual_bounds;
+
             if !entry.dirty()
                 && !matches!(entry.save_state, EditorSaveState::Saving(_))
                 && entry
@@ -181,6 +189,7 @@ impl EditorObjectWorkingSet {
             self.entries.insert(id, ObjectEditEntry::from_source(fresh));
             changed = true;
         }
+
         if changed {
             self.bump_edit_revision();
         }
@@ -267,6 +276,7 @@ impl EditorObjectWorkingSet {
     /// generation. Commands created while cooking remain divergent from that checkpoint.
     pub(crate) fn adopt_runtime_generation(&mut self) -> usize {
         let mut adopted = 0;
+
         for entry in self.entries.values_mut() {
             if entry.runtime != entry.base {
                 entry.runtime.clone_from(&entry.base);
@@ -276,9 +286,11 @@ impl EditorObjectWorkingSet {
                 entry.save_state = EditorSaveState::Idle;
             }
         }
+
         if adopted > 0 {
             self.bump_edit_revision();
         }
+
         adopted
     }
 
@@ -314,12 +326,15 @@ impl EditorObjectWorkingSet {
         if self.saving() || transforms.is_empty() {
             return false;
         }
+
         let mut unique = HashSet::with_capacity(transforms.len());
         let mut changed = false;
+
         for (object, transform) in transforms {
             if !unique.insert(*object) {
                 return false;
             }
+
             let Some(entry) = self
                 .entries
                 .get(object)
@@ -333,6 +348,7 @@ impl EditorObjectWorkingSet {
                 .expect("current object was checked above");
             changed |= SourceObjectTransform::from(current) != *transform;
         }
+
         if !changed {
             return false;
         }
@@ -353,6 +369,7 @@ impl EditorObjectWorkingSet {
             current.scale = transform.scale;
             entry.save_state = EditorSaveState::Idle;
         }
+
         self.bump_edit_revision();
         true
     }
@@ -365,6 +382,7 @@ impl EditorObjectWorkingSet {
         if self.saving() || self.entries.contains_key(&record.object.id) {
             return false;
         }
+
         self.entries
             .insert(record.object.id, ObjectEditEntry::from_created(record));
         self.bump_edit_revision();
@@ -379,7 +397,9 @@ impl EditorObjectWorkingSet {
         if self.saving() || objects.is_empty() {
             return false;
         }
+
         let mut unique = HashSet::with_capacity(objects.len());
+
         if objects.iter().any(|object| {
             !unique.insert(object.id)
                 || self
@@ -389,6 +409,7 @@ impl EditorObjectWorkingSet {
         }) {
             return false;
         }
+
         for object in objects {
             let entry = self
                 .entries
@@ -397,6 +418,7 @@ impl EditorObjectWorkingSet {
             entry.current = Some(object.clone());
             entry.save_state = EditorSaveState::Idle;
         }
+
         self.bump_edit_revision();
         true
     }
@@ -408,7 +430,9 @@ impl EditorObjectWorkingSet {
         if self.saving() || objects.is_empty() {
             return None;
         }
+
         let mut unique = HashSet::with_capacity(objects.len());
+
         if objects.iter().any(|object| {
             !unique.insert(*object)
                 || self
@@ -418,7 +442,9 @@ impl EditorObjectWorkingSet {
         }) {
             return None;
         }
+
         let mut deleted = Vec::with_capacity(objects.len());
+
         for object in objects {
             let entry = self
                 .entries
@@ -432,6 +458,7 @@ impl EditorObjectWorkingSet {
             );
             entry.save_state = EditorSaveState::Idle;
         }
+
         self.bump_edit_revision();
         Some(deleted)
     }
@@ -440,6 +467,7 @@ impl EditorObjectWorkingSet {
         if self.saving() || self.has_any_conflict() {
             return false;
         }
+
         let mut writes = Vec::new();
         let mut objects = Vec::new();
         let mut dirty_entries = self
@@ -448,6 +476,7 @@ impl EditorObjectWorkingSet {
             .filter(|(_, entry)| entry.dirty())
             .collect::<Vec<_>>();
         dirty_entries.sort_by_key(|(id, _)| id.0);
+
         for (id, entry) in dirty_entries
             .into_iter()
             .take(MAX_OBJECT_WRITES_PER_TRANSACTION)
@@ -470,14 +499,17 @@ impl EditorObjectWorkingSet {
             writes.push(write);
             objects.push(*id);
         }
+
         let Some(request_id) = project.queue_object_transaction(writes) else {
             return false;
         };
+
         for object in &objects {
             if let Some(entry) = self.entries.get_mut(object) {
                 entry.save_state = EditorSaveState::Saving(request_id);
             }
         }
+
         self.active_save = Some(ActiveObjectSave {
             request_id,
             objects,
@@ -489,10 +521,12 @@ impl EditorObjectWorkingSet {
         if self.saving() || self.dirty_count() == 0 {
             return false;
         }
+
         for entry in self.entries.values_mut().filter(|entry| entry.dirty()) {
             entry.current.clone_from(&entry.base);
             entry.save_state = EditorSaveState::Idle;
         }
+
         history.clear();
         self.bump_edit_revision();
         true
@@ -511,9 +545,11 @@ impl EditorObjectWorkingSet {
         };
         entry.base.clone_from(actual);
         entry.current.clone_from(actual);
+
         if let Some(actual) = actual {
             entry.presentation.object = actual.clone();
         }
+
         entry.save_state = EditorSaveState::Idle;
         history.clear();
         self.bump_edit_revision();
@@ -535,12 +571,14 @@ impl EditorObjectWorkingSet {
         };
         let actual = actual.clone();
         entry.base.clone_from(&actual);
+
         if let (Some(current), Some(actual)) = (entry.current.as_mut(), actual.as_ref()) {
             // Object editing does not mutate definition identity. If an improbable UUID collision
             // created the conflict, retry only the local transform against the real definition.
             current.definition = actual.definition;
             entry.presentation.object = actual.clone();
         }
+
         entry.save_state = EditorSaveState::Idle;
         history.clear();
         self.bump_edit_revision();
@@ -555,10 +593,12 @@ impl EditorObjectWorkingSet {
         {
             return;
         }
+
         let active = self
             .active_save
             .take()
             .expect("the matching active save was checked above");
+
         match outcome {
             ObjectSaveOutcome::Committed(commits) => {
                 for commit in commits {
@@ -605,6 +645,7 @@ impl EditorObjectWorkingSet {
                 }
             }
         }
+
         self.bump_edit_revision();
     }
 

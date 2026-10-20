@@ -10,6 +10,7 @@ const COMPUTE_SHADERS: [&str; 3] = [
     "shaders/vegetation/placement.wesl",
     "shaders/vegetation/candidate_cache.wesl",
 ];
+
 const DRAW_SHADER: &str = "shaders/vegetation/draw.wesl";
 
 /// The definitions every vegetation pipeline passes, as the shader checker spells them.
@@ -28,14 +29,17 @@ pub(super) fn grass_defs() -> Vec<Def> {
 fn draw_variant(temporal: bool, environment: bool) -> Vec<Def> {
     let mut defs = grass_defs();
     defs.push(Def::Flag("SHADOW_FILTER_METHOD_HARDWARE_2X2".into(), true));
+
     if environment {
         defs.push(Def::Flag("ENVIRONMENT_SURFACE".into(), true));
         defs.push(Def::Int("MATERIAL_BIND_GROUP".into(), 2));
         defs.push(Def::Flag("ATMOSPHERE".into(), true));
     }
+
     if temporal {
         defs.push(Def::Flag("TEMPORAL_GRASS".into(), true));
     }
+
     defs
 }
 
@@ -88,9 +92,11 @@ fn shaders_compose_and_validate() {
 fn checked_variants_carry_the_renderer_definitions() {
     let jobs = shader_check::entries::load(Shaders::get()).unwrap();
     let grass = grass_defs();
+
     for shader in COMPUTE_SHADERS.into_iter().chain([DRAW_SHADER]) {
         let variants: Vec<_> = jobs.iter().filter(|(s, _)| s == shader).collect();
         assert!(!variants.is_empty(), "entries.ron does not check {shader}");
+
         for (_, defs) in variants {
             for def in &grass {
                 assert!(defs.contains(def), "{shader}: entries.ron lacks {def:?}");

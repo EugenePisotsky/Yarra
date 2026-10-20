@@ -84,6 +84,7 @@ pub(super) fn adopt_runtime_manifest(
         .unwrap_or(manifest.default_world_space);
     active_space.current = Some(active);
     catalog.adopt(&manifest);
+
     if viewpoint
         .position
         .is_none_or(|position| position.space != active)
@@ -94,12 +95,14 @@ pub(super) fn adopt_runtime_manifest(
             local: [0.0, 0.0, 0.0],
         });
     }
+
     if origin.space != Some(active) {
         origin.space = Some(active);
         origin.cell = viewpoint
             .position
             .map_or(CellCoord::ZERO, |position| position.cell);
     }
+
     stream.manifest = Some(manifest);
     stream.phase = StreamPhase::Ready;
 }

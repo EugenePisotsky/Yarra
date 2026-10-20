@@ -11,6 +11,7 @@ pub(super) struct PlannedJunction {
     pub roads: Vec<RoadId>,
     pub bounds: RoadCellBounds,
 }
+
 impl PlannedJunction {
     pub fn blocks_scatter(&self, cell: CellCoord, uv: [f64; 2], size: f32, clearance: f32) -> bool {
         let p = self.source.position.relative_to(cell, f64::from(size));
@@ -22,6 +23,7 @@ impl PlannedJunction {
         if !self.bounds.contains(cell) {
             return 0.0;
         }
+
         let p = self.source.position.relative_to(cell, f64::from(size));
         let distance = (uv[0] * f64::from(size) - p[0]).hypot(uv[1] * f64::from(size) - p[1]);
         let world = [
@@ -30,6 +32,7 @@ impl PlannedJunction {
         ];
         world::junction_blend(distance, self.source.radius, world, self.source.seed)
     }
+
     /// How much of the natural ground the patch wears at `uv` where it holds fully.
     pub fn worn(&self, cell: CellCoord, uv: [f64; 2], size: f32) -> f64 {
         let world = [
@@ -48,6 +51,7 @@ impl PlannedJunction {
             * f64::from(self.wear.tracks)
             * strength(&self.ground_preset)
     }
+
     pub fn depth(&self, cell: CellCoord, uv: [f64; 2], size: f32) -> f64 {
         let r = &self.profile.relief;
         let world = [
@@ -60,11 +64,13 @@ impl PlannedJunction {
         let rut = world::road_patch(world, r.track_variation_length, self.source.seed ^ 0x418c)
             * 2.0
             - 1.0;
+
         // Ruts merge into a shallow worn basin, never accumulate into intersecting trenches.
         f64::from(r.road_depth) * (1.0 + f64::from(r.road_variation) * broad)
             + 0.5 * f64::from(r.track_depth) * (1.0 + f64::from(r.track_variation) * rut)
     }
 }
+
 impl RoadPlan {
     pub(super) fn joined_depth(
         &self,
@@ -92,13 +98,17 @@ pub(super) fn build(
     let mut result = vec![];
     let mut sources = snapshot.junctions.iter().collect::<Vec<_>>();
     sources.sort_by_key(|j| j.id);
+
     for j in sources {
         let bounds = j.bounds(size)?;
+
         if !requested.iter().any(|c| bounds.contains(*c)) {
             continue;
         }
+
         let mut members = std::collections::BTreeSet::new();
         let mut arms = 0;
+
         for r in roads {
             for c in &r.curves {
                 for k in [c.source.start.id, c.source.end.id] {
@@ -109,9 +119,11 @@ pub(super) fn build(
                 }
             }
         }
+
         if arms < 2 || members.len() < 2 {
             continue;
         }
+
         let busiest = |styled: bool| {
             (0..roads.len())
                 .filter(|&i| {
@@ -132,6 +144,7 @@ pub(super) fn build(
             bounds,
         });
     }
+
     // Independent basins must not overlap: otherwise evaluation order would define terrain.
     for (i, a) in result.iter().enumerate() {
         for b in &result[i + 1..] {
@@ -140,6 +153,7 @@ pub(super) fn build(
                 .position
                 .relative_to(a.source.position.cell, f64::from(size));
             let d = (p[0] - a.source.position.local[0]).hypot(p[1] - a.source.position.local[1]);
+
             if d < f64::from(a.source.radius + b.source.radius) {
                 return Err(road_error(
                     "junction areas overlap; reduce their radii or move them apart",
@@ -147,6 +161,7 @@ pub(super) fn build(
             }
         }
     }
+
     Ok(result)
 }
 
@@ -180,9 +195,11 @@ pub(super) fn legs(
     remaining: &mut usize,
 ) -> Vec<PlannedRoad> {
     let mut legs = vec![];
+
     for j in junctions {
         let centre = world_point(&j.source.position, size);
         let mut arms = vec![];
+
         for (r, road) in roads.iter().enumerate() {
             for (c, curve) in road.curves.iter().enumerate() {
                 for (id, at_start) in [(curve.source.start.id, true), (curve.source.end.id, false)]
@@ -190,6 +207,7 @@ pub(super) fn legs(
                     if !j.source.knots.contains(&id) {
                         continue;
                     }
+
                     let v = if at_start {
                         curve.vertices[0]
                     } else {
@@ -210,22 +228,30 @@ pub(super) fn legs(
                 }
             }
         }
+
         let angle = |a: &Arm| a.direction[1].atan2(a.direction[0]);
         arms.sort_by(|a, b| angle(a).total_cmp(&angle(b)));
         let n = arms.len();
+
         for k in 0..n {
             let (a, b) = (&arms[k], &arms[(k + 1) % n]);
+
             if n < 2 || (n == 2 && k == 1 && a.road == b.road) {
                 continue;
             }
+
             let corner = (angle(b) - angle(a)).to_degrees().rem_euclid(360.0);
+
             if !(LEG_ANGLES[0]..=LEG_ANGLES[1]).contains(&corner) || !turnable(roads, a, b) {
                 continue;
             }
+
             let cut = smooth((corner - 60.0) / 35.0) * (1.0 - smooth((corner - 150.0) / 15.0));
+
             if cut < 0.15 {
                 continue;
             }
+
             // Far enough out that the leg's middle passes a road's width and three metres from
             // the junction (a cubic with handles 35% of the way in passes 0.74 s cos(θ/2) off).
             let half = (corner / 2.0).to_radians();
@@ -297,6 +323,7 @@ pub(super) fn legs(
             let Ok(curve) = Curve::build(&span, profile, size, config, remaining) else {
                 continue;
             };
+
             // The style's depths as authored: the arm's profile holds them at its traffic.
             let Some(style) = styles.iter().find(|p| p.id == profile.id) else {
                 continue;
@@ -315,6 +342,7 @@ pub(super) fn legs(
             });
         }
     }
+
     legs
 }
 
@@ -340,19 +368,25 @@ fn along(curve: &Curve, at_start: bool, distance: f64, size: f32) -> Option<[f64
         .iter()
         .map(|v| [origin[0] + v.point[0], origin[1] + v.point[1]])
         .collect();
+
     if !at_start {
         points.reverse();
     }
+
     let length: f64 = points
         .windows(2)
         .map(|p| (p[1][0] - p[0][0]).hypot(p[1][1] - p[0][1]))
         .sum();
+
     if length <= 1e-6 {
         return None;
     }
+
     let mut left = distance.min(length * 0.8);
+
     for p in points.windows(2) {
         let step = (p[1][0] - p[0][0]).hypot(p[1][1] - p[0][1]);
+
         if left <= step {
             let t = left / step.max(1e-9);
             return Some([
@@ -360,8 +394,10 @@ fn along(curve: &Curve, at_start: bool, distance: f64, size: f32) -> Option<[f64
                 p[0][1] + (p[1][1] - p[0][1]) * t,
             ]);
         }
+
         left -= step;
     }
+
     points.last().copied()
 }
 

@@ -3,6 +3,7 @@
 use bevy::prelude::*;
 use std::collections::{HashSet, VecDeque};
 use world::StableObjectId;
+
 use world_db::{
     SourceEnvironmentCellRecord, SourceObjectRecord, SourceObjectTransform, SourceObjectViewRecord,
 };
@@ -172,6 +173,7 @@ fn replay_environment(
     merge_preset_changes(dense.presets(), from, to)
         .is_ok_and(|p| dense.apply_environment(definition, &p).is_ok())
 }
+
 /// Merge only authored changes; revision-only save checkpoints do not conflict.
 pub(crate) fn merge_preset_changes(
     current: Option<&environment::PresetLibrary>,
@@ -190,21 +192,26 @@ pub(crate) fn merge_preset_changes(
         .chain(&to.presets)
         .map(|p| p.id)
         .collect::<std::collections::BTreeSet<_>>();
+
     for id in ids {
         if same(from.get(id), to.get(id)) {
             continue;
         }
+
         if !same(library.get(id), from.get(id)) {
             return Err(format!(
                 "Preset '{}' changed outside this draft. Reload the draft before applying.",
                 to.get(id).or_else(|| from.get(id)).unwrap().name
             ));
         }
+
         library.presets.retain(|p| p.id != id);
+
         if let Some(preset) = to.get(id) {
             library.presets.push(preset.clone());
         }
     }
+
     Ok(library)
 }
 
@@ -283,6 +290,7 @@ impl EditorHistory {
             })
             .collect()
     }
+
     pub(crate) fn record_roads(
         &mut self,
         before: Vec<crate::road_authoring::working::RoadChange>,
@@ -301,12 +309,14 @@ impl EditorHistory {
         let before = dense.presets().ok_or("Presets are still loading")?.clone();
         dense.apply_presets(replacement)?;
         let after = dense.presets().unwrap().clone();
+
         if before != after {
             self.record(EditorCommand::Presets {
                 before: Box::new(before),
                 after: Box::new(after),
             });
         }
+
         Ok(())
     }
 
@@ -318,6 +328,7 @@ impl EditorHistory {
         let presets = dense.presets().ok_or("Presets are still loading")?.clone();
         self.edit_environment(dense, replacement, &presets)
     }
+
     pub(crate) fn edit_environment(
         &mut self,
         dense: &mut SourceWorkingSets,
@@ -332,6 +343,7 @@ impl EditorHistory {
         dense.apply_environment(replacement, presets)?;
         let after = dense.definition(replacement.space).unwrap().clone();
         let after_presets = dense.presets().unwrap().clone();
+
         if before != after || before_presets != after_presets {
             self.record(EditorCommand::Definition {
                 before: Box::new(before),
@@ -340,8 +352,10 @@ impl EditorHistory {
                 after_presets: Box::new(after_presets),
             });
         }
+
         Ok(())
     }
+
     pub(crate) fn environment_cells(&self) -> HashSet<(world::WorldSpaceId, world::CellCoord)> {
         self.undo
             .iter()
@@ -354,6 +368,7 @@ impl EditorHistory {
             })
             .collect()
     }
+
     pub(crate) fn record_environment_stroke(
         &mut self,
         before: Vec<SourceEnvironmentCellRecord>,
@@ -367,6 +382,7 @@ impl EditorHistory {
     fn record(&mut self, command: EditorCommand) {
         self.clear_redo();
         let bytes = command.estimated_bytes();
+
         while !self.undo.is_empty()
             && (self.undo.len() >= self.maximum_entries
                 || self.retained_bytes.saturating_add(bytes) > self.maximum_bytes)
@@ -378,10 +394,12 @@ impl EditorHistory {
             self.retained_bytes = self.retained_bytes.saturating_sub(removed.bytes);
             self.checkpointed_commands = self.checkpointed_commands.saturating_add(1);
         }
+
         if bytes > self.maximum_bytes || self.maximum_entries == 0 {
             self.checkpointed_commands = self.checkpointed_commands.saturating_add(1);
             return;
         }
+
         self.retained_bytes = self.retained_bytes.saturating_add(bytes);
         self.undo.push_back(HistoryEntry { command, bytes });
     }
@@ -392,9 +410,11 @@ impl EditorHistory {
         record: SourceObjectViewRecord,
     ) -> bool {
         let object = record.object.clone();
+
         if !objects.create_object(record) {
             return false;
         }
+
         self.record(EditorCommand::Create { object });
         true
     }
@@ -415,16 +435,19 @@ impl EditorHistory {
     ) -> bool {
         let mut unique = HashSet::with_capacity(transforms.len());
         let mut changes = Vec::with_capacity(transforms.len());
+
         for (object, after) in transforms {
             if !unique.insert(*object) {
                 return false;
             }
+
             let Some(before) = objects
                 .current_view(*object)
                 .map(|view| SourceObjectTransform::from(&view.object))
             else {
                 return false;
             };
+
             if before != *after {
                 changes.push(ObjectTransformChange {
                     object: *object,
@@ -433,6 +456,7 @@ impl EditorHistory {
                 });
             }
         }
+
         if changes.is_empty()
             || !objects.set_transforms(
                 &changes
@@ -443,6 +467,7 @@ impl EditorHistory {
         {
             return false;
         }
+
         self.record(EditorCommand::Transform { changes });
         true
     }
@@ -454,16 +479,19 @@ impl EditorHistory {
     ) -> bool {
         let mut unique = HashSet::with_capacity(before.len());
         let mut changes = Vec::with_capacity(before.len());
+
         for (object, before) in before {
             if !unique.insert(*object) {
                 return false;
             }
+
             let Some(after) = objects
                 .current_view(*object)
                 .map(|view| SourceObjectTransform::from(&view.object))
             else {
                 return false;
             };
+
             if *before != after {
                 changes.push(ObjectTransformChange {
                     object: *object,
@@ -472,9 +500,11 @@ impl EditorHistory {
                 });
             }
         }
+
         if changes.is_empty() {
             return false;
         }
+
         self.record(EditorCommand::Transform { changes });
         true
     }
@@ -499,10 +529,12 @@ impl EditorHistory {
         let Some(entry) = self.undo.pop_back() else {
             return false;
         };
+
         if !entry.command.revert(objects, dense) {
             self.undo.push_back(entry);
             return false;
         }
+
         self.redo.push_back(entry);
         true
     }
@@ -515,10 +547,12 @@ impl EditorHistory {
         let Some(entry) = self.redo.pop_back() else {
             return false;
         };
+
         if !entry.command.apply(objects, dense) {
             self.redo.push_back(entry);
             return false;
         }
+
         self.undo.push_back(entry);
         true
     }

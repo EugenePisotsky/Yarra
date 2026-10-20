@@ -1,5 +1,6 @@
 //! Run the production deformation functions on a native GPU, including previous poses.
 use super::*;
+
 use bevy::render::{
     render_resource::{
         BindGroupDescriptor, BindGroupEntry, BufferDescriptor, BufferInitDescriptor, BufferUsages,
@@ -122,6 +123,7 @@ fn evaluate(@builtin(global_invocation_id) id: vec3<u32>) {
         Vec3::Z,
     ];
     let rest = Vec3::new(0.3, 0.6, 0.7).normalize();
+
     for (result, direction) in results.iter().zip(directions) {
         assert!(
             (Vec3::from_slice(&result[8..11]) - direction.normalize()).length() < 0.0001,
@@ -195,12 +197,14 @@ fn run_shader(cases: &[Case], shader: &str) -> Vec<[f32; 16]> {
         ],
     });
     let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor::default());
+
     {
         let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
         pass.set_pipeline(&pipeline);
         pass.set_bind_group(0, &group, &[]);
         pass.dispatch_workgroups(cases.len() as u32, 1, 1);
     }
+
     encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, bytes);
     resources.1.submit([encoder.finish()]);
     let (sender, receiver) = std::sync::mpsc::channel();
@@ -305,6 +309,7 @@ fn evaluate(@builtin(global_invocation_id) id: vec3<u32>) {
     };
     let cases = [animated, paused, calm, rebased, strong];
     let results = run_shader(&cases, &shader);
+
     for (c, r) in cases.iter().zip(&results) {
         assert!(r.iter().all(|v| v.is_finite()));
         assert!(
@@ -316,6 +321,7 @@ fn evaluate(@builtin(global_invocation_id) id: vec3<u32>) {
             "trunk root must stay planted"
         );
     }
+
     let delta = |i: usize| Vec3::from_slice(&results[i][..3]) - Vec3::from_slice(&results[i][4..7]);
     assert!(
         delta(0).length() > 0.001,
@@ -401,14 +407,17 @@ fn evaluate(@builtin(global_invocation_id) id: vec3<u32>) {
     };
     let cases = [animated, rebased, strong];
     let results = run_shader(&cases, &shader);
+
     for r in &results {
         assert!(r.iter().all(|v| v.is_finite()));
+
         for point in r.chunks(4) {
             assert!(
                 Vec3::from_slice(&point[..3]).length() < 0.001,
                 "an impostor must lean as its mesh trunk does: {point:?}"
             );
         }
+
         assert!(r[11] > 0.05, "the treetop must move in the wind");
         assert!(r[15] < 0.001, "below the root nothing moves");
     }

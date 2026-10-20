@@ -5,7 +5,9 @@ use super::{
     gpu_types::{CameraGpu, ConfigGpu, WORKGROUP_SIZE},
     pipelines::VegetationPipelines,
 };
+
 use crate::{VegetationDiagnostics, VegetationProfileMode, VegetationSettings};
+
 use bevy::{
     prelude::*,
     render::{
@@ -57,12 +59,15 @@ pub(super) fn generate(
     if settings.profile_mode != VegetationProfileMode::Full {
         buffers.last_generation = None;
     }
+
     if settings.profile_mode == VegetationProfileMode::Disabled {
         return;
     }
+
     if settings.profile_mode == VegetationProfileMode::DrawFrozen {
         return;
     }
+
     let ready_pipelines = (
         pipeline_cache.get_compute_pipeline(pipelines.schedule),
         pipeline_cache.get_compute_pipeline(pipelines.generate),
@@ -78,6 +83,7 @@ pub(super) fn generate(
         }
         _ => None,
     };
+
     if settings.profile_mode == VegetationProfileMode::Full
         && generation_key.is_some()
         && buffers.last_generation == generation_key
@@ -85,6 +91,7 @@ pub(super) fn generate(
         vegetation_diagnostics.update(|snapshot| snapshot.generation_reuses += 1);
         return;
     }
+
     buffers.last_generation = None;
     render_context
         .command_encoder()
@@ -95,9 +102,11 @@ pub(super) fn generate(
     render_context
         .command_encoder()
         .clear_buffer(&buffers.gpu_telemetry, 0, None);
+
     if !buffers.active {
         return;
     }
+
     let (Some(schedule_pipeline), Some(generate_pipeline), Some(finalize_pipeline)) =
         ready_pipelines
     else {
@@ -118,6 +127,7 @@ pub(super) fn generate(
     schedule_pass.dispatch_workgroups(buffers.work_item_count.div_ceil(WORKGROUP_SIZE), 1, 1);
     schedule_span.end(&mut schedule_pass);
     drop(schedule_pass);
+
     if settings.profile_mode == VegetationProfileMode::ScheduleOnly {
         return;
     }
@@ -139,6 +149,7 @@ pub(super) fn generate(
     finalize_span.end(&mut pass);
     drop(pass);
     vegetation_diagnostics.update(|snapshot| snapshot.generation_dispatches += 1);
+
     if settings.profile_mode == VegetationProfileMode::Full {
         buffers.last_generation = generation_key;
     }

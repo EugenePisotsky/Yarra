@@ -3,9 +3,12 @@ mod coverage;
 mod inspector;
 mod layer_browser;
 mod objects;
+
 pub(crate) use layer_browser::EnvironmentLayerBrowser;
+
 pub(crate) mod preset_controls;
 pub(crate) mod preview;
+
 pub(crate) use inspector::inspector;
 pub(crate) use preview::EnvironmentPreview;
 
@@ -23,18 +26,22 @@ use crate::{
         },
     },
 };
+
 use bevy::{ecs::system::SystemParam, prelude::*};
 use bevy_egui::egui;
 use engine::{StreamedTerrainSurface, WorldOrigin};
+
 use environment::{
     EnvironmentDefinition, LayerId,
     brush::{BrushOperation, CoverageBrush},
 };
+
 use std::collections::BTreeMap;
 use world::{CellCoord, WorldSpaceId};
 use world_db::SourceEnvironmentCellRecord;
 
 pub(crate) struct EnvironmentPaintPlugin;
+
 impl Plugin for EnvironmentPaintPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<EnvironmentPaintState>()
@@ -72,10 +79,12 @@ struct Stroke {
     before: BTreeMap<CellCoord, SourceEnvironmentCellRecord>,
     last_point: Option<[f64; 2]>,
 }
+
 #[derive(Clone, Copy)]
 struct BrushHit {
     point: Vec3,
 }
+
 #[derive(Resource)]
 pub(crate) struct EnvironmentPaintState {
     definition_form: Option<inspector::DefinitionForm>,
@@ -90,6 +99,7 @@ pub(crate) struct EnvironmentPaintState {
     status: Option<String>,
     ready: bool,
 }
+
 impl Default for EnvironmentPaintState {
     fn default() -> Self {
         Self {
@@ -112,11 +122,13 @@ impl Default for EnvironmentPaintState {
         }
     }
 }
+
 impl EnvironmentPaintState {
     fn finish(&mut self, dense: &mut SourceWorkingSets, history: &mut EditorHistory, cancel: bool) {
         if let Some(stroke) = self.stroke.take() {
             dense.gesture_active = false;
             let before = stroke.before.into_values().collect::<Vec<_>>();
+
             if cancel {
                 if let Err(error) = dense.apply_environment_records(&before) {
                     self.status = Some(error);
@@ -139,6 +151,7 @@ struct PaintInput<'w, 's> {
     ground: GroundToolInput<'w, 's>,
     objects: Res<'w, EditorObjectWorkingSet>,
 }
+
 fn paint_input(
     input: PaintInput,
     mut project: ResMut<ProjectEditorStore>,
@@ -153,18 +166,23 @@ fn paint_input(
         || dense.saving()
         || dense.has_any_conflict()
         || input.objects.saving();
+
     if input.ground.keys.just_pressed(KeyCode::Escape) && paint.stroke.is_some() {
         paint.finish(&mut dense, &mut history, true);
         paint.status = Some("Stroke cancelled".into());
     }
+
     if !enabled || blocked || !input.ground.buttons.pressed(MouseButton::Left) {
         paint.finish(&mut dense, &mut history, false);
     }
+
     paint.hover = None;
     paint.ready = false;
+
     if !enabled || blocked {
         return;
     }
+
     let Some(space) = input.ground.origin.space() else {
         return;
     };
@@ -176,6 +194,7 @@ fn paint_input(
         paint.status = Some("This world has no environment definition".into());
         return;
     };
+
     if paint
         .stroke
         .as_ref()
@@ -183,10 +202,12 @@ fn paint_input(
     {
         paint.finish(&mut dense, &mut history, false);
     }
+
     if paint.space != Some(space) {
         paint.space = Some(space);
         paint.selected = None;
     }
+
     if !definition
         .layers
         .iter()
@@ -199,10 +220,12 @@ fn paint_input(
             .max_by_key(|layer| (layer.order, layer.id))
             .map(|layer| layer.id);
     }
+
     let Some(layer) = paint.selected else {
         paint.status = Some("This world has no enabled paint layers".into());
         return;
     };
+
     if definition
         .layers
         .iter()
@@ -212,6 +235,7 @@ fn paint_input(
         paint.status = Some("Enable this layer before painting".into());
         return;
     }
+
     if let Some(mask) = definition
         .layers
         .iter()
@@ -223,6 +247,7 @@ fn paint_input(
         ));
         return;
     }
+
     let Some(cursor) = input.ground.window.cursor_position() else {
         if let Some(stroke) = &mut paint.stroke {
             stroke.last_point = None;
@@ -270,11 +295,13 @@ fn paint_input(
             let snapshot = project
                 .environment_snapshot()
                 .ok_or("Loading paint area…")?;
+
             if snapshot.definition.space != space
                 || snapshot.definition.revision != definition.revision
             {
                 return Err("Loading paint area…");
             }
+
             if !cells.iter().all(|cell| {
                 dense
                     .environment_record(space, *cell)
@@ -282,8 +309,10 @@ fn paint_input(
             }) {
                 return Err("Loading paint area… Move closer or use a smaller brush.");
             }
+
             let halo = world_db::environment_dependency_cells(&cells)
                 .map_err(|_| "Brush covers too much area")?;
+
             if !halo.iter().all(|cell| {
                 snapshot
                     .coverage
@@ -293,6 +322,7 @@ fn paint_input(
             }) {
                 return Err("Loading neighboring paint cells…");
             }
+
             Ok(cells)
         });
     let cells = match ready {
@@ -302,19 +332,24 @@ fn paint_input(
         }
         Err(error) => {
             paint.status = Some(error.into());
+
             if let Some(stroke) = &mut paint.stroke {
                 stroke.last_point = None;
             }
+
             return;
         }
     };
+
     if input.ground.buttons.just_pressed(MouseButton::Left) {
         let mut brush = paint.brush;
+
         if input.ground.keys.pressed(KeyCode::ShiftLeft)
             || input.ground.keys.pressed(KeyCode::ShiftRight)
         {
             brush.operation = BrushOperation::Erase;
         }
+
         paint.stroke = Some(Stroke {
             space,
             layer,
@@ -324,10 +359,12 @@ fn paint_input(
         });
         dense.gesture_active = true;
     }
+
     let Some(stroke) = &mut paint.stroke else {
         paint.status = None;
         return;
     };
+
     match apply_segment(stroke, &definition, &cells, logical, &mut dense) {
         Ok(()) => paint.status = None,
         Err(error) => {
@@ -347,6 +384,7 @@ fn apply_segment(
     let from = stroke.last_point.unwrap_or(to);
     let mut originals = Vec::new();
     let mut replacements = Vec::new();
+
     for &cell in cells {
         let current = dense
             .environment_record(stroke.space, cell)
@@ -360,6 +398,7 @@ fn apply_segment(
             from,
             to,
         )?;
+
         if result.tiles != current.tiles {
             originals.push(before.clone());
             replacements.push(SourceEnvironmentCellRecord {
@@ -368,6 +407,7 @@ fn apply_segment(
             });
         }
     }
+
     // One drag always fits in the history budget, even when it revisits previously saved cells.
     let mut stroke_bytes = stroke
         .before
@@ -398,6 +438,7 @@ fn apply_segment(
                 .map_or(0, |r| r.sample_bytes() + 128)
         })
         .sum::<usize>();
+
     if stroke.before.len()
         + originals
             .iter()
@@ -408,10 +449,13 @@ fn apply_segment(
     {
         return Err("Release the brush to finish this stroke before painting more area".into());
     }
+
     dense.apply_environment_records(&replacements)?;
+
     for before in originals {
         stroke.before.entry(before.cell).or_insert(before);
     }
+
     stroke.last_point = Some(to);
     Ok(())
 }
@@ -436,10 +480,12 @@ fn draw_brush(
     } else {
         Color::srgb(0.2, 1.0, 0.7)
     };
+
     for radius in [brush.radius, brush.radius * (1.0 - brush.falloff)] {
         if radius < 0.01 {
             continue;
         }
+
         let points = (0..=64).map(|i| {
             let angle = i as f32 * std::f32::consts::TAU / 64.0;
             let xz = Vec2::new(

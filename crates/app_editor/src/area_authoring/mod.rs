@@ -5,6 +5,7 @@
 //! else and reaches the game on publish without recooking any terrain.
 #[cfg(test)]
 mod tests;
+
 mod viewport;
 pub(crate) mod working;
 
@@ -20,6 +21,7 @@ use crate::{
     tools::{AREA_TOOL, EditorToolRegistry},
     workspaces::{EditorWorkspace, world::EditorCameraFocusRequest, world_workspace_active},
 };
+
 use bevy::prelude::*;
 use bevy_egui::{EguiPrimaryContextPass, egui};
 use engine::{WorldCatalog, WorldOrigin};
@@ -34,6 +36,7 @@ pub(crate) const WINDOW: EditorWindowDescriptor = EditorWindowDescriptor {
 };
 
 pub(crate) struct AreaAuthoringPlugin;
+
 impl Plugin for AreaAuthoringPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<AreaToolState>()
@@ -114,6 +117,7 @@ impl AreaToolState {
                     self.gesture = Some(before);
                     dense.gesture_active = true;
                 }
+
                 self.status = None;
                 true
             }
@@ -131,6 +135,7 @@ impl AreaToolState {
             return;
         };
         dense.gesture_active = false;
+
         if !cancel {
             history.record_areas(before, dense.areas.areas().clone());
         } else if let Err(error) = dense.areas.apply(before) {
@@ -210,6 +215,7 @@ fn window(
     let Some(root) = frame.0.as_mut() else {
         return;
     };
+
     // A scrubbed or typed value is one undo step, taken when the pointer lifts or the field
     // is left.
     if state.dragging.is_none()
@@ -219,10 +225,13 @@ fn window(
     {
         state.finish(&mut dense, &mut history, false);
     }
+
     let mut open = windows.is_open(WINDOW.id);
+
     if !open {
         return;
     }
+
     let rect = root.available_rect_before_wrap();
     egui::Window::new("Areas")
         .id(egui::Id::new(WINDOW.id.0))
@@ -237,14 +246,17 @@ fn window(
                 ui.label("Waiting for world…");
                 return;
             };
+
             if !dense.areas.loaded() {
                 ui.label("Loading gameplay areas…");
                 return;
             }
+
             ui.small(
                 "Named places the game's rules react to. Gameplay content refers to an area \
                  by its name. Save & Publish updates the game.",
             );
+
             if let Some(theirs) = dense.areas.conflict.as_ref().map(|c| c.areas.len()) {
                 ui.colored_label(
                     ui.visuals().warn_fg_color,
@@ -261,6 +273,7 @@ fn window(
                 });
                 return;
             }
+
             let busy = publication.active() || save.active() || dense.saving();
             ui.add_enabled_ui(!busy, |ui| {
                 contents(
@@ -274,6 +287,7 @@ fn window(
                     &mut focus,
                 );
             });
+
             for message in [&state.status, &dense.areas.error].into_iter().flatten() {
                 ui.colored_label(ui.visuals().error_fg_color, message);
             }
@@ -294,6 +308,7 @@ fn contents(
 ) {
     let areas = dense.areas.areas().clone();
     ui.separator();
+
     if !tool_active {
         ui.label("Choose Areas in the World window to draw and reshape in the viewport.");
     } else if state.draft.is_some() {
@@ -315,6 +330,7 @@ fn contents(
              corner there.",
         );
     }
+
     ui.separator();
     let elsewhere = areas.iter().filter(|area| area.space != space).count();
     egui::ScrollArea::vertical()
@@ -330,17 +346,21 @@ fn contents(
                 }
             }
         });
+
     if areas.len() == elsewhere {
         ui.weak("No areas in this world yet.");
     }
+
     if elsewhere > 0 {
         ui.weak(format!("{elsewhere} more in other worlds."));
     }
+
     let Some(index) = state.selected_index(&areas) else {
         return;
     };
     let area = &areas[index];
     ui.separator();
+
     // Text stays in egui's temporary state until applied: a half-typed name is not a name.
     let name_id = ui.make_persistent_id(("area-name", &area.name));
     let mut name = ui
@@ -353,18 +373,23 @@ fn contents(
         rename |= ui.button("Rename").clicked();
     });
     ui.data_mut(|d| d.insert_temp(name_id, name.clone()));
+
     if rename && name != area.name {
         let renamed = with_area(&areas, index, |area| area.name = name.clone());
+
         if state.commit(dense, history, renamed) {
             state.selected = Some(name);
             ui.data_mut(|d| d.remove::<String>(name_id));
         }
+
         return;
     }
+
     ui.small("Lowercase letters, digits and _ - / . such as guard/gate_post.");
 
     ui.label(format!("{} corners", area.points.len()));
     let mut limited = area.height.is_some();
+
     if ui
         .checkbox(&mut limited, "Limit height")
         .on_hover_text(
@@ -381,6 +406,7 @@ fn contents(
         state.commit(dense, history, changed);
         return;
     }
+
     if let Some([mut low, mut high]) = area.height {
         let mut changed = false;
         ui.horizontal(|ui| {
@@ -393,6 +419,7 @@ fn contents(
                 .add(egui::DragValue::new(&mut high).speed(0.1).suffix(" m"))
                 .changed();
         });
+
         if changed {
             let height = Some([low.min(high), high.max(low)]);
             let changed = with_area(&areas, index, |area| area.height = height);
@@ -400,6 +427,7 @@ fn contents(
             return;
         }
     }
+
     ui.horizontal(|ui| {
         if ui.button("Go to").clicked() {
             let [x, z] = area.interior_point();
@@ -409,7 +437,9 @@ fn contents(
             let y = f64::from(state.ground.map_or(0., |[low, _]| low));
             focus.0 = Some(WorldPosition::from_world(area.space, [x, y, z], size));
         }
+
         let corner = state.corner.filter(|&c| c < area.points.len());
+
         if ui
             .add_enabled(
                 corner.is_some() && area.points.len() > 3,
@@ -425,9 +455,11 @@ fn contents(
             state.commit(dense, history, changed);
             state.corner = None;
         }
+
         if ui.button("Delete area").clicked() {
             let mut remaining = areas.to_vec();
             remaining.remove(index);
+
             if state.commit(dense, history, remaining) {
                 state.selected = None;
                 state.corner = None;

@@ -1,10 +1,12 @@
 use game_types::VariableId;
 use gameplay::dialogue::HistoryEvent;
 use gameplay::inventory::fixtures::{KEY, SWORD};
+
 use gameplay::{
     Action, Command, Condition, ConversationKey, GameContent, GameEvent, GameSession, KeyedMap,
     ScriptModule, ScriptName, ToolContent, Value, VariableDefinition, fixtures::*,
 };
+
 use yarra_scripting::{API_DEFINITIONS, LuauScripts};
 
 const GATE: &str = r#"
@@ -45,12 +47,15 @@ return gate
 fn module<'a>(content: &'a mut GameContent, name: &str) -> &'a mut ScriptModule {
     content.game.scripts.get_mut(&key(name)).unwrap()
 }
+
 fn script(name: &str) -> ScriptName {
     ScriptName::try_from(name.to_owned()).unwrap()
 }
+
 /// The fixture conversation, with its choice decided and carried out by scripts.
 fn content(source: &str, action: &str) -> GameContent {
     let mut content = gameplay::fixtures::content();
+
     for (name, initial) in [
         ("old_gate/visits", Value::Int(0)),
         ("old_gate/password", Value::Text(String::new())),
@@ -61,6 +66,7 @@ fn content(source: &str, action: &str) -> GameContent {
             scope: Default::default(),
         });
     }
+
     for (name, initial) in [
         ("old_gate/thanked", Value::Bool(false)),
         ("old_gate/favours", Value::Int(0)),
@@ -71,6 +77,7 @@ fn content(source: &str, action: &str) -> GameContent {
             scope: gameplay::VariableScope::Actor,
         });
     }
+
     // Beside the rules module the fixture already carries.
     content.game.scripts.add(ScriptModule {
         name: key("gate"),
@@ -83,11 +90,13 @@ fn content(source: &str, action: &str) -> GameContent {
     content.validate().unwrap();
     content
 }
+
 const TALK: ConversationKey = ConversationKey {
     dialogue: GATE_DIALOGUE,
     participant: HERO,
     speaker: MERCHANT,
 };
+
 fn at_choice(content: GameContent) -> GameSession {
     let mut session = GameSession::new(ToolContent::new(content).unwrap(), state()).unwrap();
     session
@@ -107,6 +116,7 @@ fn at_choice(content: GameContent) -> GameSession {
         .unwrap();
     session
 }
+
 fn choose(session: &mut GameSession) -> gameplay::Result<gameplay::CommandOutcome> {
     let expected = session.conversation_view(TALK)?.token;
     session.apply(Command::Choose {
@@ -117,6 +127,7 @@ fn choose(session: &mut GameSession) -> gameplay::Result<gameplay::CommandOutcom
         choice: key("return-key"),
     })
 }
+
 fn keys(session: &GameSession) -> usize {
     let bag = session.state().carried(HERO).unwrap();
     bag.entries.iter().filter(|e| e.definition == KEY).count()
@@ -180,11 +191,13 @@ fn a_scripted_choice_reads_state_and_changes_it_through_the_same_rules() {
         1
     );
 }
+
 #[test]
 fn a_script_that_fails_part_way_leaves_nothing_behind_and_says_where() {
     let mut session = at_choice(content(GATE, "gate.greedy"));
     let before = session.state().clone();
     let error = choose(&mut session).unwrap_err();
+
     // A rule's refusal keeps its type through the script, and the script is named.
     assert_eq!(
         error.rejection(),
@@ -200,6 +213,7 @@ fn a_script_that_fails_part_way_leaves_nothing_behind_and_says_where() {
     );
     assert_eq!(session.state(), &before);
     assert_eq!(keys(&session), 1);
+
     // A mistake in the script itself says where it happened.
     let broken = GATE.replace(
         "game.consume_item(scene.player, \"old_gate_key\", 5)",
@@ -214,6 +228,7 @@ fn a_script_that_fails_part_way_leaves_nothing_behind_and_says_where() {
         "{error}"
     );
 }
+
 #[test]
 fn conditions_are_read_only_strict_and_bounded() {
     let cases = [
@@ -253,6 +268,7 @@ fn conditions_are_read_only_strict_and_bounded() {
             HERO,
             MERCHANT,
         );
+
         match result {
             // The first case is a plain false: effect functions do not exist for conditions.
             Ok(evaluation) => assert!(!evaluation.matched && body.contains("~= nil"), "{body}"),
@@ -261,9 +277,11 @@ fn conditions_are_read_only_strict_and_bounded() {
                 assert!(error.contains(expected), "{body}: {error}");
             }
         }
+
         assert_eq!(state, before);
     }
 }
+
 #[test]
 fn a_script_asking_the_rules_in_a_loop_still_runs_out_of_steps() {
     // Every check runs the rules module; its calls count against the script's budget.
@@ -281,6 +299,7 @@ fn a_script_asking_the_rules_in_a_loop_still_runs_out_of_steps() {
     assert!(error.contains("step budget"), "{error}");
     assert_eq!(session.state(), &before);
 }
+
 #[test]
 fn nothing_a_script_keeps_survives_to_the_next_call() {
     let source = r#"
@@ -299,6 +318,7 @@ fn nothing_a_script_keeps_survives_to_the_next_call() {
     let content = content(source, "gate.hand_over");
     let state = state();
     let condition = Condition::Script(script("gate.has_key"));
+
     for _ in 0..3 {
         assert!(
             content
@@ -307,6 +327,7 @@ fn nothing_a_script_keeps_survives_to_the_next_call() {
                 .matched
         );
     }
+
     // Nor does a global set by another call reach the next one.
     let mut session = at_choice(content);
     choose(&mut session).unwrap();
@@ -318,6 +339,7 @@ fn nothing_a_script_keeps_survives_to_the_next_call() {
             .matched
     );
 }
+
 #[test]
 fn an_action_script_sees_everyone_taking_part_in_the_conversation() {
     let source = r#"
@@ -332,6 +354,7 @@ function gate.hand_over(game: Game, scene: Scene)
 end
 return gate
 "#;
+
     // Mira is not in the party; she is there as a witness.
     let mut content = content(source, "gate.hand_over");
     let witness = gameplay::dialogue::Role::Optional;
@@ -361,6 +384,7 @@ return gate
         Value::Int(1)
     );
 }
+
 #[test]
 fn publication_rejects_broken_modules_and_missing_functions() {
     let module = |source: &str| {
@@ -392,6 +416,7 @@ fn publication_rejects_broken_modules_and_missing_functions() {
     );
     assert!(ScriptName::try_from("no-dot".to_owned()).is_err());
 }
+
 #[test]
 fn the_type_definitions_list_exactly_the_functions_scripts_are_given() {
     // Ask a script what it was handed, for a condition and for an action.
@@ -501,6 +526,7 @@ return gate
             ..
         })
     ));
+
     // The conversation was queued and tried as soon as the choice was done: the gate
     // dialogue, just completed, is said only once.
     let refused = outcome.events.iter().find_map(|e| match e {
@@ -534,6 +560,7 @@ fn the_luau_rules_compute_what_the_fixture_formulas_do() {
     // works every character's stats out again and compares.
     let content = content(GATE, "gate.hand_over");
     let mut state = state();
+
     // A character that is not the plain level-one template.
     let hero = state.actors.get_mut(&HERO).unwrap();
     hero.level = 3;
@@ -555,6 +582,7 @@ fn the_luau_rules_compute_what_the_fixture_formulas_do() {
     );
     assert_eq!(derived["max-health"], 155.0);
     assert_eq!(derived["attack"], 14.0);
+
     for (wisdom, rank, difficulty) in [(10, 0, 10), (7, 0, 10), (13, 2, 16), (30, 3, 40)] {
         let mut stats = hero.base.clone();
         stats.insert(key("wisdom"), wisdom);
@@ -565,6 +593,7 @@ fn the_luau_rules_compute_what_the_fixture_formulas_do() {
             skills: &skills,
             ..sheet
         };
+
         for face in 1..=20 {
             let check = |engine: &dyn ScriptEngine| {
                 let mut asked = Vec::new();
@@ -589,6 +618,7 @@ fn the_luau_rules_compute_what_the_fixture_formulas_do() {
             );
         }
     }
+
     GameSession::new(ToolContent::new(content).unwrap(), self::state()).unwrap();
 }
 
@@ -641,6 +671,7 @@ return gate
     );
     assert!(hero.effects.is_empty());
     assert_eq!(state.gold().unwrap(), 60);
+
     // The merchant was poisoned without a time limit, so passing time has to visit him.
     assert_eq!(state.timed, [MERCHANT].into());
     assert!(matches!(
@@ -665,6 +696,7 @@ fn a_playthrough_opened_with_changed_formulas_takes_them_up() {
     assert!(rules.source.contains(before));
     rules.source = rules.source.replace(before, "10 + c.stats.vitality * 2");
     content.scripts = LuauScripts::install(content.game.scripts.values()).unwrap();
+
     // The fixture state was worked out with the old formula, as a save made before the
     // change would have been.
     let session = GameSession::new(ToolContent::new(content).unwrap(), state()).unwrap();
@@ -692,6 +724,7 @@ fn formulas_that_do_not_answer_properly_are_errors() {
              function rules.check(c, skill, difficulty, roll) return true end\nreturn rules"
         )
     };
+
     for (body, expected) in [
         ("return { attack = 1 }", "did not return max-health"),
         (
@@ -709,6 +742,7 @@ fn formulas_that_do_not_answer_properly_are_errors() {
         let error = broken(&with_derive(body));
         assert!(error.contains(expected), "{body}: {error}");
     }
+
     // A missing formula is found when the content is loaded, not at the first check.
     let mut content = gameplay::fixtures::content();
     module(&mut content, "rules").source =
@@ -731,6 +765,7 @@ fn working_out_a_whole_population_in_luau_stays_cheap() {
             .spawn(&content, TRAVELLER, game_types::ActorId(id))
             .unwrap();
     }
+
     let spawned = started.elapsed();
     let started = std::time::Instant::now();
     state.validate(&content).unwrap();
@@ -739,6 +774,7 @@ fn working_out_a_whole_population_in_luau_stays_cheap() {
         "{POPULATION} characters: spawn {spawned:?}, full check {checked:?} ({:?} per derive)",
         spawned / POPULATION
     );
+
     // An unoptimised build on a busy machine; the point is that it is not seconds.
     assert!(spawned.as_millis() < 5000 && checked.as_millis() < 5000);
 }
@@ -763,6 +799,7 @@ fn abilities_written_in_luau_fight_the_same_fight_as_the_fixture_ones() {
             GameSession::new(ToolContent::new(content).unwrap(), start.clone()).unwrap();
         session.apply(strike(HERO, MERCHANT)).unwrap();
         session.apply(strike(MERCHANT, HERO)).unwrap();
+
         for (ability, target) in [("power-strike", Some(MERCHANT)), ("second-wind", None)] {
             session
                 .apply(Command::Intend {
@@ -776,13 +813,16 @@ fn abilities_written_in_luau_fight_the_same_fight_as_the_fixture_ones() {
                 })
                 .unwrap();
         }
+
         for _ in 0..80 {
             session.apply(Command::AdvanceTime { millis: 100 }).unwrap();
         }
+
         session.state().clone()
     };
     let luau = fight(content(GATE, "gate.hand_over"));
     assert!(luau == fight(gameplay::fixtures::content()));
+
     // Blows were traded: this is not two idle states comparing equal.
     assert!(luau.actors[&MERCHANT].resources[&key("health")] < 60);
     assert!(luau.actors[&HERO].resources[&key("health")] < 50);
@@ -826,10 +866,12 @@ return abilities
     let reason = failure.expect("the failure is reported");
     assert!(reason.contains("abilities.strike") && reason.contains("the blade slips"));
     let state = session.state();
+
     // The wound the script dealt before failing was taken back; time went on regardless,
     // and the repeating strike was not lined up again.
     assert_eq!(state.actors[&MERCHANT].resources[&key("health")], 100);
     assert_eq!(state.time, game_types::GameTime(2000));
+
     // What the hero meant to do next still happened, straight after the failed strike.
     assert!(outcome.events.iter().any(|e| matches!(
         e,

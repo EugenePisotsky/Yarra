@@ -1,35 +1,43 @@
 #![allow(dead_code)]
 use game_types::ContentId;
+
 use std::{
     fs,
     path::{Path, PathBuf},
 };
+
 pub struct Temp(pub PathBuf);
+
 impl Temp {
     pub fn new() -> Self {
         let path = std::env::temp_dir().join(format!("yarra-content-test-{}", ContentId::random()));
         fs::create_dir(&path).unwrap();
         Self(path)
     }
+
     pub fn source(&self) -> PathBuf {
         let root = self.0.join("source");
         copy(&sample(), &root);
         root
     }
 }
+
 impl Drop for Temp {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
     }
 }
+
 pub fn sample() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content/gameplay/demo")
 }
+
 fn copy(from: &Path, to: &Path) {
     fs::create_dir_all(to).unwrap();
     for entry in fs::read_dir(from).unwrap() {
         let entry = entry.unwrap();
         let target = to.join(entry.file_name());
+
         if entry.file_type().unwrap().is_dir() {
             copy(&entry.path(), &target)
         } else {
@@ -37,6 +45,7 @@ fn copy(from: &Path, to: &Path) {
         }
     }
 }
+
 pub fn write(path: impl AsRef<Path>, value: &impl serde::Serialize) {
     fs::write(
         path,
@@ -44,6 +53,7 @@ pub fn write(path: impl AsRef<Path>, value: &impl serde::Serialize) {
     )
     .unwrap();
 }
+
 /// Reads a file as the loader does: one under `packages/<name>/` belongs to that package,
 /// so a message written as a bare key is in its text.
 pub fn read<T: serde::de::DeserializeOwned>(path: impl AsRef<Path>) -> T {
@@ -54,6 +64,7 @@ pub fn read<T: serde::de::DeserializeOwned>(path: impl AsRef<Path>) -> T {
         .by_ref()
         .find(|part| part == "packages")
         .and_then(|_| parts.next());
+
     match package {
         Some(name) => {
             let text_id = game_types::TextResourceId::try_from(name).unwrap();
@@ -62,6 +73,7 @@ pub fn read<T: serde::de::DeserializeOwned>(path: impl AsRef<Path>) -> T {
         None => ron::from_str(&text).unwrap(),
     }
 }
+
 /// Publish the project and start its scenario against the published bundle.
 pub fn runtime(temp: &Temp, project: &yarra_game_content::LoadedProject) -> gameplay::GameSession {
     let bundle = temp.0.join("content.sqlite");

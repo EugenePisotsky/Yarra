@@ -4,7 +4,9 @@ use super::{
     gpu_types::WorkItemGpu,
     pipelines::VegetationPipelines,
 };
+
 use crate::{VegetationDiagnostics, VegetationProfileMode, VegetationSettings};
+
 use bevy::{
     prelude::*,
     render::{
@@ -59,18 +61,22 @@ fn plan(items: &[WorkItemGpu], position: Vec3, byte_budget: u64) -> (Vec<[u32; 4
     let mut descriptors = vec![[0; 4]; items.len()];
     let mut pending = Vec::new();
     let mut indices = 0u64;
+
     for index in order {
         let count = items[index as usize].field[0];
+
         if count == 0
             || count > MAX_BUILD_LANES
             || (indices + u64::from(count.div_ceil(32))) * 4 > byte_budget
         {
             continue;
         }
+
         descriptors[index as usize] = [indices as u32, count, 0, 0];
         pending.push(index);
         indices += u64::from(count.div_ceil(32));
     }
+
     (descriptors, pending, indices * 4)
 }
 
@@ -90,6 +96,7 @@ impl CandidateCache {
         self.completed = 0;
         self.serial = self.serial.wrapping_add(1);
         let mut replaced = false;
+
         if let Some((buffer, _)) = update_storage(
             device,
             queue,
@@ -101,6 +108,7 @@ impl CandidateCache {
             self.entries = buffer;
             replaced = true;
         }
+
         if let Some((buffer, _)) = grow_storage(
             device,
             self.acceptance_bits.size(),
@@ -110,6 +118,7 @@ impl CandidateCache {
             self.acceptance_bits = buffer;
             replaced = true;
         }
+
         debug_assert!(self.acceptance_bits.size() <= MAX_MASK_BYTES);
         replaced
     }
@@ -138,9 +147,11 @@ pub(super) fn build(
         s.candidate_cache_ready_items = cache.completed as u32;
         s.candidate_cache_planned_items = cache.pending.len() as u32;
     });
+
     if !enabled || !buffers.active {
         return;
     }
+
     let (Some(build), Some(finish)) = (
         pipeline_cache.get_compute_pipeline(pipelines.cache_build),
         pipeline_cache.get_compute_pipeline(pipelines.cache_finish),
@@ -148,6 +159,7 @@ pub(super) fn build(
         return;
     };
     let ids = [build.id(), finish.id()];
+
     if cache.pipelines != Some(ids) {
         // Shader reload may change stable acceptance even if source buffers are unchanged.
         for (index, entry) in cache.descriptors.iter().enumerate() {
@@ -159,26 +171,34 @@ pub(super) fn build(
                 );
             }
         }
+
         cache.completed = 0;
         cache.serial = cache.serial.wrapping_add(1);
         cache.pipelines = Some(ids);
     }
+
     let mut selected = [u32::MAX; MAX_BUILD_ITEMS];
     let mut count = 0;
     let mut maximum = 0;
+
     for &index in &cache.pending[cache.completed..] {
         let next_maximum = maximum.max(cache.descriptors[index as usize][1].div_ceil(64) * 64);
+
         if count == MAX_BUILD_ITEMS || next_maximum * (count as u32 + 1) > MAX_BUILD_LANES {
             break;
         }
+
         maximum = next_maximum;
         selected[count] = index;
         count += 1;
     }
+
     if count == 0 {
         return;
     }
+
     queue.write_buffer(&cache.build_items, 0, bytemuck::cast_slice(&selected));
+
     {
         let mut pass = context
             .command_encoder()
@@ -190,6 +210,7 @@ pub(super) fn build(
         pass.set_pipeline(build);
         pass.dispatch_workgroups(maximum.div_ceil(64), count as u32, 1);
     }
+
     {
         // Separate pass: make acceptance bits visible before publishing ready to generation.
         let mut pass = context
@@ -202,6 +223,7 @@ pub(super) fn build(
         pass.set_pipeline(finish);
         pass.dispatch_workgroups(1, 1, 1);
     }
+
     cache.completed += count;
     cache.serial = cache.serial.wrapping_add(1);
     diagnostics.update(|s| {
@@ -214,17 +236,21 @@ pub(super) fn build(
 mod tests {
     use super::*;
     use crate::renderer::packing::pack_scene;
+
     #[test]
     fn planning_has_bounded_nonoverlapping_slots_and_reference_fallback() {
         let mut items = pack_scene(&vegetation::fixtures::reference_scene()).work_items;
+
         for (i, item) in items.iter_mut().enumerate() {
             item.field[0] = 100 + i as u32;
         }
+
         items[0].field[0] = MAX_BUILD_LANES + 1;
         let (entries, pending, bytes) = plan(&items, Vec3::ZERO, 1200);
         assert!(bytes <= 1200 && pending.len() > 1);
         assert_eq!(entries[0], [0; 4]);
         let mut end = 0;
+
         for i in pending {
             let e = entries[i as usize];
             assert_eq!(e[0], end);
@@ -232,6 +258,7 @@ mod tests {
             assert_eq!(&e[2..], &[0, 0]);
             end += e[1].div_ceil(32);
         }
+
         assert_eq!(u64::from(end) * 4, bytes);
     }
 }

@@ -2,6 +2,7 @@
 //! Persistence/editor integration is separate; a snapshot must contain every span whose
 //! conservative influence bounds intersect its declared window, including off-window knots.
 mod geometry;
+
 use crate::{ChannelId, PresetId, ValidationError, unit};
 pub use geometry::{influence_bounds, split_span};
 use serde::{Deserialize, Serialize};
@@ -16,11 +17,17 @@ macro_rules! road_id {
         pub struct $name(pub [u8; 16]);
     };
 }
+
 road_id!(RoadId);
+
 road_id!(RoadProfileId);
+
 road_id!(RoadKnotId);
+
 road_id!(RoadSpanId);
+
 road_id!(RoadJunctionId);
+
 pub const MAX_ROAD_RECORDS: usize = 64;
 pub const MAX_ROAD_SPANS: usize = 256;
 pub const MAX_ROAD_QUERY_CELLS: usize = 576;
@@ -29,6 +36,7 @@ pub const MAX_ROAD_QUERY_CELLS: usize = 576;
 /// The first policy is a worn clearing, using one shared cart style for all arms.
 /// How far along its arms a junction's corner legs join them at most, metres.
 pub const JUNCTION_LEG_REACH: f32 = 18.0;
+
 /// What a corner leg's drawing reaches beyond its centre line at most: half the widest road a
 /// junction takes (its radius) is not known here, so a generous bound.
 const JUNCTION_LEG_MARGIN: f32 = 8.0;
@@ -43,6 +51,7 @@ pub struct RoadJunction {
     pub seed: u32,
     pub knots: Vec<RoadKnotId>,
 }
+
 impl RoadJunction {
     pub fn validate(&self, size: f32) -> Result<(), ValidationError> {
         if self.revision == 0
@@ -62,6 +71,7 @@ impl RoadJunction {
         }
         Ok(())
     }
+
     /// The cells the junction's patch and its corner legs reach.
     pub fn bounds(&self, size: f32) -> Result<RoadCellBounds, ValidationError> {
         self.validate(size)?;
@@ -86,6 +96,7 @@ pub struct RoadPoint {
     pub cell: CellCoord,
     pub local: [f64; 2],
 }
+
 impl RoadPoint {
     pub fn relative_to(self, origin: CellCoord, size: f64) -> [f64; 2] {
         [
@@ -93,6 +104,7 @@ impl RoadPoint {
             (i64::from(self.cell.z) - i64::from(origin.z)) as f64 * size + self.local[1],
         ]
     }
+
     pub fn from_relative(
         origin: CellCoord,
         point: [f64; 2],
@@ -101,15 +113,18 @@ impl RoadPoint {
         if !size.is_finite() || size <= 0.0 || point.iter().any(|p| !p.is_finite()) {
             return Err(invalid("point"));
         }
+
         let offsets = point.map(|p| (p / size).floor());
         let x = f64::from(origin.x) + offsets[0];
         let z = f64::from(origin.z) + offsets[1];
+
         if [x, z]
             .iter()
             .any(|p| *p < f64::from(i32::MIN) || *p > f64::from(i32::MAX))
         {
             return Err(invalid("coordinate range"));
         }
+
         Ok(Self {
             cell: CellCoord {
                 x: x as i32,
@@ -119,6 +134,7 @@ impl RoadPoint {
         })
     }
 }
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RoadKnot {
     pub id: RoadKnotId,
@@ -130,14 +146,17 @@ pub struct RoadKnot {
     /// Full corridor width. Changes shoulders, not cart wheel spacing.
     pub width: f32,
 }
+
 impl RoadKnot {
     pub fn validate(&self, size: f32, profile: &CartTrackProfile) -> Result<(), ValidationError> {
         profile.validate()?;
+
         if !range(self.width, profile.minimum_width(), 64.0) {
             return Err(invalid(
                 "corridor width must fit the style's minimum road width and be at most 64 m",
             ));
         }
+
         if self.revision == 0
             || !range(size, 0.01, 65536.0)
             || self
@@ -153,9 +172,11 @@ impl RoadKnot {
         {
             return Err(invalid("knot"));
         }
+
         Ok(())
     }
 }
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RoadSpan {
     pub id: RoadSpanId,
@@ -164,18 +185,21 @@ pub struct RoadSpan {
     pub start: RoadKnot,
     pub end: RoadKnot,
 }
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TravelDirection {
     Bidirectional,
     Forward,
     Reverse,
 }
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum RoadTravelMode {
     Foot,
     Mounted,
     Cart,
 }
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Road {
     pub id: RoadId,
@@ -191,6 +215,7 @@ pub struct Road {
     /// ([`RoadWear`]).
     pub traffic: f32,
 }
+
 impl Road {
     pub fn validate(&self) -> Result<(), ValidationError> {
         if self.revision == 0
@@ -205,6 +230,7 @@ impl Road {
         Ok(())
     }
 }
+
 /// A road style: the kind of way (two wheel tracks or one footpath track, how ragged its edges,
 /// how its tracks wander and sink). How worn a road of it is comes from the road's traffic
 /// ([`RoadWear`]).
@@ -252,8 +278,10 @@ pub struct RoadWear {
     /// Scale of the style's whole-road depth.
     pub basin: f32,
 }
+
 /// Traffic of a new road: tracks worn bare, grass down the middle.
 pub const DEFAULT_TRAFFIC: f32 = 0.5;
+
 impl RoadWear {
     pub fn at(traffic: f32) -> Self {
         let t = traffic.clamp(0.0, 1.0);
@@ -270,10 +298,12 @@ impl RoadWear {
             basin: 2.0 * t,
         }
     }
+
     /// A style's `breakup` at this wear.
     pub fn breakup(&self, style: f32) -> f32 {
         (style * self.patchiness).clamp(0.0, 1.0)
     }
+
     /// `relief` at this wear, kept within its limits.
     pub fn relief(&self, relief: &RoadRelief) -> RoadRelief {
         RoadRelief {
@@ -283,6 +313,7 @@ impl RoadWear {
         }
     }
 }
+
 /// The share of grass that road wear `wear` (0..1) clears: little where the ground is trampled,
 /// all where it is worn bare.
 pub fn grass_cleared(wear: f64) -> f64 {
@@ -302,6 +333,7 @@ pub struct RoadRelief {
     pub track_variation: f32,
     pub track_variation_length: f32,
 }
+
 impl Default for RoadRelief {
     fn default() -> Self {
         Self {
@@ -316,10 +348,12 @@ impl Default for RoadRelief {
         }
     }
 }
+
 impl RoadRelief {
     pub fn enabled(&self) -> bool {
         self.road_depth > 0.0 || self.track_depth > 0.0
     }
+
     pub fn validate(&self) -> Result<(), ValidationError> {
         for (value, min, max, message) in [
             (
@@ -378,25 +412,31 @@ impl RoadRelief {
         Ok(())
     }
 }
+
 impl CartTrackProfile {
     /// Whether terrain heights `height_step` apart carry the wheel ruts: tracks at least two
     /// intervals wide. Narrower ruts are drawn by near terrain detail alone.
     pub fn carves_ruts(&self, height_step: f32) -> bool {
         self.relief.track_depth > 0.0 && self.track_width >= 2.0 * height_step
     }
+
     pub fn validate_relief_detail(&self, height_step: f32) -> Result<(), &'static str> {
         let r = &self.relief;
+
         if !r.enabled() {
             return Ok(());
         }
+
         if !height_step.is_finite() || height_step <= 0.0 {
             return Err("invalid terrain height grid");
         }
+
         if r.road_depth > 0.0 && r.shoulder_falloff < height_step {
             return Err(
                 "terrain shoulder falloff must span at least one height sample; broaden it or increase terrain resolution",
             );
         }
+
         if (r.road_depth > 0.0
             && r.road_variation > 0.0
             && r.road_variation_length < 4.0 * height_step)
@@ -406,15 +446,19 @@ impl CartTrackProfile {
         {
             return Err("depth variation length must span at least four terrain height intervals");
         }
+
         Ok(())
     }
+
     pub fn validate(&self) -> Result<(), ValidationError> {
         self.relief.validate()?;
+
         if self.revision == 0 || !name(&self.name) {
             return Err(invalid(
                 "style needs a revision and a nonempty name of at most 256 bytes",
             ));
         }
+
         for (value, min, max, message) in [
             (
                 self.track_width,
@@ -457,44 +501,54 @@ impl CartTrackProfile {
                 return Err(invalid(message));
             }
         }
+
         // No spacing: a footpath, one track down the middle.
         if self.track_spacing != 0.0 && !range(self.track_spacing, 0.1, 16.0) {
             return Err(invalid(
                 "wheel spacing must be 0 (one track) or between 0.1 and 16 m",
             ));
         }
+
         if self.track_spacing != 0.0 && self.track_spacing <= self.track_width {
             return Err(invalid("wheel spacing must be greater than track width"));
         }
+
         if self.edge_softness > self.track_width {
             return Err(invalid(
                 "edge softness must not exceed track width; reduce softness or increase track width",
             ));
         }
+
         if self.edge_variation > self.track_width * 0.4 {
             return Err(invalid("edge variation must not exceed 40% of track width"));
         }
+
         if !range(self.track_wander, 0.0, self.track_width) {
             return Err(invalid(
                 "track wander must be between 0 and the track width",
             ));
         }
+
         if !unit(self.breakup) {
             return Err(invalid("unworn patches must be between 0 and 1"));
         }
+
         Ok(())
     }
+
     pub fn minimum_width(&self) -> f32 {
         self.track_spacing
             + self.track_width
             + 2.0 * (self.edge_softness + self.edge_variation + self.track_wander)
     }
 }
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RoadCellBounds {
     pub minimum: CellCoord,
     pub maximum: CellCoord,
 }
+
 impl RoadCellBounds {
     pub fn contains(self, cell: CellCoord) -> bool {
         cell.x >= self.minimum.x
@@ -502,21 +556,26 @@ impl RoadCellBounds {
             && cell.z >= self.minimum.z
             && cell.z <= self.maximum.z
     }
+
     pub fn intersects(self, other: Self) -> bool {
         self.minimum.x <= other.maximum.x
             && self.maximum.x >= other.minimum.x
             && self.minimum.z <= other.maximum.z
             && self.maximum.z >= other.minimum.z
     }
+
     pub fn cell_count(self) -> Option<usize> {
         let x = i64::from(self.maximum.x) - i64::from(self.minimum.x) + 1;
         let z = i64::from(self.maximum.z) - i64::from(self.minimum.z) + 1;
+
         if x <= 0 || z <= 0 {
             return None;
         }
+
         usize::try_from(x.checked_mul(z)?).ok()
     }
 }
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RoadSnapshot {
     pub space: WorldSpaceId,
@@ -529,6 +588,7 @@ pub struct RoadSnapshot {
     pub spans: Vec<RoadSpan>,
     pub junctions: Vec<RoadJunction>,
 }
+
 impl RoadSnapshot {
     pub fn validate(&self) -> Result<(), ValidationError> {
         if self.truncated
@@ -544,33 +604,43 @@ impl RoadSnapshot {
         {
             return Err(invalid("snapshot bounds or completeness"));
         }
+
         let mut profiles = BTreeMap::new();
+
         for p in &self.profiles {
             p.validate()?;
             if profiles.insert(p.id, p).is_some() {
                 return Err(invalid("duplicate profile"));
             }
         }
+
         let mut roads = BTreeMap::new();
+
         for r in &self.roads {
             r.validate()?;
             if roads.insert(r.id, r).is_some() || !profiles.contains_key(&r.profile) {
                 return Err(invalid("road metadata or profile reference"));
             }
         }
+
         let mut spans = BTreeSet::new();
         let mut knots = BTreeMap::new();
         let mut directions = BTreeSet::new();
+
         for span in &self.spans {
             let Some(road) = roads.get(&span.road) else {
                 return Err(invalid("span road reference"));
             };
+
             if span.revision == 0 || !spans.insert(span.id) || span.start.id == span.end.id {
                 return Err(invalid("span identity"));
             }
+
             let profile = profiles[&road.profile];
+
             for (knot, is_start) in [(&span.start, true), (&span.end, false)] {
                 knot.validate(self.cell_size, profile)?;
+
                 if let Some((owner, previous)) = knots.insert(knot.id, (span.road, knot))
                     && (owner != span.road || previous != knot)
                 {
@@ -578,35 +648,45 @@ impl RoadSnapshot {
                         "inconsistent shared knot; explicit junction required between roads",
                     ));
                 }
+
                 if !directions.insert((span.road, knot.id, is_start)) {
                     return Err(invalid("branch requires an explicit junction"));
                 }
             }
+
             let delta = span
                 .end
                 .position
                 .relative_to(span.start.position.cell, f64::from(self.cell_size));
+
             if (delta[0] - span.start.position.local[0])
                 .hypot(delta[1] - span.start.position.local[1])
                 > 1024.0
             {
                 return Err(invalid("span length; insert intermediate knots"));
             }
+
             influence_bounds(span, profile, self.cell_size)?;
         }
+
         let mut junction_ids = BTreeSet::new();
         let mut connected = BTreeSet::new();
+
         for junction in &self.junctions {
             junction.validate(self.cell_size)?;
+
             if !junction_ids.insert(junction.id) || !profiles.contains_key(&junction.profile) {
                 return Err(invalid("duplicate junction or missing junction style"));
             }
+
             let mut owners = BTreeSet::new();
             let mut arms = 0;
+
             for id in &junction.knots {
                 let Some((owner, knot)) = knots.get(id) else {
                     return Err(invalid("junction is missing an incident road point"));
                 };
+
                 if !connected.insert(*id)
                     || !owners.insert(*owner)
                     || knot.position != junction.position
@@ -616,15 +696,18 @@ impl RoadSnapshot {
                         "junction points must belong to different roads, share its position and fit its radius",
                     ));
                 }
+
                 arms += self
                     .spans
                     .iter()
                     .filter(|s| s.start.id == *id || s.end.id == *id)
                     .count();
             }
+
             if !(2..=4).contains(&arms) {
                 return Err(invalid("junction supports two to four incident arms"));
             }
+
             // Roads of other styles may join (a footpath leaving a cart road); the junction's
             // worn patch takes the style of one of its roads.
             if !owners
@@ -634,15 +717,19 @@ impl RoadSnapshot {
                 return Err(invalid("a junction takes the style of one of its roads"));
             }
         }
+
         Ok(())
     }
 }
+
 fn name(s: &str) -> bool {
     !s.trim().is_empty() && s.len() <= 256
 }
+
 fn range(v: f32, min: f32, max: f32) -> bool {
     v.is_finite() && (min..=max).contains(&v)
 }
+
 fn invalid(what: &'static str) -> ValidationError {
     ValidationError::Road(what)
 }
@@ -659,14 +746,18 @@ mod tests {
         assert!(near(medium.tracks, 1.0) && near(medium.center, 0.35));
         assert!(near(medium.shoulders, 0.45) && near(medium.breakup(0.45), 0.45));
         assert!(near(medium.ruts, 1.0) && near(medium.basin, 1.0));
+
         // The faintest: tracks only trampled, nothing between them.
         let faint = RoadWear::at(0.0);
         assert!(faint.tracks < 0.4 && faint.center == 0.0 && faint.shoulders == 0.0);
+
         // The busiest: one worn band, shoulders worn too, fewer unworn patches.
         let busy = RoadWear::at(1.0);
         assert!(near(busy.center, 1.0) && busy.shoulders > 0.75 && busy.breakup(0.45) < 0.3);
+
         // Every part wears more the more the road is used.
         let mut last = faint;
+
         for i in 1..=20 {
             let w = RoadWear::at(i as f32 / 20.0);
             assert!(w.tracks >= last.tracks && w.center >= last.center);

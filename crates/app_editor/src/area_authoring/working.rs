@@ -34,29 +34,36 @@ impl WorkingSet {
             self.current = source.areas.clone();
         }
     }
+
     pub fn loaded(&self) -> bool {
         self.base.is_some()
     }
+
     pub fn areas(&self) -> &Arc<[GameplayArea]> {
         &self.current
     }
+
     pub fn dirty_count(&self) -> usize {
         usize::from(self.base.as_ref().is_some_and(|b| b.areas != self.current))
     }
+
     pub fn blocked(&self) -> bool {
         self.base.is_none() || self.saving.is_some() || self.conflict.is_some()
     }
+
     /// Replaces the whole set. A set the project would refuse is refused here.
     pub fn apply(&mut self, areas: Arc<[GameplayArea]>) -> Result<(), String> {
         if self.blocked() {
             return Err("Gameplay areas are loading, saving or in conflict".into());
         }
+
         world::validate_gameplay_areas(&areas)?;
         self.current = areas;
         self.revision += 1;
         self.error = None;
         Ok(())
     }
+
     pub fn journal(&self) -> Option<Snapshot> {
         let base = self.base.as_ref()?;
         (base.areas != self.current).then(|| Snapshot {
@@ -65,6 +72,7 @@ impl WorkingSet {
             current: self.current.to_vec(),
         })
     }
+
     /// Brings back unsaved work after a crash, unless there is newer unsaved work already.
     pub fn restore(&mut self, snapshot: Snapshot) -> bool {
         if snapshot.revision < 1
@@ -74,6 +82,7 @@ impl WorkingSet {
         {
             return false;
         }
+
         self.base = Some(GameplayAreasRecord {
             revision: snapshot.revision,
             areas: snapshot.base.into(),
@@ -82,6 +91,7 @@ impl WorkingSet {
         self.revision += 1;
         true
     }
+
     pub fn queue_save(&mut self, store: &mut ProjectEditorStore) -> bool {
         let Some(base) = self.base.as_ref().filter(|_| !self.blocked()) else {
             return false;
@@ -90,6 +100,7 @@ impl WorkingSet {
         self.error = None;
         self.saving.is_some()
     }
+
     pub fn complete(&mut self, result: Result<GameplayAreasWriteResult, String>) -> bool {
         self.saving = None;
         match result {
@@ -114,12 +125,14 @@ impl WorkingSet {
             }
         }
     }
+
     /// Continues from what the project holds now, keeping or dropping the local version.
     pub fn resolve_conflict(&mut self, keep_local: bool) {
         if let Some(actual) = self.conflict.take() {
             if !keep_local {
                 self.current = actual.areas.clone();
             }
+
             self.base = Some(actual);
             self.revision += 1;
             self.error = None;

@@ -3,16 +3,19 @@ use super::{
     telemetry::{PendingPipelines, Telemetry, scene_size},
     timing,
 };
+
 use crate::{
     frame_pacing::{FramePacing, FrameRate},
     runtime_settings::RuntimeSettings,
 };
+
 use bevy::{prelude::*, window::PrimaryWindow};
 use engine::WorldViewCamera;
 
 const SAMPLE_SECONDS: f64 = 10.0;
 const SETTLE_SECONDS: f64 = 2.0;
 const MAX_SETTLE_SECONDS: f64 = 8.0;
+
 #[derive(Resource)]
 pub(crate) struct CaptureSession {
     baseline: RuntimeSettings,
@@ -21,6 +24,7 @@ pub(crate) struct CaptureSession {
     active: Option<Recording>,
     pub(crate) message: String,
 }
+
 impl Default for CaptureSession {
     fn default() -> Self {
         Self {
@@ -32,11 +36,13 @@ impl Default for CaptureSession {
         }
     }
 }
+
 pub(super) struct Progress {
     pub slot: usize,
     pub sampling: bool,
     pub elapsed: f64,
 }
+
 impl CaptureSession {
     pub(crate) fn recording(&self) -> bool {
         self.active.is_some()
@@ -72,6 +78,7 @@ impl CaptureSession {
         if self.recording() || slot >= self.slots.len() {
             return false;
         }
+
         let was_detailed = settings.gpu_pass_timings;
         settings.gpu_pass_timings = false;
         self.active = Some(Recording {
@@ -135,12 +142,14 @@ struct Recording {
     was_detailed: bool,
     capture: Capture,
 }
+
 impl Recording {
     fn restore_controls(&self, settings: &mut RuntimeSettings) {
         settings.controls_locked = self.was_locked;
         settings.gpu_pass_timings = self.was_detailed;
     }
 }
+
 #[derive(Clone, Debug)]
 pub(super) struct Capture {
     pub(super) settings: RuntimeSettings,
@@ -159,6 +168,7 @@ pub(super) struct Capture {
     pub(super) gpu: Vec<timing::GpuSample>,
     pub(super) cpu: Vec<timing::CpuSample>,
 }
+
 impl Capture {
     pub(super) fn new(settings: RuntimeSettings, frame_rate: FrameRate) -> Self {
         Self {
@@ -205,9 +215,11 @@ pub(super) fn sample(
     let Some(recording) = state.active.as_mut() else {
         return false;
     };
+
     if pacing.rate != recording.capture.frame_rate {
         return state.cancel(&mut settings, "Capture cancelled: FPS limit changed.");
     }
+
     let now = time.elapsed_secs_f64();
     let busy = pending.count() > 0
         || streaming.loading > 0
@@ -217,23 +229,27 @@ pub(super) fn sample(
             .is_ok_and(|s| s.active.is_none() || s.requested != settings.upscaler);
     let mut cancel = None;
     let mut done = false;
+
     if !window.focused {
         cancel = Some("Capture cancelled: window lost focus.");
     } else if let Some(start) = recording.sampling_since {
         recording.capture.frames.push(frame_ms);
         recording.capture.app_times.push(app_ms);
+
         if busy {
             add_warning(
                 &mut recording.capture,
                 "Loading, pipeline compilation or upscaler preparation occurred during this capture.",
             );
         }
+
         if upscaler.single().ok() != recording.capture.upscaler.as_ref() {
             add_warning(
                 &mut recording.capture,
                 "Active upscaler or its dimensions changed during capture.",
             );
         }
+
         if !camera
             .0
             .to_matrix()
@@ -241,9 +257,11 @@ pub(super) fn sample(
         {
             add_warning(&mut recording.capture, "Camera moved during capture.");
         }
+
         if atmosphere.weather != recording.capture.weather {
             add_warning(&mut recording.capture, "Weather changed during capture.");
         }
+
         done = now - start >= SAMPLE_SECONDS;
     } else if now - recording.started >= SETTLE_SECONDS && !busy {
         recording.sampling_since = Some(now);
@@ -271,6 +289,7 @@ pub(super) fn sample(
             "\nTree wind tuning (session controls): {:?}",
             wind_tuning.as_deref()
         );
+
         if let Ok(status) = upscaler.single() {
             recording.capture.context += &format!("\n{}", status.description());
             recording.capture.upscaler = Some(status.clone());
@@ -280,6 +299,7 @@ pub(super) fn sample(
             "Capture cancelled: render resources did not settle within 8 s. Try again once the scene is ready.",
         );
     }
+
     if let Some(message) = cancel {
         return state.cancel(&mut settings, message);
     } else if done {
@@ -296,6 +316,7 @@ pub(super) fn sample(
             .filter(|s| in_capture(s.stamp, recording.timing_start, *stamp))
             .cloned()
             .collect();
+
         if !timings.enabled {
             add_warning(
                 &mut recording.capture,
@@ -307,19 +328,23 @@ pub(super) fn sample(
                 "Insufficient GPU timestamp samples; no GPU estimate available.",
             );
         }
+
         if stamp.epoch != recording.timing_start.epoch {
             add_warning(
                 &mut recording.capture,
                 "Settings changed during capture; timing samples excluded after the change.",
             );
         }
+
         recording.capture.thermal_end = crate::render_audit::logging::power_state().thermal.into();
+
         if recording.capture.thermal_start != recording.capture.thermal_end {
             add_warning(
                 &mut recording.capture,
                 "Thermal state changed during capture.",
             );
         }
+
         recording.restore_controls(&mut settings);
         state.message = format!(
             "Captured {}. {}",
@@ -333,13 +358,16 @@ pub(super) fn sample(
         state.slots[recording.slot] = Some(recording.capture);
         return true;
     }
+
     false
 }
+
 fn add_warning(capture: &mut Capture, warning: &str) {
     if !capture.warnings.iter().any(|w| w == warning) {
         capture.warnings.push(warning.into());
     }
 }
+
 fn in_capture(sample: timing::Stamp, start: timing::Stamp, end: timing::Stamp) -> bool {
     sample.epoch == start.epoch && sample.frame > start.frame && sample.frame <= end.frame
 }

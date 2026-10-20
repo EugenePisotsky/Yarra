@@ -2,6 +2,7 @@
 //! shader poses every blade twice, with this frame's camera and wind and with last frame's.
 use super::{buffers::VegetationBuffers, gpu_types::CameraGpu};
 use crate::{VegetationSceneState, VegetationView};
+
 use bevy::{
     core_pipeline::{Core3dSystems, schedule::Core3d},
     prelude::*,
@@ -17,18 +18,21 @@ use bevy::{
         view::{ViewDepthStencilTexture, ViewTarget},
     },
 };
+
 use bytemuck::{Pod, Zeroable};
 use std::mem::size_of;
 use upscaling::temporal::{TemporalFrame, TemporalMotionTarget};
 
 #[derive(Component)]
 pub(super) struct Pipeline(pub CachedRenderPipelineId);
+
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct Uniform {
     previous: CameraGpu,
     raster_clip: [f32; 16],
 }
+
 #[derive(Resource)]
 struct State {
     uniform: Buffer,
@@ -37,6 +41,7 @@ struct State {
     catalog_revision: u64,
     was_active: bool,
 }
+
 impl FromWorld for State {
     fn from_world(world: &mut World) -> Self {
         let device = world.resource::<RenderDevice>();
@@ -55,12 +60,14 @@ impl FromWorld for State {
         }
     }
 }
+
 pub(super) fn layout() -> BindGroupLayoutDescriptor {
     BindGroupLayoutDescriptor::new(
         "grass temporal data",
         &BindGroupLayoutEntries::single(ShaderStages::VERTEX, uniform_buffer_sized(false, None)),
     )
 }
+
 pub(super) fn install(app: &mut SubApp) {
     app.init_gpu_resource::<State>()
         .add_systems(
@@ -78,6 +85,7 @@ pub(super) fn install(app: &mut SubApp) {
                 .before(bevy::core_pipeline::core_3d::main_transparent_pass_3d),
         );
 }
+
 #[allow(clippy::too_many_arguments)] // Independent render-world resources.
 fn prepare(
     mut state: ResMut<State>,
@@ -95,6 +103,7 @@ fn prepare(
         state.group = None;
         return;
     };
+
     if state.group.is_none() {
         state.group = Some(device.create_bind_group(
             "grass temporal data",
@@ -102,6 +111,7 @@ fn prepare(
             &BindGroupEntries::single(state.uniform.as_entire_binding()),
         ));
     }
+
     let catalog_revision = scene.as_ref().map_or(0, |s| s.catalog_revision());
     let catalog_changed = buffers.active && state.catalog_revision != catalog_revision;
     let active_changed = state.was_active != buffers.active;
@@ -111,6 +121,7 @@ fn prepare(
             p.render_origin != camera.render_origin || (p.wind[3] - camera.wind[3]).abs() > 0.25
         });
     let reset = frame.reset || catalog_changed || pose_discontinuity;
+
     // Residency repacks instance indices, not blade identity: both poses come from the same
     // root and seed, so page loads need no reset.
     if diagnostics.as_ref().is_some_and(|d| d.temporal_timing)
@@ -121,16 +132,19 @@ fn prepare(
             buffers.uploaded_revision
         );
     }
+
     frame.reset |= reset;
     let mut previous = if reset || active_changed {
         camera
     } else {
         state.previous.unwrap_or(camera)
     };
+
     if active_changed && !reset {
         // Newly enabled grass has no old deformation, but still has camera motion.
         previous.clip_from_world = frame.previous_clip_from_world.to_cols_array();
     }
+
     queue.write_buffer(
         &state.uniform,
         0,
@@ -140,12 +154,15 @@ fn prepare(
         }),
     );
     state.previous = Some(camera);
+
     // An edit while disabled must still invalidate when the new catalog is first drawn.
     if buffers.active {
         state.catalog_revision = catalog_revision;
     }
+
     state.was_active = buffers.active;
 }
+
 fn draw(
     view: ViewQuery<(
         &Pipeline,
@@ -168,9 +185,11 @@ fn draw(
     let Some(group) = &state.group else {
         return;
     };
+
     if !buffers.active {
         return;
     }
+
     let mut pass = ctx
         .command_encoder()
         .begin_render_pass(&RenderPassDescriptor {
@@ -201,12 +220,15 @@ fn draw(
     pass.set_pipeline(pipeline);
     pass.set_bind_group(0, &*mesh.main, &mesh.main_offsets);
     pass.set_bind_group(1, &*buffers.draw_bind_group, &[]);
+
     if let Some(environment) = &environment {
         pass.set_bind_group(2, &*environment.0, &[]);
     }
+
     pass.set_bind_group(3, &**group, &[]);
     pass.set_viewport(0., 0., frame.size.x as f32, frame.size.y as f32, 0., 1.);
     pass.set_index_buffer(*buffers.topology_indices.slice(..), IndexFormat::Uint16);
+
     for offset in [0, 20] {
         pass.draw_indexed_indirect(&buffers.args, offset);
     }

@@ -7,6 +7,7 @@ use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError};
 use engine::{WorldCatalog, WorldViewpoint};
 use vegetation::VegetationCatalog;
 use world::{CellCoord, StableObjectId, WorldSpaceId};
+
 use world_db::{
     EnvironmentCellKey, EnvironmentCellWrite, EnvironmentDefinitionWrite, EnvironmentSourceCommit,
     EnvironmentSourceWriteResult, ObjectWriteTransactionResult, ProjectManifest, ProjectReader,
@@ -16,10 +17,12 @@ use world_db::{
 
 use crate::tools::{EditorSourceDomain, EditorToolRegistry};
 use crate::workspaces::EditorWorkspace;
+
 use demand::{
     dispatch_project_query, dispatch_project_save, update_project_query_demand,
     validate_project_catalog,
 };
+
 use receive::receive_project_results;
 use worker::start_project_worker;
 
@@ -248,6 +251,7 @@ impl ProjectEditorStore {
         if writes.is_empty() || self.save_in_flight() || self.write_error.is_some() {
             return None;
         }
+
         self.next_save_request_id = self.next_save_request_id.wrapping_add(1).max(1);
         self.pending_atmosphere_save = Some((self.next_save_request_id, writes));
         Some(self.next_save_request_id)
@@ -266,6 +270,7 @@ impl ProjectEditorStore {
         if self.save_in_flight() || self.write_error.is_some() {
             return None;
         }
+
         self.next_save_request_id = self.next_save_request_id.wrapping_add(1).max(1);
         self.pending_area_save = Some((self.next_save_request_id, expected_revision, areas));
         Some(self.next_save_request_id)
@@ -292,9 +297,11 @@ impl ProjectEditorStore {
     pub(crate) fn environment_snapshot(&self) -> Option<&world_db::EnvironmentReadSnapshot> {
         self.environment_snapshot.as_ref()
     }
+
     pub(crate) fn terrain_height_step(&self, space: WorldSpaceId) -> Option<f32> {
         self.height_steps.get(&space).copied()
     }
+
     pub(crate) fn terrain_resources(
         &self,
         space: WorldSpaceId,
@@ -303,6 +310,7 @@ impl ProjectEditorStore {
             .iter()
             .find(|r| r.profile.space == space)
     }
+
     pub(crate) fn focus_environment(&mut self, space: WorldSpaceId, cell: CellCoord) {
         self.environment_focus = Some((space, cell));
     }
@@ -406,6 +414,7 @@ impl ProjectEditorStore {
         if writes.is_empty() || self.save_in_flight() || self.write_error.is_some() {
             return None;
         }
+
         let request_id = self.next_save_request_id.wrapping_add(1).max(1);
         self.next_save_request_id = request_id;
         self.pending_save = Some(PendingObjectSave { request_id, writes });
@@ -431,6 +440,7 @@ impl ProjectEditorStore {
         {
             return None;
         }
+
         let request_id = self.next_save_request_id.wrapping_add(1).max(1);
         self.next_save_request_id = request_id;
         self.pending_dense_save = Some(PendingDenseSave {

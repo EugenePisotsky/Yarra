@@ -51,6 +51,7 @@ impl Plugin for MsaaColorStorePlugin {
         let schedule = schedules
             .get_mut(Core3d)
             .expect("Core3d plugin is required");
+
         // Replace the uninitialized system in its existing graph slot. Removing
         // and re-adding it would lose ordering edges from transmission, atmosphere,
         // deferred lighting and third-party plugins attached to Bevy's system set.
@@ -81,9 +82,11 @@ fn can_discard_color(
     if policy != Some(&MsaaColorStorePolicy::Automatic) {
         return false;
     }
+
     let Some(sampled) = target.sampled_main_texture() else {
         return false; // Never discard single-sample color: it is the final image.
     };
+
     // Cameras with the same target can share their MSAA attachment. Keep it even
     // when the other camera has no draws this frame, since it may load/resolve it.
     if targets.iter().any(|(entity, other)| {
@@ -94,6 +97,7 @@ fn can_discard_color(
     }) {
         return false;
     }
+
     // Bevy's sky pass loads multisample color; the sky composite that replaces it does not.
     if (world.get::<GpuAtmosphereSettings>(view_entity).is_some()
         && !world.contains_resource::<atmosphere::sky::BevySkyPassReplaced>())
@@ -104,7 +108,9 @@ fn can_discard_color(
     {
         return false;
     }
+
     let retained = &view.retained_view_entity;
+
     // Gizmos also use Transparent3d. Missing phase resources/entries are treated
     // conservatively, rather than assuming a partially configured view is empty.
     let transparent_empty = world
@@ -165,11 +171,13 @@ fn opaque_pass(
     let diagnostics = diagnostics.as_deref();
     let discard = can_discard_color(world, view_entity, extracted_view, target, policy, &targets);
     let mut color = target.get_color_attachment();
+
     if discard && color.resolve_target.is_some() {
         // Discard affects only the multisampled attachment. The resolve target
         // is still written and is consumed by UI/postprocessing/presentation.
         color.ops.store = StoreOp::Discard;
     }
+
     let label = if discard {
         "main_opaque_pass_3d_resolve_only"
     } else {
@@ -184,21 +192,25 @@ fn opaque_pass(
         multiview_mask: None,
     });
     let span = diagnostics.pass_span(&mut pass, "main_opaque_pass_3d");
+
     if let Some(viewport) =
         Viewport::from_viewport_and_override(camera.viewport.as_ref(), resolution_override)
     {
         pass.set_camera_viewport(&viewport);
     }
+
     if !opaque_phase.is_empty()
         && let Err(err) = opaque_phase.render(&mut pass, world, view_entity)
     {
         error!("Error encountered while rendering the opaque phase {err:?}");
     }
+
     if !alpha_mask_phase.is_empty()
         && let Err(err) = alpha_mask_phase.render(&mut pass, world, view_entity)
     {
         error!("Error encountered while rendering the alpha mask phase {err:?}");
     }
+
     if let (Some(skybox_pipeline), Some(SkyboxBindGroup(skybox_bind_group))) =
         (skybox_pipeline, skybox_bind_group)
         && let Some(pipeline) = pipeline_cache.get_render_pipeline(skybox_pipeline.0)
@@ -211,6 +223,7 @@ fn opaque_pass(
         );
         pass.draw(0..3, 0..1);
     }
+
     span.end(&mut pass);
 }
 

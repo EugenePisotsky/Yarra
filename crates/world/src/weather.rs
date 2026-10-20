@@ -12,6 +12,7 @@ pub enum WeatherKind {
     Rain,
     Storm,
 }
+
 impl WeatherKind {
     pub const ALL: [Self; 5] = [
         Self::Clear,
@@ -20,6 +21,7 @@ impl WeatherKind {
         Self::Rain,
         Self::Storm,
     ];
+
     pub fn label(self) -> &'static str {
         match self {
             Self::Clear => "Clear",
@@ -29,9 +31,11 @@ impl WeatherKind {
             Self::Storm => "Storm",
         }
     }
+
     pub fn index(self) -> usize {
         self as usize
     }
+
     /// Built-in default for this state; worlds author their own in `WeatherSettings`.
     pub fn preset(self) -> WeatherParams {
         let p = |cloud_coverage,
@@ -78,11 +82,13 @@ impl WeatherKind {
             Self::Storm => p(1.0, 2.2, 1.1, 0.05, 0.08, 0.9, -0.9, [1.9, 1.0, 1.5], 1.0),
         }
     }
+
     /// The preset closest to an authored cloud layer, used to start the sequence without a jump.
     pub fn nearest_to(profile: &AtmosphereProfile) -> Self {
         if !profile.clouds.enabled {
             return Self::Clear;
         }
+
         let coverage = profile.clouds.coverage;
         Self::ALL
             .into_iter()
@@ -118,6 +124,7 @@ pub struct WeatherParams {
 }
 
 const NEUTRAL_HAZE_SRGB: [f32; 3] = [0.78, 0.80, 0.82];
+
 /// Keep one frame's wave advance below the grass history-reset threshold at the 0.1 s hitch clamp.
 pub const MAX_WIND_RATE: f32 = 2.0;
 
@@ -130,6 +137,7 @@ impl WeatherParams {
         };
         8.0 * ramp(self.precipitation, 0.75, 1.0) * ramp(self.cloud_density, 1.7, 2.1)
     }
+
     pub fn lerp(self, to: Self, t: f32) -> Self {
         let m = |a: f32, b: f32| a + (b - a) * t;
         Self {
@@ -181,17 +189,21 @@ impl WeatherParams {
         p.clouds.erosion = self.cloud_erosion.clamp(0., 1.);
         p.clouds.thickness_metres =
             (profile.clouds.thickness_metres * self.cloud_thickness_scale).clamp(100., 3000.);
+
         // Night keeps its authored exposure: the moon is already hidden by the same clouds.
         p.exposure_ev100 = (profile.exposure_ev100 + self.exposure_offset_ev).clamp(0., 20.);
+
         // Skylight under a cloud deck is grey. Blue clear-sky ambient on pale surfaces reads as
         // fog even at arm's length once the sun is gone.
         let grey = self.haze_grey.clamp(0., 1.) * 0.7;
+
         for phase in &mut p.phases {
             let mean = phase.ambient_srgb.iter().sum::<f32>() / 3.;
             for c in &mut phase.ambient_srgb {
                 *c += (mean - *c) * grey;
             }
         }
+
         p
     }
 
@@ -245,6 +257,7 @@ pub struct WeatherSchedule {
     /// Duration of an automatic change, as [min, max].
     pub transition_seconds: [f32; 2],
 }
+
 impl Default for WeatherSchedule {
     fn default() -> Self {
         Self {
@@ -267,6 +280,7 @@ impl Default for WeatherSchedule {
         }
     }
 }
+
 impl WeatherSchedule {
     pub fn validate(&self) -> Result<(), &'static str> {
         let range = |[lo, hi]: [f32; 2]| lo.is_finite() && hi.is_finite() && 0. <= lo && lo <= hi;
@@ -274,6 +288,7 @@ impl WeatherSchedule {
         let weights = self.next_weights.iter().all(|row| {
             row.iter().all(|w| w.is_finite() && *w >= 0.) && row.iter().sum::<f32>() > 0.
         });
+
         if holds && weights && range(self.transition_seconds) {
             Ok(())
         } else {
@@ -291,6 +306,7 @@ pub struct WeatherSettings {
     pub presets: [WeatherParams; 5],
     pub schedule: WeatherSchedule,
 }
+
 impl Default for WeatherSettings {
     fn default() -> Self {
         Self {
@@ -299,10 +315,12 @@ impl Default for WeatherSettings {
         }
     }
 }
+
 impl WeatherSettings {
     pub fn preset(&self, kind: WeatherKind) -> WeatherParams {
         self.presets[kind.index()]
     }
+
     pub fn validate(&self) -> Result<(), &'static str> {
         for preset in &self.presets {
             preset.validate()?;
@@ -314,6 +332,7 @@ impl WeatherSettings {
 /// Small deterministic generator; weather needs variety, not statistical quality.
 #[derive(Debug, Clone)]
 struct SplitMix64(u64);
+
 impl SplitMix64 {
     fn next_u64(&mut self) -> u64 {
         self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
@@ -322,10 +341,12 @@ impl SplitMix64 {
         z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
         z ^ (z >> 31)
     }
+
     /// Uniform in [0, 1).
     fn next_f32(&mut self) -> f32 {
         (self.next_u64() >> 40) as f32 / (1u64 << 24) as f32
     }
+
     fn range(&mut self, [lo, hi]: [f32; 2]) -> f32 {
         lo + (hi - lo) * self.next_f32()
     }
@@ -338,6 +359,7 @@ fn smoothstep(t: f32) -> f32 {
 
 /// Wetting and drying time constants at full precipitation, in seconds.
 const WETTING_SECONDS: f32 = 90.;
+
 const DRYING_SECONDS: f32 = 240.;
 
 /// Weather state and automatic sequence. Manual requests blend from the current values, so a
@@ -355,6 +377,7 @@ pub struct WeatherRuntime {
     pub automatic: bool,
     wetness: f32,
 }
+
 impl WeatherRuntime {
     /// Settled at `initial`. Invalid settings fall back to the defaults.
     pub fn new(
@@ -406,9 +429,11 @@ impl WeatherRuntime {
     pub fn target(&self) -> WeatherKind {
         self.target
     }
+
     pub fn wetness(&self) -> f32 {
         self.wetness
     }
+
     /// 1 once the target is reached.
     pub fn progress(&self) -> f32 {
         if self.duration <= 0. {
@@ -417,6 +442,7 @@ impl WeatherRuntime {
             (self.elapsed / self.duration).clamp(0., 1.)
         }
     }
+
     /// Remaining hold before the next automatic change, once settled.
     pub fn hold_remaining(&self) -> Option<f32> {
         (self.automatic && self.progress() >= 1.).then_some(self.hold_remaining)
@@ -434,6 +460,7 @@ impl WeatherRuntime {
         let t = self.progress();
         let to = self.settings.preset(self.target);
         let mut params = self.from.lerp(to, smoothstep(t));
+
         // Rain starts once the cloud deck has built and stops before it clears.
         let rain_t = if to.precipitation > self.from.precipitation {
             smoothstep((t - 0.4) / 0.6)
@@ -464,16 +491,20 @@ impl WeatherRuntime {
         let weights = self.settings.schedule.next_weights[self.target.index()];
         let mut pick = self.rng.next_f32() * weights.iter().sum::<f32>();
         let mut next = self.target;
+
         for kind in WeatherKind::ALL {
             let weight = weights[kind.index()];
             if weight > 0. {
                 next = kind;
+
                 if pick < weight {
                     break;
                 }
+
                 pick -= weight;
             }
         }
+
         let seconds = self.rng.range(self.settings.schedule.transition_seconds);
         self.request(next, seconds);
         next
@@ -483,7 +514,9 @@ impl WeatherRuntime {
         if !seconds.is_finite() || seconds <= 0. {
             return;
         }
+
         let precipitation = self.current().precipitation;
+
         // Exact for constant precipitation over the step, so accelerated clocks stay stable.
         if precipitation > 0.01 {
             let k = precipitation / WETTING_SECONDS;
@@ -491,27 +524,33 @@ impl WeatherRuntime {
         } else {
             self.wetness *= (-seconds / DRYING_SECONDS).exp();
         }
+
         self.wetness = self.wetness.clamp(0., 1.);
         let mut remaining = seconds;
+
         // Bounded: each iteration either consumes the step or starts a positive-length change.
         for _ in 0..8 {
             if self.progress() < 1. {
                 let step = remaining.min(self.duration - self.elapsed);
                 self.elapsed += step;
                 remaining -= step;
+
                 if self.elapsed >= self.duration {
                     self.from = self.settings.preset(self.target);
                     self.elapsed = 0.;
                     self.duration = 0.;
                 }
             }
+
             if remaining <= 0. || !self.automatic {
                 return;
             }
+
             if remaining < self.hold_remaining {
                 self.hold_remaining -= remaining;
                 return;
             }
+
             remaining -= self.hold_remaining;
             self.next_random();
         }
@@ -527,6 +566,7 @@ mod tests {
         for kind in WeatherKind::ALL {
             assert!(kind.preset().validate().is_ok(), "{kind:?}");
         }
+
         let coverage: Vec<_> = WeatherKind::ALL
             .iter()
             .map(|k| k.preset().cloud_coverage)
@@ -541,6 +581,7 @@ mod tests {
             clouds: crate::clouds::CloudSettings::scattered(),
             ..Default::default()
         };
+
         for kind in WeatherKind::ALL {
             let applied = kind.preset().apply(&profile);
             assert!(applied.validate().is_ok(), "{kind:?}");
@@ -553,13 +594,16 @@ mod tests {
                 (applied.sun_srgb, applied.sun_lux),
                 (profile.sun_srgb, profile.sun_lux)
             );
+
             for (a, b) in applied.phases.iter().zip(&profile.phases) {
                 assert_eq!(a.ambient_lux, b.ambient_lux);
             }
+
             // The sky model keeps authored clear air; weather visibility is separate fog.
             assert_eq!(applied.visibility_metres, profile.visibility_metres);
             assert_eq!(applied.haze_srgb, profile.haze_srgb);
         }
+
         let scattered = WeatherKind::Scattered.preset().apply(&profile);
         assert_eq!(scattered.phases, profile.phases);
         assert_eq!(scattered.clouds, profile.clouds);
@@ -593,18 +637,21 @@ mod tests {
         assert_eq!(w.current(), WeatherKind::Clear.preset());
         w.request(WeatherKind::Overcast, 60.);
         let mut previous = w.current();
+
         for step in 0..200 {
             if step == 50 {
                 // Redirect halfway: the next value continues from the blended state.
                 w.request(WeatherKind::Storm, 30.);
                 assert_eq!(w.current(), previous);
             }
+
             w.advance(0.5);
             let now = w.current();
             assert!((now.cloud_coverage - previous.cloud_coverage).abs() < 0.03);
             assert!((now.visibility_scale - previous.visibility_scale).abs() < 0.05);
             previous = now;
         }
+
         assert_eq!(w.current(), WeatherKind::Storm.preset());
         assert_eq!(w.progress(), 1.);
         assert_eq!(
@@ -637,17 +684,21 @@ mod tests {
         let run = |step: f32| {
             let mut w = WeatherRuntime::new(default_schedule(), 1, WeatherKind::Storm, false);
             let mut t = 0.;
+
             while t < 180. {
                 w.advance(step);
                 t += step;
             }
+
             let wet = w.wetness();
             w.request(WeatherKind::Clear, 0.);
             let mut t = 0.;
+
             while t < 240. {
                 w.advance(step);
                 t += step;
             }
+
             (wet, w.wetness())
         };
         let (fine_wet, fine_dry) = run(1. / 120.);
@@ -668,22 +719,26 @@ mod tests {
             };
             let mut w = WeatherRuntime::new(settings, seed, WeatherKind::Clear, true);
             let mut seen = vec![WeatherKind::Clear];
+
             for _ in 0..20_000 {
                 w.advance(5.);
                 if *seen.last().unwrap() != w.target() {
                     seen.push(w.target());
                 }
             }
+
             seen
         };
         let a = sequence(42);
         assert_eq!(a, sequence(42));
         assert_ne!(a, sequence(43));
         assert!(a.len() > 50);
+
         for pair in a.windows(2) {
             let weight = schedule.next_weights[pair[0].index()][pair[1].index()];
             assert!(weight > 0., "{:?} -> {:?}", pair[0], pair[1]);
         }
+
         for kind in WeatherKind::ALL {
             assert!(a.contains(&kind), "{kind:?} never occurs");
         }

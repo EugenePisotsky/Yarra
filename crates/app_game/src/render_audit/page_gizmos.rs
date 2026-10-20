@@ -19,6 +19,7 @@ pub(super) fn draw(
 
     for (transform, page) in &terrain_pages {
         let center_xz = transform.translation.xz();
+
         if center_xz.distance_squared(camera_xz) > 96.0_f32.powi(2) {
             continue;
         }

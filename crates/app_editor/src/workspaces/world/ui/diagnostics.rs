@@ -9,10 +9,12 @@ use crate::{
     tools::EditorToolRegistry,
     workspaces::EditorWorkspace,
 };
+
 use bevy::{
     diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin},
     prelude::*,
 };
+
 use bevy_egui::egui;
 use engine::{StreamingStats, WorldCatalog, WorldOrigin, WorldViewpoint};
 
@@ -39,16 +41,20 @@ pub(super) fn draw_world_diagnostics(
         .unwrap_or_default();
     ui.monospace(format!("{fps:.1} FPS · 30 FPS authoring target"));
     ui.label(&stats.status);
+
     if !catalog.generation_id().is_empty() {
         ui.small(format!("Runtime generation {}", catalog.generation_id()));
     }
+
     ui.small(publication.status());
+
     if let Some(generation) = publication.published_generation() {
         ui.small(format!("Last publication adopted: {generation}"));
     }
 
     ui.separator();
     ui.heading("Logical viewpoint");
+
     if let Some(position) = viewpoint.position() {
         ui.monospace(format!(
             "space {} · cell {}, {} · local {:.2}, {:.2}, {:.2}",
@@ -62,6 +68,7 @@ pub(super) fn draw_world_diagnostics(
     } else {
         ui.weak("Waiting for runtime manifest…");
     }
+
     ui.monospace(format!("origin {}, {}", origin.cell().x, origin.cell().z));
 
     ui.separator();
@@ -90,6 +97,7 @@ pub(super) fn draw_world_diagnostics(
     ui.separator();
     ui.heading("Authoring source");
     ui.label(project.status());
+
     if let Some(active_tool) = tools.active(EditorWorkspace::World) {
         ui.small(format!(
             "{} · {} source domain(s)",
@@ -97,6 +105,7 @@ pub(super) fn draw_world_diagnostics(
             active_tool.source_domains.len(),
         ));
     }
+
     ui.small(format!(
         "{} coverage cell(s) · {} unsaved · {} retained",
         dense_domains.environment_record_count(),
@@ -113,12 +122,14 @@ pub(super) fn draw_world_diagnostics(
         listings.status(),
         listings.stale_results()
     ));
+
     if let Some(error) = project.write_error() {
         ui.colored_label(
             egui::Color32::YELLOW,
             format!("Read-only authoring session: {error}"),
         );
     }
+
     if let Some(manifest) = project.manifest() {
         ui.small(format!(
             "Schema {} · {} world spaces · default {}",
@@ -127,6 +138,7 @@ pub(super) fn draw_world_diagnostics(
             manifest.default_world_space.0
         ));
     }
+
     egui::Grid::new("source_cache_diagnostics")
         .num_columns(2)
         .striped(true)
@@ -161,12 +173,15 @@ pub(super) fn draw_world_diagnostics(
             ui.monospace(project.stale_results().to_string());
             ui.end_row();
         });
+
     if let Some(window) = project.desired_window() {
         ui.small(format_source_window("Desired", window));
     }
+
     if let Some(window) = project.loaded_window() {
         ui.small(format_source_window("Loaded", window));
     }
+
     if project.cells_truncated() || project.objects_truncated() {
         ui.colored_label(
             egui::Color32::YELLOW,

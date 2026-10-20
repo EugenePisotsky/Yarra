@@ -1,11 +1,13 @@
 //! Session wind experiments on the native F1 panel.
 use super::capture::CaptureSession;
 use crate::render_audit::font;
+
 use bevy::{
     prelude::*,
     ui::{Pressed, RelativeCursorPosition},
     ui_widgets::Button,
 };
+
 use engine::TreeWindTuning;
 use vegetation_render::VegetationWind;
 
@@ -19,6 +21,7 @@ enum Knob {
     Flutter,
     Rhythm,
 }
+
 impl Knob {
     fn info(self) -> (&'static str, f32, f32) {
         match self {
@@ -31,6 +34,7 @@ impl Knob {
             Self::Rhythm => ("Trunk response period", 0.4, 2.),
         }
     }
+
     fn value(self, t: &TreeWindTuning) -> f32 {
         match self {
             Self::Strength => t.strength,
@@ -42,6 +46,7 @@ impl Knob {
             Self::Rhythm => t.rhythm,
         }
     }
+
     fn set(self, t: &mut TreeWindTuning, value: f32) {
         match self {
             Self::Strength => {
@@ -63,14 +68,19 @@ impl Knob {
         }
     }
 }
+
 #[derive(Component)]
 struct Track(Knob);
+
 #[derive(Component)]
 struct Fill(Knob);
+
 #[derive(Component)]
 struct Label(Knob);
+
 #[derive(Component)]
 struct Status;
+
 #[derive(Component, Clone, Copy)]
 enum Action {
     Weather,
@@ -85,6 +95,7 @@ pub(super) fn install(app: &mut App) {
     app.add_systems(Update, (actions, drag).chain())
         .add_systems(PostUpdate, refresh.after(engine::TreeWindSystems));
 }
+
 pub(super) fn spawn(page: &mut ChildSpawnerCommands, button: impl Fn() -> (Node, BackgroundColor)) {
     page.spawn((Text::new("Drag a bar to tune. Strength, gusts and direction switch to manual shared wind; Follow weather restores automatic wind. Tree response controls apply to the new connected assets. Values are artistic tuning, not measured wind speeds."),font(12.)));
     page.spawn((Text::new(""), font(13.), Status));
@@ -108,6 +119,7 @@ pub(super) fn spawn(page: &mut ChildSpawnerCommands, button: impl Fn() -> (Node,
                 .with_child((Text::new(label), font(13.)));
         }
     });
+
     for knob in [
         Knob::Strength,
         Knob::Gusts,
@@ -148,6 +160,7 @@ pub(super) fn spawn(page: &mut ChildSpawnerCommands, button: impl Fn() -> (Node,
         });
     }
 }
+
 fn actions(
     clicks: Query<&Action, Added<Pressed>>,
     tuning: Option<ResMut<TreeWindTuning>>,
@@ -157,9 +170,11 @@ fn actions(
     let Some(mut t) = tuning else {
         return;
     };
+
     if session.recording() {
         return;
     }
+
     for action in &clicks {
         match action {
             Action::Weather => t.manual = false,
@@ -178,6 +193,7 @@ fn actions(
         }
     }
 }
+
 fn drag(
     tracks: Query<(Has<Pressed>, &RelativeCursorPosition, &Track)>,
     tuning: Option<ResMut<TreeWindTuning>>,
@@ -187,19 +203,24 @@ fn drag(
     let Some(mut t) = tuning else {
         return;
     };
+
     if session.recording() {
         return;
     }
+
     for (pressed, cursor, track) in &tracks {
         if pressed && let Some(p) = cursor.normalized {
             let (_, lo, hi) = track.0.info();
+
             if matches!(track.0, Knob::Strength | Knob::Gusts | Knob::Heading) {
                 begin_manual(&mut t, wind.as_deref());
             }
+
             track.0.set(&mut t, lo + p.x.clamp(0., 1.) * (hi - lo));
         }
     }
 }
+
 fn refresh(
     tuning: Option<Res<TreeWindTuning>>,
     wind: Option<Res<VegetationWind>>,
@@ -211,23 +232,29 @@ fn refresh(
         return;
     };
     let mut display = t.clone();
+
     if !display.manual {
         begin_manual(&mut display, wind.as_deref());
     }
+
     for (label, mut text) in &mut texts {
         let (name, _, _) = label.0.info();
         let value = format!("{name}: {:.2}", label.0.value(&display));
+
         if text.0 != value {
             **text = value;
         }
     }
+
     for (fill, mut node) in &mut fills {
         let (_, lo, hi) = fill.0.info();
         let width = percent(100. * ((fill.0.value(&display) - lo) / (hi - lo)).clamp(0., 1.));
+
         if node.width != width {
             node.width = width;
         }
     }
+
     for mut text in &mut status {
         let value = format!(
             "{} | effective strength {:.2}{}",

@@ -2,33 +2,41 @@
 use super::*;
 use environment::roads::*;
 use world_db::{RoadSourceRecord as R, SourceRoad, SourceRoadKnot, SourceRoadSpan};
+
 pub fn create_road_demo_project(path: &Path) -> Result<()> {
     write_project_database(path, &document())
         .with_context(|| format!("failed to create road project at {}", path.display()))
 }
+
 pub(super) fn document() -> ProjectDocument {
     let mut project = demo_project_document();
+
     for world in &mut project.world_spaces {
         world.cell_size = 8.0;
         world.minimum_y *= 0.25;
         world.maximum_y *= 0.25;
     }
+
     for d in &mut project.environments {
         d.cell_size = 8.0;
     }
+
     for p in &mut project.terrain_profiles {
         p.weight_resolution = 65;
     }
+
     for h in &mut project.terrain_cell_heightfields {
         for y in &mut h.heights {
             *y *= 0.25;
         }
     }
+
     for o in &mut project.objects {
         for v in &mut o.local_translation {
             *v *= 0.25;
         }
     }
+
     let p = CartTrackProfile {
         id: RoadProfileId(stable_id("road-demo-cart-style")),
         revision: 1,
@@ -96,9 +104,11 @@ pub(super) fn document() -> ProjectDocument {
     ];
     project
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn road_fixture_cooks_narrow_tracks_on_its_own_grid() {
         let project = document();

@@ -1,6 +1,7 @@
 //! Vegetation render-world composition. Resource ownership lives in the stage modules below.
 #[cfg(not(target_os = "ios"))]
 use bevy::render::ExtractSchedule;
+
 use bevy::{
     core_pipeline::{core_3d::Opaque3d, schedule::camera_driver},
     prelude::*,
@@ -18,8 +19,10 @@ mod pipelines;
 mod prepare;
 mod telemetry;
 mod temporal;
+
 #[cfg(test)]
 mod tests;
+
 mod topology;
 mod trample;
 

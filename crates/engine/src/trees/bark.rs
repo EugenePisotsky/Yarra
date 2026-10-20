@@ -6,6 +6,7 @@
 use atmosphere::environment::{
     EnvironmentMaterial, EnvironmentMaterialOptIn, EnvironmentMaterialSystems,
 };
+
 use bevy::{
     asset::AssetEventSystems,
     gltf::GltfMaterialExtras,
@@ -23,9 +24,11 @@ use bevy::{
         AsBindGroup, RenderPipelineDescriptor, SpecializedMeshPipelineError,
     },
 };
+
 use std::collections::{HashMap, HashSet};
 
 type TreeBarkMaterial = ExtendedMaterial<EnvironmentMaterial, TreeBarkExtension>;
+
 #[derive(Asset, AsBindGroup, TypePath, Clone, Debug)]
 struct TreeBarkExtension {
     // StandardMaterial uses 0–99, tree wind 100 and EnvironmentMaterial 120–123.
@@ -37,6 +40,7 @@ struct TreeBarkExtension {
     #[texture(104)]
     upper_metallic_roughness: Handle<Image>,
 }
+
 impl MaterialExtension for TreeBarkExtension {
     fn specialize(
         _pipeline: &MaterialExtensionPipeline,
@@ -61,9 +65,11 @@ pub(super) struct UpperBark {
 
 pub(super) fn upper_bark(extras: &str) -> Option<UpperBark> {
     let value = serde_json::from_str::<serde_json::Value>(extras).ok()?;
+
     if value.get("yarra_bark")?.as_str()? != "blend_v1" {
         return None;
     }
+
     let upper = value.get("yarra_bark_upper")?;
     let path = |key: &str| upper.get(key)?.as_str().map(str::to_owned);
     Some(UpperBark {
@@ -74,6 +80,7 @@ pub(super) fn upper_bark(extras: &str) -> Option<UpperBark> {
 }
 
 pub(super) struct TreeBarkPlugin;
+
 impl Plugin for TreeBarkPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(MaterialPlugin::<TreeBarkMaterial>::default())
@@ -89,6 +96,7 @@ impl Plugin for TreeBarkPlugin {
 
 #[derive(Component)]
 struct BarkChecked;
+
 #[derive(Component)]
 struct SourceMaterial(Handle<EnvironmentMaterial>);
 
@@ -154,17 +162,21 @@ fn convert(
             converted.base = material.clone();
         }
     }
+
     // Only live scene instances retain material handles; unloading releases them.
     let live: HashSet<_> = retained.iter().map(|m| m.0.id()).collect();
     cache.retain(|id, _| live.contains(id));
+
     for (entity, extras, handle) in &candidates {
         let Some(material) = source.get(handle) else {
             continue;
         };
         commands.entity(entity).insert(BarkChecked);
+
         if super::material::structural_tag(&extras.value) {
             continue;
         }
+
         let Some(upper) = upper_bark(&extras.value) else {
             continue;
         };
@@ -185,6 +197,7 @@ fn convert(
                 })
             })
             .clone();
+
         // Like tree wind: publish before AssetEventSystems so the replacement material
         // is prepared in the same frame and the trunk never drops out.
         commands
@@ -209,6 +222,7 @@ mod tests {
                 metallic_roughness: "t/mr.ktx2".into(),
             })
         );
+
         for text in [
             "",
             "{}",

@@ -5,7 +5,9 @@ use thiserror::Error;
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 #[error("{0}")]
 pub struct Invalid(pub String);
+
 pub type Result<T> = std::result::Result<T, Invalid>;
+
 pub fn require(condition: bool, message: &str) -> Result<()> {
     if condition {
         Ok(())
@@ -27,13 +29,16 @@ pub mod names {
         let bytes = name.as_bytes();
         let mut hash: u128 = 0x6c62272e07bb014262b821756295c58d;
         let mut i = 0;
+
         while i < bytes.len() {
             hash ^= bytes[i] as u128;
             hash = hash.wrapping_mul(0x0000000001000000000000000000013b);
             i += 1;
         }
+
         hash.to_be_bytes()
     }
+
     pub fn valid(name: &str) -> bool {
         !name.is_empty()
             && name.len() <= 96
@@ -41,18 +46,22 @@ pub mod names {
                 .bytes()
                 .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"_-/.".contains(&b))
     }
+
     fn table() -> &'static Mutex<HashMap<[u8; 16], Box<str>>> {
         static TABLE: OnceLock<Mutex<HashMap<[u8; 16], Box<str>>>> = OnceLock::new();
         TABLE.get_or_init(Default::default)
     }
+
     /// Remembers which name produced an identity, so messages and saved files can show it.
     /// Two different names with the same hash are reported instead of silently merging.
     pub fn remember(name: &str) -> Result<[u8; 16], String> {
         if !valid(name) {
             return Err(format!("invalid name or UUID: {name}"));
         }
+
         let id = hash(name);
         let mut table = table().lock().unwrap_or_else(|e| e.into_inner());
+
         match table.get(&id) {
             Some(known) if &**known != name => {
                 Err(format!("names {known} and {name} have the same identity"))
@@ -64,9 +73,11 @@ pub mod names {
             }
         }
     }
+
     thread_local! {
         static RAW: Cell<bool> = const { Cell::new(false) };
     }
+
     /// Runs `work` with every identity written in UUID form, for output that must come out
     /// the same whichever names this process happens to have met.
     pub fn raw<T>(work: impl FnOnce() -> T) -> T {
@@ -75,11 +86,13 @@ pub mod names {
         RAW.set(before);
         result
     }
+
     /// The name behind an identity, if one is known and names are being shown.
     pub fn lookup(id: &[u8; 16]) -> Option<String> {
         if RAW.get() {
             return None;
         }
+
         let table = table().lock().unwrap_or_else(|e| e.into_inner());
         table.get(id).map(|name| name.to_string())
     }
@@ -119,6 +132,7 @@ macro_rules! ids {
         }
     )+};
 }
+
 ids!(
     CatalogId,
     CategoryId,
@@ -148,11 +162,13 @@ ids!(
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct Key(String);
+
 impl std::fmt::Display for Key {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.0)
     }
 }
+
 impl Key {
     pub fn new(value: impl Into<String>) -> Result<Self> {
         let value = value.into();
@@ -166,16 +182,20 @@ impl Key {
         )?;
         Ok(Self(value))
     }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }
 }
+
 impl TryFrom<String> for Key {
     type Error = Invalid;
+
     fn try_from(v: String) -> Result<Self> {
         Self::new(v)
     }
 }
+
 impl From<Key> for String {
     fn from(v: Key) -> Self {
         v.0
@@ -186,11 +206,13 @@ impl From<Key> for String {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct TextKey(String);
+
 impl std::fmt::Display for TextKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.0)
     }
 }
+
 impl TextKey {
     pub fn new(value: impl Into<String>) -> Result<Self> {
         let value = value.into();
@@ -205,16 +227,20 @@ impl TextKey {
         )?;
         Ok(Self(value))
     }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }
 }
+
 impl TryFrom<String> for TextKey {
     type Error = Invalid;
+
     fn try_from(v: String) -> Result<Self> {
         Self::new(v)
     }
 }
+
 impl From<TextKey> for String {
     fn from(v: TextKey) -> Self {
         v.0
@@ -226,6 +252,7 @@ pub enum TextRef {
     Message(MessageRef),
     Literal(String),
 }
+
 impl TextRef {
     pub fn message(resource: TextResourceId, key: impl Into<String>) -> Result<Self> {
         Ok(Self::Message(MessageRef {
@@ -233,6 +260,7 @@ impl TextRef {
             key: TextKey::new(key)?,
         }))
     }
+
     pub fn validate(&self) -> Result<()> {
         match self {
             Self::Message(_) => Ok(()),
@@ -240,11 +268,13 @@ impl TextRef {
         }
     }
 }
+
 impl From<String> for TextRef {
     fn from(v: String) -> Self {
         Self::Literal(v)
     }
 }
+
 impl From<&str> for TextRef {
     fn from(v: &str) -> Self {
         Self::Literal(v.into())
@@ -261,12 +291,14 @@ pub enum OwnerKind {
     /// The party, which shares a purse.
     Party,
 }
+
 /// Whoever owns an inventory or a wallet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct OwnerRef {
     pub kind: OwnerKind,
     pub id: OwnerId,
 }
+
 impl OwnerRef {
     pub fn actor(id: ActorId) -> Self {
         Self {
@@ -274,12 +306,14 @@ impl OwnerRef {
             id: OwnerId(id.0),
         }
     }
+
     pub fn object(id: ObjectId) -> Self {
         Self {
             kind: OwnerKind::Object,
             id: OwnerId(id.0),
         }
     }
+
     /// The actor, when an actor is the owner.
     pub fn as_actor(&self) -> Option<ActorId> {
         (self.kind == OwnerKind::Actor).then_some(ActorId(self.id.0))
@@ -289,6 +323,7 @@ impl OwnerRef {
 /// Logical milliseconds, independent of wall-clock time and rendering frames.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct GameTime(pub u64);
+
 impl GameTime {
     pub fn advance(self, millis: u64) -> Result<Self> {
         self.0
@@ -306,14 +341,17 @@ pub struct MessageRef {
     pub resource: TextResourceId,
     pub key: TextKey,
 }
+
 impl MessageRef {
     pub fn as_str(&self) -> &str {
         self.key.as_str()
     }
 }
+
 thread_local! {
     static PACKAGE: std::cell::Cell<Option<TextResourceId>> = const { std::cell::Cell::new(None) };
 }
+
 /// Runs `work` while reading a package's files: a message written as a bare key is in that
 /// package's text.
 pub fn in_package<T>(text: TextResourceId, work: impl FnOnce() -> T) -> T {
@@ -322,8 +360,10 @@ pub fn in_package<T>(text: TextResourceId, work: impl FnOnce() -> T) -> T {
     PACKAGE.set(before);
     result
 }
+
 impl TryFrom<String> for MessageRef {
     type Error = Invalid;
+
     fn try_from(value: String) -> Result<Self> {
         // Keys have no `/`, so whatever comes before the last one names the resource.
         let (resource, key) = match value.rsplit_once('/') {
@@ -343,6 +383,7 @@ impl TryFrom<String> for MessageRef {
         })
     }
 }
+
 impl From<MessageRef> for String {
     fn from(value: MessageRef) -> Self {
         format!("{}/{}", value.resource, value.key)
@@ -359,6 +400,7 @@ pub enum ArgumentType {
     /// Chooses one of these named variants.
     Select(std::collections::BTreeSet<String>),
 }
+
 /// The arguments a message takes. Worked out from the source-language Fluent file.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -366,6 +408,7 @@ pub struct MessageContract {
     #[serde(deserialize_with = "deserialize_unique_map")]
     pub arguments: std::collections::BTreeMap<String, ArgumentType>,
 }
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TextContract {
@@ -373,6 +416,7 @@ pub struct TextContract {
     #[serde(deserialize_with = "deserialize_unique_map")]
     pub messages: std::collections::BTreeMap<TextKey, MessageContract>,
 }
+
 impl TextContract {
     pub fn validate(&self) -> Result<()> {
         for contract in self.messages.values() {
@@ -389,6 +433,7 @@ impl TextContract {
         Ok(())
     }
 }
+
 /// Reject duplicate keys instead of silently losing authoring data during deserialization.
 pub fn deserialize_unique_map<'de, D, K, V>(
     deserializer: D,
@@ -411,12 +456,14 @@ where
             mut map: A,
         ) -> std::result::Result<Self::Value, A::Error> {
             let mut result = std::collections::BTreeMap::new();
+
             while let Some((key, value)) = map.next_entry::<K, V>()? {
                 if result.contains_key(&key) {
                     return Err(serde::de::Error::custom(format!("duplicate key {key}")));
                 }
                 result.insert(key, value);
             }
+
             Ok(result)
         }
     }
@@ -430,6 +477,7 @@ pub enum BoundArgument {
     Number(i32),
     Select(String),
 }
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BoundText {
     pub text: TextRef,
@@ -439,6 +487,7 @@ pub struct BoundText {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn a_name_is_an_identity_and_is_shown_as_written() {
         const GATE: QuestId = QuestId::named("guard/gate");
@@ -447,9 +496,11 @@ mod tests {
         assert_eq!(parsed.to_string(), "guard/gate");
         assert_eq!(serde_json::to_string(&parsed).unwrap(), "\"guard/gate\"");
         assert_ne!(GATE, QuestId::named("guard/gates"));
+
         // The same name means the same bytes for every kind of identity.
         assert_eq!(ActorId::named("hero").0, OwnerId::named("hero").0);
     }
+
     #[test]
     fn raw_output_shows_bytes_even_for_known_names() {
         let id = QuestId::try_from("guard/raw".to_owned()).unwrap();
@@ -457,6 +508,7 @@ mod tests {
         assert_eq!(raw, format!("\"{}\"", id.raw()));
         assert_eq!(id.to_string(), "guard/raw");
     }
+
     #[test]
     fn identities_without_a_name_keep_their_uuid_form() {
         let text = "0a0b0c0d-0102-0304-0506-0708090a0b0c";
@@ -467,6 +519,7 @@ mod tests {
         assert_eq!(ItemId::try_from(fresh.to_string()).unwrap(), fresh);
         assert_eq!(QuestId::named("guard/gate").raw().len(), 36);
     }
+
     #[test]
     fn malformed_names_are_rejected() {
         for bad in ["", "Bad Id", "UPPER", "spaced name", &"x".repeat(97)] {

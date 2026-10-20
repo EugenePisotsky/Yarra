@@ -8,9 +8,11 @@ pub(crate) fn map<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> 
     let threads = std::thread::available_parallelism()
         .map_or(1, |n| n.get())
         .min(items.len());
+
     if threads <= 1 {
         return items.iter().map(f).collect();
     }
+
     let next = AtomicUsize::new(0);
     let mut results: Vec<(usize, R)> = std::thread::scope(|scope| {
         let workers: Vec<_> = (0..threads)

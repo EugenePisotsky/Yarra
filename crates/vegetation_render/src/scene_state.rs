@@ -4,10 +4,12 @@ use bevy::{
     prelude::*,
     render::{extract_component::ExtractComponent, extract_resource::ExtractResource},
 };
+
 use std::sync::{
     Arc,
     atomic::{AtomicU64, Ordering},
 };
+
 use vegetation::{SceneValidationError, VegetationScene};
 
 static NEXT_SCENE_REVISION: AtomicU64 = AtomicU64::new(1);
@@ -21,6 +23,7 @@ pub struct VegetationTerrainGate {
     pub block_all: bool,
     pub blocked_pages: std::collections::BTreeSet<[u32; 3]>,
 }
+
 impl VegetationTerrainGate {
     pub fn page_id(page: &vegetation::VegetationFieldPage) -> [u32; 3] {
         [
@@ -97,9 +100,11 @@ impl VegetationSceneState {
         scene.validate()?;
         debug_assert!(page_keys.is_empty() || page_keys.len() == scene.pages.len());
         let revision = NEXT_SCENE_REVISION.fetch_add(1, Ordering::Relaxed);
+
         if scene.catalog != self.scene.catalog {
             self.catalog_revision = revision;
         }
+
         self.scene = Arc::new(scene);
         self.revision = revision;
         self.page_keys = page_keys.into();

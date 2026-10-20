@@ -4,7 +4,9 @@ use super::{
     pipelines::{VegetationPipelineKey, VegetationPipelines},
     temporal,
 };
+
 use crate::{VegetationDraw, VegetationProfileMode, VegetationSettings, VegetationView};
+
 use bevy::{
     asset::AssetId,
     core_pipeline::core_3d::{Opaque3d, Opaque3dBatchSetKey, Opaque3dBinKey},
@@ -52,6 +54,7 @@ pub(super) fn queue(
         return;
     };
     let draw_function = draw_functions.read().id::<DrawVegetation>();
+
     for (view_entity, view, msaa, temporal) in &views {
         commands.entity(view_entity).remove::<temporal::Pipeline>();
         let (Some(phase), Some(mesh_view_key)) = (
@@ -61,6 +64,7 @@ pub(super) fn queue(
             continue;
         };
         phase.remove(*draw_main_entity);
+
         // Queue precedes PrepareBindGroups: buffers.active still describes the last
         // frame here. Decide residency at draw time so newly resident grass does not
         // miss its first frame (including after an empty scene or a visibility toggle).
@@ -72,6 +76,7 @@ pub(super) fn queue(
         ) {
             continue;
         }
+
         let Ok(pipeline) = pipelines.draw_variants.specialize(
             &pipeline_cache,
             VegetationPipelineKey {
@@ -84,12 +89,14 @@ pub(super) fn queue(
         ) else {
             continue;
         };
+
         if temporal.is_some() {
             commands
                 .entity(view_entity)
                 .insert(temporal::Pipeline(pipeline));
             continue;
         }
+
         phase.add(
             Opaque3dBatchSetKey {
                 draw_function,
@@ -122,6 +129,7 @@ impl<P: PhaseItem> RenderCommand<P> for DrawVegetationIndirect {
         Option<SRes<DiagnosticsRecorder>>,
         Option<SRes<atmosphere::environment::EnvironmentSurfaceGpu>>,
     );
+
     type ViewQuery = ();
     type ItemQuery = ();
 
@@ -133,15 +141,19 @@ impl<P: PhaseItem> RenderCommand<P> for DrawVegetationIndirect {
         pass: &mut TrackedRenderPass<'w>,
     ) -> RenderCommandResult {
         let buffers = buffers.into_inner();
+
         if !buffers.active {
             return RenderCommandResult::Success;
         }
+
         let diagnostics = diagnostics.as_deref();
         let draw_span = diagnostics.pass_span(pass, "vegetation_draw");
         pass.set_bind_group(1, &buffers.draw_bind_group, &[]);
+
         if let Some(environment) = environment {
             pass.set_bind_group(2, &environment.into_inner().0, &[]);
         }
+
         pass.set_index_buffer(buffers.topology_indices.slice(..), IndexFormat::Uint16);
         pass.draw_indexed_indirect(&buffers.args, 0);
         pass.draw_indexed_indirect(&buffers.args, 20);

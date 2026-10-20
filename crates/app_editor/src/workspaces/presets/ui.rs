@@ -1,4 +1,5 @@
 use super::*;
+
 use crate::{
     editing::{EditorHistory, EditorObjectWorkingSet, merge_preset_changes},
     environment_paint::{EnvironmentPaintState, preset_controls as controls},
@@ -6,6 +7,7 @@ use crate::{
     saving::EditorSaveCoordinator,
     shell::EditorUiFrame,
 };
+
 use bevy::ecs::system::SystemParam;
 use environment::{Preset, PresetKind};
 
@@ -24,6 +26,7 @@ pub(super) struct Resources<'w> {
     paint: Res<'w, EnvironmentPaintState>,
     next: ResMut<'w, NextState<EditorWorkspace>>,
 }
+
 pub(super) fn draw(mut frame: ResMut<EditorUiFrame>, resources: Resources) -> Result {
     let Resources {
         mut listings,
@@ -90,12 +93,14 @@ pub(super) fn draw(mut frame: ResMut<EditorUiFrame>, resources: Resources) -> Re
         if let Some(status)=dense.status() {ui.colored_label(egui::Color32::YELLOW,status);}
         if paint.has_unapplied_changes() {ui.colored_label(egui::Color32::YELLOW,"Apply or discard the layer settings in World before saving.");}
     });
+
     // A mode change renders on the next frame. Do not copy preview controls from the
     // destination mode back into the mode whose panels are still being drawn.
     if (state.mode == Mode::Roads) != road_mode {
         state.draft = Some(draft);
         return Ok(());
     }
+
     if road_mode {
         road_styles::panels(
             root,
@@ -128,14 +133,17 @@ pub(super) fn draw(mut frame: ResMut<EditorUiFrame>, resources: Resources) -> Re
                                     added = Some(editor::new_ground(base));
                                     ui.close();
                                 }
+
                                 if ui.button("Asset collection").clicked() {
                                     added = Some(editor::new_collection());
                                     ui.close();
                                 }
+
                                 if ui.button("Exclusion").clicked() {
                                     added = Some(editor::new_exclusion());
                                     ui.close();
                                 }
+
                                 if ui.button("Composition").clicked() {
                                     added = Some(Preset {
                                         id: PresetId(*uuid::Uuid::new_v4().as_bytes()),
@@ -164,10 +172,12 @@ pub(super) fn draw(mut frame: ResMut<EditorUiFrame>, resources: Resources) -> Re
                         })
                     },
                 );
+
                 if let Some(p) = added {
                     state.select(p.id);
                     draft.library.presets.push(p);
                 }
+
                 egui::ScrollArea::vertical()
                     .id_salt("presets_list")
                     .show(ui, |ui| {
@@ -199,6 +209,7 @@ pub(super) fn draw(mut frame: ResMut<EditorUiFrame>, resources: Resources) -> Re
             .resizable(true)
             .show(root, |ui| {
                 ui.heading("Shared preset");
+
                 if !state.navigation.is_empty()
                     && ui.small_button("Back to parent / previous").clicked()
                     && let Some(id) = state.navigation.pop()
@@ -206,11 +217,13 @@ pub(super) fn draw(mut frame: ResMut<EditorUiFrame>, resources: Resources) -> Re
                     state.selected = Some(id);
                     state.bump();
                 }
+
                 if let (Some(mut selected), Some(definition)) = (
                     state.selected,
                     state.space.and_then(|space| dense.definition(space)),
                 ) {
                     let mut usages = vec![];
+
                     for world in project.environments() {
                         let world = dense.definition(world.space).unwrap_or(world);
                         for layer in &world.layers {
@@ -224,6 +237,7 @@ pub(super) fn draw(mut frame: ResMut<EditorUiFrame>, resources: Resources) -> Re
                             }
                         }
                     }
+
                     ui.collapsing(format!("Used by {} map layers", usages.len()), |ui| {
                         for usage in usages {
                             ui.label(usage);
@@ -245,6 +259,7 @@ pub(super) fn draw(mut frame: ResMut<EditorUiFrame>, resources: Resources) -> Re
                                 );
                             })
                         });
+
                     if Some(selected) != state.selected {
                         state.select(selected);
                     }
@@ -253,13 +268,16 @@ pub(super) fn draw(mut frame: ResMut<EditorUiFrame>, resources: Resources) -> Re
                 }
             });
     }
+
     if (state.mode == Mode::Roads) != road_mode {
         state.draft = Some(draft);
         return Ok(());
     }
+
     let mut preview_underlay = state.preview_underlay();
     egui::CentralPanel::default().show(root,|ui| {
         ui.heading(if road_mode {"Road style preview"} else {"Preset preview"});
+
         if road_mode {
             let before=(state.styles.curved,state.styles.width.to_bits(),state.styles.traffic.map(f32::to_bits));
             let minimum_width = state.styles.draft.as_ref().map_or(0.1, |d| d.value.minimum_width());
@@ -267,25 +285,31 @@ pub(super) fn draw(mut frame: ResMut<EditorUiFrame>, resources: Resources) -> Re
                 ui.checkbox(&mut state.styles.curved,"Curved road");
                 ui.label("Preview corridor width");
                 road_styles::bounded_metres(ui, &mut state.styles.width, minimum_width..=64.0, 0.05);
+
                 if state.styles.width < minimum_width && ui.button("Fit preview width").clicked() {
                     state.styles.width = minimum_width;
                 }
+
                 let mut traffic = state.styles.traffic.unwrap_or(environment::roads::DEFAULT_TRAFFIC);
                 ui.label("Preview traffic");
+
                 if ui.add(egui::Slider::new(&mut traffic, 0.0..=1.0)).changed() {
                     state.styles.traffic = Some(traffic);
                 }
             });
             if before!=(state.styles.curved,state.styles.width.to_bits(),state.styles.traffic.map(f32::to_bits)) {state.bump();}
             ui.small("Width, traffic and reference ground are preview-only. Map roads keep their own widths, traffic and painted coverage.");
+
             if state.styles.width < minimum_width {
                 ui.colored_label(egui::Color32::YELLOW,format!("Preview corridor is {:.2} m wide; this style needs at least {minimum_width:.2} m. Use Fit preview width.",state.styles.width));
             }
+
             if let Some(d)=&state.styles.draft {
                 if let Err(e)=road_styles::validate_in_project(&d.value,&dense,&draft.library,&project,state.space) {ui.colored_label(egui::Color32::YELLOW,e);}
                 if d.value.vegetation_channel!=environment::GRASS_CHANNEL {ui.colored_label(egui::Color32::YELLOW,"This style clears another channel, so it does not thin grass.");}
             }
         }
+
         ui.small("Flat test patch · fixed seed · no map overrides. Drag to orbit; scroll to zoom.");
         ui.horizontal_wrapped(|ui| {
             let previous_size=state.size;
@@ -297,10 +321,12 @@ pub(super) fn draw(mut frame: ResMut<EditorUiFrame>, resources: Resources) -> Re
         });
         ui.horizontal_wrapped(|ui| {
             ui.label("Base ground");
+
             if let Some(space)=state.space && let Some(resources)=project.terrain_resources(space) {
                 let name=resources.surfaces.iter().find(|s|Some(s.surface.id)==state.base).map(|s|s.surface.display_name.as_str()).unwrap_or("Choose");
                 egui::ComboBox::from_id_salt("preset_base").selected_text(name).show_ui(ui,|ui|{for surface in &resources.surfaces {ui.selectable_value(&mut state.base,Some(surface.surface.id),&surface.surface.display_name);}});
             }
+
             ui.label("Reference ground");
             egui::ComboBox::from_id_salt("preset_underlay").selected_text(preview_underlay.and_then(|id|draft.library.get(id)).map_or("None",|p|p.name.as_str())).show_ui(ui,|ui| {
                 ui.selectable_value(&mut preview_underlay,None,"None");
@@ -321,17 +347,21 @@ pub(super) fn draw(mut frame: ResMut<EditorUiFrame>, resources: Resources) -> Re
         ui.add(egui::Label::new(status_text).truncate()).on_hover_text(status);
         let available=ui.available_size();let width=available.x.min((available.y-8.0).max(1.0)*4.0/3.0).max(1.0);
         let response=ui.add(egui::Image::new((state.texture,egui::vec2(width,width*0.75))).sense(egui::Sense::drag()));
+
         if preview.error.is_some() && preview.has_image() {
             ui.painter().text(response.rect.left_top()+egui::vec2(12.0,12.0),egui::Align2::LEFT_TOP,"Last valid preview",egui::FontId::proportional(16.0),egui::Color32::WHITE);
         }
+
         if response.dragged(){let delta=ui.input(|i|i.pointer.delta());state.yaw-=delta.x*0.4;state.pitch=(state.pitch+delta.y*0.3).clamp(5.0,89.0);}
         if response.hovered(){let scroll=ui.input(|i|i.smooth_scroll_delta.y);state.distance=(state.distance*(-scroll*0.002).exp()).clamp(2.0,80.0);}
     });
+
     if road_mode {
         state.styles.underlay = preview_underlay;
     } else {
         state.underlay = preview_underlay;
     }
+
     if road_mode {
         if apply && preview.matches(&state) {
             let space = state.space;
@@ -378,9 +408,11 @@ pub(super) fn draw(mut frame: ResMut<EditorUiFrame>, resources: Resources) -> Re
         };
         state.message = None;
     }
+
     if !visual_changes::same_library(&before, &draft.library) {
         state.bump();
     }
+
     state.draft = Some(draft);
     Ok(())
 }

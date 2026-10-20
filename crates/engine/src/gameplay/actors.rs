@@ -8,6 +8,7 @@ use crate::{
     character::CharacterPresentationRef,
     world_streaming,
 };
+
 use bevy::prelude::*;
 
 pub(super) fn spawn_player(mut commands: Commands, start_view: Res<WorldStartView>) {
@@ -53,6 +54,7 @@ pub fn standing_character(translation: Vec3, name: &'static str) -> impl Bundle 
 /// controls are unaffected.
 #[derive(Resource, Default, Clone, PartialEq, Eq, Debug)]
 pub struct PlayerMovementSuspended(std::collections::BTreeSet<&'static str>);
+
 impl PlayerMovementSuspended {
     /// Holds the player for `reason`, or lets go of it.
     pub fn hold(&mut self, reason: &'static str, held: bool) {
@@ -62,6 +64,7 @@ impl PlayerMovementSuspended {
             self.0.remove(reason);
         }
     }
+
     pub fn held(&self) -> bool {
         !self.0.is_empty()
     }
@@ -88,6 +91,7 @@ pub struct PlayerRoute {
     /// onto ground that is not yet certified still wait, as they do at normal speed.
     speed_mps: Option<f32>,
 }
+
 impl PlayerRoute {
     pub fn new(points: Vec<[f32; 3]>) -> Self {
         Self {
@@ -96,12 +100,14 @@ impl PlayerRoute {
             speed_mps: None,
         }
     }
+
     pub fn with_speed(self, speed_mps: f32) -> Self {
         Self {
             speed_mps: Some(speed_mps),
             ..self
         }
     }
+
     /// Points not reached yet.
     pub fn remaining(&self) -> usize {
         self.points.len() - self.next
@@ -129,20 +135,24 @@ pub(super) fn steer_player_along_route(
         .and_then(|space| catalog.world_space(space))
         .map_or(world::DEFAULT_CELL_SIZE, |space| space.cell_size);
     let offset = origin.cell().origin(size);
+
     for (transform, mut intent, config) in &mut player {
         // Re-applied each frame: the character's presentation may replace its config.
         if let (Some(speed), Some(mut config)) = (route.speed_mps, config) {
             config.jog_speed_mps = speed;
         }
+
         let here = Vec2::new(
             (f64::from(transform.translation.x) + offset[0]) as f32,
             (f64::from(transform.translation.z) + offset[1]) as f32,
         );
         let target =
             |route: &PlayerRoute| route.points.get(route.next).map(|p| Vec2::new(p[0], p[2]));
+
         while target(&route).is_some_and(|p| here.distance(p) < 3.) {
             route.next += 1;
         }
+
         match target(&route) {
             Some(p) => intent.set_direct(p - here, 1., Some(crate::actor::CharacterGait::Jog)),
             None => intent.set_direct(Vec2::ZERO, 0., None),
@@ -181,6 +191,7 @@ pub(crate) fn ground_characters_to_streamed_terrain(
 #[cfg(test)]
 mod suspension_tests {
     use super::*;
+
     #[test]
     fn the_player_stays_held_while_any_reason_remains() {
         let mut suspended = PlayerMovementSuspended::default();

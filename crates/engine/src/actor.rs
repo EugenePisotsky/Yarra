@@ -77,6 +77,7 @@ impl MoveIntent {
         self.direction = direction.normalize_or_zero();
         self.strength = strength.clamp(0.0, 1.0);
         self.requested_gait = requested_gait;
+
         if self.strength > 0.0 && self.direction != Vec2::ZERO {
             self.destination = None;
         }
@@ -229,9 +230,11 @@ pub(crate) fn advance_character_motors(
         // Scale a local copy so disabling the mode restores authored speeds, and NPCs
         // and character presentation never inherit a modified configuration.
         let mut config = *config;
+
         if controlled && let Some(speed) = &player_speed {
             config.walk_speed_mps *= speed.multiplier();
             config.jog_speed_mps *= speed.multiplier();
+
             if speed.is_changed() {
                 // Do not coast at the old fast speed or retain its destination braking
                 // curve after switching back to normal. Preserve heading and intent.
@@ -241,6 +244,7 @@ pub(crate) fn advance_character_motors(
                 motor.destination_braking = None;
             }
         }
+
         let config = &config;
         let output = if let Some(destination) = intent.destination {
             let offset = destination.position - transform.translation;
@@ -257,6 +261,7 @@ pub(crate) fn advance_character_motors(
 
         let proposed =
             transform.translation + Vec3::new(output.displacement.x, 0., output.displacement.y);
+
         if grounded
             && terrain
                 .as_ref()
@@ -271,15 +276,19 @@ pub(crate) fn advance_character_motors(
             *motion = CharacterMotion::default();
             continue;
         }
+
         transform.translation.x += output.displacement.x;
         transform.translation.z += output.displacement.y;
+
         if motor.facing.length_squared() > f32::EPSILON {
             // The validated character asset faces local +Z.
             transform.rotation = Quat::from_rotation_y(motor.facing.x.atan2(motor.facing.y));
         }
+
         if output.arrived {
             intent.clear();
         }
+
         *motion = CharacterMotion {
             displacement: output.displacement,
             speed_mps: output.speed_mps,
@@ -371,10 +380,12 @@ impl CharacterMotor {
             0.0
         };
         let direction = offset.normalize_or_zero();
+
         if self.destination_revision != Some(revision) {
             self.destination_revision = Some(revision);
             self.destination_braking = None;
         }
+
         if remaining_distance <= config.arrival_radius_m || direction == Vec2::ZERO {
             return self.finish_destination(direction * remaining_distance, config);
         }
@@ -433,6 +444,7 @@ impl CharacterMotor {
         let maximum_step = self.speed_mps * delta_seconds;
         let (displacement, arrived) =
             destination_displacement(self.facing, direction, remaining_distance, maximum_step);
+
         if arrived {
             self.finish_destination(displacement, config)
         } else {
@@ -466,13 +478,16 @@ impl CharacterMotor {
 
         let (displacement, arrived) =
             destination_displacement(self.facing, direction, remaining_distance, maximum_step);
+
         if arrived {
             return self.finish_destination(displacement, config);
         }
+
         if next_time + f32::EPSILON >= duration {
             self.destination_braking = None;
             self.speed_mps = 0.0;
         }
+
         self.gait = CharacterGait::Walk;
         self.destination_revision = Some(revision);
         self.output(displacement, false, config)
@@ -611,6 +626,7 @@ mod tests {
                     .1,
                 )
                 .add_systems(Update, advance_character_motors);
+
             // Resident ground elsewhere: none under the actor yet.
             let far = world::CellCoord { x: 5, z: 5 };
             app.world_mut()
@@ -643,6 +659,7 @@ mod tests {
                 app.world().get::<CharacterMotion>(actor).unwrap().phase,
                 CharacterMotionPhase::Idle
             );
+
             // The ground under the actor arrives: motion resumes.
             app.world_mut()
                 .insert_resource(crate::ClipmapTerrain::test_flat(
@@ -690,9 +707,11 @@ mod tests {
         let player = spawn();
         let npc = spawn();
         app.world_mut().entity_mut(player).insert(PlayerControlled);
+
         for _ in 0..60 {
             app.update();
         }
+
         let position =
             |app: &App, actor| app.world().get::<Transform>(actor).unwrap().translation.z;
         assert!((position(&app, player) / position(&app, npc) - 10.0).abs() < 0.001);
@@ -718,9 +737,11 @@ mod tests {
             .get_mut::<MoveIntent>(player)
             .unwrap()
             .walk_to(target);
+
         for _ in 0..180 {
             app.update();
         }
+
         assert!(
             app.world()
                 .get::<Transform>(player)
@@ -814,6 +835,7 @@ mod tests {
         for _ in 0..240 {
             let output = advance_destination(&mut motor, &mut position, target, 7);
             saw_arriving |= output.phase == CharacterMotionPhase::Arriving;
+
             if output.arrived {
                 arrived = true;
                 break;
@@ -831,12 +853,14 @@ mod tests {
         let mut position = Vec2::ZERO;
         let mut motor = CharacterMotor::default();
         let first_target = Vec2::Y;
+
         for _ in 0..120 {
             let output = advance_destination(&mut motor, &mut position, first_target, 10);
             if output.phase == CharacterMotionPhase::Arriving {
                 break;
             }
         }
+
         assert_eq!(motor.phase, CharacterMotionPhase::Arriving);
         let speed_before = motor.speed_mps;
         let second_target = position + Vec2::X * 2.0;

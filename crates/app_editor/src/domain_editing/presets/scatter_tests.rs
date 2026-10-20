@@ -1,8 +1,10 @@
 use super::*;
+
 use crate::{
     editing::{EditorHistory, EditorObjectWorkingSet},
     environment_paint::preview::compile_source_cells_with_roads,
 };
+
 use environment::*;
 use world::{CellCoord, PageDomain, PagePayload};
 use world_db::*;
@@ -44,6 +46,7 @@ fn collection_preview_save_recovery_undo_and_cook_preserve_manual_objects() {
             road_clearance: 0.5,
         }),
     });
+
     // Existing meadow becomes a woodland composition; masks and manual objects stay intact.
     let root = library
         .presets
@@ -128,10 +131,13 @@ fn collection_preview_save_recovery_undo_and_cook_preserve_manual_objects() {
         project.environment_cells.len()
     );
     let after = compile(&saved.presets, saved.presets.revision);
+
     for (a, b) in before.iter().zip(&after) {
         assert_eq!(a.objects, b.objects);
     }
+
     let build = world_cook::build_runtime(saved.clone()).unwrap();
+
     for cell in &after {
         let page = build
             .pages
@@ -156,9 +162,11 @@ fn collection_preview_save_recovery_undo_and_cook_preserve_manual_objects() {
                 .collect::<Vec<_>>(),
             cell.objects
         );
+
         for o in page.instances.iter().filter(|o| !o.generated) {
             assert!(project.objects.iter().any(|m| m.id == o.id));
         }
+
         assert!(build.dependencies.iter().any(|d| d.page.space == space
             && d.page.cell == cell.cell
             && d.asset == project.assets[0].id));
@@ -167,6 +175,7 @@ fn collection_preview_save_recovery_undo_and_cook_preserve_manual_objects() {
             .iter()
             .find(|c| c.space == space && c.cell == cell.cell)
             .unwrap();
+
         for o in &cell.objects {
             assert!(
                 cell_bounds.maximum_y
@@ -174,6 +183,7 @@ fn collection_preview_save_recovery_undo_and_cook_preserve_manual_objects() {
             );
         }
     }
+
     assert!(history.undo(&mut manual, &mut dense));
     assert!(
         compile(dense.presets().unwrap(), saved.presets.revision)

@@ -12,13 +12,16 @@
 use super::{LabView, LodLab, label, switches};
 use crate::game_render::RESOLUTION_SCALES;
 use crate::runtime_settings::RuntimeSettings;
+
 use bevy::{
     prelude::*,
     render::view::screenshot::{Screenshot, ScreenshotCaptured},
     window::{MonitorSelection, PrimaryWindow, WindowMode},
 };
+
 use engine::{LabRepresentation, LabTree, WorldSun, WorldViewCamera};
 use serde_json::{Value, json};
+
 use std::{
     path::PathBuf,
     sync::{
@@ -31,10 +34,13 @@ use std::{
 /// Frames every tree draws before the first capture: shadows, the forest shadow map and
 /// terrain around the camera settle.
 const WARMUP_FRAMES: u32 = 240;
+
 const TIMEOUT: Duration = Duration::from_secs(30 * 60);
+
 /// Wind samples of each of the last mesh LOD and the impostor, and frames between samples,
 /// at these shares of the impostor's switch distance.
 const SWAY_SAMPLES: usize = 30;
+
 const SWAY_FACTORS: [f32; 2] = [1.06, 1.75];
 const SWAY_FRAMES: u32 = 8;
 
@@ -102,9 +108,11 @@ fn plan(tree: &LabTree, options: &crate::launch::LodLabOptions) -> Vec<Pose> {
     let again = (settle / 2).max(8);
     let mut poses = Vec::new();
     let mut previous_bearing = None;
+
     for &bearing in &options.yaws {
         type Row = (f32, &'static str, Option<usize>, Option<f32>);
         let mut rows: Vec<(Row, Vec<(&'static str, LabRepresentation)>)> = Vec::new();
+
         for (j, &switch) in switches.iter().enumerate() {
             for factor in [0.8, 0.9, 1.0, 1.1, 1.2] {
                 rows.push((
@@ -118,6 +126,7 @@ fn plan(tree: &LabTree, options: &crate::launch::LodLabOptions) -> Vec<Pose> {
                 ));
             }
         }
+
         for &distance in &options.distances {
             rows.push((
                 (distance, "fixed", None, None),
@@ -127,7 +136,9 @@ fn plan(tree: &LabTree, options: &crate::launch::LodLabOptions) -> Vec<Pose> {
                 ],
             ));
         }
+
         rows.sort_by(|a, b| a.0.0.total_cmp(&b.0.0));
+
         for ((distance, kind, switch, factor), roles) in rows {
             for (k, (role, representation)) in roles.into_iter().enumerate() {
                 let turned = previous_bearing != Some(bearing);
@@ -155,6 +166,7 @@ fn plan(tree: &LabTree, options: &crate::launch::LodLabOptions) -> Vec<Pose> {
             }
         }
     }
+
     for (j, &switch) in switches.iter().enumerate() {
         for k in 0..=24 {
             let factor = 0.85 + 0.3 * k as f32 / 24.0;
@@ -174,6 +186,7 @@ fn plan(tree: &LabTree, options: &crate::launch::LodLabOptions) -> Vec<Pose> {
             });
         }
     }
+
     // The dissolve over time: steady on one side, then frames while it fades to the other,
     // then back; the ground without the tree at both, to measure the shadow frame by frame.
     for (j, &switch) in switches.iter().enumerate() {
@@ -200,9 +213,11 @@ fn plan(tree: &LabTree, options: &crate::launch::LodLabOptions) -> Vec<Pose> {
             });
         }
     }
+
     // Wind just past the impostor switch and farther out: the last mesh LOD and the impostor
     // in turn, so the sheet compares how far their tops sway at nearly the same moment.
     let last = tree.bands.len().saturating_sub(1);
+
     if last > 0 && tree.bands[last].representation == LabRepresentation::Impostor {
         let j = last - 1;
         for factor in SWAY_FACTORS {
@@ -221,12 +236,14 @@ fn plan(tree: &LabTree, options: &crate::launch::LodLabOptions) -> Vec<Pose> {
                 sequence: false,
             };
             poses.push(pose(LabRepresentation::Hidden, "hidden", settle * 2));
+
             for _ in 0..SWAY_SAMPLES {
                 poses.push(pose(tree.bands[j].representation, "mesh", SWAY_FRAMES));
                 poses.push(pose(LabRepresentation::Impostor, "impostor", 3));
             }
         }
     }
+
     poses
 }
 
@@ -267,9 +284,11 @@ fn crop(
             .map(|v| v * factor)
     };
     let tree: Vec<Vec2> = corners.iter().filter_map(|&p| project(p)).collect();
+
     if tree.len() < corners.len() {
         return None;
     }
+
     let all: Vec<Vec2> = tree
         .iter()
         .copied()
@@ -289,9 +308,11 @@ fn crop(
     );
     let lo = (lo - margin).max(Vec2::ZERO).floor();
     let hi = (hi + margin).min(size).ceil();
+
     if hi.x - lo.x < 2.0 || hi.y - lo.y < 2.0 {
         return None;
     }
+
     let (tree_lo, tree_hi) = extent(&tree);
     Some((
         [
@@ -348,32 +369,41 @@ fn run(
         exit.write(AppExit::error());
         return;
     }
+
     let Some((entity, root)) = lab.tree else {
         return;
     };
+
     if !trees.iter().all(|(tree, ..)| tree.ready) {
         return;
     }
+
     let Ok((tree, mut representation, transform)) = trees.get_mut(entity) else {
         return;
     };
     let scale = transform.to_scale_rotation_translation().0.y;
+
     if capture.poses.is_empty() {
         capture.warm += 1;
+
         if capture.warm < WARMUP_FRAMES {
             return;
         }
+
         if tree.bands.is_empty() {
             error!("LOD_LAB: no LOD bands; the LOD projection is unknown");
             exit.write(AppExit::error());
             return;
         }
+
         capture.poses = plan(tree, &lab.options);
+
         if let Err(e) = std::fs::create_dir_all(&capture.dir) {
             error!("LOD_LAB cannot create {}: {e}", capture.dir.display());
             exit.write(AppExit::error());
             return;
         }
+
         let to_sun = sun.back();
         capture.header = json!({
             "asset": tree.asset.key,
@@ -411,13 +441,16 @@ fn run(
         );
         return;
     }
+
     if capture.awaiting.load(Ordering::Acquire) {
         return;
     }
+
     if capture.index == capture.poses.len() {
         if capture.saving.load(Ordering::Acquire) == 0 {
             let manifest = json!({"header": capture.header, "frames": capture.frames});
             let path = capture.dir.join("manifest.json");
+
             match std::fs::write(&path, serde_json::to_string_pretty(&manifest).unwrap()) {
                 Ok(()) => {
                     info!(
@@ -435,8 +468,10 @@ fn run(
         }
         return;
     }
+
     let pose = capture.poses[capture.index].clone();
     let now = time.elapsed_secs_f64();
+
     if capture.waited == 0 {
         lab.view = pose.view;
         lab.wind = pose.kind == "sway";
@@ -445,9 +480,11 @@ fn run(
         capture.sequence = pose.sequence.then_some((now, 0));
         return;
     }
+
     let (camera, camera_transform) = *camera;
     let placed = (camera_transform.translation().distance(root) - pose.view.distance).abs()
         <= 0.002 * pose.view.distance + 0.01;
+
     if !placed
         || (!pose.sequence
             && (capture.waited < pose.settle
@@ -457,8 +494,10 @@ fn run(
         capture.waited += 1;
         return;
     }
+
     let index = capture.index;
     let elapsed = capture.sequence.map(|(start, _)| now - start);
+
     match capture.sequence.as_mut() {
         // Keep taking frames of this pose until the fade has ended for two of them.
         Some((_, after)) if *after < 2 => {
@@ -473,6 +512,7 @@ fn run(
             capture.sequence = None;
         }
     }
+
     let d = pose.view.distance;
     let height = tree.asset.bounds[1] * scale;
     let logical = tree.pixels_per_metre * height / d;
@@ -553,10 +593,12 @@ fn run(
                             .save(&path)
                             .map_err(|e| e.to_string())
                     });
+
                 if let Err(e) = result {
                     error!("LOD_LAB cannot save {}: {e}", path.display());
                     failed.store(true, Ordering::Release);
                 }
+
                 saving.fetch_sub(1, Ordering::AcqRel);
             });
         },

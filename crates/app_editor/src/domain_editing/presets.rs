@@ -9,48 +9,60 @@ pub(crate) struct DirtyPresetSnapshot {
     pub(crate) base: PresetLibrary,
     pub(crate) current: PresetLibrary,
 }
+
 pub(crate) fn library_bytes(library: &PresetLibrary) -> usize {
     ron::ser::to_string(library).map_or(usize::MAX, |s| s.len())
 }
+
 fn normalize(current: &mut PresetLibrary, base: &PresetLibrary) {
     current.revision = base.revision;
+
     for p in &mut current.presets {
         p.revision = base.get(p.id).map_or(1, |p| p.revision);
     }
+
     current.presets.sort_by_key(|p| p.id);
 }
+
 impl SourceWorkingSets {
     pub(crate) fn apply_presets(&mut self, library: &PresetLibrary) -> Result<(), String> {
         if self.presets.is_none() {
             return Err("Presets are still loading".into());
         }
+
         if self.saving() || self.has_any_conflict() || self.gesture_active {
             return Err(
                 "Finish the stroke, save or conflict resolution before editing presets".into(),
             );
         }
+
         self.validate_preset_edit(library, None)?;
         self.install_preset_edit(library);
         Ok(())
     }
+
     pub(crate) fn presets(&self) -> Option<&PresetLibrary> {
         self.presets.as_ref().map(|p| &p.current)
     }
+
     pub(crate) fn preset_base_revision(&self) -> u64 {
         self.presets.as_ref().map_or(0, |p| p.base.revision)
     }
+
     pub(super) fn preset_write(&self) -> Option<PresetLibrary> {
         self.presets
             .as_ref()
             .filter(|p| p.dirty())
             .map(|p| p.current.clone())
     }
+
     pub(super) fn preset_status(&self) -> Option<String> {
         self.presets.as_ref().and_then(|p|match &p.state {
             DefinitionSaveState::Conflict(_)=>Some("Shared presets changed in the database; local edits are retained. Resolve the conflict.".into()),
             DefinitionSaveState::Failed(e)=>Some(format!("Preset save failed: {e}")),_=>None
         })
     }
+
     pub(super) fn validate_preset_edit(
         &self,
         library: &PresetLibrary,
@@ -59,8 +71,10 @@ impl SourceWorkingSets {
         if library_bytes(library) > 1024 * 1024 {
             return Err("Preset library exceeds the editor's 1 MiB authoring limit".into());
         }
+
         let plants = self.plants.as_ref().ok_or("Plant assets are loading")?;
         library.validate().map_err(|e| e.to_string())?;
+
         for definition in self.definitions() {
             let d = replacement
                 .filter(|r| r.space == definition.space)
@@ -68,8 +82,10 @@ impl SourceWorkingSets {
             environment_compile::CompilePlan::new(d, plants, library, Default::default())
                 .map_err(|e| e.to_string())?;
         }
+
         Ok(())
     }
+
     pub(super) fn install_preset_edit(&mut self, library: &PresetLibrary) {
         let entry = self
             .presets
@@ -77,12 +93,14 @@ impl SourceWorkingSets {
             .expect("library loaded before editing");
         let mut current = library.clone();
         normalize(&mut current, &entry.base);
+
         if current != entry.current {
             entry.current = current;
             entry.state = DefinitionSaveState::Idle;
             self.bump_definitions();
         }
     }
+
     pub(super) fn reconcile_presets(&mut self, project: &ProjectEditorStore) {
         let Some(saved) = project.presets() else {
             return;
@@ -113,16 +131,19 @@ impl SourceWorkingSets {
             _ => {}
         }
     }
+
     pub(super) fn finish_presets(&mut self, request: u64, outcome: &DenseSaveOutcome) {
         let Some(entry) = &mut self.presets else {
             return;
         };
+
         if matches!(entry.state,DefinitionSaveState::Saving(id) if id==request) {
             entry.state = match outcome {
                 DenseSaveOutcome::Failed(e) => DefinitionSaveState::Failed(e.clone()),
                 _ => DefinitionSaveState::Idle,
             };
         }
+
         match outcome {
             DenseSaveOutcome::Committed(commit) => {
                 if let Some(library) = &commit.presets {
@@ -138,12 +159,14 @@ impl SourceWorkingSets {
             _ => {}
         }
     }
+
     fn resolved_preset_conflict(&self, keep: bool) -> Option<PresetLibrary> {
         let entry = self.presets.as_ref()?;
         let DefinitionSaveState::Conflict(Some(actual)) = &entry.state else {
             return None;
         };
         let mut result = actual.clone();
+
         if keep {
             let ids = entry
                 .base
@@ -152,23 +175,30 @@ impl SourceWorkingSets {
                 .chain(&entry.current.presets)
                 .map(|p| p.id)
                 .collect::<std::collections::BTreeSet<_>>();
+
             for id in ids {
                 if entry.base.get(id) == entry.current.get(id) {
                     continue;
                 }
+
                 result.presets.retain(|p| p.id != id);
+
                 if let Some(p) = entry.current.get(id) {
                     result.presets.push(p.clone());
                 }
             }
+
             normalize(&mut result, actual);
         }
+
         self.validate_preset_edit(&result, None).ok()?;
         Some(result)
     }
+
     pub(super) fn can_resolve_presets(&self, keep: bool) -> bool {
         self.resolved_preset_conflict(keep).is_some()
     }
+
     pub(super) fn resolve_preset_conflict(&mut self, keep: bool) -> usize {
         let Some(current) = self.resolved_preset_conflict(keep) else {
             return 0;
@@ -183,6 +213,7 @@ impl SourceWorkingSets {
         self.bump_definitions();
         1
     }
+
     pub(crate) fn dirty_preset_snapshot(&self) -> Option<DirtyPresetSnapshot> {
         self.presets
             .as_ref()
@@ -192,6 +223,7 @@ impl SourceWorkingSets {
                 current: p.current.clone(),
             })
     }
+
     pub(crate) fn restore_preset_snapshot(
         &mut self,
         snapshot: DirtyPresetSnapshot,
@@ -203,6 +235,7 @@ impl SourceWorkingSets {
         {
             return false;
         }
+
         self.presets = Some(DefinitionEntry {
             base: snapshot.base,
             current: snapshot.current,
@@ -212,6 +245,7 @@ impl SourceWorkingSets {
         self.bump_definitions();
         true
     }
+
     pub(crate) fn initialize_presets(&mut self, library: &PresetLibrary) {
         if self.presets.is_none() {
             self.presets = Some(DefinitionEntry {
@@ -228,6 +262,7 @@ impl SourceWorkingSets {
 mod tests {
     use super::*;
     use environment::fixtures::*;
+
     fn working() -> SourceWorkingSets {
         let library = meadow_library(
             world::TerrainSurfaceId([1; 16]),
@@ -238,6 +273,7 @@ mod tests {
         dense.plants = Some(vegetation::fixtures::reference_catalog());
         dense
     }
+
     #[test]
     fn keeping_local_preset_edits_preserves_unrelated_external_changes() {
         let mut dense = working();
@@ -278,6 +314,7 @@ mod tests {
         assert!(!dense.has_any_conflict());
         assert!(dense.preset_write().is_some());
     }
+
     #[test]
     fn a_paint_only_library_conflict_does_not_revert_shared_defaults() {
         let mut dense = working();
@@ -295,6 +332,7 @@ mod tests {
         assert_eq!(dense.presets(), Some(&actual));
         assert!(dense.preset_write().is_none());
     }
+
     #[test]
     fn dedicated_preset_history_survives_save_and_preserves_unrelated_changes() {
         use crate::editing::{EditorHistory, EditorObjectWorkingSet, merge_preset_changes};
@@ -312,9 +350,11 @@ mod tests {
         history.edit_presets(&mut dense, &edited).unwrap();
         let mut saved = dense.presets().unwrap().clone();
         saved.revision += 1;
+
         for p in &mut saved.presets {
             p.revision += 1;
         }
+
         saved
             .presets
             .iter_mut()

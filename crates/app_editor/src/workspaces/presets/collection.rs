@@ -35,6 +35,7 @@ pub(crate) fn editor(
     ui.separator();
     ui.label("Collection assets");
     let mut remove = None;
+
     for (index, a) in collection.assets.iter_mut().enumerate() {
         ui.push_id(a.asset.0, |ui| {
             let label = assets
@@ -82,18 +83,22 @@ pub(crate) fn editor(
             });
         });
     }
+
     if let Some(i) = remove {
         collection.assets.remove(i);
     }
+
     ui.small("Weights control the mix over many placements, not exact counts in a small patch.");
     ui.collapsing("Add from asset library", |ui| {
         let mut search = listings.palette_search().to_owned();
+
         if ui
             .add(egui::TextEdit::singleline(&mut search).hint_text("Find tree, bush, rock…"))
             .changed()
         {
             listings.search_palette(search);
         }
+
         egui::ScrollArea::vertical()
             .id_salt("collection_assets")
             .max_height(220.0)
@@ -102,10 +107,13 @@ pub(crate) fn editor(
                     let Some(asset) = record.definition.visual_asset else {
                         continue;
                     };
+
                     if record.visual_uri.is_none() {
                         continue;
                     }
+
                     let included = collection.assets.iter().any(|a| a.asset == asset);
+
                     if ui
                         .add_enabled(
                             !included

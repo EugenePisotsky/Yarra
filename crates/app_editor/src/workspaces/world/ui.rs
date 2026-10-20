@@ -27,10 +27,12 @@ use crate::{
         },
     },
 };
+
 use bevy::{
     diagnostic::DiagnosticsStore, ecs::system::SystemParam,
     gizmos::transform_gizmo::TransformGizmoSettings, prelude::*,
 };
+
 use bevy_egui::egui;
 use engine::{ActiveWorldSpace, StreamingStats, WorldCatalog, WorldOrigin, WorldViewpoint};
 
@@ -49,24 +51,28 @@ pub(crate) const WORLD_WINDOW: EditorWindowDescriptor = EditorWindowDescriptor {
     label: "World",
     default_open: true,
 };
+
 pub(crate) const INSPECTOR_WINDOW: EditorWindowDescriptor = EditorWindowDescriptor {
     id: EditorWindowId("world.inspector"),
     workspace: EditorWorkspace::World,
     label: "Inspector",
     default_open: true,
 };
+
 pub(crate) const ASSETS_WINDOW: EditorWindowDescriptor = EditorWindowDescriptor {
     id: EditorWindowId("world.assets"),
     workspace: EditorWorkspace::World,
     label: "Assets",
     default_open: false,
 };
+
 pub(crate) const NAVIGATOR_WINDOW: EditorWindowDescriptor = EditorWindowDescriptor {
     id: EditorWindowId("world.navigator"),
     workspace: EditorWorkspace::World,
     label: "Navigator",
     default_open: false,
 };
+
 pub(crate) const DIAGNOSTICS_WINDOW: EditorWindowDescriptor = EditorWindowDescriptor {
     id: EditorWindowId("world.diagnostics"),
     workspace: EditorWorkspace::World,
@@ -99,9 +105,11 @@ fn show_window(
     let Some(viewport_ui) = frame.0.as_mut() else {
         return;
     };
+
     if !windows.is_open(descriptor.id) {
         return;
     }
+
     let context = viewport_ui.ctx().clone();
     let area = viewport_ui.available_rect_before_wrap();
     let mut open = true;
@@ -372,10 +380,12 @@ pub(crate) fn open_requested_presets(
     if frame.0.is_none() {
         return;
     }
+
     if let Some((space, preset)) = paint.preset_request.take() {
         presets.open(space, preset);
         next_workspace.set(EditorWorkspace::Presets);
     }
+
     if let Some((space, style)) = roads.style_request.take() {
         presets.open_road(space, style);
         next_workspace.set(EditorWorkspace::Presets);

@@ -29,6 +29,7 @@ impl TerrainNodeKey {
         if self.level > MAX_TERRAIN_NODE_LEVEL {
             return Err(invalid("node level"));
         }
+
         let span = 1_i64 << self.level;
         let x = i64::from(self.x) * span;
         let z = i64::from(self.z) * span;
@@ -43,9 +44,11 @@ impl TerrainNodeKey {
 
     pub fn parent(self) -> Result<Option<Self>, TerrainHierarchyError> {
         self.cell_bounds()?;
+
         if self.level == MAX_TERRAIN_NODE_LEVEL {
             return Ok(None);
         }
+
         let parent = Self {
             level: self.level + 1,
             x: self.x.div_euclid(2),
@@ -59,9 +62,11 @@ impl TerrainNodeKey {
     /// Child order: lower-left, lower-right, upper-left, upper-right in XZ.
     pub fn children(self) -> Result<Option<[Self; 4]>, TerrainHierarchyError> {
         self.cell_bounds()?;
+
         if self.level == 0 {
             return Ok(None);
         }
+
         Ok(Some(std::array::from_fn(|index| Self {
             level: self.level - 1,
             x: self.x * 2 + (index % 2) as i32,
@@ -91,12 +96,15 @@ impl TerrainNode {
         if key.level != 0 {
             return Err(invalid("leaf level"));
         }
+
         field.validate().map_err(|_| invalid("leaf samples"))?;
         validate_resolution(resolution)?;
         validate_resolution(field.resolution)?;
+
         if resolution < field.resolution {
             return Err(invalid("leaf resampling would discard detail"));
         }
+
         let field = if resolution == field.resolution {
             field.clone()
         } else {
@@ -106,6 +114,7 @@ impl TerrainNode {
             let bounds = field.height_bounds();
             let mut heights = Vec::with_capacity(n * n);
             let mut normals = Vec::with_capacity(n * n);
+
             for z in 0..n {
                 for x in 0..n {
                     let sample = field.sample(
@@ -116,10 +125,12 @@ impl TerrainNode {
                     normals.push(sample.normal);
                 }
             }
+
             let mut result = TerrainHeightfield::from_heights_and_normals(
                 resolution, &heights, &normals, bounds[0], bounds[1],
             )
             .map_err(|_| invalid("resampled leaf"))?;
+
             // Preserve original endpoints/normal codes exactly instead of decode/encode drift.
             for z in 0..=source_intervals {
                 for x in 0..=source_intervals {
@@ -130,6 +141,7 @@ impl TerrainNode {
                     result.normals_oct[target] = field.normals_oct[source];
                 }
             }
+
             result
         };
         let node = Self {
@@ -150,20 +162,25 @@ impl TerrainNode {
         let keys = key.children()?.ok_or(invalid("parent level"))?;
         let mut mask = 0;
         let mut bounds = [f32::INFINITY, f32::NEG_INFINITY];
+
         for (i, child) in children.iter().enumerate() {
             if let Some(child) = child {
                 child.validate()?;
+
                 if child.key != keys[i] {
                     return Err(invalid("child address or ordering"));
                 }
+
                 mask |= 1 << i;
                 bounds[0] = bounds[0].min(child.height_bounds[0]);
                 bounds[1] = bounds[1].max(child.height_bounds[1]);
             }
         }
+
         if mask == 0 {
             return Err(invalid("empty parent"));
         }
+
         let mut node = Self {
             key,
             child_mask: mask,
@@ -179,9 +196,11 @@ impl TerrainNode {
             return Ok(node);
         };
         let n = usize::from(fields[0].resolution);
+
         if fields.iter().any(|f| usize::from(f.resolution) != n) {
             return Err(invalid("inconsistent hierarchy resolution"));
         }
+
         for (a, b, horizontal) in [(0, 1, true), (2, 3, true), (0, 2, false), (1, 3, false)] {
             for i in 0..n {
                 let (left, right) = if horizontal {
@@ -196,6 +215,7 @@ impl TerrainNode {
                 }
             }
         }
+
         // The four children as one grid of 2n - 1 samples a side; shared borders are equal.
         let fine = |ix: usize, iz: usize| {
             let cx = usize::from(ix >= n - 1);
@@ -205,11 +225,14 @@ impl TerrainNode {
         };
         let mut heights = Vec::with_capacity(n * n);
         let mut normals_oct = Vec::with_capacity(n * n);
+
         for z in 0..n {
             for x in 0..n {
                 let (field, sample) = fine(x * 2, z * 2);
+
                 // Heights are decimated exactly: stitching and the error bound use them.
                 heights.push(field.heights[sample]);
+
                 // Normals are filtered like a mip level. One fine normal per coarse sample
                 // aliases on rough relief: every level lit the same slope differently, so far
                 // lighting jumped at each level change. Border samples filter only along
@@ -223,6 +246,7 @@ impl TerrainNode {
                     }
                 };
                 let mut sum = [0.0_f32; 3];
+
                 for &(dz, wz) in taps(z == 0 || z == n - 1) {
                     for &(dx, wx) in taps(x == 0 || x == n - 1) {
                         let (field, sample) = fine(
@@ -230,23 +254,28 @@ impl TerrainNode {
                             (z * 2).wrapping_add_signed(dz),
                         );
                         let normal = crate::decode_octahedral_normal(field.normals_oct[sample]);
+
                         for (s, v) in sum.iter_mut().zip(normal) {
                             *s += v * wx * wz;
                         }
                     }
                 }
+
                 normals_oct.push(crate::encode_octahedral_normal(sum));
             }
         }
+
         let field = TerrainHeightfield {
             resolution: n as u16,
             heights,
             normals_oct,
         };
         let mut error = 0.0_f64;
+
         for (i, child) in children.into_iter().enumerate() {
             let child = child.unwrap();
             let mut deviation = 0.0_f64;
+
             for z in 0..n {
                 for x in 0..n {
                     let parent_x = ((i % 2) * (n - 1) + x) as f64 * 0.5;
@@ -258,8 +287,10 @@ impl TerrainNode {
                     );
                 }
             }
+
             error = error.max(f64::from(child.geometric_error) + deviation);
         }
+
         let rounded = error as f32;
         node.geometric_error = if f64::from(rounded) < error {
             f32::from_bits(rounded.to_bits() + 1)
@@ -273,6 +304,7 @@ impl TerrainNode {
 
     pub fn validate(&self) -> Result<(), TerrainHierarchyError> {
         self.key.cell_bounds()?;
+
         if !self.height_bounds.iter().all(|v| v.is_finite())
             || self.height_bounds[0] > self.height_bounds[1]
             || !self.geometric_error.is_finite()
@@ -282,10 +314,12 @@ impl TerrainNode {
         {
             return Err(invalid("node descriptor"));
         }
+
         if let Some(field) = &self.heightfield {
             field.validate().map_err(|_| invalid("node heightfield"))?;
             validate_resolution(field.resolution)?;
             let bounds = field.height_bounds();
+
             if (self.key.level != 0 && self.child_mask != 15)
                 || bounds[0] < self.height_bounds[0]
                 || bounds[1] > self.height_bounds[1]
@@ -297,6 +331,7 @@ impl TerrainNode {
         } else if self.key.level == 0 || self.geometric_error != 0.0 {
             return Err(invalid("invalid partial node"));
         }
+
         Ok(())
     }
 
@@ -316,6 +351,7 @@ fn sample_height_f64(field: &TerrainHeightfield, x: f64, z: f64) -> f64 {
     let x = x - x0 as f64;
     let z = z - z0 as f64;
     let h = |dx, dz| f64::from(field.height_at(x0 + dx, z0 + dz));
+
     if z >= x {
         h(0, 0) * (1.0 - z) + h(0, 1) * (z - x) + h(1, 1) * x
     } else {
@@ -337,6 +373,7 @@ pub enum TerrainHierarchyError {
     #[error("terrain hierarchy codec: {0}")]
     Codec(String),
 }
+
 fn invalid(message: &'static str) -> TerrainHierarchyError {
     TerrainHierarchyError::Invalid(message)
 }
@@ -351,6 +388,7 @@ pub fn encode_terrain_node(node: &TerrainNode) -> Result<Vec<u8>, TerrainHierarc
     )
     .map_err(|e| TerrainHierarchyError::Codec(e.to_string()))
 }
+
 pub fn decode_terrain_node(bytes: &[u8]) -> Result<TerrainNode, TerrainHierarchyError> {
     if bytes.len() > MAX_TERRAIN_NODE_BYTES
         || bytes.len() < 2
@@ -358,6 +396,7 @@ pub fn decode_terrain_node(bytes: &[u8]) -> Result<TerrainNode, TerrainHierarchy
     {
         return Err(invalid("node size or version"));
     }
+
     let ((_, node), consumed): ((u16, TerrainNode), usize) = bincode::serde::decode_from_slice(
         bytes,
         bincode::config::standard()
@@ -366,9 +405,11 @@ pub fn decode_terrain_node(bytes: &[u8]) -> Result<TerrainNode, TerrainHierarchy
             .with_limit::<MAX_TERRAIN_NODE_BYTES>(),
     )
     .map_err(|e| TerrainHierarchyError::Codec(e.to_string()))?;
+
     if consumed != bytes.len() {
         return Err(invalid("node trailing bytes"));
     }
+
     node.validate()?;
     Ok(node)
 }
@@ -376,6 +417,7 @@ pub fn decode_terrain_node(bytes: &[u8]) -> Result<TerrainNode, TerrainHierarchy
 #[cfg(test)]
 mod tests {
     use super::*;
+
     fn leaf(x: i32, z: i32, peak: bool) -> TerrainNode {
         let heights: Vec<_> = (0..5)
             .flat_map(|j| (0..5).map(move |i| if peak && i == 1 && j == 1 { 50.0 } else { 0.0 }))
@@ -395,6 +437,7 @@ mod tests {
         )
         .unwrap()
     }
+
     /// A leaf of a rough surface sampled on the world grid, so neighbours share borders.
     fn rough_leaf(x: i32, z: i32) -> TerrainNode {
         let n = 9;
@@ -451,9 +494,11 @@ mod tests {
         let (east, _) = parent(1);
         let n = 9;
         let (a, b) = (west.heightfield.unwrap(), east.heightfield.unwrap());
+
         for z in 0..n {
             assert_eq!(a.normals_oct[z * n + n - 1], b.normals_oct[z * n]);
         }
+
         // An interior sample is the tent-weighted average of the children's normals around it,
         // not the one fine normal beneath it.
         let (x, z) = (2, 3);
@@ -464,6 +509,7 @@ mod tests {
             crate::decode_octahedral_normal(field.normals_oct[lz * n + lx])
         };
         let mut sum = [0.; 3];
+
         for (dz, wz) in [(-1, 1.), (0, 2.), (1, 1.)] {
             for (dx, wx) in [(-1, 1.), (0, 2.), (1, 1.)] {
                 let v = fine(
@@ -475,6 +521,7 @@ mod tests {
                 }
             }
         }
+
         assert_eq!(
             a.normals_oct[z * n + x],
             crate::encode_octahedral_normal(sum)
@@ -511,6 +558,7 @@ mod tests {
         assert!(TerrainNode::leaf(node.key, &expanded, 17).is_err());
         assert!(TerrainNode::leaf(node.key, &field, 34).is_err());
     }
+
     #[test]
     fn addresses_use_euclidean_parents_and_reject_overflow() {
         let key = TerrainNodeKey::leaf(WorldSpaceId(1), CellCoord { x: -3, z: -1 });
@@ -543,6 +591,7 @@ mod tests {
             .is_none()
         );
     }
+
     #[test]
     fn skipped_peak_stays_in_bounds_and_error() {
         let children = [
@@ -567,6 +616,7 @@ mod tests {
         );
         assert_eq!(parent.height_bounds, [0.0, 50.0]);
         assert_eq!(parent.geometric_error, 50.0);
+
         for (i, child) in children.iter().enumerate() {
             for z in 0..21 {
                 for x in 0..21 {
@@ -593,16 +643,19 @@ mod tests {
                 }
             }
         }
+
         let mut grandchildren = [
             parent.clone(),
             parent.clone(),
             parent.clone(),
             parent.clone(),
         ];
+
         for (i, c) in grandchildren.iter_mut().enumerate() {
             c.key.x = (i % 2) as i32;
             c.key.z = (i / 2) as i32;
         }
+
         let grandparent = TerrainNode::parent(
             parent.key.parent().unwrap().unwrap(),
             grandchildren.each_ref().map(Some),
@@ -610,6 +663,7 @@ mod tests {
         .unwrap();
         assert_eq!(grandparent.geometric_error, 50.0);
     }
+
     #[test]
     fn sparse_parent_never_invents_ground_and_rejects_bad_children() {
         let child = leaf(-2, 0, false);
@@ -634,6 +688,7 @@ mod tests {
             .is_err()
         );
     }
+
     #[test]
     fn codec_rejects_version_trailing_and_nonfinite_data() {
         let node = leaf(0, 0, true);

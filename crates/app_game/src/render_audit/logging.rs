@@ -6,6 +6,7 @@ use bevy::{
     prelude::*,
     window::{Monitor, OnMonitor, PrimaryWindow, WindowMode},
 };
+
 use engine::WorldViewCamera;
 use terrain_render::TerrainMacroVariation;
 use vegetation_render::{VegetationDiagnostics, VegetationDiagnosticsSnapshot, VegetationSettings};
@@ -64,6 +65,7 @@ impl LogState {
         self.last_poll_s = Some(now);
         let power_changed = self.last_power.is_some_and(|old| old != power);
         self.last_power = Some(power);
+
         if self.last_emit.is_none() {
             self.changed_at_s = now;
             Some("startup")
@@ -126,12 +128,15 @@ pub(super) fn log_status(
     mut state: Local<LogState>,
 ) {
     let (window, on_monitor) = window.into_inner();
+
     // Real time is unaffected by game time clamping, pausing, or profiling's control lock.
     let now = time.elapsed_secs_f64();
     let changed = settings.is_changed() || grass.is_changed() || terrain_macro.is_changed();
+
     if !state.should_poll(now, changed) {
         return;
     }
+
     let power = power_state();
     let Some(event) = state.event(now, changed, power) else {
         return;

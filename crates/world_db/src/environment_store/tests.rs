@@ -1,8 +1,10 @@
 use super::*;
 use crate::{WorldSpaceRecord, write_project_database};
+
 use environment::{
     Exclusion, GRASS_CHANNEL, Layer, LayerId, OutputId, Preset, PresetId, PresetKind,
 };
+
 use world::TerrainSurface;
 
 struct Fixture {
@@ -10,6 +12,7 @@ struct Fixture {
     path: std::path::PathBuf,
     definition: EnvironmentDefinition,
 }
+
 impl Fixture {
     fn new() -> Self {
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -102,12 +105,15 @@ impl Fixture {
             definition,
         }
     }
+
     fn reader(&self) -> ProjectReader {
         ProjectReader::open_read_only(&self.path).unwrap()
     }
+
     fn writer(&self) -> ProjectWriter {
         ProjectWriter::open(&self.path).unwrap()
     }
+
     fn cell(&self, x: i32) -> SourceEnvironmentCellRecord {
         SourceEnvironmentCellRecord {
             space: self.definition.space,
@@ -120,23 +126,27 @@ impl Fixture {
             }],
         }
     }
+
     fn snapshot(&self, cells: &[CellCoord]) -> EnvironmentReadSnapshot {
         self.reader()
             .read_environment_snapshot(self.definition.space, cells)
             .unwrap()
     }
 }
+
 impl Drop for Fixture {
     fn drop(&mut self) {
         std::fs::remove_dir_all(&self.directory).unwrap();
     }
 }
+
 fn write(record: SourceEnvironmentCellRecord, revision: Option<i64>) -> EnvironmentCellWrite {
     EnvironmentCellWrite {
         expected_source_revision: revision,
         record,
     }
 }
+
 fn committed(result: EnvironmentCellWriteResult) -> Vec<SourceEnvironmentCellRecord> {
     let EnvironmentCellWriteResult::Committed(records) = result else {
         panic!("expected a commit")
@@ -159,6 +169,7 @@ fn creating_painting_and_removing_a_layer_are_atomic_source_commits() {
         expected_revision: Some(1),
         definition: added.clone(),
     };
+
     // A shared-edge error after both writes have been staged rolls everything back.
     let mut invalid = paint.clone();
     invalid.tiles[0].samples[5] = 255;
@@ -184,6 +195,7 @@ fn creating_painting_and_removing_a_layer_are_atomic_source_commits() {
     let mut saved = commit.coverage[0].clone();
     assert_eq!(saved.definition_revision, 2);
     assert_eq!(saved.source_revision, 1);
+
     // A stale mask CAS must also roll back an otherwise valid definition edit.
     added.layers[1].name = "Renamed".into();
     let edit = EnvironmentDefinitionWrite {
@@ -197,6 +209,7 @@ fn creating_painting_and_removing_a_layer_are_atomic_source_commits() {
         EnvironmentSourceWriteResult::CoverageConflict { .. }
     ));
     assert_eq!(f.snapshot(&[paint.cell]).definition, commit.definitions[0]);
+
     // Undo painting and layer creation together, after an earlier successful save.
     saved.tiles.clear();
     let edit = EnvironmentDefinitionWrite {
@@ -214,6 +227,7 @@ fn creating_painting_and_removing_a_layer_are_atomic_source_commits() {
     assert!(snapshot.coverage.cells[0].tiles.is_empty());
     assert_eq!(snapshot.coverage.cells[0].revision, 2);
     assert_eq!(snapshot.definition.revision, 3);
+
     // A stale definition fails before touching any masks.
     let edit = EnvironmentDefinitionWrite {
         expected_revision: Some(1),
@@ -549,9 +563,11 @@ fn byte_budget_applies_before_writing_and_while_loading_a_multi_cell_snapshot() 
         .collect();
     assert!(writer.apply_environment_cell_transaction(&writes).is_err());
     assert_eq!(f.snapshot(&[CellCoord::ZERO]).coverage.cells[0].revision, 0);
+
     for chunk in writes.chunks(32) {
         committed(writer.apply_environment_cell_transaction(chunk).unwrap());
     }
+
     let cells: Vec<_> = (0..64).map(|x| CellCoord { x, z: 0 }).collect();
     assert!(
         f.reader()
@@ -711,6 +727,7 @@ fn dependency_pages_follow_nested_repeated_uses_across_worlds_and_update_atomica
         vec![(WorldSpaceId(2), f.definition.layers[0].id)]
     );
     assert!(next.next_cursor.is_none());
+
     // Removing a nested child would orphan another world's override: reject the shared edit.
     let mut broken = document.presets.clone();
     let PresetKind::Composition(children) = &mut broken
@@ -730,6 +747,7 @@ fn dependency_pages_follow_nested_repeated_uses_across_worlds_and_update_atomica
             .is_err()
     );
     assert_eq!(reader.read_environment_presets().unwrap(), document.presets);
+
     // Root changes update the reverse dependency index in the same commit.
     let mut detached = document.environments[1].clone();
     detached.layers[0].preset = leaf;
@@ -791,6 +809,7 @@ fn referenced_preset_deletion_and_incompatible_type_changes_do_not_corrupt_sourc
         )
         .unwrap();
     let mut changed = original.clone();
+
     // A ground leaf no longer takes the definition's exclusion override.
     changed.presets[0].kind = PresetKind::Ground(environment::GroundTreatment {
         id: OutputId([3; 16]),
@@ -849,6 +868,7 @@ fn presence_is_bounded_metadata_only_and_reports_partial_results() {
             )
             .is_err()
     );
+
     // Corrupt payloads deliberately: discovery must not decode or load either blob.
     let connection = rusqlite::Connection::open(&f.path).unwrap();
     connection

@@ -9,6 +9,7 @@ use crate::{
         world::objects::{EditorObjectPalette, create_palette_object},
     },
 };
+
 use bevy::prelude::*;
 use bevy_egui::egui;
 use engine::WorldViewpoint;
@@ -27,12 +28,14 @@ pub(super) fn draw_asset_browser(
     tools: &mut EditorToolRegistry,
 ) {
     let mut search = listings.palette_search().to_owned();
+
     if ui
         .add(egui::TextEdit::singleline(&mut search).hint_text("Search asset definitions"))
         .changed()
     {
         listings.search_palette(search);
     }
+
     let palette_records = listings.palette_records().to_vec();
     egui::ScrollArea::vertical()
         .id_salt("object_definition_palette")
@@ -64,12 +67,14 @@ pub(super) fn draw_asset_browser(
         {
             listings.palette_previous();
         }
+
         if ui
             .add_enabled(listings.palette_has_next(), egui::Button::new("Next"))
             .clicked()
         {
             listings.palette_next();
         }
+
         ui.weak(format!("{} on page", palette_records.len()));
     });
 
@@ -86,6 +91,7 @@ pub(super) fn draw_asset_browser(
             .find(|record| record.definition.id == definition)
             .cloned()
     });
+
     if ui
         .add_enabled(
             selected_definition.is_some()
@@ -101,6 +107,7 @@ pub(super) fn draw_asset_browser(
         transform_draft.sync(selection, objects);
         tools.set_active(EditorWorkspace::World, OBJECT_TOOL.id);
     }
+
     if viewpoint_position.is_some() && !source_cell_available {
         ui.small("The viewpoint cell has no loaded authoring source cell.");
     } else {

@@ -1,6 +1,8 @@
 #[path = "support/roads.rs"]
 mod road_support;
+
 mod support;
+
 use environment::roads::*;
 use road_support::*;
 use support::*;
@@ -34,6 +36,7 @@ fn terrain(cell: CellCoord, resolution: u16) -> TerrainSource {
         loaded_cells,
     }
 }
+
 fn setup() -> (CompilePlan, environment::CoverageSnapshot, RoadSnapshot) {
     let (d, l, p, c, mut r) = cart_tracks();
     straight(&mut r);
@@ -45,6 +48,7 @@ fn setup() -> (CompilePlan, environment::CoverageSnapshot, RoadSnapshot) {
         r,
     )
 }
+
 fn compile(
     plan: &CompilePlan,
     c: &environment::CoverageSnapshot,
@@ -54,6 +58,7 @@ fn compile(
     plan.compile_cell_with_terrain(cell, c, r, &terrain(cell, 33), Default::default())
         .unwrap()
 }
+
 fn max_delta(a: &TerrainHeightfield, b: &TerrainHeightfield) -> f32 {
     (0..usize::from(a.resolution).pow(2))
         .map(|i| {
@@ -63,6 +68,7 @@ fn max_delta(a: &TerrainHeightfield, b: &TerrainHeightfield) -> f32 {
         })
         .fold(0.0, f32::max)
 }
+
 #[test]
 fn depths_combine_without_changing_wear_and_zero_depth_restores_the_source() {
     let (plan, c, mut r) = setup();
@@ -92,6 +98,7 @@ fn depths_combine_without_changing_wear_and_zero_depth_restores_the_source() {
     );
     assert_eq!(flat, compile(&plan, &c, &r, CellCoord::ZERO));
 }
+
 #[test]
 fn seeded_variation_is_bounded_deterministic_and_survives_a_knot_split() {
     let (plan, c, mut r) = setup();
@@ -128,6 +135,7 @@ fn seeded_variation_is_bounded_deterministic_and_survives_a_knot_split() {
         ) > 0.003
     );
 }
+
 #[test]
 fn independently_compiled_borders_share_heights_and_normals_on_curved_roads() {
     let (d, l, p, c, mut r) = cart_tracks();
@@ -136,11 +144,13 @@ fn independently_compiled_borders_share_heights_and_normals_on_curved_roads() {
     let plan = CompilePlan::new(&d, &p, &l, Default::default()).unwrap();
     let a = compile(&plan, &c, &r, CELLS[0]).terrain.unwrap();
     let b = compile(&plan, &c, &r, CELLS[1]).terrain.unwrap();
+
     for z in 0..33 {
         assert_eq!(a.heights[z * 33 + 32], b.heights[z * 33]);
         assert_eq!(a.normals_oct[z * 33 + 32], b.normals_oct[z * 33]);
     }
 }
+
 #[test]
 fn relief_ignores_cosmetic_breakup_and_edges_and_does_not_stack_overlaps() {
     let (plan, c, mut r) = setup();
@@ -156,6 +166,7 @@ fn relief_ignores_cosmetic_breakup_and_edges_and_does_not_stack_overlaps() {
     span.road = other.id;
     span.start.id = RoadKnotId([10; 16]);
     span.end.id = RoadKnotId([11; 16]);
+
     // Parallel roads with overlapping shoulders; do not invent a junction.
     span.start.position.local[1] += 3.0;
     span.end.position.local[1] += 3.0;
@@ -164,6 +175,7 @@ fn relief_ignores_cosmetic_breakup_and_edges_and_does_not_stack_overlaps() {
     let overlapped = compile(&plan, &c, &r, CELLS[0]).terrain.unwrap();
     assert!((0..33).all(|x| overlapped.height_at(x, 22) > -0.20));
 }
+
 #[test]
 fn invalid_height_halos_and_out_of_range_depths_fail_explicitly() {
     let (plan, c, r) = setup();
@@ -196,6 +208,7 @@ fn ruts_too_narrow_for_the_heights_are_left_to_near_detail() {
         )
         .unwrap()
     };
+
     // 0.65 m tracks: two intervals of a 33-sample grid (0.25 m), not of a 17-sample one (0.5 m).
     let (fine, coarse) = (cell(33), cell(17));
     assert_eq!(
@@ -206,6 +219,7 @@ fn ruts_too_narrow_for_the_heights_are_left_to_near_detail() {
         coarse.roads.roads[0].track_depth, 0.08,
         "near detail draws them"
     );
+
     // Only the 0.15 m road bed is carved into the coarse grid; ruts deepen the fine one.
     let deepest = |t: &TerrainHeightfield| {
         (0..usize::from(t.resolution).pow(2))
@@ -215,13 +229,16 @@ fn ruts_too_narrow_for_the_heights_are_left_to_near_detail() {
     assert!(deepest(coarse.terrain.as_ref().unwrap()) > -0.2);
     assert!(deepest(fine.terrain.as_ref().unwrap()) < -0.2);
 }
+
 #[test]
 fn flat_source_cells_keep_four_vertices_until_relief_needs_a_mesh() {
     let (plan, c, mut r) = setup();
     let mut t = terrain(CELLS[0], 33);
+
     for page in &mut t.cells {
         page.flat = true;
     }
+
     let shaped = plan
         .compile_cell_with_terrain(CELLS[0], &c, &r, &t, Default::default())
         .unwrap();

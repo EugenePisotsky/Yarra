@@ -1,32 +1,41 @@
 use game_types::*;
+
 use gameplay::{
     Command, Condition,
     fixtures::{GATE_DIALOGUE, HERO, MERCHANT},
 };
+
 use gameplay::{dialogue, inventory};
 use localization::{Arguments, Localization};
 use std::{fs, path::Path};
 use yarra_game_content::*;
+
 mod support;
+
 use support::{Temp, read, write};
+
 const GATE: &str = "packages/old_gate/conversations/gate.dialogue.ron";
+
 fn error(path: &Path) -> String {
     LoadedProject::load_directory(path)
         .err()
         .expect("invalid project accepted")
         .to_string()
 }
+
 #[test]
 fn conversations_reuse_text_keys_and_node_names_without_sharing_logic() {
     let temp = Temp::new();
     let root = temp.source();
     let second_id = DialogueId([2; 16]);
+
     // Another package, with text of its own under the same keys.
     let text_id = TextResourceId::try_from("second".to_owned()).unwrap();
     let mut graph: dialogue::Dialogue = read(root.join(GATE));
     graph.id = second_id;
     graph.nodes[0].text = TextRef::message(text_id, "greeting").unwrap();
     graph.nodes[1].text = TextRef::message(text_id, "return-key").unwrap();
+
     // Same node names as the first conversation, a stricter condition.
     graph.nodes[1].condition = Some(Condition::HasItem {
         definition: inventory::fixtures::KEY,
@@ -35,18 +44,21 @@ fn conversations_reuse_text_keys_and_node_names_without_sharing_logic() {
     let folder = "packages/second";
     fs::create_dir_all(root.join(folder)).unwrap();
     write(root.join(format!("{folder}/gate.dialogue.ron")), &graph);
+
     for locale in ["en", "uk"] {
         let text = fs::read_to_string(root.join(format!("packages/old_gate/{locale}.ftl")))
             .unwrap()
             .replace("Did you find the key?", "I need two keys.");
         fs::write(root.join(format!("{folder}/{locale}.ftl")), text).unwrap();
     }
+
     let mut manifest: ProjectFile = read(root.join("project.ron"));
     manifest.packages.push(folder.into());
     write(root.join("project.ron"), &manifest);
     let project = LoadedProject::load_directory(&root).unwrap();
     assert_eq!(project.content().game.dialogues.len(), 9);
     let mut session = project.start().unwrap();
+
     for dialogue in [GATE_DIALOGUE, second_id] {
         session
             .apply(Command::StartDialogue {
@@ -67,6 +79,7 @@ fn conversations_reuse_text_keys_and_node_names_without_sharing_logic() {
             })
             .unwrap();
     }
+
     assert_eq!(
         session
             .available_choices(GATE_DIALOGUE, HERO, MERCHANT)
@@ -90,6 +103,7 @@ fn conversations_reuse_text_keys_and_node_names_without_sharing_logic() {
     );
     let path = temp.0.join("mechanics.sqlite");
     project.build(&path).unwrap();
+
     // Each conversation is published whole, with its own conditions.
     let mut repo = ContentRepository::open(path).unwrap();
     let second = gameplay::ContentSource::dialogue(&mut repo, second_id).unwrap();
@@ -98,6 +112,7 @@ fn conversations_reuse_text_keys_and_node_names_without_sharing_logic() {
     assert_eq!(first.nodes[1].id, second.nodes[1].id);
     assert_ne!(first.nodes[1].condition, second.nodes[1].condition);
 }
+
 #[test]
 fn moving_conversation_and_reordering_packages_preserves_publication_identity() {
     let temp = Temp::new();
@@ -105,6 +120,7 @@ fn moving_conversation_and_reordering_packages_preserves_publication_identity() 
     let before = LoadedProject::load_directory(&root).unwrap();
     let first = temp.0.join("first.sqlite");
     before.build(&first).unwrap();
+
     // Where a file sits in its package, and the order of packages, are no identity.
     fs::create_dir(root.join("packages/old_gate/moved")).unwrap();
     fs::rename(
@@ -131,6 +147,7 @@ fn moving_conversation_and_reordering_packages_preserves_publication_identity() 
     let b = ContentRepository::open(second).unwrap();
     assert_eq!(a.manifest().publication_hash, b.manifest().publication_hash);
 }
+
 #[test]
 fn independent_language_updates_work_with_retained_content_and_saved_state() {
     let temp = Temp::new();
@@ -198,6 +215,7 @@ fn independent_language_updates_work_with_retained_content_and_saved_state() {
     );
     library.load(&saves, save::SaveSlot::Quick).unwrap();
 }
+
 #[test]
 fn new_wording_changes_no_identity_and_missing_translations_fall_back() {
     let temp = Temp::new();
@@ -222,6 +240,7 @@ fn new_wording_changes_no_identity_and_missing_translations_fall_back() {
     assert_eq!(after.warnings().len(), 1);
     assert!(after.warnings()[0].contains("uk: old_gate/greeting falls back to en"));
 }
+
 #[test]
 fn misnamed_files_hidden_fluent_errors_and_extra_translations_fail_publication() {
     let temp = Temp::new();
@@ -232,6 +251,7 @@ fn misnamed_files_hidden_fluent_errors_and_extra_translations_fail_publication()
     fs::remove_file(stray).unwrap();
     let path = root.join("packages/core/en.ftl");
     let original = fs::read_to_string(&path).unwrap();
+
     for extra in [
         "\n-unused = { -unused }",
         "\n-unused = { BAD() }",
@@ -241,19 +261,23 @@ fn misnamed_files_hidden_fluent_errors_and_extra_translations_fail_publication()
         fs::write(&path, format!("{original}{extra}")).unwrap();
         assert!(LoadedProject::load_directory(&root).is_err(), "{extra}");
     }
+
     fs::write(&path, &original).unwrap();
+
     // A translation says what the source language says, not more.
     let ukrainian = root.join("packages/core/uk.ftl");
     let text = fs::read_to_string(&ukrainian).unwrap();
     fs::write(&ukrainian, format!("{text}\nunheard-of = Нове")).unwrap();
     assert!(error(&root).contains("unheard-of is not in the source-language text"));
 }
+
 #[test]
 fn content_names_only_declared_characters() {
     let temp = Temp::new();
     let root = temp.source();
     let banter = root.join("packages/guard/world/banter.trigger.ron");
     let original = fs::read_to_string(&banter).unwrap();
+
     // A mistyped name, wherever content names a character, fails the build.
     for (from, to) in [
         ("Present(\"mira\")", "Present(\"mria\")"),
@@ -265,7 +289,9 @@ fn content_names_only_declared_characters() {
         let error = error(&root);
         assert!(error.contains("unknown character"), "{to}: {error}");
     }
+
     fs::write(&banter, &original).unwrap();
+
     // So does starting a scenario with one, or declaring one twice.
     let mut scenario: Scenario = read(root.join("scenario.ron"));
     scenario.actors[0].id = ActorId::try_from("stranger".to_owned()).unwrap();
@@ -275,6 +301,7 @@ fn content_names_only_declared_characters() {
     fs::copy(&characters, root.join("packages/guard/more.characters.ron")).unwrap();
     assert!(error(&root).contains("character hero is defined in both"));
 }
+
 #[test]
 fn language_packs_are_indexed_lazy_and_reject_requested_corruption() {
     let temp = Temp::new();
@@ -316,11 +343,13 @@ fn language_packs_are_indexed_lazy_and_reject_requested_corruption() {
     assert!(project.build_language_pack("uk", &path).is_err());
     assert_eq!(fs::read(&path).unwrap(), before);
 }
+
 #[test]
 fn argument_contract_changes_change_mechanical_identity() {
     let temp = Temp::new();
     let root = temp.source();
     let before = LoadedProject::load_directory(&root).unwrap();
+
     // The English text choosing on the name makes it a choice between named variants.
     let path = root.join("packages/core/en.ftl");
     let text = fs::read_to_string(&path).unwrap().replace(

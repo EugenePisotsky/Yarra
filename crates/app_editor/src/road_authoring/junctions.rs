@@ -2,24 +2,28 @@
 use super::*;
 use std::collections::BTreeMap;
 use world_db::SourceRoadJunction;
+
 fn change(record: RoadSourceRecord) -> RoadChange {
     RoadChange {
         key: record.key(),
         record: Some(record),
     }
 }
+
 fn knot(w: &working::RoadWorkingSet, id: RoadKnotId) -> Result<world_db::SourceRoadKnot, String> {
     match w.get(RoadRecordKey::Knot(id)) {
         Some(RoadSourceRecord::Knot(k)) => Ok(k.clone()),
         _ => Err("Choose a loaded road point".into()),
     }
 }
+
 pub(super) fn at(w: &working::RoadWorkingSet, id: RoadKnotId) -> Option<&SourceRoadJunction> {
     w.entries.values().find_map(|e| match &e.current {
         Some(RoadSourceRecord::Junction(j)) if j.junction.knots.contains(&id) => Some(j),
         _ => None,
     })
 }
+
 fn incident(w: &working::RoadWorkingSet, id: RoadKnotId) -> usize {
     w.entries
         .values()
@@ -28,10 +32,12 @@ fn incident(w: &working::RoadWorkingSet, id: RoadKnotId) -> usize {
         )
         .count()
 }
+
 pub(super) fn ready(w: &working::RoadWorkingSet, id: RoadKnotId) -> bool {
     commands::complete(w, id)
         && at(w, id).is_none_or(|j| j.junction.knots.iter().all(|k| commands::complete(w, *k)))
 }
+
 pub(super) fn join(
     w: &working::RoadWorkingSet,
     source: RoadKnotId,
@@ -41,15 +47,19 @@ pub(super) fn join(
     if source == target {
         return Err("Choose a point on another road".into());
     }
+
     if !ready(w, source) || !ready(w, target) {
         return Err("Wait for all adjoining curves to load".into());
     }
+
     if at(w, source).is_some() {
         return Err("Disconnect this point before joining it elsewhere".into());
     }
+
     if !(1..=2).contains(&incident(w, source)) {
         return Err("Choose a point with one or two adjoining road sections".into());
     }
+
     let mut a = knot(w, source)?;
     let b = knot(w, target)?;
     let road = |id| match w.get(RoadRecordKey::Road(id)) {
@@ -58,11 +68,13 @@ pub(super) fn join(
     };
     let ar = road(a.road)?;
     let br = road(b.road)?;
+
     // Roads of any style meet (a footpath leaving a cart road); the junction's worn patch takes
     // the style of the road joined to.
     if ar.space != br.space {
         return Err("Junctions connect roads in the same world".into());
     }
+
     let mut j = at(w, target)
         .cloned()
         .unwrap_or_else(|| SourceRoadJunction {
@@ -77,6 +89,7 @@ pub(super) fn join(
                 knots: vec![target],
             },
         });
+
     if j.junction
         .knots
         .iter()
@@ -84,10 +97,12 @@ pub(super) fn join(
     {
         return Err("A road can use only one point in this junction".into());
     }
+
     j.junction.knots.push(source);
     j.junction.knots.sort();
     j.junction.radius = j.junction.radius.max(a.knot.width);
     j.junction.validate(size).map_err(|e| e.to_string())?;
+
     if j.junction
         .knots
         .iter()
@@ -97,12 +112,14 @@ pub(super) fn join(
     {
         return Err("This junction already has four arms".into());
     }
+
     a.knot.position = b.knot.position;
     Ok(vec![
         change(RoadSourceRecord::Knot(a)),
         change(RoadSourceRecord::Junction(j)),
     ])
 }
+
 pub(super) fn branch(
     w: &working::RoadWorkingSet,
     target: RoadKnotId,
@@ -112,6 +129,7 @@ pub(super) fn branch(
     if !ready(w, target) {
         return Err("Wait for adjoining curves to load".into());
     }
+
     let a = knot(w, target)?;
     let Some(RoadSourceRecord::Road(r)) = w.get(RoadRecordKey::Road(a.road)) else {
         return Err("Road metadata is not loaded".into());
@@ -139,6 +157,7 @@ pub(super) fn branch(
         .collect::<BTreeMap<_, _>>();
     Ok((road, end_id, merged.into_values().collect()))
 }
+
 pub(super) fn detach(
     w: &working::RoadWorkingSet,
     id: RoadKnotId,
@@ -146,6 +165,7 @@ pub(super) fn detach(
     if !ready(w, id) {
         return Err("Wait for adjoining curves to load".into());
     }
+
     let mut j = at(w, id)
         .cloned()
         .ok_or("This point is not in a junction")?;
@@ -156,6 +176,7 @@ pub(super) fn detach(
         record: (j.junction.knots.len() >= 2).then_some(RoadSourceRecord::Junction(j)),
     }])
 }
+
 pub(super) fn move_point(
     w: &working::RoadWorkingSet,
     primary: RoadChange,
@@ -166,25 +187,32 @@ pub(super) fn move_point(
     let Some(mut j) = at(w, k.knot.id).cloned() else {
         return Ok(vec![primary]);
     };
+
     if !ready(w, k.knot.id) {
         return Err("Wait for junction members to load".into());
     }
+
     j.junction.position = k.knot.position;
     let mut changes = vec![];
+
     for id in &j.junction.knots {
         if *id == k.knot.id {
             continue;
         }
+
         let mut other = knot(w, *id)?;
         other.knot.position = k.knot.position;
         changes.push(change(RoadSourceRecord::Knot(other)));
     }
+
     changes.push(change(RoadSourceRecord::Junction(j)));
     changes.push(primary);
     Ok(changes)
 }
+
 pub(super) fn drag_before(w: &working::RoadWorkingSet, id: RoadKnotId) -> Vec<RoadChange> {
     let mut keys = vec![RoadRecordKey::Knot(id)];
+
     if let Some(j) = at(w, id) {
         keys.push(RoadRecordKey::Junction(j.junction.id));
         keys.extend(
@@ -195,6 +223,7 @@ pub(super) fn drag_before(w: &working::RoadWorkingSet, id: RoadKnotId) -> Vec<Ro
                 .map(|k| RoadRecordKey::Knot(*k)),
         );
     }
+
     w.changes(keys)
 }
 
@@ -234,6 +263,7 @@ pub(super) fn inspector(
         source.junction.knots.len()
     ));
     ui.weak("Moving this point moves every connected point. Choose a road below to edit its tangent handles.");
+
     for id in &source.junction.knots {
         let Some(RoadSourceRecord::Knot(k)) = dense.roads.get(RoadRecordKey::Knot(*id)) else {
             continue;
@@ -241,6 +271,7 @@ pub(super) fn inspector(
         let Some(RoadSourceRecord::Road(r)) = dense.roads.get(RoadRecordKey::Road(k.road)) else {
             continue;
         };
+
         if ui
             .selectable_label(state.knot == Some(*id), &r.road.name)
             .clicked()
@@ -253,16 +284,20 @@ pub(super) fn inspector(
             });
         }
     }
+
     let key = ui.make_persistent_id(("junction-radius", source.junction.id.0));
     let mut draft = ui
         .data_mut(|d| d.get_temp::<(f32, f32)>(key))
         .unwrap_or((source.junction.radius, source.junction.radius));
+
     if draft.0 != source.junction.radius {
         draft = (source.junction.radius, source.junction.radius);
     }
+
     ui.horizontal(|ui| {
         ui.add(egui::DragValue::new(&mut draft.1).speed(0.05).range(1.0..=16.0).suffix(" m"));
         ui.label("Blend radius");
+
         if ui.add_enabled(draft.1!=source.junction.radius,egui::Button::new("Apply radius")).clicked() {
             let mut next=source.clone();next.junction.radius=draft.1;
             let valid=next.junction.knots.iter().all(|id|matches!(dense.roads.get(RoadRecordKey::Knot(*id)),Some(RoadSourceRecord::Knot(k)) if k.knot.width<=next.junction.radius));
@@ -271,6 +306,7 @@ pub(super) fn inspector(
         }
     });
     ui.data_mut(|d| d.insert_temp(key, draft));
+
     if ui.button("Disconnect this road point").clicked() {
         let changes = detach(&dense.roads, knot);
         if state.commit(dense, history, changes) {

@@ -1,4 +1,5 @@
 use super::*;
+
 use bevy::{
     core_pipeline::{Core3dSystems, FullscreenShader, schedule::Core3d},
     render::{
@@ -10,6 +11,7 @@ use bevy::{
         view::{ExtractedView, ViewTarget, ViewUniform, ViewUniformOffset, ViewUniforms},
     },
 };
+
 use binding_types::*;
 
 #[derive(Resource)]
@@ -23,6 +25,7 @@ pub(crate) struct Pipelines {
     /// Cached sky: wraps across the azimuth seam, clamps at the horizon and zenith rows.
     panorama_sampler: Sampler,
 }
+
 impl Pipelines {
     /// Sampler for displaying the cloud image: the panorama cache or a per-frame screen image.
     pub(crate) fn display_sampler(&self, cached: bool) -> &Sampler {
@@ -33,6 +36,7 @@ impl Pipelines {
         }
     }
 }
+
 pub(super) fn install(app: &mut App) {
     let Some(render) = app.get_sub_app_mut(RenderApp) else {
         return;
@@ -48,6 +52,7 @@ pub(super) fn install(app: &mut App) {
                 .before(Core3dSystems::EarlyPostProcess),
         );
 }
+
 fn init(
     mut commands: Commands,
     device: Res<RenderDevice>,
@@ -141,6 +146,7 @@ fn init(
         }),
     });
 }
+
 #[allow(clippy::too_many_arguments)] // Independent render-world inputs of one pass.
 fn update_shadows(
     view: ViewQuery<&CloudView>,
@@ -178,9 +184,11 @@ fn update_shadows(
         shadows.texture_view.id(),
         pipeline.id(),
     );
+
     if previous.as_ref() == Some(&key) {
         return;
     }
+
     let group = ctx.render_device().create_bind_group(
         "cloud shadow generation",
         &cache.get_bind_group_layout(&pipelines.compute_layout),
@@ -214,6 +222,7 @@ struct ShadowInputs {
     transition: [f32; 4],
     lights: [[f32; 4]; 2],
 }
+
 impl From<&EnvironmentParams> for ShadowInputs {
     fn from(p: &EnvironmentParams) -> Self {
         Self {
@@ -242,6 +251,7 @@ struct SkyCacheKey {
     enabled: f32,
     seed: f32,
 }
+
 impl From<&EnvironmentParams> for SkyCacheKey {
     fn from(p: &EnvironmentParams) -> Self {
         Self {
@@ -256,6 +266,7 @@ impl From<&EnvironmentParams> for SkyCacheKey {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn finished_sweeps_rotate_without_ever_refreshing_a_displayed_image() {
         let mut target = CloudTarget {
@@ -267,6 +278,7 @@ mod tests {
         for _ in 0..6 {
             let (older, newer, building) = (target.older, target.newer, target.building);
             target.rotate();
+
             // The finished image is shown next; the image being replaced was not on screen.
             assert_eq!(
                 (target.older, target.newer, target.building),
@@ -276,6 +288,7 @@ mod tests {
             assert_ne!(target.building, target.newer);
         }
     }
+
     #[test]
     fn weather_evolution_refreshes_the_sky_progressively_but_field_changes_do_not() {
         let mut p = EnvironmentParams {
@@ -290,6 +303,7 @@ mod tests {
         p.shape[2] = 0.1;
         p.offset = [1000., 2000., 500., 750.];
         assert_eq!(SkyCacheKey::from(&p), key);
+
         for change in [
             |p: &mut EnvironmentParams| p.layer[0] = 1500.,
             |p: &mut EnvironmentParams| p.layer[2] = 8000.,
@@ -301,6 +315,7 @@ mod tests {
             assert_ne!(SkyCacheKey::from(&changed), key);
         }
     }
+
     #[test]
     fn wind_origin_and_exposure_reuse_shadows_but_density_and_light_changes_do_not() {
         let mut p = EnvironmentParams {
@@ -325,6 +340,7 @@ mod tests {
         assert_ne!(ShadowInputs::from(&p), key);
     }
 }
+
 /// Balanced keeps three cache images: the previous and newest complete refreshes, which the
 /// sky composite cross-fades by sweep progress, and one being refreshed row by row. Displaying
 /// only complete images turns 4 Hz texel updates into continuous change: no stepping, and no
@@ -346,6 +362,7 @@ pub(crate) struct CloudTarget {
     /// Cross-fade from the previous to the newest complete image.
     blend: f32,
 }
+
 impl CloudTarget {
     /// Newest and previous complete images and the cross-fade between them, once traced.
     pub(crate) fn display(&self) -> Option<(&TextureView, &TextureView, f32)> {
@@ -353,11 +370,13 @@ impl CloudTarget {
         let older = self.slots.get(self.older)?;
         Some((&newer.1, &older.1, self.blend))
     }
+
     /// A finished sweep becomes the newest image; the oldest slot is refreshed next.
     fn rotate(&mut self) {
         (self.older, self.newer, self.building) = (self.newer, self.building, self.older);
     }
 }
+
 #[allow(clippy::too_many_arguments)] // One scissored pass: target, rows and pipeline state.
 fn trace(
     encoder: &mut CommandEncoder,
@@ -394,6 +413,7 @@ fn trace(
     pass.set_scissor_rect(0, rows.0, width, rows.1);
     pass.draw(0..3, 0..1);
 }
+
 /// Trace this frame's share of the cloud images. The sky composite displays them.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn refresh(
@@ -416,9 +436,11 @@ pub(crate) fn refresh(
     mut ctx: RenderContext,
 ) {
     let (_, extracted, view, offset, resolution) = view.into_inner();
+
     if view.main_texture_format() != TextureFormat::Rgba16Float {
         return;
     }
+
     let Some(assets) = assets else {
         return;
     };
@@ -438,6 +460,7 @@ pub(crate) fn refresh(
     let size = quality.target_size(main_size);
     let slot_count = if cached { 3 } else { 1 };
     let resized = target.size != size || target.slots.len() != slot_count;
+
     if resized {
         target.slots = (0..slot_count)
             .map(|_| {
@@ -465,6 +488,7 @@ pub(crate) fn refresh(
         (target.older, target.newer, target.building) = if cached { (0, 1, 2) } else { (0, 0, 0) };
         target.size = size;
     }
+
     let now = target
         .epoch
         .get_or_insert_with(std::time::Instant::now)
@@ -484,6 +508,7 @@ pub(crate) fn refresh(
     } else {
         Some(sky_cache::Region::Full)
     };
+
     if let Some(region) = region {
         let group = ctx.render_device().create_bind_group(
             "cloud volume",
@@ -496,6 +521,7 @@ pub(crate) fn refresh(
             )),
         );
         let full = region == sky_cache::Region::Full;
+
         for rows in region.ranges(size.y) {
             let building = target.slots[target.building].1.clone();
             trace(
@@ -509,10 +535,12 @@ pub(crate) fn refresh(
                 offset.offset,
             );
             target.traced_pixels += u64::from(size.x) * u64::from(rows.1);
+
             if cached && !full && rows.0 + rows.1 == size.y {
                 target.rotate();
             }
         }
+
         if cached && full {
             // Restart: both displayed images show the new field until the next sweep.
             let source = target.slots[target.building].0.clone();
@@ -524,9 +552,12 @@ pub(crate) fn refresh(
                 );
             }
         }
+
         target.sky_key = Some(key);
     }
+
     target.composites += 1;
+
     if now.saturating_sub(target.last_report).as_secs_f32() >= 5. {
         debug!(
             "CLOUD_WORK quality={:?} seconds={:.3} composites={} traced_pixels={}",
@@ -539,6 +570,7 @@ pub(crate) fn refresh(
         target.composites = 0;
         target.traced_pixels = 0;
     }
+
     target.blend = if cached {
         target.sky_refresh.progress()
     } else {

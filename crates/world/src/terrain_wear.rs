@@ -7,8 +7,10 @@ use serde::{Deserialize, Serialize};
 
 /// Texels per side of a page's wear field: 12.5 cm on 32 m cells.
 pub const WEAR_RESOLUTION: u16 = 256;
+
 /// Rut depth at a texel's full value, metres.
 pub const RUT_DEPTH_SCALE: f32 = 0.25;
+
 /// A worn slot entry that names no surface.
 pub const NO_WORN_SLOT: u8 = u8::MAX;
 
@@ -96,11 +98,14 @@ impl TerrainWear {
         if wear <= 0.0 {
             return;
         }
+
         let natural = weights.to_vec();
+
         for (slot, (&w, pair)) in natural.iter().zip(&self.worn).enumerate() {
             if w <= 0.0 {
                 continue;
             }
+
             let given = w * wear;
             let trampled = self.trampled[slot];
             let to_trampled = if trampled == NO_WORN_SLOT {
@@ -109,13 +114,17 @@ impl TerrainWear {
                 given * (1.0 - bare)
             };
             let mut to_bare = given - to_trampled;
+
             if pair.iter().all(|&(s, _)| s == NO_WORN_SLOT) {
                 to_bare = 0.0;
             }
+
             weights[slot] -= to_trampled + to_bare;
+
             if to_trampled > 0.0 {
                 weights[usize::from(trampled)] += to_trampled;
             }
+
             for &(s, share) in pair {
                 if s != NO_WORN_SLOT {
                     weights[usize::from(s)] += to_bare * f64::from(share) / 255.0;
@@ -164,6 +173,7 @@ mod tests {
             trampled: vec![3, NO_WORN_SLOT, NO_WORN_SLOT, NO_WORN_SLOT],
         };
         assert!(wear.is_valid(4));
+
         // All bare: as without trampling.
         let mut w = [0.8, 0.2, 0.0, 0.0];
         wear.lay(&mut w, 0.5, 1.0);
@@ -171,6 +181,7 @@ mod tests {
         assert!((w[0] - 0.4).abs() < 1e-9);
         assert!((w[1] - (0.2 + 0.4 * 0.6)).abs() < 1e-9);
         assert!((w[2] - 0.4 * 0.4).abs() < 1e-9);
+
         // A quarter bare: three quarters of the worn meadow trampled.
         let mut w = [0.8, 0.2, 0.0, 0.0];
         wear.lay(&mut w, 0.5, 0.25);
@@ -185,6 +196,7 @@ mod tests {
         assert!(bare_share(0.05, p) < 0.1);
         assert!(bare_share(1.0, p) > 0.9);
         let mut last = 0.0;
+
         for i in 0..=20 {
             let b = bare_share(f64::from(i) / 20.0, p);
             assert!(b >= last);

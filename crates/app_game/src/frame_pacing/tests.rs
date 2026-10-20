@@ -10,6 +10,7 @@ fn live_rate_policy_keeps_clock_and_presentation_together() {
         };
         let policy = request.resolve(true);
         let events = policy.event_loop(&original);
+
         if fps == 0 {
             assert_eq!(policy.source, ClockSource::FollowDisplay);
             assert_eq!(policy.presentation_interval, Duration::ZERO);
@@ -42,6 +43,7 @@ fn fallback_and_diagnostic_modes_do_not_add_a_second_limiter() {
         rate: FrameRate::new(60),
         ..default()
     };
+
     for policy in [
         request.resolve(false),
         FramePacing {
@@ -77,6 +79,7 @@ fn runtime_changes_apply_once_and_restore_original_event_loop() {
         original_event_loop: original.clone(),
     })
     .add_systems(PostUpdate, apply_pending);
+
     for fps in [0, 60, 30, 120, 0, 60, 0] {
         set_fps(&mut app, fps);
         app.update();
@@ -86,6 +89,7 @@ fn runtime_changes_apply_once_and_restore_original_event_loop() {
         let events = app.world().resource::<WinitSettings>();
         assert_eq!(events.focused_mode, expected_events.focused_mode);
         assert_eq!(events.unfocused_mode, expected_events.unfocused_mode);
+
         // Neither resources nor a native clock are recreated on unchanged frames.
         let tick = app
             .world()
@@ -106,12 +110,15 @@ fn runtime_changes_apply_once_and_restore_original_event_loop() {
 #[test]
 fn selector_cycles_presets_and_handles_custom_launch_rates() {
     let mut rate = FrameRate::default();
+
     for fps in [30, 60, 120, 0, 30] {
         rate = rate.next();
         assert_eq!(rate.fps(), fps);
     }
+
     assert_eq!(FrameRate::new(45).label(), "FPS limit: 45");
     assert_eq!(FrameRate::new(45).next(), FrameRate::default());
+
     for invalid in [1, 14, 241] {
         assert!(std::panic::catch_unwind(|| FrameRate::new(invalid)).is_err());
     }

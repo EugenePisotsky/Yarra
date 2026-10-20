@@ -4,14 +4,17 @@ use game_types::{ContentId, TextContract, TextResourceId, require};
 use localization::{LanguageResource, LocalizationError, ResourceSource};
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
+
 use std::{
     collections::BTreeMap,
     fs::{self, OpenOptions},
     path::{Path, PathBuf},
 };
+
 const APPLICATION_ID: i64 = 0x59474c50;
 const VERSION: i64 = 2;
 const MAX_PACK_BYTES: u64 = 256 * 1024 * 1024;
+
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Manifest {
@@ -19,17 +22,20 @@ struct Manifest {
     locale: String,
     source_locale: String,
 }
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LanguageStats {
     pub payload_queries: usize,
     pub decoded_resources: usize,
     pub payload_bytes: usize,
 }
+
 pub struct LanguageRepository {
     connection: Connection,
     manifest: Manifest,
     stats: LanguageStats,
 }
+
 impl LanguageRepository {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         require(
@@ -60,12 +66,15 @@ impl LanguageRepository {
             stats: LanguageStats::default(),
         })
     }
+
     pub fn locale(&self) -> &str {
         &self.manifest.locale
     }
+
     pub fn stats(&self) -> &LanguageStats {
         &self.stats
     }
+
     pub fn load(&mut self, id: TextResourceId) -> Result<Option<LanguageResource>> {
         self.stats.payload_queries += 1;
         let row: Option<(Vec<u8>,Vec<u8>)> = self.connection.query_row(
@@ -86,6 +95,7 @@ impl LanguageRepository {
         self.stats.payload_bytes += payload.len();
         Ok(Some(resource))
     }
+
     fn all_for_tools(&mut self) -> Result<Vec<LanguageResource>> {
         let ids: Vec<String> = self
             .connection
@@ -93,22 +103,27 @@ impl LanguageRepository {
             .query_map([], |r| r.get(0))?
             .collect::<std::result::Result<_, _>>()?;
         let mut result = Vec::new();
+
         for id in ids {
             let resource = self
                 .load(TextResourceId::try_from(id)?)?
                 .ok_or_else(|| game_types::Invalid("missing language resource".into()))?;
             result.push(resource);
         }
+
         Ok(result)
     }
 }
+
 pub struct LanguageSource {
     content: ContentRepository,
     languages: BTreeMap<String, LanguageRepository>,
 }
+
 impl LanguageSource {
     pub fn new(content: ContentRepository, languages: Vec<LanguageRepository>) -> Result<Self> {
         let mut by_locale = BTreeMap::new();
+
         for language in languages {
             require(
                 language.manifest.content == content.manifest().content.id
@@ -122,15 +137,18 @@ impl LanguageSource {
                 "duplicate language pack locale",
             )?;
         }
+
         Ok(Self {
             content,
             languages: by_locale,
         })
     }
 }
+
 fn presentation_error(error: ContentError) -> LocalizationError {
     LocalizationError::Resource(error.to_string())
 }
+
 impl ResourceSource for LanguageSource {
     fn contract(&mut self, id: TextResourceId) -> localization::Result<TextContract> {
         match self.content.read(&AssetId::Text(id)) {
@@ -139,6 +157,7 @@ impl ResourceSource for LanguageSource {
             Err(error) => Err(presentation_error(error)),
         }
     }
+
     fn resource(
         &mut self,
         id: TextResourceId,
@@ -149,6 +168,7 @@ impl ResourceSource for LanguageSource {
             .map_or(Ok(None), |pack| pack.load(id).map_err(presentation_error))
     }
 }
+
 impl LoadedProject {
     /// Publish one locale independently. A wording/review edit does not rebuild mechanics.
     pub fn build_language_pack(&self, locale: &str, output: impl AsRef<Path>) -> Result<()> {
@@ -185,6 +205,7 @@ impl LoadedProject {
                 "INSERT INTO manifest VALUES(1,?1)",
                 [serde_json::to_vec(&manifest)?],
             )?;
+
             for resource in resources {
                 let payload = serde_json::to_vec(resource)?;
                 require(
@@ -200,6 +221,7 @@ impl LoadedProject {
                     ],
                 )?;
             }
+
             tx.pragma_update(None, "application_id", APPLICATION_ID)?;
             tx.pragma_update(None, "user_version", VERSION)?;
             tx.commit()?;
@@ -213,12 +235,14 @@ impl LoadedProject {
         cleanup?;
         Ok(())
     }
+
     pub fn materialize_with_languages_for_tools(
         path: impl AsRef<Path>,
         languages: &[PathBuf],
     ) -> Result<Self> {
         let content = Self::materialize_bundle_for_tools(path)?;
         let mut translations = Vec::new();
+
         for path in languages {
             let mut language = LanguageRepository::open(path)?;
             require(
@@ -228,6 +252,7 @@ impl LoadedProject {
             )?;
             translations.extend(language.all_for_tools()?);
         }
+
         Self::from_parts(
             content.content,
             content.scenario,

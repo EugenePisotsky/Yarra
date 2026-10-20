@@ -2,15 +2,18 @@ use super::working::{RoadChange, RoadWorkingSet};
 use environment::{ChannelId, PresetId, roads::*};
 use world::WorldSpaceId;
 use world_db::*;
+
 fn id() -> [u8; 16] {
     *uuid::Uuid::new_v4().as_bytes()
 }
+
 fn change(r: RoadSourceRecord) -> RoadChange {
     RoadChange {
         key: r.key(),
         record: Some(r),
     }
 }
+
 pub(crate) fn default_profile(ground: PresetId, channel: ChannelId) -> CartTrackProfile {
     CartTrackProfile {
         id: RoadProfileId(id()),
@@ -30,6 +33,7 @@ pub(crate) fn default_profile(ground: PresetId, channel: ChannelId) -> CartTrack
         relief: Default::default(),
     }
 }
+
 pub(super) fn create(
     working: &RoadWorkingSet,
     space: WorldSpaceId,
@@ -40,9 +44,11 @@ pub(super) fn create(
 ) -> Result<(RoadId, RoadKnotId, Vec<RoadChange>), String> {
     let d = end.relative_to(start.cell, size as f64);
     let delta = [d[0] - start.local[0], d[1] - start.local[1]];
+
     if delta[0].hypot(delta[1]) < 2.0 {
         return Err("Place the second point at least 2 m away".into());
     }
+
     let Some(RoadSourceRecord::Profile(profile)) = working.get(RoadRecordKey::Profile(style))
     else {
         return Err("Choose a loaded road style first".into());
@@ -102,6 +108,7 @@ pub(super) fn create(
     })));
     Ok((road.id, b.id, changes))
 }
+
 pub(super) fn span(w: &RoadWorkingSet, id: RoadSpanId) -> Option<RoadSpan> {
     let RoadSourceRecord::Span(s) = w.get(RoadRecordKey::Span(id))? else {
         return None;
@@ -120,21 +127,25 @@ pub(super) fn span(w: &RoadWorkingSet, id: RoadSpanId) -> Option<RoadSpan> {
         end: b.knot.clone(),
     })
 }
+
 pub(super) fn complete(w: &RoadWorkingSet, id: RoadKnotId) -> bool {
     w.complete_knots.contains(&id)
         || w.entries
             .get(&RoadRecordKey::Knot(id))
             .is_some_and(|e| e.base.revision.is_none())
 }
+
 pub(super) fn split(
     w: &RoadWorkingSet,
     key: RoadSpanId,
     size: f32,
 ) -> Result<Vec<RoadChange>, String> {
     let s = span(w, key).ok_or("Select a loaded curve first")?;
+
     if !complete(w, s.start.id) || !complete(w, s.end.id) {
         return Err("Wait for adjoining spans to load".into());
     }
+
     let (a, b) =
         split_span(&s, size, 0.5, RoadKnotId(id()), RoadSpanId(id())).map_err(|e| e.to_string())?;
     let mut changes = [a.start.clone(), a.end.clone(), b.end.clone()]
@@ -157,6 +168,7 @@ pub(super) fn split(
     }));
     Ok(changes)
 }
+
 pub(super) fn extend(
     w: &RoadWorkingSet,
     key: RoadKnotId,
@@ -166,18 +178,22 @@ pub(super) fn extend(
     if super::junctions::at(w, key).is_some() {
         return Err("Use Branch from point at a connected junction".into());
     }
+
     if !complete(w, key) {
         return Err("Wait for adjoining spans to load".into());
     }
+
     let Some(RoadSourceRecord::Knot(a)) = w.get(RoadRecordKey::Knot(key)) else {
         return Err("Select an endpoint".into());
     };
+
     if w.entries
         .values()
         .any(|e| matches!(&e.current,Some(RoadSourceRecord::Span(s)) if s.start==key))
     {
         return Err("Select the last endpoint of the road to extend it".into());
     }
+
     let mut a = a.clone();
     let d = end.relative_to(a.knot.position.cell, size as f64);
     let delta = [
@@ -185,9 +201,11 @@ pub(super) fn extend(
         d[1] - a.knot.position.local[1],
     ];
     let distance = delta[0].hypot(delta[1]);
+
     if distance < 2.0 {
         return Err("Extend by at least 2 m".into());
     }
+
     let tangent = a.knot.incoming;
     let len = tangent[0].hypot(tangent[1]);
     a.knot.outgoing = if len > 0.01 {
@@ -219,16 +237,19 @@ pub(super) fn extend(
     ];
     Ok((b.id, changes))
 }
+
 pub(super) fn delete_span(w: &RoadWorkingSet, key: RoadSpanId) -> Result<Vec<RoadChange>, String> {
     let s = span(w, key).ok_or("Select a curve to remove")?;
     let mut changes = vec![RoadChange {
         key: RoadRecordKey::Span(key),
         record: None,
     }];
+
     for id in [s.start.id, s.end.id] {
         if !complete(w, id) {
             return Err("Wait for adjoining spans to load".into());
         }
+
         let count = w
             .entries
             .values()
@@ -236,6 +257,7 @@ pub(super) fn delete_span(w: &RoadWorkingSet, key: RoadSpanId) -> Result<Vec<Roa
                 |e| matches!(&e.current,Some(RoadSourceRecord::Span(s)) if s.start==id||s.end==id),
             )
             .count();
+
         if count == 1 {
             if super::junctions::at(w, id).is_some() {
                 changes.extend(super::junctions::detach(w, id)?);
@@ -246,5 +268,6 @@ pub(super) fn delete_span(w: &RoadWorkingSet, key: RoadSpanId) -> Result<Vec<Roa
             });
         }
     }
+
     Ok(changes)
 }

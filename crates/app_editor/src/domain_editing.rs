@@ -6,14 +6,17 @@
 //! saving, or newer than the active runtime generation.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+
 mod definitions;
 mod presets;
+
 use definitions::DefinitionEntry;
 pub(crate) use definitions::{DirtyDefinitionSnapshot, definition_bytes};
 pub(crate) use presets::{DirtyPresetSnapshot, library_bytes};
 
 use bevy::prelude::*;
 use world::{CellCoord, WorldSpaceId};
+
 use world_db::{
     EnvironmentCellKey, EnvironmentCellWrite, MAX_DENSE_DOMAIN_WRITES_PER_TRANSACTION,
     SourceEnvironmentCellRecord,
@@ -84,6 +87,7 @@ impl SourceWorkingSets {
         records: &[world_db::SourceEnvironmentCellRecord],
     ) -> Self {
         let mut result = Self::default();
+
         for record in records {
             let current = record.clone();
             let base = (record.source_revision > 0).then(|| current.clone());
@@ -97,6 +101,7 @@ impl SourceWorkingSets {
                 },
             );
         }
+
         result
     }
 
@@ -117,6 +122,7 @@ impl SourceWorkingSets {
         records: &[world_db::SourceEnvironmentCellRecord],
     ) -> Result<(), String> {
         let mut replacements = HashMap::new();
+
         for record in records {
             let key = record.key();
             let entry = self
@@ -124,6 +130,7 @@ impl SourceWorkingSets {
                 .get(&key)
                 .ok_or("Wait for this area to load before editing")?;
             let mut record = record.clone();
+
             if let Some(definition) = self.definition(record.space) {
                 if record.tiles.iter().any(|tile| {
                     !definition.layers.iter().any(|l| l.id == tile.layer)
@@ -133,6 +140,7 @@ impl SourceWorkingSets {
                 }
                 record.definition_revision = definition.revision;
             }
+
             if !same_dense_shape(&entry.current, &record)
                 || matches!(
                     entry.save_state,
@@ -141,34 +149,43 @@ impl SourceWorkingSets {
             {
                 return Err("Resolve the pending save or changed layer definition first".into());
             }
+
             record.source_revision = entry.current.source_revision;
+
             if replacements.insert(key, record).is_some() {
                 return Err("Duplicate cell in coverage command".into());
             }
         }
+
         let mut dirty = 0;
         let mut dirty_bytes = 0;
         let mut retained = 0;
+
         for (key, entry) in &self.entries {
             let next = replacements.get(key).unwrap_or(&entry.current);
             retained += dense_record_bytes(next)
                 + entry.base.as_ref().map_or(0, dense_record_bytes)
                 + entry.runtime.as_ref().map_or(0, dense_record_bytes);
+
             if !same_dense_content(entry.base.as_ref(), next) {
                 dirty += 1;
                 dirty_bytes += dense_record_bytes(next);
             }
         }
+
         if dirty > MAX_DENSE_DOMAIN_WRITES_PER_TRANSACTION || dirty_bytes > 3 * 1024 * 1024 {
             return Err("Save these changes before painting more area".into());
         }
+
         if retained > 32 * 1024 * 1024 || self.entries.len() > 512 {
             return Err(
                 "Publish changes and clear undo history to release the retained painting area"
                     .into(),
             );
         }
+
         let mut changed = false;
+
         for (key, next) in replacements {
             let entry = self.entries.get_mut(&key).unwrap();
             if !same_dense_content(Some(&entry.current), &next) {
@@ -177,9 +194,11 @@ impl SourceWorkingSets {
                 changed = true;
             }
         }
+
         if changed {
             self.bump_revision();
         }
+
         Ok(())
     }
 
@@ -209,6 +228,7 @@ impl SourceWorkingSets {
 
     pub(crate) fn restore_dirty_snapshot(&mut self, snapshot: DirtyDenseSnapshot) -> bool {
         let key = snapshot.current.key();
+
         if snapshot.base.as_ref() == Some(&snapshot.current)
             || !valid_dense_record(&snapshot.current)
             || snapshot
@@ -222,6 +242,7 @@ impl SourceWorkingSets {
         {
             return false;
         }
+
         self.entries.insert(
             key,
             DenseEditEntry {
@@ -305,11 +326,13 @@ impl SourceWorkingSets {
     /// coverage bytes for a retry. Conflicts with an incompatible record shape remain unresolved.
     pub(crate) fn keep_local_conflicts(&mut self) -> usize {
         let mut resolved = self.resolve_definition_conflicts(true);
+
         for entry in self.entries.values_mut() {
             let DenseSaveState::Conflict(actual) = &entry.save_state else {
                 continue;
             };
             let actual = actual.clone();
+
             if let Some(actual) = actual.as_ref() {
                 if !same_dense_shape(actual, &entry.current) {
                     continue;
@@ -318,13 +341,16 @@ impl SourceWorkingSets {
             } else {
                 entry.current.source_revision = 0;
             }
+
             entry.base = actual;
             entry.save_state = DenseSaveState::Idle;
             resolved += 1;
         }
+
         if resolved > 0 {
             self.bump_revision();
         }
+
         resolved
     }
 
@@ -332,21 +358,26 @@ impl SourceWorkingSets {
     /// record; an externally removed record or changed definition requires a project reload.
     pub(crate) fn accept_database_conflicts(&mut self) -> usize {
         let mut resolved = self.resolve_definition_conflicts(false);
+
         for entry in self.entries.values_mut() {
             let DenseSaveState::Conflict(Some(actual)) = &entry.save_state else {
                 continue;
             };
+
             if !same_dense_shape(actual, &entry.current) {
                 continue;
             }
+
             entry.base = Some(actual.clone());
             entry.current = actual.clone();
             entry.save_state = DenseSaveState::Idle;
             resolved += 1;
         }
+
         if resolved > 0 {
             self.bump_revision();
         }
+
         resolved
     }
 
@@ -378,15 +409,18 @@ impl SourceWorkingSets {
     /// adopted immutable generation. Unsaved current values remain divergent from `base`.
     pub(crate) fn adopt_runtime_generation(&mut self) -> usize {
         let mut adopted = 0;
+
         for entry in self.entries.values_mut() {
             if entry.runtime != entry.base {
                 entry.runtime.clone_from(&entry.base);
                 adopted += 1;
             }
         }
+
         if adopted > 0 {
             self.bump_revision();
         }
+
         adopted
     }
 
@@ -421,6 +455,7 @@ impl SourceWorkingSets {
         if self.saving() || self.has_any_conflict() {
             return false;
         }
+
         if self
             .entries
             .values()
@@ -428,6 +463,7 @@ impl SourceWorkingSets {
         {
             return false;
         }
+
         let mut dirty = self
             .entries
             .iter()
@@ -438,9 +474,11 @@ impl SourceWorkingSets {
             .into_iter()
             .map(|(key, entry)| (*key, dense_write(entry.base.as_ref(), &entry.current)))
             .collect::<Vec<_>>();
+
         if selected.len() > MAX_DENSE_DOMAIN_WRITES_PER_TRANSACTION || self.gesture_active {
             return false;
         }
+
         let writes = selected
             .iter()
             .map(|(_, write)| write.clone())
@@ -457,12 +495,14 @@ impl SourceWorkingSets {
         };
         self.mark_definitions_saving(request_id);
         self.roads.saving = Some(request_id);
+
         for (key, _) in selected {
             self.entries
                 .get_mut(&key)
                 .expect("selected dense write remains in the working set")
                 .save_state = DenseSaveState::Saving(request_id);
         }
+
         true
     }
 
@@ -470,9 +510,11 @@ impl SourceWorkingSets {
         if let Some(error) = &self.roads.error {
             return Some(error.clone());
         }
+
         if let Some(status) = self.definition_status() {
             return Some(status);
         }
+
         self.entries
             .values()
             .find_map(|entry| match &entry.save_state {
@@ -493,6 +535,7 @@ impl SourceWorkingSets {
         if self.last_completed_query == project.completed_queries() {
             return;
         }
+
         self.last_completed_query = project.completed_queries();
 
         let fresh = project.environment_cells();
@@ -506,8 +549,10 @@ impl SourceWorkingSets {
                 || fresh_keys.contains(key)
                 || history_cells.contains(&(key.space, key.cell))
         });
+
         for record in fresh.iter().cloned() {
             let key = record.key();
+
             if self
                 .definitions
                 .get(&key.space)
@@ -515,6 +560,7 @@ impl SourceWorkingSets {
             {
                 continue;
             }
+
             match self.entries.get_mut(&key) {
                 Some(entry) if !entry.pinned() => {
                     entry.base = (record.source_revision > 0).then(|| record.clone());
@@ -549,6 +595,7 @@ impl SourceWorkingSets {
             .collect::<Vec<_>>();
         self.finish_definitions(request_id, &outcome);
         self.roads.finish_save(request_id, &outcome);
+
         match outcome {
             DenseSaveOutcome::Committed(commits) => {
                 for key in &matching_keys {
@@ -590,6 +637,7 @@ impl SourceWorkingSets {
                 }
             }
         }
+
         self.bump_revision();
     }
 
@@ -670,6 +718,7 @@ fn same_dense_content(
 mod tests {
     use super::*;
     use crate::editing::{EditorHistory, EditorObjectWorkingSet};
+
     fn record(x: i32, value: u8) -> world_db::SourceEnvironmentCellRecord {
         world_db::SourceEnvironmentCellRecord {
             space: WorldSpaceId(1),
@@ -682,6 +731,7 @@ mod tests {
             }],
         }
     }
+
     #[test]
     fn environment_undo_redo_rebases_on_saved_revision_and_retains_runtime_delta() {
         let before = record(0, 60);
@@ -726,6 +776,7 @@ mod tests {
         assert!(history.undo(&mut objects, &mut dense));
         assert_eq!(dense.runtime_divergent_records().len(), 1);
     }
+
     #[test]
     fn rejected_large_gesture_does_not_apply_any_cells() {
         let records = (0..65).map(|x| record(x, 60)).collect::<Vec<_>>();
@@ -733,12 +784,15 @@ mod tests {
         let changed = (0..65).map(|x| record(x, 180)).collect::<Vec<_>>();
         assert!(dense.apply_environment_records(&changed).is_err());
         assert_eq!(dense.dirty_count(), 0);
+
         for r in &records {
             assert_eq!(dense.environment_record(r.space, r.cell), Some(r));
         }
+
         dense.apply_environment_records(&changed[..64]).unwrap();
         assert_eq!(dense.dirty_count(), 64);
     }
+
     #[test]
     fn absent_empty_cell_is_clean_and_cancel_restores_it() {
         let mut before = record(0, 0);

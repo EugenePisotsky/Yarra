@@ -35,22 +35,27 @@ impl ClipmapLayout {
             intervals,
         }
     }
+
     /// Metres between samples of `level`.
     pub fn spacing(&self, level: u8) -> f64 {
         self.cell_size * f64::from(1_u32 << level) / f64::from(self.intervals)
     }
+
     /// Metres of a node of `level`.
     pub fn node_metres(&self, level: u8) -> f64 {
         self.cell_size * f64::from(1_u32 << level)
     }
+
     /// Nodes per side of a level's window.
     pub fn nodes_per_side(&self) -> i32 {
         (self.side / self.intervals) as i32
     }
+
     /// Texel of world sample index `sample` along one axis.
     pub fn texel(&self, sample: i64) -> u32 {
         sample.rem_euclid(i64::from(self.side)) as u32
     }
+
     /// First texel (x, z) of a node's block in its level.
     pub fn block_origin(&self, key: TerrainNodeKey) -> [u32; 2] {
         let n = i64::from(self.intervals);
@@ -77,6 +82,7 @@ impl NodeWindow {
         let node = layout.node_metres(level);
         xz.map(|v| (v / node).floor() as i32)
     }
+
     /// The window of `level` around node `centre`.
     pub fn around(layout: &ClipmapLayout, level: u8, centre: [i32; 2]) -> Self {
         let half = (layout.nodes_per_side() - 1) / 2;
@@ -86,24 +92,29 @@ impl NodeWindow {
             size: 2 * half + 1,
         }
     }
+
     /// The window of `level` centred on world `xz`.
     pub fn centred(layout: &ClipmapLayout, level: u8, xz: [f64; 2]) -> Self {
         Self::around(layout, level, Self::node_at(layout, level, xz))
     }
+
     pub fn centre(&self) -> [i32; 2] {
         self.min.map(|m| m + self.size / 2)
     }
+
     pub fn contains(&self, x: i32, z: i32) -> bool {
         x >= self.min[0]
             && z >= self.min[1]
             && x < self.min[0] + self.size
             && z < self.min[1] + self.size
     }
+
     /// Whether world `xz` lies at least `margin` nodes inside the window.
     pub fn holds(&self, layout: &ClipmapLayout, xz: [f64; 2], margin: i32) -> bool {
         let at = Self::node_at(layout, self.level, xz);
         (0..2).all(|i| at[i] >= self.min[i] + margin && at[i] < self.min[i] + self.size - margin)
     }
+
     pub fn nodes(&self) -> impl Iterator<Item = [i32; 2]> + '_ {
         (0..self.size * self.size)
             .map(move |i| [self.min[0] + i % self.size, self.min[1] + i / self.size])
@@ -124,6 +135,7 @@ impl LodRanges {
     pub fn range(&self, level: u8) -> f64 {
         self.leaf * f64::from(1_u32 << level)
     }
+
     /// Where level `level` starts and ends morphing towards the next coarser level.
     pub fn morph(&self, level: u8) -> [f64; 2] {
         let end = self.range(level);
@@ -182,6 +194,7 @@ pub fn select(
             })
         })
         .collect();
+
     while let Some(patch) = stack.pop() {
         let key = patch.key;
         let split =
@@ -202,11 +215,13 @@ pub fn select(
                     })
                     .collect::<Option<Vec<_>>>()
             });
+
         match children {
             Some(children) => stack.extend(children),
             None => out.push(patch),
         }
     }
+
     out
 }
 
@@ -227,6 +242,7 @@ mod tests {
     /// Every node of levels 0..=top over `cells`² leaves, flat at 0..10 m.
     fn world(top: u8, cells: i32) -> HashMap<TerrainNodeKey, [f32; 2]> {
         let mut nodes = HashMap::new();
+
         for level in 0..=top {
             let n = cells >> level;
             for z in 0..n {
@@ -235,6 +251,7 @@ mod tests {
                 }
             }
         }
+
         nodes
     }
 
@@ -247,15 +264,19 @@ mod tests {
         assert_eq!(layout.spacing(3), 8.0);
         let window = NodeWindow::centred(&layout, 2, [1000.0, -1000.0]);
         let mut seen = std::collections::HashSet::new();
+
         for [x, z] in window.nodes() {
             assert!(
                 seen.insert(layout.block_origin(key(2, x, z))),
                 "two nodes share a block"
             );
         }
+
         assert_eq!(seen.len(), 31 * 31);
+
         // The shared last column and row land in the guard, not on the first nodes.
         let [x, z] = window.min.map(|m| m + window.size);
+
         for guard in [
             key(2, x, window.min[1]),
             key(2, window.min[0], z),
@@ -263,6 +284,7 @@ mod tests {
         ] {
             assert!(!seen.contains(&layout.block_origin(guard)));
         }
+
         assert_eq!(
             window.centre(),
             NodeWindow::node_at(&layout, 2, [1000.0, -1000.0])
@@ -282,9 +304,11 @@ mod tests {
             .flat_map(|z| (0..10).map(move |x| key(5, x, z)))
             .collect();
         let patches = select(&layout, &ranges, &windows, &starts, &nodes, eye);
+
         // Leaf area adds up to the world's.
         let area: i64 = patches.iter().map(|p| 1_i64 << (2 * p.key.level)).sum();
         assert_eq!(area, 320 * 320);
+
         // Leaves near the eye, coarse far away, and a patch's level never jumps more than one
         // between a node and the ground the eye stands on.
         let under = patches
@@ -297,6 +321,7 @@ mod tests {
             .unwrap();
         assert_eq!(under.key.level, 0);
         assert!(patches.iter().any(|p| p.key.level == 5));
+
         for p in &patches {
             let d = distance(&layout, p.key, p.bounds, eye);
             // A patch is never drawn nearer than its parent's split range would allow.
@@ -304,6 +329,7 @@ mod tests {
                 assert!(d >= ranges.range(p.key.level - 1) - 1e-6, "{p:?} at {d}");
             }
         }
+
         assert!(patches.len() < 1500, "{}", patches.len());
     }
 

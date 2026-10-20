@@ -1,19 +1,24 @@
 use super::*;
+
 use crate::{
     ProjectDocument, SourceCellRecord, SourceEnvironmentCellRecord, WorldSpaceRecord,
     write_project_database,
 };
+
 use environment::{ChannelId, CoverageTile, EnvironmentDefinition, Layer, LayerId};
 use environment_compile::CompilePlan;
 use world::{TerrainSurface, TerrainSurfaceId};
+
 const SPACE: WorldSpaceId = WorldSpaceId(1);
 const SOIL: TerrainSurfaceId = TerrainSurfaceId([1; 16]);
 const GREEN: TerrainSurfaceId = TerrainSurfaceId([2; 16]);
 const ROUTE: RoadId = RoadId([1; 16]);
 const PROFILE: RoadProfileId = RoadProfileId([1; 16]);
+
 fn id(n: u128) -> [u8; 16] {
     n.to_be_bytes()
 }
+
 fn fixture_records(count: usize) -> Vec<RoadSourceRecord> {
     let mut records = vec![
         RoadSourceRecord::Profile(CartTrackProfile {
@@ -49,6 +54,7 @@ fn fixture_records(count: usize) -> Vec<RoadSourceRecord> {
             },
         }),
     ];
+
     for n in 0..=count {
         records.push(RoadSourceRecord::Knot(SourceRoadKnot {
             road: ROUTE,
@@ -67,6 +73,7 @@ fn fixture_records(count: usize) -> Vec<RoadSourceRecord> {
             },
         }));
     }
+
     for n in 0..count {
         records.push(RoadSourceRecord::Span(SourceRoadSpan {
             id: RoadSpanId(id(n as u128 + 1)),
@@ -76,8 +83,10 @@ fn fixture_records(count: usize) -> Vec<RoadSourceRecord> {
             end: RoadKnotId(id(n as u128 + 2)),
         }));
     }
+
     records
 }
+
 fn project() -> ProjectDocument {
     let presets = environment::fixtures::meadow_library(SOIL, GREEN);
     let definition = EnvironmentDefinition {
@@ -181,10 +190,12 @@ fn project() -> ProjectDocument {
         objects: vec![],
     }
 }
+
 struct Fixture {
     directory: std::path::PathBuf,
     path: std::path::PathBuf,
 }
+
 impl Fixture {
     fn new(count: usize) -> Self {
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -196,23 +207,29 @@ impl Fixture {
         std::fs::create_dir_all(&directory).unwrap();
         let path = directory.join("project.sqlite");
         let mut document = project();
+
         if count > 0 {
             document.roads.records = fixture_records(count);
         }
+
         write_project_database(&path, &document).unwrap();
         Self { directory, path }
     }
+
     fn reader(&self) -> ProjectReader {
         ProjectReader::open_read_only(&self.path).unwrap()
     }
+
     fn writer(&self) -> ProjectWriter {
         ProjectWriter::open(&self.path).unwrap()
     }
+
     fn snapshot(&self) -> RoadReadSnapshot {
         self.reader()
             .read_roads_in_cells(SPACE, bounds(0, 0))
             .unwrap()
     }
+
     fn records(&self) -> Vec<RoadSourceRecord> {
         crate::read_project_database(&self.path)
             .unwrap()
@@ -220,17 +237,20 @@ impl Fixture {
             .records
     }
 }
+
 impl Drop for Fixture {
     fn drop(&mut self) {
         std::fs::remove_dir_all(&self.directory).unwrap();
     }
 }
+
 fn bounds(x: i32, z: i32) -> RoadCellBounds {
     RoadCellBounds {
         minimum: CellCoord { x, z },
         maximum: CellCoord { x, z },
     }
 }
+
 fn write(record: RoadSourceRecord, expected: Option<u64>) -> RoadSourceWrite {
     RoadSourceWrite {
         key: record.key(),
@@ -238,12 +258,14 @@ fn write(record: RoadSourceRecord, expected: Option<u64>) -> RoadSourceWrite {
         record: Some(record),
     }
 }
+
 fn commit(result: RoadSourceWriteResult) -> RoadSourceCommit {
     let RoadSourceWriteResult::Committed(c) = result else {
         panic!("expected commit, got {result:?}")
     };
     c
 }
+
 fn compile(s: &RoadEnvironmentSnapshot) -> Vec<environment_compile::CompiledCell> {
     let e = &s.environment;
     let plan = CompilePlan::new(
@@ -261,6 +283,7 @@ fn compile(s: &RoadEnvironmentSnapshot) -> Vec<environment_compile::CompiledCell
     )
     .unwrap()
 }
+
 #[test]
 fn normalized_roundtrip_and_atomic_environment_snapshot_match_offline_compiler() {
     let f = Fixture::new(1);
@@ -295,6 +318,7 @@ fn normalized_roundtrip_and_atomic_environment_snapshot_match_offline_compiler()
         world::PROJECT_SCHEMA_VERSION
     );
 }
+
 #[test]
 fn create_and_stale_multi_record_edit_are_atomic() {
     let f = Fixture::new(0);
@@ -339,6 +363,7 @@ fn create_and_stale_multi_record_edit_are_atomic() {
     assert!(matches!(result, RoadSourceWriteResult::Conflict(_)));
     assert_eq!(before, f.records());
 }
+
 #[test]
 fn local_knot_move_updates_incident_spans_and_old_new_bounds_without_route_revision() {
     let f = Fixture::new(4);
@@ -378,12 +403,14 @@ fn local_knot_move_updates_incident_spans_and_old_new_bounds_without_route_revis
             .revision,
         2
     );
+
     for record in before {
         if record.key() != RoadRecordKey::Knot(RoadKnotId(id(2))) {
             assert_eq!(required(&reader.connection, record.key()).unwrap(), record);
         }
     }
 }
+
 #[test]
 fn shape_preserving_split_is_one_transaction_with_shared_knots() {
     let f = Fixture::new(1);
@@ -456,6 +483,7 @@ fn shape_preserving_split_is_one_transaction_with_shared_knots() {
     assert_eq!(compile(&old)[0].ground, compile(&s)[0].ground);
     assert_eq!(compile(&old)[0].vegetation, compile(&s)[0].vegetation);
 }
+
 #[test]
 fn deletion_tombstones_prevent_stale_recreation_and_preserve_invalidation() {
     let f = Fixture::new(1);
@@ -524,6 +552,7 @@ fn deletion_tombstones_prevent_stale_recreation_and_preserve_invalidation() {
         RoadSourceWriteResult::Conflict(_)
     ));
 }
+
 #[test]
 fn invalid_geometry_dependencies_or_topology_roll_back_the_whole_gesture() {
     let f = Fixture::new(1);
@@ -584,6 +613,7 @@ fn invalid_geometry_dependencies_or_topology_roll_back_the_whole_gesture() {
     );
     assert_eq!(before, f.records());
 }
+
 #[test]
 fn shared_profile_edits_have_paged_dependencies_and_validate_distant_corridors() {
     let f = Fixture::new(9);
@@ -605,6 +635,7 @@ fn shared_profile_edits_have_paged_dependencies_and_validate_distant_corridors()
     );
     let mut seen = vec![];
     let mut cursor = None;
+
     loop {
         let page = f
             .reader()
@@ -614,10 +645,12 @@ fn shared_profile_edits_have_paged_dependencies_and_validate_distant_corridors()
         assert_eq!(page.library_revision, 1);
         seen.extend(page.spans.iter().map(|(id, _)| *id));
         cursor = page.next_cursor;
+
         if cursor.is_none() {
             break;
         }
     }
+
     assert_eq!(seen, (1..=9).map(|n| RoadSpanId(id(n))).collect::<Vec<_>>());
     let ground = f
         .reader()
@@ -635,6 +668,7 @@ fn shared_profile_edits_have_paged_dependencies_and_validate_distant_corridors()
         2
     );
 }
+
 #[test]
 fn shared_ground_and_world_edits_cannot_break_offscreen_roads() {
     let f = Fixture::new(1);
@@ -645,6 +679,7 @@ fn shared_ground_and_world_edits_cannot_break_offscreen_roads() {
             && p.id != environment::fixtures::DRY_MEADOW
             && p.id != environment::fixtures::CLEARING
     });
+
     // Also remove references via composed dry meadow; this fixture's map uses green only.
     assert!(
         f.writer()
@@ -687,6 +722,7 @@ fn shared_ground_and_world_edits_cannot_break_offscreen_roads() {
         RoadSourceWriteResult::LibraryConflict { actual_revision: 2 }
     ));
 }
+
 #[test]
 fn nearby_query_is_indexed_and_does_not_decode_a_long_routes_distant_knots() {
     let f = Fixture::new(1000);
@@ -715,23 +751,28 @@ fn nearby_query_is_indexed_and_does_not_decode_a_long_routes_distant_knots() {
             .is_err()
     );
 }
+
 #[test]
 fn query_truncation_and_record_budgets_are_explicit() {
     let f = Fixture::new(1);
     let c = Connection::open(&f.path).unwrap();
+
     // Dense spatial membership can be inspected as partial metadata, never compiled as complete.
     let mut p = project();
     p.roads.records = fixture_records(1);
+
     for n in 2..=70u128 {
         let mut road = route(&c, ROUTE).unwrap();
         road.road.id = RoadId(id(10000 + n));
         p.roads.records.push(RoadSourceRecord::Road(road.clone()));
+
         for (offset, source_id) in [(0, 1), (1, 2)] {
             let mut k = knot(&c, RoadKnotId(id(source_id))).unwrap();
             k.road = road.road.id;
             k.knot.id = RoadKnotId(id(10000 + n * 2 + offset));
             p.roads.records.push(RoadSourceRecord::Knot(k));
         }
+
         p.roads.records.push(RoadSourceRecord::Span(SourceRoadSpan {
             id: RoadSpanId(id(10000 + n)),
             revision: 1,
@@ -740,6 +781,7 @@ fn query_truncation_and_record_budgets_are_explicit() {
             end: RoadKnotId(id(10001 + n * 2)),
         }));
     }
+
     let dense = f.directory.join("dense.sqlite");
     write_project_database(&dense, &p).unwrap();
     let reader = ProjectReader::open_read_only(&dense).unwrap();
@@ -778,6 +820,7 @@ fn shared_profile_dependencies_cover_other_worlds_without_loading_their_controls
     let mut d = p.environments[0].clone();
     d.space = WorldSpaceId(2);
     p.environments.push(d);
+
     for mut record in fixture_records(1) {
         match &mut record {
             RoadSourceRecord::Profile(_) => continue,
@@ -799,6 +842,7 @@ fn shared_profile_dependencies_cover_other_worlds_without_loading_their_controls
         }
         p.roads.records.push(record);
     }
+
     let path = f.directory.join("two-worlds.sqlite");
     write_project_database(&path, &p).unwrap();
     let reader = ProjectReader::open_read_only(&path).unwrap();
@@ -823,6 +867,7 @@ fn shared_profile_dependencies_cover_other_worlds_without_loading_their_controls
         .unwrap_err();
     assert!(error.to_string().contains("road Ground preset"), "{error}");
 }
+
 #[test]
 fn deleting_a_dependency_cursor_changes_epoch_and_does_not_skip_the_next_span() {
     let f = Fixture::new(4);
@@ -856,6 +901,7 @@ fn deleting_a_dependency_cursor_changes_epoch_and_does_not_skip_the_next_span() 
     );
     assert!(next.next_cursor.is_none());
 }
+
 #[test]
 fn width_changes_reindex_old_and_new_cells_and_too_large_indexes_fail_atomically() {
     let f = Fixture::new(1);
@@ -897,6 +943,7 @@ fn width_changes_reindex_old_and_new_cells_and_too_large_indexes_fail_atomically
 fn aggregate_spatial_index_work_is_bounded_and_rolls_back_partially_staged_indexes() {
     let f = Fixture::new(0);
     let mut records = fixture_records(12);
+
     for record in &mut records {
         if let RoadSourceRecord::Knot(k) = record {
             let n = u128::from_be_bytes(k.knot.id.0) - 1;
@@ -908,6 +955,7 @@ fn aggregate_spatial_index_work_is_bounded_and_rolls_back_partially_staged_index
             .unwrap();
         }
     }
+
     let writes = records
         .into_iter()
         .map(|r| write(r, None))
@@ -948,6 +996,7 @@ fn authoring_snapshot_loads_incident_spans_once_without_walking_the_whole_route(
     assert!(spans.len() < 5, "one hop must not load all 30 spans");
     assert!(!snapshot.complete_knots.contains(&RoadKnotId(id(30))));
 }
+
 #[test]
 fn combined_road_and_preset_save_rolls_back_both_on_road_conflict() {
     let fixture = Fixture::new(1);
@@ -959,9 +1008,11 @@ fn combined_road_and_preset_save_rolls_back_both_on_road_conflict() {
         .into_iter()
         .find(|r| matches!(r, RoadSourceRecord::Knot(_)))
         .unwrap();
+
     if let RoadSourceRecord::Knot(k) = &mut record {
         k.knot.width += 0.2;
     }
+
     let deps = fixture.snapshot().dependencies();
     let stale = fixture
         .writer()
@@ -1147,6 +1198,7 @@ fn junction_document(count: usize) -> ProjectDocument {
     ]);
     p
 }
+
 #[test]
 fn junction_queries_complete_one_connection_without_loading_the_route_network() {
     let f = Fixture::new(0);
@@ -1186,6 +1238,7 @@ fn junction_queries_complete_one_connection_without_loading_the_route_network() 
     assert!(authoring.records.len() < 20);
     assert!(authoring.complete_knots.contains(&RoadKnotId(id(2))));
     assert!(authoring.complete_knots.contains(&RoadKnotId([91; 16])));
+
     // Duplicate membership and foreign positions are rejected by the offline source path too.
     let mut bad = p.clone();
     let RoadSourceRecord::Junction(j) = bad.roads.records.last_mut().unwrap() else {
@@ -1194,6 +1247,7 @@ fn junction_queries_complete_one_connection_without_loading_the_route_network() 
     j.junction.position.local[0] += 0.5;
     assert!(RoadDocumentIndex::new(&bad.roads, &bad.environments).is_err());
 }
+
 #[test]
 fn incomplete_junction_moves_and_stale_membership_roll_back_every_record() {
     let f = Fixture::new(0);

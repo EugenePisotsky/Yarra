@@ -62,6 +62,7 @@ fn orthographic_views_keep_the_one_matching_lod_at_any_distance() {
         output_scale: 1.0,
     };
     let thresholds = [160.0, 80.0, 0.0];
+
     // 1 m tall at 100 px/m: 100 px, which is LOD1.
     for (index, visible) in [(0, false), (1, true), (2, false)] {
         let range = projection.range(&thresholds, 1.0, index, f32::INFINITY);
@@ -124,6 +125,7 @@ fn meshes_inside_each_lod_scene_get_that_lods_distance_band() {
     let mut app = app(Transform::from_xyz(0., 2., 20.).looking_at(Vec3::new(0., 2., 0.), Vec3::Y));
     let (root, meshes) = object(&mut app, 4.);
     app.update();
+
     // 500 px over tan(22.5°) per metre at 1 m: the 4 m object is 160 px tall at ~30 m.
     let switch = 4. * 500. / FRAC_PI_8.tan() / 160.;
     let near = app.world().get::<VisibilityRange>(meshes[0]).unwrap();
@@ -135,6 +137,7 @@ fn meshes_inside_each_lod_scene_get_that_lods_distance_band() {
     );
     assert_eq!(near.end_margin, far.start_margin);
     assert_eq!(far.end_margin, f32::MAX..f32::MAX);
+
     // 20 m away is inside LOD0's band.
     assert_eq!(lod(&app, root).current_lod(), 0);
 }
@@ -147,6 +150,7 @@ fn projected_size_follows_distance_not_camera_pitch() {
         app.update();
         lod(&app, root).projected_height()
     };
+
     // The same tree 20 m away, seen side-on and from straight above.
     let side = measure(Transform::from_xyz(0., 2., 20.).looking_at(Vec3::new(0., 2., 0.), Vec3::Y));
     let above =

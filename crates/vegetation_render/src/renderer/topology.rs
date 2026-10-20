@@ -6,6 +6,7 @@
 
 /// Rows of vertex pairs below the tip.
 pub(super) const HIGH_ROWS: u32 = 9;
+
 pub(super) const LOW_ROWS: u32 = 3;
 pub(super) const HIGH_INDEX_COUNT: u32 = (HIGH_ROWS - 1) * 6 + 3;
 pub(super) const LOW_INDEX_COUNT: u32 = (LOW_ROWS - 1) * 6 + 3;

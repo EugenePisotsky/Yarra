@@ -8,9 +8,11 @@ pub(super) fn validate_project_catalog(
     let Some(source) = store.manifest.as_ref() else {
         return;
     };
+
     if runtime.world_spaces().is_empty() {
         return;
     }
+
     store.catalog_compatible = Some(
         source.world_spaces.len() == runtime.world_spaces().len()
             && source.world_spaces.iter().all(|source_space| {
@@ -33,13 +35,16 @@ pub(super) fn update_project_query_demand(
     if !matches!(store.phase, ProjectStorePhase::Ready) || store.catalog_compatible == Some(false) {
         return;
     }
+
     let Some(tool) = tools.active(*workspace.get()) else {
         return;
     };
     let desired_domains = ProjectSourceDomains::from_tool(tool);
+
     if !desired_domains.any() {
         return;
     }
+
     let Some(position) = viewpoint.position() else {
         return;
     };
@@ -52,6 +57,7 @@ pub(super) fn update_project_query_demand(
         position.cell
     };
     let desired = ProjectQueryWindow::around(position.space, center);
+
     if store.desired_window == Some(desired) && store.desired_domains == desired_domains {
         return;
     }
@@ -70,8 +76,10 @@ pub(super) fn update_project_query_demand(
         store.objects_truncated = false;
         store.environment_coverage_truncated = false;
     }
+
     store.desired_window = Some(desired);
     store.desired_domains = desired_domains;
+
     if store.failed_window != Some(desired) || store.failed_domains != desired_domains {
         store.failed_window = None;
         store.failed_domains = ProjectSourceDomains::default();
@@ -89,20 +97,24 @@ pub(super) fn dispatch_project_query(
     {
         return;
     }
+
     let Some(window) = store.desired_window else {
         return;
     };
     let domains = store.desired_domains;
+
     if (store.loaded_window == Some(window) && store.loaded_domains == domains)
         || (store.failed_window == Some(window) && store.failed_domains == domains)
     {
         return;
     }
+
     let Some(worker) = worker else {
         return;
     };
 
     let revision = store.next_revision.wrapping_add(1).max(1);
+
     match worker.try_send(ProjectRequest::Query {
         revision,
         window,
@@ -135,6 +147,7 @@ pub(super) fn dispatch_project_save(
     {
         return;
     }
+
     let Some(worker) = worker else {
         return;
     };

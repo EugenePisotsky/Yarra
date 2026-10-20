@@ -3,6 +3,7 @@
 use crate::{EncodedPage, WorldDbError};
 use rusqlite::{Connection, params};
 use std::collections::{BTreeMap, HashMap};
+
 use world::{
     AssetId, CellCoord, FAR_OBJECT_BLOCK_CELLS, FarObjectForm, FarObjectInstance, FarObjectMesh,
     FarObjectsPage, PageCodec, PageDomain, PageKey, PagePayload, WorldSpaceId,
@@ -38,6 +39,7 @@ pub(crate) fn rebuild(connection: &Connection) -> Result<FarObjectStats, WorldDb
          ORDER BY world_space_id, cell_x, cell_z",
     )?;
     let mut rows = query.query([PageDomain::StaticObjects as i64])?;
+
     while let Some(row) = rows.next()? {
         let space: i64 = row.get(0)?;
         let cell = CellCoord {
@@ -72,6 +74,7 @@ pub(crate) fn rebuild(connection: &Connection) -> Result<FarObjectStats, WorldDb
             ((cell.x - block.x * FAR_OBJECT_BLOCK_CELLS) as f32) * size,
             ((cell.z - block.z * FAR_OBJECT_BLOCK_CELLS) as f32) * size,
         ];
+
         for instance in objects.instances {
             let Some(form) = forms.get(&instance.asset) else {
                 continue;
@@ -101,11 +104,13 @@ pub(crate) fn rebuild(connection: &Connection) -> Result<FarObjectStats, WorldDb
             });
         }
     }
+
     let mut stats = FarObjectStats::default();
     let mut insert = connection.prepare(
         "INSERT INTO far_object_pages(world_space_id, block_x, block_z, instance_count, payload) \
          VALUES (?1, ?2, ?3, ?4, ?5)",
     )?;
+
     for (
         (space, block),
         Block {
@@ -128,6 +133,7 @@ pub(crate) fn rebuild(connection: &Connection) -> Result<FarObjectStats, WorldDb
         stats.blocks += 1;
         stats.instances += page.instances.len();
     }
+
     Ok(stats)
 }
 
@@ -142,6 +148,7 @@ fn impostor_forms(
          ORDER BY asset_id, lod",
     )?;
     let mut rows = query.query([])?;
+
     while let Some(row) = rows.next()? {
         let asset = AssetId(crate::storage::blob_array(
             row.get_ref(0)?.as_blob().map_err(rusqlite::Error::from)?,
@@ -152,22 +159,27 @@ fn impostor_forms(
             .or_default()
             .push((row.get(1)?, row.get(2)?, row.get(3)?));
     }
+
     Ok(variants
         .into_iter()
         .filter_map(|(asset, variants)| {
             let [.., (mesh, _, threshold), (impostor, _, _)] = variants.as_slice() else {
                 return None;
             };
+
             if !world::is_impostor_uri(impostor)
                 || world::is_impostor_uri(mesh)
                 || *threshold <= 0.0
             {
                 return None;
             }
+
             let meshes = &variants[..variants.len() - 1];
+
             if meshes.iter().any(|(uri, ..)| world::is_impostor_uri(uri)) {
                 return None;
             }
+
             let height = variants.iter().map(|v| v.1).fold(0.0_f32, f32::max);
             (height > 0.0).then(|| {
                 (
@@ -201,17 +213,21 @@ pub(crate) fn read(
     if minimum.x > maximum.x || minimum.z > maximum.z {
         return Err(WorldDbError::InvalidSpatialQueryBounds { minimum, maximum });
     }
+
     let width = (i64::from(maximum.x) - i64::from(minimum.x) + 1) as u64;
     let depth = (i64::from(maximum.z) - i64::from(minimum.z) + 1) as u64;
+
     if width.saturating_mul(depth) > crate::MAX_CELL_DESCRIPTOR_QUERY as u64 {
         return Err(WorldDbError::InvalidQueryLimit);
     }
+
     let mut statement = connection.prepare_cached(
         "SELECT block_z, payload FROM far_object_pages \
          WHERE world_space_id = ?1 AND block_x = ?2 AND block_z BETWEEN ?3 AND ?4 \
          ORDER BY block_z",
     )?;
     let mut result = Vec::new();
+
     for x in minimum.x..=maximum.x {
         let rows = statement.query_map(params![space.0, x, minimum.z, maximum.z], |row| {
             Ok((CellCoord { x, z: row.get(0)? }, row.get(1)?))
@@ -220,6 +236,7 @@ pub(crate) fn read(
             result.push(row?);
         }
     }
+
     Ok(result)
 }
 
@@ -245,6 +262,7 @@ mod tests {
                 [atmosphere::encode(&Default::default()).unwrap()],
             )
             .unwrap();
+
         // The tree's last LOD is an impostor after a mesh switching at 200 px; the rock
         // has meshes only.
         for (asset, lod, uri, height, threshold) in [
@@ -260,6 +278,7 @@ mod tests {
                 )
                 .unwrap();
         }
+
         connection
     }
 
@@ -321,6 +340,7 @@ mod tests {
                 instances: 2
             }
         );
+
         // A second rebuild replaces, not duplicates.
         assert_eq!(rebuild(&connection).unwrap(), stats);
 
@@ -354,6 +374,7 @@ mod tests {
                 ],
             }]
         );
+
         // Cell -1 is the last of block -1's 16 cells of 8 m.
         assert_eq!(west.instances[0].translation, [15.0 * 8.0 + 1.0, 5.0, 2.0]);
         assert_eq!((west.instances[0].yaw, west.instances[0].scale), (0.5, 2.0));

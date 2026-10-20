@@ -1,26 +1,34 @@
 use super::*;
+
 pub(crate) fn write_document(c: &Connection, document: &RoadDocument) -> Result<(), WorldDbError> {
     let mut keys = BTreeSet::new();
+
     for record in &document.records {
         if !keys.insert(record.key()) {
             return Err(invalid("duplicate road document record"));
         }
         store(c, record)?;
     }
+
     let library = read_library(c)?;
     transaction::validate_shared(c, &library)?;
+
     for record in &document.records {
         transaction::validate_record(c, record)?;
     }
+
     for key in keys {
         if let RoadRecordKey::Span(id) = key {
             reindex(c, id, None)?;
         }
     }
+
     Ok(())
 }
+
 pub(crate) fn read_document(c: &Connection) -> Result<RoadDocument, WorldDbError> {
     let mut records = vec![];
+
     // Whole-project import/export/reference tests only. Production cooking uses a snapshot.
     for (table, kind) in [
         ("road_profiles", 0),
@@ -31,6 +39,7 @@ pub(crate) fn read_document(c: &Connection) -> Result<RoadDocument, WorldDbError
     ] {
         let mut q = c.prepare(&format!("SELECT id FROM {table} ORDER BY id"))?;
         let mut rows = q.query([])?;
+
         while let Some(row) = rows.next()? {
             let id = crate::storage::blob_array(
                 row.get_ref(0)?.as_blob().map_err(rusqlite::Error::from)?,
@@ -46,8 +55,10 @@ pub(crate) fn read_document(c: &Connection) -> Result<RoadDocument, WorldDbError
             records.push(required(c, key)?);
         }
     }
+
     Ok(RoadDocument { records })
 }
+
 /// Offline index used by small whole-project reference fixtures. Construction may read the whole
 /// document; every subsequent cell snapshot has the same limits as a database viewport query.
 pub struct RoadDocumentIndex {
@@ -60,6 +71,7 @@ pub struct RoadDocumentIndex {
     incident: BTreeMap<RoadKnotId, Vec<RoadSpanId>>,
     junction_cells: BTreeMap<(WorldSpaceId, CellCoord), Vec<RoadJunctionId>>,
 }
+
 impl RoadDocumentIndex {
     pub fn new(
         document: &RoadDocument,
@@ -71,6 +83,7 @@ impl RoadDocumentIndex {
         let mut source_spans = vec![];
         let mut junctions = BTreeMap::new();
         let mut unique = BTreeSet::new();
+
         for record in &document.records {
             if !unique.insert(record.key()) {
                 return Err(invalid("duplicate document record"));
@@ -92,15 +105,18 @@ impl RoadDocumentIndex {
                 }
             }
         }
+
         if profiles.len() > MAX_ROAD_RECORDS {
             return Err(invalid("project road profile limit is 64"));
         }
+
         let world = |id| {
             definitions
                 .iter()
                 .find(|d| d.space == id)
                 .ok_or_else(|| invalid("missing road world"))
         };
+
         for r in routes.values() {
             let d = world(r.space)?;
             let p = profiles
@@ -122,6 +138,7 @@ impl RoadDocumentIndex {
             .validate()
             .map_err(|e| invalid(e.to_string()))?;
         }
+
         for k in knots.values() {
             let r = routes
                 .get(&k.road)
@@ -130,10 +147,12 @@ impl RoadDocumentIndex {
                 .validate(world(r.space)?.cell_size, &profiles[&r.road.profile])
                 .map_err(|e| invalid(e.to_string()))?;
         }
+
         let mut spans = BTreeMap::new();
         let mut cells: BTreeMap<_, Vec<_>> = BTreeMap::new();
         let mut directions = BTreeSet::new();
         let mut incident: BTreeMap<RoadKnotId, Vec<RoadSpanId>> = BTreeMap::new();
+
         for s in source_spans {
             let r = routes
                 .get(&s.road)
@@ -145,6 +164,7 @@ impl RoadDocumentIndex {
             let b = knots
                 .get(&s.end)
                 .ok_or_else(|| invalid("missing end knot"))?;
+
             if a.road != s.road
                 || b.road != s.road
                 || !directions.insert((s.start, true))
@@ -152,6 +172,7 @@ impl RoadDocumentIndex {
             {
                 return Err(invalid("span ownership or branching"));
             }
+
             let span = RoadSpan {
                 id: s.id,
                 revision: s.revision,
@@ -175,6 +196,7 @@ impl RoadDocumentIndex {
             .validate()
             .map_err(|e| invalid(e.to_string()))?;
             let bounds = index_bounds(&span, d.cell_size)?;
+
             for x in bounds.minimum.x..=bounds.maximum.x {
                 for z in bounds.minimum.z..=bounds.maximum.z {
                     cells
@@ -183,43 +205,55 @@ impl RoadDocumentIndex {
                         .push(s.id);
                 }
             }
+
             for k in [s.start, s.end] {
                 incident.entry(k).or_default().push(s.id);
             }
+
             spans.insert(s.id, span);
         }
+
         let mut membership = BTreeMap::new();
         let mut junction_cells: BTreeMap<_, Vec<_>> = BTreeMap::new();
+
         for j in junctions.values() {
             let d = world(j.space)?;
             let bounds = j
                 .junction
                 .bounds(d.cell_size)
                 .map_err(|e| invalid(e.to_string()))?;
+
             if bounds
                 .cell_count()
                 .is_none_or(|n| n > MAX_ROAD_INDEX_CELLS_PER_SPAN)
             {
                 return Err(invalid("junction index budget"));
             }
+
             let mut js = BTreeMap::new();
             let mut jr = BTreeMap::new();
+
             for k in &j.junction.knots {
                 if membership.insert(*k, j.junction.id).is_some() {
                     return Err(invalid("point belongs to two junctions"));
                 }
+
                 let connected = incident
                     .get(k)
                     .ok_or_else(|| invalid("junction has an unused point"))?;
+
                 for id in connected {
                     let s = &spans[id];
+
                     if routes[&s.road].space != j.space {
                         return Err(invalid("junction connects different worlds"));
                     }
+
                     jr.insert(s.road, routes[&s.road].road.clone());
                     js.insert(*id, s.clone());
                 }
             }
+
             let p = profiles
                 .get(&j.junction.profile)
                 .ok_or_else(|| invalid("missing junction style"))?;
@@ -235,6 +269,7 @@ impl RoadDocumentIndex {
             }
             .validate()
             .map_err(|e| invalid(e.to_string()))?;
+
             for x in bounds.minimum.x..=bounds.maximum.x {
                 for z in bounds.minimum.z..=bounds.maximum.z {
                     junction_cells
@@ -244,6 +279,7 @@ impl RoadDocumentIndex {
                 }
             }
         }
+
         Ok(Self {
             junctions,
             membership,
@@ -255,6 +291,7 @@ impl RoadDocumentIndex {
             cells,
         })
     }
+
     #[cfg(test)]
     pub fn cell_snapshot(
         &self,
@@ -271,6 +308,7 @@ impl RoadDocumentIndex {
             cell_size,
         )
     }
+
     pub fn snapshot(
         &self,
         space: WorldSpaceId,
@@ -280,7 +318,9 @@ impl RoadDocumentIndex {
         if bounds.cell_count().is_none_or(|n| n > MAX_ROAD_QUERY_CELLS) {
             return Err(invalid("road snapshot query budget"));
         }
+
         let mut ids = BTreeSet::new();
+
         for x in bounds.minimum.x..=bounds.maximum.x {
             for z in bounds.minimum.z..=bounds.maximum.z {
                 if let Some(found) = self.cells.get(&(space, CellCoord { x, z })) {
@@ -291,10 +331,13 @@ impl RoadDocumentIndex {
                 }
             }
         }
+
         if ids.len() > MAX_ROAD_SPANS {
             return Err(invalid("road cell exceeds 256 spans"));
         }
+
         let mut junction_ids = BTreeSet::new();
+
         for x in bounds.minimum.x..=bounds.maximum.x {
             for z in bounds.minimum.z..=bounds.maximum.z {
                 if let Some(js) = self.junction_cells.get(&(space, CellCoord { x, z })) {
@@ -302,6 +345,7 @@ impl RoadDocumentIndex {
                 }
             }
         }
+
         for id in &ids {
             let s = &self.spans[id];
             for k in [s.start.id, s.end.id] {
@@ -310,21 +354,26 @@ impl RoadDocumentIndex {
                 }
             }
         }
+
         if junction_ids.len() > MAX_ROAD_RECORDS {
             return Err(invalid("junction query budget"));
         }
+
         let junctions = junction_ids
             .into_iter()
             .map(|id| self.junctions[id].junction.clone())
             .collect::<Vec<_>>();
+
         for j in &junctions {
             for k in &j.knots {
                 ids.extend(&self.incident[k]);
             }
         }
+
         if ids.len() > MAX_ROAD_SPANS {
             return Err(invalid("junction incident-span budget"));
         }
+
         let mut spans = ids
             .iter()
             .map(|id| self.spans[id].clone())
@@ -364,6 +413,7 @@ pub(crate) fn validate_cook_source(
     library: &PresetLibrary,
 ) -> Result<(), WorldDbError> {
     transaction::validate_shared(c, library)?;
+
     for (table, kind) in [
         ("road_profiles", 0),
         ("roads", 1),
@@ -373,6 +423,7 @@ pub(crate) fn validate_cook_source(
     ] {
         let mut q = c.prepare(&format!("SELECT id FROM {table} ORDER BY id"))?;
         let mut rows = q.query([])?;
+
         while let Some(row) = rows.next()? {
             let id = crate::storage::blob_array(
                 row.get_ref(0)?.as_blob().map_err(rusqlite::Error::from)?,
@@ -387,6 +438,7 @@ pub(crate) fn validate_cook_source(
             };
             let record = required(c, key)?;
             transaction::validate_record(c, &record)?;
+
             match record {
                 RoadSourceRecord::Span(source) => {
                     let span = span(c, source.id)?;
@@ -422,6 +474,7 @@ pub(crate) fn validate_cook_source(
                             })
                         },
                     )?;
+
                     if stored != bounds {
                         return Err(invalid("road span bounds index disagrees with source"));
                     }
@@ -444,9 +497,11 @@ pub(crate) fn validate_cook_source(
                         [id.as_slice()],
                         |r| r.get(0),
                     )?;
+
                     if count != source.junction.knots.len() as i64 {
                         return Err(invalid("junction membership count disagrees with source"));
                     }
+
                     for knot in source.junction.knots {
                         if junctions::for_knot(c, knot)? != Some(source.junction.id) {
                             return Err(invalid("junction membership disagrees with source"));
@@ -457,8 +512,10 @@ pub(crate) fn validate_cook_source(
             }
         }
     }
+
     Ok(())
 }
+
 fn validate_cook_index(
     c: &Connection,
     table: &str,
@@ -472,8 +529,10 @@ fn validate_cook_index(
         .filter(|&n| n <= MAX_ROAD_INDEX_CELLS_PER_SPAN)
         .ok_or_else(|| invalid("road index budget"))?;
     let (total,matching):(i64,i64)=c.query_row(&format!("SELECT count(*),coalesce(sum(world_space_id=?2 AND cell_x BETWEEN ?3 AND ?4 AND cell_z BETWEEN ?5 AND ?6),0) FROM {table} WHERE {id_column}=?1"),params![id.as_slice(),space.0,bounds.minimum.x,bounds.maximum.x,bounds.minimum.z,bounds.maximum.z],|r|Ok((r.get(0)?,r.get(1)?)))?;
+
     if total != expected as i64 || matching != total {
         return Err(invalid("road spatial index disagrees with source coverage"));
     }
+
     Ok(())
 }

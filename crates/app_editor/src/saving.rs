@@ -29,6 +29,7 @@ impl EditorSaveCoordinator {
         if self.intent != SaveIntent::Idle {
             return false;
         }
+
         self.intent = SaveIntent::Save;
         true
     }
@@ -37,6 +38,7 @@ impl EditorSaveCoordinator {
         if self.intent != SaveIntent::Idle {
             return false;
         }
+
         self.intent = SaveIntent::SaveAndPublish;
         true
     }
@@ -107,6 +109,7 @@ pub(crate) fn drive_editor_save(
     if !coordinator.active() {
         return;
     }
+
     if dense.atmospheres.gesture.is_some()
         || dense.gesture_active
         || project.save_in_flight()
@@ -115,6 +118,7 @@ pub(crate) fn drive_editor_save(
     {
         return;
     }
+
     if presets.dirty()
         || paint.has_unapplied_changes()
         || project.write_error().is_some()
@@ -132,6 +136,7 @@ pub(crate) fn drive_editor_save(
         }
         return;
     }
+
     if dense.areas.dirty_count() > 0 {
         if !dense.areas.queue_save(&mut project) {
             coordinator.finish();

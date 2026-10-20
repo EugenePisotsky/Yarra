@@ -1,6 +1,7 @@
 //! Messages between residency/terrain consumers and immutable SQLite IO.
 //! Encoded payloads cross this boundary; decoding, admission and GPU state stay with consumers.
 use world::{CellCoord, PageKey, TerrainNodeKey, WorldSpaceId};
+
 use world_db::{
     CellDescriptor, EncodedPage, EncodedTerrainNode, PageDependency, RuntimeManifest,
     RuntimeObjectDefinition, TerrainNodeDescriptor, TerrainRenderResources,
@@ -81,6 +82,7 @@ pub(in crate::world_streaming) enum TerrainQuery {
     /// A space's terrain profile, texture set and every surface of the set.
     Surfaces(WorldSpaceId),
 }
+
 #[derive(Debug)]
 pub(in crate::world_streaming) enum TerrainReply {
     Metadata(Vec<TerrainNodeDescriptor>),

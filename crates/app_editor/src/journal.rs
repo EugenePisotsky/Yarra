@@ -9,9 +9,11 @@ use std::{
 use bevy::prelude::*;
 use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError};
 use serde::{Deserialize, Serialize};
+
 use world::{
     AssetId, CellCoord, ObjectActivationPolicy, ObjectDefinitionId, StableObjectId, WorldSpaceId,
 };
+
 use world_db::{
     SourceEnvironmentCellRecord, SourceObjectDefinitionRecord, SourceObjectRecord,
     SourceObjectViewRecord,
@@ -359,6 +361,7 @@ fn load_journal(path: &Path, project_database: &Path) -> Result<Option<JournalFi
     };
     let file: JournalFile = ron::from_str(&source)
         .map_err(|error| format!("could not parse {}: {error}", path.display()))?;
+
     if file.schema_version != JOURNAL_SCHEMA_VERSION {
         return Err(format!(
             "unsupported journal schema {} in {}",
@@ -366,12 +369,14 @@ fn load_journal(path: &Path, project_database: &Path) -> Result<Option<JournalFi
             path.display()
         ));
     }
+
     if file.project_database != project_database {
         return Err(format!(
             "journal {} belongs to a different project",
             path.display()
         ));
     }
+
     Ok(Some(file))
 }
 
@@ -379,10 +384,12 @@ fn write_journal_atomically(path: &Path, file: &JournalFile) -> Result<(), Strin
     let source = ron::ser::to_string_pretty(file, ron::ser::PrettyConfig::default())
         .map_err(|error| format!("could not encode editor journal: {error}"))?;
     let temporary = path.with_extension("editor-journal.ron.tmp");
+
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .map_err(|error| format!("could not create {}: {error}", parent.display()))?;
     }
+
     let mut output = File::create(&temporary)
         .map_err(|error| format!("could not create {}: {error}", temporary.display()))?;
     output
@@ -478,18 +485,24 @@ pub(crate) fn restore_loaded_journal(
         usize::from(dense_domains.restore_preset_snapshot(p, plants))
     });
     let mut recovered_definitions = 0;
+
     for entry in recovery.definitions {
         recovered_definitions +=
             usize::from(dense_domains.restore_definition_snapshot(entry, plants));
     }
+
     let mut recovered_objects = 0;
+
     for entry in recovery.objects {
         recovered_objects += usize::from(objects.restore_dirty_snapshot(entry.into()));
     }
+
     let mut recovered_dense = 0;
+
     for entry in recovery.dense {
         recovered_dense += usize::from(dense_domains.restore_dirty_snapshot(entry.into()));
     }
+
     let recovered_atmospheres = dense_domains.atmospheres.restore(recovery.atmospheres);
     let recovered_areas = usize::from(
         recovery
@@ -504,9 +517,11 @@ pub(crate) fn restore_loaded_journal(
         + recovered_dense
         + recovered_definitions
         + recovered_presets;
+
     if recovered != 0 {
         history.clear();
     }
+
     status.recovered_entries = recovered;
     status.message = format!(
         "recovered {recovered_roads} road records, {recovered_objects} object(s), {recovered_dense} coverage cells and {recovered_definitions} layer definitions and {recovered_presets} preset library"
@@ -530,9 +545,11 @@ fn dispatch_dirty_journal(
         objects: objects.edit_revision(),
         dense: dense_domains.edit_revision(),
     };
+
     if status.pending_restore.is_some() || status.last_dispatched_revision == Some(revision) {
         return;
     }
+
     let entries = objects
         .dirty_snapshots()
         .into_iter()
@@ -573,6 +590,7 @@ fn dispatch_dirty_journal(
             }),
         }
     };
+
     match worker.try_send(request) {
         Ok(()) => status.last_dispatched_revision = Some(revision),
         Err(TrySendError::Full(_)) => {}
@@ -585,6 +603,7 @@ fn dispatch_dirty_journal(
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn journal_recovers_a_new_layer_and_its_unsaved_coverage_together() {
         let dir =
@@ -653,12 +672,15 @@ mod tests {
         dense.initialize_presets(&reader.read_environment_presets().unwrap());
         assert!(dense.restore_preset_snapshot(recovered.presets.unwrap(), &plants));
         assert_eq!(dense.presets(), Some(&presets));
+
         for entry in recovered.definition_entries {
             assert!(dense.restore_definition_snapshot(entry, &plants));
         }
+
         for entry in recovered.dense_entries {
             assert!(dense.restore_dirty_snapshot(entry.into()));
         }
+
         assert_eq!(dense.definition(current.space), Some(&current));
         assert_eq!(
             dense.environment_record(current.space, CellCoord::ZERO),

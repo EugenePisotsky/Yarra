@@ -31,11 +31,13 @@ pub struct AssetCollection {
 impl AssetCollection {
     pub fn validate(&self) -> Result<(), ValidationError> {
         let mut ids = BTreeSet::new();
+
         if self.assets.is_empty() || self.assets.len() > MAX_COLLECTION_ASSETS {
             return Err(ValidationError::Preset(
                 "choose 1–64 collection assets".into(),
             ));
         }
+
         if self.assets.iter().any(|a| {
             !ids.insert(a.asset)
                 || !a.weight.is_finite()
@@ -49,6 +51,7 @@ impl AssetCollection {
                 "collection asset weights, scales or duplicate assets".into(),
             ));
         }
+
         if !self.spacing.is_finite()
             || !(0.5..=64.0).contains(&self.spacing)
             || !unit(self.density)
@@ -61,6 +64,7 @@ impl AssetCollection {
                 "collection spacing, density, slope or road clearance".into(),
             ));
         }
+
         Ok(())
     }
 }

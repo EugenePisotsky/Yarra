@@ -1,4 +1,5 @@
 use super::*;
+
 pub(super) fn controls(ui: &mut egui::Ui, p: &mut CartTrackProfile, step: f32) {
     ui.separator();
     ui.heading("Road relief");
@@ -26,10 +27,12 @@ pub(super) fn controls(ui: &mut egui::Ui, p: &mut CartTrackProfile, step: f32) {
         "Height grid: {step:.3} m. Tracks at least {:.3} m wide carve their ruts into the terrain; near terrain detail draws narrower ones.",
         step * 2.0
     ));
+
     if let Err(e) = p.validate_relief_detail(step) {
         ui.colored_label(egui::Color32::YELLOW, e);
     }
 }
+
 fn dimension(
     ui: &mut egui::Ui,
     label: &str,
@@ -45,6 +48,7 @@ fn dimension(
         ui.label(label);
     });
 }
+
 fn percentage(ui: &mut egui::Ui, label: &str, value: &mut f32) {
     let mut percent = *value * 100.0;
     if ui

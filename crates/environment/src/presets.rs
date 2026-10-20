@@ -14,6 +14,7 @@ pub struct PresetLibrary {
     pub revision: u64,
     pub presets: Vec<Preset>,
 }
+
 impl Default for PresetLibrary {
     fn default() -> Self {
         Self {
@@ -22,6 +23,7 @@ impl Default for PresetLibrary {
         }
     }
 }
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Preset {
     pub id: PresetId,
@@ -29,6 +31,7 @@ pub struct Preset {
     pub name: String,
     pub kind: PresetKind,
 }
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum PresetKind {
     Ground(GroundTreatment),
@@ -36,6 +39,7 @@ pub enum PresetKind {
     Composition(Vec<PresetUse>),
     AssetCollection(AssetCollection),
 }
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PresetUse {
     pub id: PresetUseId,
@@ -43,12 +47,14 @@ pub struct PresetUse {
     pub preset: PresetId,
     pub overrides: Vec<PresetOverride>,
 }
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PresetOverride {
     /// Relative to the referenced root. Empty addresses a root leaf preset.
     pub path: Vec<PresetUseId>,
     pub value: QuickValue,
 }
+
 /// These are the entire supported quick-control interface, owned by code, not by authors.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum QuickValue {
@@ -57,6 +63,7 @@ pub enum QuickValue {
     CollectionDensity(f32),
     CollectionSeed(u32),
 }
+
 impl QuickValue {
     pub fn key(self) -> u8 {
         match self {
@@ -67,6 +74,7 @@ impl QuickValue {
         }
     }
 }
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResolvedUse {
     pub path: Vec<PresetUseId>,
@@ -75,6 +83,7 @@ pub struct ResolvedUse {
     /// Always a leaf; values include enclosing use and layer overrides.
     pub kind: PresetKind,
 }
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ResolvedComposition {
     pub ground: Option<GroundTreatment>,
@@ -83,6 +92,7 @@ pub struct ResolvedComposition {
     /// Only reachable preset revisions; unrelated library changes do not fingerprint this plan.
     pub dependencies: BTreeMap<PresetId, u64>,
 }
+
 fn invalid(message: impl Into<String>) -> ValidationError {
     ValidationError::Preset(message.into())
 }
@@ -91,11 +101,14 @@ impl PresetLibrary {
     pub fn get(&self, id: PresetId) -> Option<&Preset> {
         self.presets.iter().find(|p| p.id == id)
     }
+
     pub fn validate(&self) -> Result<(), ValidationError> {
         if self.revision == 0 || self.presets.len() > MAX_PRESETS {
             return Err(invalid("library budget or revision"));
         }
+
         let mut ids = BTreeSet::new();
+
         for preset in &self.presets {
             if preset.revision == 0
                 || !ids.insert(preset.id)
@@ -137,11 +150,14 @@ impl PresetLibrary {
                 _ => {}
             }
         }
+
         for preset in &self.presets {
             self.resolve(preset.id, &[])?;
         }
+
         Ok(())
     }
+
     pub fn uses(
         &self,
         root: PresetId,
@@ -149,6 +165,7 @@ impl PresetLibrary {
     ) -> Result<Vec<ResolvedUse>, ValidationError> {
         self.expand(root, overrides).map(|(uses, _)| uses)
     }
+
     fn expand(
         &self,
         root: PresetId,
@@ -157,6 +174,7 @@ impl PresetLibrary {
         if self.presets.len() > MAX_PRESETS {
             return Err(invalid("library budget"));
         }
+
         let mut expansion = Expansion {
             library: self,
             stack: vec![],
@@ -169,6 +187,7 @@ impl PresetLibrary {
         expansion.leaves.sort_by(|a, b| a.path.cmp(&b.path));
         Ok((expansion.leaves, expansion.dependencies))
     }
+
     pub fn resolve(
         &self,
         root: PresetId,
@@ -182,14 +201,17 @@ impl PresetLibrary {
             dependencies,
         };
         let mut ids = BTreeSet::new();
+
         for leaf in uses {
             let derive = |id: OutputId| {
                 let mut hash = blake3::Hasher::new();
                 hash.update(b"yarra.environment.preset-use.v1");
                 hash.update(&root.0);
+
                 for child in &leaf.path {
                     hash.update(&child.0);
                 }
+
                 hash.update(&leaf.preset.0);
                 hash.update(&id.0);
                 OutputId(hash.finalize().as_bytes()[..16].try_into().unwrap())
@@ -202,6 +224,7 @@ impl PresetLibrary {
                             leaf.path
                         )));
                     }
+
                     g.id = derive(g.id);
                     g.surfaces.sort_by_key(|w| w.surface);
                     let id = g.id;
@@ -223,15 +246,18 @@ impl PresetLibrary {
                 }
                 PresetKind::Composition(_) => unreachable!(),
             };
+
             if !ids.insert(output) {
                 return Err(invalid("resolved output identity collision"));
             }
         }
+
         result.exclusions.sort_by_key(|e| e.id);
         result.collections.sort_by_key(|e| e.id);
         Ok(result)
     }
 }
+
 struct Expansion<'a> {
     library: &'a PresetLibrary,
     stack: Vec<PresetId>,
@@ -239,6 +265,7 @@ struct Expansion<'a> {
     dependencies: BTreeMap<PresetId, u64>,
     work: usize,
 }
+
 impl Expansion<'_> {
     fn visit(
         &mut self,
@@ -247,28 +274,35 @@ impl Expansion<'_> {
         names: &[String],
     ) -> Result<(), ValidationError> {
         self.work += 1;
+
         if path.len() > MAX_PRESET_DEPTH || self.work > MAX_EXPANSION_WORK {
             return Err(invalid("composition expansion budget"));
         }
+
         if self.stack.contains(&id) {
             return Err(invalid(format!("composition cycle at {id:?}")));
         }
+
         let preset = self
             .library
             .get(id)
             .ok_or_else(|| invalid(format!("missing preset {id:?} at {path:?}")))?;
         self.dependencies.insert(id, preset.revision);
         self.stack.push(id);
+
         match &preset.kind {
             PresetKind::Composition(children) => {
                 if children.len() > MAX_PRESET_CHILDREN {
                     return Err(invalid("child budget"));
                 }
+
                 let mut ids = BTreeSet::new();
+
                 for child in children {
                     if !ids.insert(child.id) {
                         return Err(invalid("duplicate child use"));
                     }
+
                     let mut path = path.to_vec();
                     path.push(child.id);
                     let mut names = names.to_vec();
@@ -290,10 +324,12 @@ impl Expansion<'_> {
                 });
             }
         }
+
         self.stack.pop();
         Ok(())
     }
 }
+
 fn apply_overrides(
     leaves: &mut [ResolvedUse],
     prefix: &[PresetUseId],
@@ -302,13 +338,16 @@ fn apply_overrides(
     if overrides.len() > MAX_PRESET_OVERRIDES {
         return Err(invalid("override budget"));
     }
+
     let mut keys = BTreeSet::new();
+
     for edit in overrides {
         if edit.path.len() + prefix.len() > MAX_PRESET_DEPTH
             || !keys.insert((&edit.path, edit.value.key()))
         {
             return Err(invalid("duplicate override or path budget"));
         }
+
         let path = prefix.iter().chain(&edit.path).copied().collect::<Vec<_>>();
         let leaf = leaves
             .iter_mut()
@@ -332,6 +371,7 @@ fn apply_overrides(
                 )));
             }
         };
+
         if let Some((target, value)) = target {
             if !unit(value) {
                 return Err(invalid(format!("override outside 0..1 at {path:?}")));
@@ -339,5 +379,6 @@ fn apply_overrides(
             *target = value;
         }
     }
+
     Ok(())
 }

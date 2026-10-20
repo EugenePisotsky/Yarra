@@ -30,6 +30,7 @@ pub(super) enum WeatherAction {
     /// Move to the day with the moon's next phase, by eighths of a month.
     MoonPhase,
 }
+
 #[derive(Component)]
 struct WeatherStatus;
 
@@ -93,11 +94,13 @@ fn pause_during_capture(
     clock: Option<ResMut<GameDayClock>>,
 ) {
     let recording = session.recording();
+
     if let Some(mut weather) = weather
         && weather.paused != recording
     {
         weather.paused = recording;
     }
+
     if let Some(mut clock) = clock
         && clock.paused != recording
     {
@@ -120,11 +123,14 @@ fn actions(
     else {
         return;
     };
+
     if session.recording() {
         return;
     }
+
     for action in &clicks {
         let profile = &atmosphere.profile;
+
         match *action {
             WeatherAction::Preset(kind) => {
                 weather.request(profile, kind, TRANSITIONS[panel.transition]);
@@ -173,6 +179,7 @@ fn actions(
                 atmosphere.set_moon_age(next as f32 / 8.0 * world::atmosphere::SYNODIC_MONTH_DAYS);
             }
         }
+
         // Show the result immediately rather than at the next periodic refresh.
         panel.refreshed = f64::NEG_INFINITY;
     }
@@ -324,21 +331,27 @@ fn refresh(
         return;
     };
     let now = time.elapsed_secs_f64();
+
     if now - panel.refreshed < 0.25 {
         return;
     }
+
     panel.refreshed = now;
+
     for entity in &status_text {
         if let Ok(mut text) = texts.get_mut(entity) {
             let mut value = status(&weather, &atmosphere);
+
             if let Some(clock) = clock.as_deref() {
                 value = format!("{}\n{value}", time_status(clock, &atmosphere));
             }
+
             if text.0 != value {
                 text.0 = value;
             }
         }
     }
+
     for (action, children) in &buttons {
         let value = label(*action, &weather, &rain, clock.as_deref(), &panel);
         for child in children {

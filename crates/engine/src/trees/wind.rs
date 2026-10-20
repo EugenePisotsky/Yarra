@@ -3,10 +3,12 @@
 //! pose in one GPU buffer.
 #[cfg(test)]
 mod gpu_tests;
+
 #[cfg(test)]
 mod tests;
 
 use super::tuning::{TreeWindTuning, WindTuningState};
+
 use bevy::{
     asset::RenderAssetUsages,
     prelude::*,
@@ -17,6 +19,7 @@ use bevy::{
         storage::{GpuShaderBuffer, ShaderBuffer},
     },
 };
+
 use bytemuck::{Pod, Zeroable};
 use vegetation_render::{VegetationRenderOrigin, VegetationWind};
 
@@ -26,6 +29,7 @@ pub struct TreeWindResponse {
     pub branch_amplitude: f32,
     pub flutter_amplitude: f32,
 }
+
 impl Default for TreeWindResponse {
     fn default() -> Self {
         Self {
@@ -81,6 +85,7 @@ impl WindPose {
             * f64::from(frequency)
             * 0.71
             + time * speed * 0.37;
+
         // Reduce each independent phase only after evaluating in f64. Reducing broad/cross
         // before the fractional gust combination would introduce jumps at rebase boundaries.
         let phases = [
@@ -155,18 +160,21 @@ pub(super) fn sample_wind(
 #[derive(Resource, ExtractResource, Clone)]
 #[extract_app(bevy::render::RenderApp)]
 pub(crate) struct WindBuffer(pub(crate) Handle<ShaderBuffer>);
+
 #[derive(Clone, Copy, Pod, Zeroable)]
 #[repr(C)]
 struct WindFrames {
     current: WindPose,
     previous: WindPose,
 }
+
 pub(super) fn setup_buffer(mut commands: Commands, mut buffers: ResMut<Assets<ShaderBuffer>>) {
     commands.insert_resource(WindBuffer(buffers.add(ShaderBuffer::new(
         vec![WindFrames::zeroed()],
         RenderAssetUsages::RENDER_WORLD,
     ))));
 }
+
 pub(super) fn upload_wind(
     pose: Res<WindPose>,
     handle: Option<Res<WindBuffer>>,
@@ -181,8 +189,10 @@ pub(super) fn upload_wind(
         current: *pose,
         previous: previous.unwrap_or(*pose),
     };
+
     // One shared GPU buffer per frame; never dirty/rebind every material to advance time.
     queue.write_buffer(&buffer.buffer, 0, bytemuck::bytes_of(&frames));
+
     // Keep the last submitted pose, including settings and origin. Time-delta reconstruction
     // cannot handle a paused external transport, toggles, scrubbing or an origin change correctly.
     *previous = Some(*pose);

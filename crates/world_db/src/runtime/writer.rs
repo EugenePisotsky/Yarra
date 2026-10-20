@@ -2,10 +2,12 @@
 use crate::catalog::{write_terrain_catalog, write_vegetation_catalog};
 use crate::runtime::read_runtime_manifest;
 use crate::storage::ensure_new_database_path;
+
 use crate::{
     MAX_COOK_CATALOG_ROWS, MAX_COOK_CELL_BYTES, MAX_COOK_MANUAL_OBJECTS_PER_CELL, RuntimeBuild,
     RuntimeManifest, WorldDbError, atmosphere, schema,
 };
+
 use rusqlite::{Connection, OptionalExtension, params};
 use std::path::Path;
 
@@ -27,11 +29,13 @@ fn write_runtime_build(transaction: &Connection, build: &RuntimeBuild) -> Result
     // treat its cells as unknown.
     write_runtime_spatial(transaction, build, [0; 32], [0; 32])
 }
+
 fn write_runtime_header(
     transaction: &Connection,
     build: &RuntimeBuild,
 ) -> Result<(), WorldDbError> {
     let manifest = &build.manifest;
+
     for space in &manifest.world_spaces {
         transaction.execute(
             "INSERT INTO world_spaces(id, name, cell_size, minimum_y, maximum_y, atmosphere, atmosphere_revision, sea_level) \
@@ -48,6 +52,7 @@ fn write_runtime_header(
             ],
         )?;
     }
+
     transaction.execute(
         "INSERT INTO runtime_metadata( \
             singleton, schema_version, generation_id, content_hash, header_hash, \
@@ -70,6 +75,7 @@ fn write_runtime_header(
         &build.terrain_texture_layers,
         &build.terrain_profiles,
     )?;
+
     for asset in &build.assets {
         transaction.execute(
             "INSERT INTO asset_variants( \
@@ -91,6 +97,7 @@ fn write_runtime_header(
             ],
         )?;
     }
+
     for definition in &build.definitions {
         transaction.execute(
             "INSERT INTO object_definitions( \
@@ -105,8 +112,10 @@ fn write_runtime_header(
             ],
         )?;
     }
+
     Ok(())
 }
+
 fn write_runtime_spatial(
     transaction: &Connection,
     build: &RuntimeBuild,
@@ -133,6 +142,7 @@ fn write_runtime_spatial(
             ],
         )?;
     }
+
     for page in &build.pages {
         transaction.execute(
             "INSERT INTO cell_pages( \
@@ -155,6 +165,7 @@ fn write_runtime_spatial(
             ],
         )?;
     }
+
     for dependency in &build.dependencies {
         transaction.execute(
             "INSERT INTO page_dependencies( \
@@ -171,6 +182,7 @@ fn write_runtime_spatial(
             ],
         )?;
     }
+
     for dependency in &build.definition_dependencies {
         transaction.execute(
             "INSERT INTO page_object_definitions( \
@@ -186,6 +198,7 @@ fn write_runtime_spatial(
             ],
         )?;
     }
+
     for dependency in &build.terrain_surface_dependencies {
         transaction.execute(
             "INSERT INTO page_terrain_surfaces( \
@@ -201,6 +214,7 @@ fn write_runtime_spatial(
             ],
         )?;
     }
+
     Ok(())
 }
 
@@ -208,6 +222,7 @@ fn write_runtime_spatial(
 pub struct RuntimeCookWriter {
     connection: Connection,
 }
+
 impl RuntimeCookWriter {
     pub fn create(path: &Path, header: &RuntimeBuild) -> Result<Self, WorldDbError> {
         if !header.cells.is_empty()
@@ -218,6 +233,7 @@ impl RuntimeCookWriter {
         {
             return Err(invalid("runtime cook header contains spatial data"));
         }
+
         ensure_new_database_path(path)?;
         let connection = Connection::open(path)?;
         schema::create_runtime_schema(&connection)?;
@@ -226,6 +242,7 @@ impl RuntimeCookWriter {
         write_runtime_header(&connection, header)?;
         Ok(Self { connection })
     }
+
     /// Continues a copy of the previous publication, whose unchanged cells are kept.
     /// The caller checks that its header hash matches this cook's.
     pub fn open_incremental(path: &Path) -> Result<Self, WorldDbError> {
@@ -240,6 +257,7 @@ impl RuntimeCookWriter {
         )?;
         Ok(Self { connection })
     }
+
     pub fn header_hash(&self) -> Result<[u8; 32], WorldDbError> {
         Ok(self.connection.query_row(
             "SELECT header_hash FROM runtime_metadata WHERE singleton=1",
@@ -247,6 +265,7 @@ impl RuntimeCookWriter {
             |r| crate::storage::blob_array(r.get_ref(0)?.as_blob()?, "header hash"),
         )?)
     }
+
     /// Source fingerprints of the cells already in this output.
     pub fn cell_fingerprints(
         &self,
@@ -266,6 +285,7 @@ impl RuntimeCookWriter {
         })?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
+
     /// Replaces the start view of a continued publication; it is not part of any hash.
     pub fn set_start_view(
         &self,
@@ -277,6 +297,7 @@ impl RuntimeCookWriter {
         )?;
         Ok(())
     }
+
     /// Replaces the gameplay areas of a continued publication. They are not part of the
     /// content hash, but `finish` folds them into the generation.
     pub fn set_gameplay_areas(&self, areas: &[world::GameplayArea]) -> Result<(), WorldDbError> {
@@ -286,6 +307,7 @@ impl RuntimeCookWriter {
         )?;
         Ok(())
     }
+
     pub fn page_checksum(&self, key: world::PageKey) -> Result<Option<[u8; 32]>, WorldDbError> {
         let checksum: Option<Vec<u8>> = self
             .connection
@@ -306,6 +328,7 @@ impl RuntimeCookWriter {
             .map(|c| crate::storage::blob_array(&c, "page checksum"))
             .transpose()?)
     }
+
     /// Removes a cell and every page row that depends on it.
     pub fn remove_cell(
         &self,
@@ -326,6 +349,7 @@ impl RuntimeCookWriter {
         }
         Ok(())
     }
+
     pub fn append_cell(
         &self,
         batch: &RuntimeBuild,
@@ -335,6 +359,7 @@ impl RuntimeCookWriter {
             .pages
             .iter()
             .try_fold(0_u64, |bytes, page| bytes.checked_add(page.decoded_bytes));
+
         if batch.cells.len() != 1
             || batch.pages.len() > 9
             || decoded_bytes.is_none_or(|bytes| bytes > MAX_COOK_CELL_BYTES)
@@ -350,7 +375,9 @@ impl RuntimeCookWriter {
         {
             return Err(invalid("runtime cell output exceeds cook budget"));
         }
+
         let cell = &batch.cells[0];
+
         if batch
             .pages
             .iter()
@@ -358,6 +385,7 @@ impl RuntimeCookWriter {
         {
             return Err(invalid("runtime batch crosses cell boundaries"));
         }
+
         if batch
             .dependencies
             .iter()
@@ -368,6 +396,7 @@ impl RuntimeCookWriter {
         {
             return Err(invalid("runtime dependencies cross cell boundaries"));
         }
+
         write_runtime_spatial(
             &self.connection,
             batch,
@@ -375,17 +404,20 @@ impl RuntimeCookWriter {
             batch.manifest.content_hash,
         )
     }
+
     /// Regroups the impostor-drawn objects of every static-object page into far-object
     /// blocks. Derived from cell pages and asset variants, it changes no content hash.
     pub fn rebuild_far_objects(&self) -> Result<super::FarObjectStats, WorldDbError> {
         super::far_objects::rebuild(&self.connection)
     }
+
     /// The generation's content hash folds the header with every cell in key order, read
     /// back from the output, so full and incremental cooks agree.
     pub fn finish(self) -> Result<RuntimeManifest, WorldDbError> {
         let mut hash = blake3::Hasher::new();
         hash.update(b"bounded-source-cook-v2");
         hash.update(&self.header_hash()?);
+
         {
             let mut query = self.connection.prepare(
                 "SELECT world_space_id, cell_x, cell_z, content_hash, minimum_y, maximum_y, \
@@ -393,6 +425,7 @@ impl RuntimeCookWriter {
                  FROM cells ORDER BY world_space_id, cell_x, cell_z",
             )?;
             let mut rows = query.query([])?;
+
             while let Some(r) = rows.next()? {
                 hash.update(&r.get::<_, i64>(0)?.to_le_bytes());
                 hash.update(&r.get::<_, i32>(1)?.to_le_bytes());
@@ -404,6 +437,7 @@ impl RuntimeCookWriter {
                 hash.update(&r.get::<_, i64>(7)?.to_le_bytes());
             }
         }
+
         let content_hash = *hash.finalize().as_bytes();
         let generation_id = crate::gameplay_areas::generation_id(&self.connection, &content_hash)?;
         self.connection.execute(
@@ -414,6 +448,7 @@ impl RuntimeCookWriter {
         read_runtime_manifest(&self.connection)
     }
 }
+
 fn invalid(message: impl Into<String>) -> WorldDbError {
     WorldDbError::Cook(message.into())
 }

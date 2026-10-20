@@ -3,12 +3,14 @@ use super::*;
 use environment::LayerId;
 
 pub const MAX_ENVIRONMENT_PRESENCE_ROWS: usize = 4096;
+
 #[derive(Debug, Clone)]
 pub struct EnvironmentLayerPresence {
     pub definition_revision: u64,
     pub entries: Vec<(CellCoord, LayerId)>,
     pub truncated: bool,
 }
+
 impl ProjectReader {
     pub fn read_environment_layer_presence(
         &self,
@@ -24,14 +26,17 @@ impl ProjectReader {
         {
             return Err(invalid("layer presence query budget"));
         }
+
         let width = i64::from(maximum.x) - i64::from(minimum.x) + 1;
         let height = i64::from(maximum.z) - i64::from(minimum.z) + 1;
+
         if width
             .checked_mul(height)
             .is_none_or(|n| n > MAX_ENVIRONMENT_READ_CELLS as i64)
         {
             return Err(invalid("layer presence area budget"));
         }
+
         let tx = self.connection.unchecked_transaction()?;
         let revision: i64 = tx.query_row(
             "SELECT revision FROM environment_definitions WHERE world_space_id=?1",

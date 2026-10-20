@@ -79,6 +79,7 @@ fn movement_button_toggles_player_speed_and_reset_restores_normal() {
         *app.world().resource::<engine::PlayerMovementSpeed>(),
         engine::PlayerMovementSpeed::Normal
     );
+
     for expected in [true, false, true] {
         app.world_mut()
             .entity_mut(button)
@@ -107,6 +108,7 @@ fn movement_button_toggles_player_speed_and_reset_restores_normal() {
             }
         );
     }
+
     let reset = app.world_mut().spawn((Pressed, Control::Reset)).id();
     tick(&mut app, 0.01);
     app.world_mut().despawn(reset);
@@ -127,15 +129,18 @@ fn f1_and_escape_cancel_without_replacing_results_or_losing_prior_controls() {
             tick(&mut app, 10.1);
             let previous =
                 super::super::report::comparison(app.world().resource::<CaptureSession>());
+
             {
                 let mut settings = app.world_mut().resource_mut::<RuntimeSettings>();
                 settings.controls_locked = locked;
                 settings.gpu_pass_timings = true;
             }
+
             click(&mut app, Action::Capture(0));
             assert!(!app.world().resource::<PanelState>().open);
             assert!(!app.world().resource::<GameInputEnabled>().0);
             assert!(!app.world().resource::<RuntimeSettings>().gpu_pass_timings);
+
             // Other controls and restore must not change settings mid-capture.
             let rate = app.world().resource::<FramePacing>().rate;
             let reset = app.world_mut().spawn((Pressed, Control::Reset)).id();
@@ -154,6 +159,7 @@ fn f1_and_escape_cancel_without_replacing_results_or_losing_prior_controls() {
             assert!(!session.recording());
             assert!(session.message.contains("previous results kept"));
             let after = super::super::report::comparison(session);
+
             // The message changes; the completed result must be identical.
             assert_eq!(
                 previous.split_once('\n').unwrap().1,
@@ -173,6 +179,7 @@ fn completion_and_automatic_abort_reopen_panel_and_restore_controls_in_the_same_
         click(&mut app, Action::Capture(1));
         assert!(!app.world().resource::<PanelState>().open);
         assert!(!app.world().resource::<GameInputEnabled>().0);
+
         if cancel {
             app.world_mut()
                 .resource_mut::<engine::StreamingStats>()
@@ -182,11 +189,13 @@ fn completion_and_automatic_abort_reopen_panel_and_restore_controls_in_the_same_
             tick(&mut app, 2.1);
             tick(&mut app, 10.1);
         }
+
         let session = app.world().resource::<CaptureSession>();
         assert!(!session.recording());
         assert_eq!(session.slots[1].is_none(), cancel);
         assert!(app.world().resource::<PanelState>().open);
         assert!(app.world().resource::<GameInputEnabled>().0);
+
         // Closing the panel later must not replay an old completion notification.
         click(&mut app, Action::Toggle);
         tick(&mut app, 0.1);

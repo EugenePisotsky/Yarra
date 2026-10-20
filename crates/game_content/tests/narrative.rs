@@ -2,16 +2,21 @@ use game_types::*;
 use gameplay::actors::RelationshipKey;
 use gameplay::dialogue::InteractionKey;
 use gameplay::quests::{Status, Transition};
+
 use gameplay::{
     Command, GameEvent, GameSession,
     fixtures::{HERO, key},
 };
+
 use gameplay::{dialogue, inventory};
 use rusqlite::{Connection, params};
 use save::{SaveDirectory, SaveSlot};
 use yarra_game_content::*;
+
 const GUARD: ActorId = ActorId::named("guard");
+
 mod support;
+
 use support::{Temp, read, write};
 
 const GATE: QuestId = QuestId::named("guard/gate");
@@ -19,20 +24,24 @@ const SUPPLIES: QuestId = QuestId::named("guard/supplies");
 const READY: PredicateId = PredicateId::named("guard/ready");
 const REWARD: DialogueId = DialogueId::named("guard/reward");
 const DUTY: DialogueId = DialogueId::named("guard/duty");
+
 const INTERACTION: InteractionKey = InteractionKey {
     participant: HERO,
     speaker: GUARD,
 };
+
 const ATTITUDE: RelationshipKey = RelationshipKey {
     from: GUARD,
     to: HERO,
 };
+
 fn setup(temp: &Temp) -> (LoadedProject, gameplay::GameSession) {
     let project =
         LoadedProject::load_directory_with_scenario(temp.source(), "scenarios/guard.ron").unwrap();
     let session = support::runtime(temp, &project);
     (project, session)
 }
+
 fn talk(topic: Option<&str>) -> Command {
     Command::Talk {
         bindings: Default::default(),
@@ -41,6 +50,7 @@ fn talk(topic: Option<&str>) -> Command {
         topic: topic.map(key),
     }
 }
+
 fn choose() -> Command {
     Command::Choose {
         expected: dialogue::Token { run: 1, step: 2 },
@@ -50,9 +60,11 @@ fn choose() -> Command {
         choice: key("return-key"),
     }
 }
+
 fn selection(session: &gameplay::GameSession) -> dialogue::Selection {
     session.state().selection(INTERACTION).unwrap().clone()
 }
+
 fn start_quest(session: &mut gameplay::GameSession, quest: QuestId) {
     session
         .apply(Command::Quest {
@@ -66,14 +78,17 @@ fn start_quest(session: &mut gameplay::GameSession, quest: QuestId) {
 fn guard_scenario_rewards_and_new_state_survive_checkpoint_restore() {
     let temp = Temp::new();
     let (project, mut session) = setup(&temp);
+
     for step in &project.scenario().steps {
         step.apply(&mut session).unwrap();
     }
+
     let state = session.state().clone();
     assert_eq!(state.quest(GATE).status, Status::Completed);
     assert!(state.quest(GATE).completed.contains(&key("deliver")));
     assert_eq!(state.quest(SUPPLIES).status, Status::Active);
     assert_eq!(state.relationship(ATTITUDE).attitude, 5);
+
     // The reward is enough experience for the hero's second level.
     assert_eq!(state.party.experience, 120);
     assert_eq!(state.actor(HERO).unwrap().level, 2);
@@ -95,6 +110,7 @@ fn guard_scenario_rewards_and_new_state_survive_checkpoint_restore() {
     library.retain(temp.0.join("content.sqlite")).unwrap();
     std::fs::remove_dir_all(temp.0.join("source")).unwrap();
     let loaded = library.load(&saves, SaveSlot::Quick).unwrap();
+
     // Restoring reads no dialogue graph: the saved conversation had finished.
     assert!(loaded.content().graphs.loaded() == 0);
     assert_eq!(loaded.state(), &state);
@@ -198,6 +214,7 @@ fn weighted_selection_replays_after_restore_and_active_conversation_resumes() {
     replay.apply(talk(None)).unwrap();
     assert_eq!(selection(&replay), chosen);
     assert_eq!(replay.header(), after);
+
     // A new higher-priority quest must not silently replace a conversation in progress.
     start_quest(&mut session, GATE);
     let before_resume = session.header();
@@ -235,6 +252,7 @@ fn directed_relationships_have_explicit_neutral_defaults_and_clamp_adjustments()
         from: HERO,
         to: GUARD,
     };
+
     // Reads of records that were never written return defaults and store nothing.
     assert_eq!(session.state().relationship(ATTITUDE).attitude, 0);
     assert_eq!(session.state().quest(GATE).status, Status::NotStarted);
@@ -284,6 +302,7 @@ fn only_the_selected_dialogue_graph_is_read() {
     let (project, session) = setup(&temp);
     drop(session);
     let bundle = temp.0.join("content.sqlite");
+
     // Damage to a candidate graph cannot affect opening, inspection or another selection.
     let db = Connection::open(&bundle).unwrap();
     db.execute(
@@ -304,6 +323,7 @@ fn only_the_selected_dialogue_graph_is_read() {
     session.apply(talk(None)).unwrap();
     assert_eq!(selection(&session).rule, key("welcome"));
     assert_eq!(session.content().graphs.loaded(), 1);
+
     // The damaged graph fails only when the quest selects it, and nothing is changed.
     let mut fresh = open();
     start_quest(&mut fresh, GATE);
@@ -318,8 +338,10 @@ fn invalid_profile_predicate_and_quest_references_fail_authoring() {
     let root = temp.source();
     let path = root.join("packages/guard/guard.profile.ron");
     let original: gameplay::InteractionProfile = read(&path);
+
     for change in 0..4 {
         let mut profile = original.clone();
+
         match change {
             0 => {
                 profile.rules[1].priority = profile.rules[0].priority;
@@ -334,9 +356,11 @@ fn invalid_profile_predicate_and_quest_references_fail_authoring() {
                 }
             }
         }
+
         write(&path, &profile);
         assert!(LoadedProject::load_directory(&root).is_err());
     }
+
     write(&path, &original);
     let path = root.join("packages/guard/ready.predicate.ron");
     let mut predicate: gameplay::NamedPredicate = read(&path);
@@ -387,6 +411,7 @@ fn opening_checks_references_between_always_loaded_definitions() {
         .next()
         .unwrap()
         .clone();
+
     if let gameplay::Condition::All(children) = &mut predicate.condition {
         children.push(gameplay::Condition::ObjectiveCompleted {
             quest: GATE,
@@ -395,6 +420,7 @@ fn opening_checks_references_between_always_loaded_definitions() {
     } else {
         panic!("expected composite guard predicate");
     }
+
     // A well-formed record with a valid checksum that refers to something that is not there.
     let payload = serde_json::to_vec(&Asset::Predicate(predicate)).unwrap();
     let bundle = temp.0.join("content.sqlite");
@@ -433,6 +459,7 @@ fn scripts_are_checked_at_publication_and_run_from_the_published_bundle() {
             .unwrap()
             .to_string()
     };
+
     // A syntax error, a missing function and a module that is not a table all stop the build.
     assert!(failure("local guard = {").contains("script guard"));
     assert!(failure("return {}").contains("unknown script guard.take_key"));
@@ -441,11 +468,14 @@ fn scripts_are_checked_at_publication_and_run_from_the_published_bundle() {
 
     let (project, mut session) = setup(&temp);
     std::fs::remove_dir_all(temp.0.join("source")).unwrap();
+
     // The rules' formulas, the abilities and the guard's script.
     assert_eq!(session.content().game.scripts.len(), 3);
+
     for step in &project.scenario().steps {
         step.apply(&mut session).unwrap();
     }
+
     // The scripted reward was given once, took the key and completed the quest.
     let state = session.state();
     assert_eq!(state.quest(GATE).status, Status::Completed);
@@ -475,6 +505,7 @@ fn the_analyzer_reports_type_errors_at_their_authored_lines() {
     assert_eq!((modules, warnings), (3, vec![]));
     let path = root.join("packages/guard/scripts/guard.luau");
     let source = std::fs::read_to_string(&path).unwrap();
+
     // Still compiles and still exports take_key, so only the analyzer can object.
     let broken = source.replace(
         "game.complete_quest(\"guard/gate\")",

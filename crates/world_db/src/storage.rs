@@ -8,9 +8,11 @@ pub(crate) fn ensure_new_database_path(path: &Path) -> Result<(), WorldDbError> 
     if path.exists() {
         return Err(WorldDbError::AlreadyExists(path.to_path_buf()));
     }
+
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
+
     Ok(())
 }
 
@@ -20,6 +22,7 @@ pub(crate) fn ensure_schema_version(
     database: &'static str,
 ) -> Result<(), WorldDbError> {
     let actual: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+
     if actual != expected {
         return Err(WorldDbError::SchemaVersion {
             database,
@@ -27,6 +30,7 @@ pub(crate) fn ensure_schema_version(
             actual,
         });
     }
+
     Ok(())
 }
 
@@ -78,9 +82,11 @@ pub(crate) fn decode_start_view(
         .map(|bytes| {
             let (view, used): (world::WorldViewBookmark, usize) =
                 bincode::serde::decode_from_slice(&bytes, bincode::config::standard())?;
+
             if used != bytes.len() {
                 return Err(WorldDbError::Cook("start view has trailing bytes".into()));
             }
+
             view.validate()
                 .map_err(|e| WorldDbError::Cook(format!("start view: {e}")))?;
             Ok(view)
@@ -90,9 +96,11 @@ pub(crate) fn decode_start_view(
 
 pub(crate) fn encode_f32_blob(values: &[f32]) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(std::mem::size_of_val(values));
+
     for value in values {
         bytes.extend_from_slice(&value.to_le_bytes());
     }
+
     bytes
 }
 

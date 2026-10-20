@@ -3,6 +3,7 @@ pub(crate) mod actors;
 mod camera;
 mod input;
 mod target;
+
 pub use actors::{PlayerMovementSuspended, PlayerRoute, standing_character};
 pub(crate) use camera::CAMERA_FOCUS_HEIGHT;
 pub use camera::{GameCameraPlugin, orbit_transform};
@@ -15,6 +16,7 @@ use crate::{
     actor::advance_character_motors,
     character::{CharacterPresentationPlugin, CharacterPresentationResolveSet},
 };
+
 use bevy::{app::PluginGroupBuilder, prelude::*};
 use std::path::PathBuf;
 
@@ -24,6 +26,7 @@ use std::path::PathBuf;
 pub struct MinimalGamePlugin {
     runtime_database: PathBuf,
 }
+
 impl MinimalGamePlugin {
     pub fn new(runtime_database: impl Into<PathBuf>) -> Self {
         Self {
@@ -31,6 +34,7 @@ impl MinimalGamePlugin {
         }
     }
 }
+
 impl Plugin for MinimalGamePlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((
@@ -46,6 +50,7 @@ impl Plugin for MinimalGamePlugin {
 /// Normal gameplay defaults. Keep GameplayPlugin; input, camera and destination marker
 /// can each be omitted at startup. This is composition, not runtime teardown/resume.
 pub struct GameplayPlugins;
+
 impl PluginGroup for GameplayPlugins {
     fn build(self) -> PluginGroupBuilder {
         PluginGroupBuilder::start::<Self>()
@@ -60,6 +65,7 @@ impl PluginGroup for GameplayPlugins {
 /// Requires world streaming/contact resources, Time and character assets supplied by DefaultPlugins.
 /// Does not spawn a camera, read native input or create the destination marker.
 pub struct GameplayPlugin;
+
 impl Plugin for GameplayPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(CharacterPresentationPlugin)
@@ -126,6 +132,7 @@ pub enum GameplaySystems {
 /// Grounding and camera follow continue; native gesture readers drain events while disabled.
 #[derive(Resource, Clone, Copy, PartialEq, Eq)]
 pub struct GameInputEnabled(pub bool);
+
 impl Default for GameInputEnabled {
     fn default() -> Self {
         Self(true)

@@ -1,23 +1,28 @@
 #[cfg(target_os = "ios")]
 use bevy::window::{MonitorSelection, ScreenEdge, WindowMode};
+
 use bevy::{
     asset::AssetPlugin,
     log::LogPlugin,
     prelude::*,
     window::{PresentMode, WindowResolution},
 };
+
 use engine::{MinimalGamePlugin, WorldVegetationPlugin};
 
 #[cfg(target_os = "macos")]
 mod camera_input_trace;
+
 mod frame_pacing;
 mod game_render;
 mod grass_pack;
 mod launch;
 mod lod_lab;
 mod look_capture;
+
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 mod metal_capture;
+
 mod profile;
 mod render_audit;
 mod repro;
@@ -33,10 +38,12 @@ fn main() {
 
 fn run() -> Result<(), String> {
     let options = launch::LaunchOptions::parse(std::env::args_os().skip(1))?;
+
     if options.help {
         print!("{}", launch::LaunchOptions::help());
         return Ok(());
     }
+
     let start_view = engine::WorldStartView::load(options.start_view.as_deref())?;
     let asset_root = resolve_asset_root();
     let runtime_database = options
@@ -89,6 +96,7 @@ fn run() -> Result<(), String> {
     );
     #[cfg(target_os = "macos")]
     camera_input_trace::install(&mut app);
+
     // Variety between sessions; the seed is logged when weather starts.
     let weather_seed = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -111,10 +119,13 @@ fn run() -> Result<(), String> {
     );
 
     runtime_settings::apply_launch_options(&mut app)?;
+
     if let Some(source) = &options.story {
         story::install(&mut app, source)?;
     }
+
     app.add_plugins(runtime_settings::RuntimeSettingsPlugin);
+
     // Explicit precedence: launch defaults, reproduction, then profile settings.
     profile::install(&mut app);
     repro::install(&mut app);
@@ -130,11 +141,13 @@ fn run() -> Result<(), String> {
 
 fn game_log_plugin(_options: &launch::LaunchOptions) -> LogPlugin {
     let mut plugin = LogPlugin::default();
+
     if cfg!(target_os = "ios") {
         plugin
             .filter
             .push_str(",winit::platform_impl::ios::app_state=error");
     }
+
     #[cfg(target_os = "ios")]
     if _options.console {
         // Bevy's iOS OSLog layer is visible in Xcode but not devicectl --console.
@@ -147,6 +160,7 @@ fn game_log_plugin(_options: &launch::LaunchOptions) -> LogPlugin {
             ))
         };
     }
+
     plugin
 }
 
@@ -161,6 +175,7 @@ fn game_window() -> Window {
     #[cfg(target_os = "ios")]
     let window = {
         let mut window = window;
+
         // Windowed mode causes winit to use the desktop-sized resolution above
         // as the actual UIWindow size. Fullscreen uses the device surface.
         window.mode = WindowMode::BorderlessFullscreen(MonitorSelection::Primary);
@@ -178,15 +193,18 @@ fn game_window() -> Window {
 
 fn resolve_asset_root() -> std::path::PathBuf {
     let mut candidates = Vec::new();
+
     if let Ok(current_directory) = std::env::current_dir() {
         candidates.push(current_directory.join("assets"));
     }
+
     if let Ok(executable) = std::env::current_exe()
         && let Some(executable_directory) = executable.parent()
     {
         candidates.push(executable_directory.join("assets"));
         candidates.push(executable_directory.join("../Resources/assets"));
     }
+
     candidates.push(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets"));
 
     candidates

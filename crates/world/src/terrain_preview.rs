@@ -12,6 +12,7 @@ pub struct TerrainPreviewProducts {
     /// Only leaves that differ from the publication; retained after source eviction.
     pub leaves: BTreeMap<CellCoord, Arc<TerrainHeightfieldPage>>,
 }
+
 impl TerrainPreviewProducts {
     pub fn bytes(&self) -> usize {
         self.nodes

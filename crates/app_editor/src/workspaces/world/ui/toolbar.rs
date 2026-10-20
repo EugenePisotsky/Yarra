@@ -11,10 +11,12 @@ use crate::{
     tools::{EditorToolRegistry, OBJECT_TOOL},
     workspaces::{EditorWorkspace, presets::PresetAuthoringState},
 };
+
 use bevy::{
     gizmos::transform_gizmo::{TransformGizmoMode, TransformGizmoSettings},
     prelude::*,
 };
+
 use bevy_egui::egui;
 
 #[allow(clippy::too_many_arguments)] // Bevy system parameters.
@@ -52,6 +54,7 @@ pub(crate) fn world_toolbar(
                 && !publication.active()
                 && project.write_error().is_none();
             let can_save = has_dirty_source && source_action_available;
+
             if ui
                 .add_enabled(can_save, egui::Button::new("Save"))
                 .on_hover_text("Save all local source changes (Cmd+S)")
@@ -59,6 +62,7 @@ pub(crate) fn world_toolbar(
             {
                 save.request_save();
             }
+
             let can_publish = (project.source_epoch() > 0 || has_dirty_source)
                 && source_action_available;
             let publish_label = if has_dirty_source {
@@ -66,6 +70,7 @@ pub(crate) fn world_toolbar(
             } else {
                 "Publish"
             };
+
             if ui
                 .add_enabled(can_publish, egui::Button::new(publish_label))
                 .on_hover_text(if has_dirty_source {
@@ -77,6 +82,7 @@ pub(crate) fn world_toolbar(
             {
                 save.request_publish();
             }
+
             if ui
                 .add_enabled(
                     history.undo_len() > 0
@@ -98,6 +104,7 @@ pub(crate) fn world_toolbar(
                 history.undo(&mut objects, &mut dense_domains);
                 transform_draft.sync(&selection, &objects);
             }
+
             if ui
                 .add_enabled(
                     history.redo_len() > 0
@@ -174,10 +181,12 @@ pub(crate) fn world_toolbar(
                     format!("{} environment change(s) unsaved", dense_domains.dirty_count()),
                 );
             }
+
             if objects.has_any_conflict() || dense_domains.has_any_conflict() {
                 ui.separator();
                 ui.colored_label(egui::Color32::LIGHT_RED, "Source conflict");
             }
+
             if publication.active() {
                 ui.separator();
                 ui.spinner();

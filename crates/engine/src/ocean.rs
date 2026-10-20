@@ -77,9 +77,11 @@ mod tests {
         let mut app = ocean_app(Some(0.));
         let world = app.world_mut();
         let mut cameras = world.query::<&mut Camera>();
+
         for mut camera in cameras.iter_mut(world) {
             camera.is_active = false;
         }
+
         app.update();
         assert_eq!(level(&app), None);
     }

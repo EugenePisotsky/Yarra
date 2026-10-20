@@ -7,6 +7,7 @@ use crate::{
     ApplyAtmosphere, AtmosphereState, WorldEnvironmentView,
     environment::{EnvironmentAssets, EnvironmentParams},
 };
+
 use bevy::{
     core_pipeline::{Core3dSystems, schedule::Core3d},
     prelude::*,
@@ -21,6 +22,7 @@ use bevy::{
         view::{ViewDepthStencilTexture, ViewTarget, ViewUniform, ViewUniformOffset, ViewUniforms},
     },
 };
+
 use bytemuck::{Pod, Zeroable};
 
 /// Temporary presentation switch for measurements. Weather still computes precipitation.
@@ -29,6 +31,7 @@ use bytemuck::{Pod, Zeroable};
 pub struct PrecipitationPresentation {
     pub enabled: bool,
 }
+
 impl Default for PrecipitationPresentation {
     fn default() -> Self {
         Self { enabled: true }
@@ -42,8 +45,10 @@ pub(crate) struct PrecipitationView;
 
 pub const SPLASH_CAPACITY: usize = 512;
 const SPLASH_SECONDS: f32 = 0.3;
+
 /// Largest ripple radius, in metres.
 const SPLASH_SIZE: f32 = 0.09;
+
 /// Ripple ring plus thrown droplets, as quads of six vertices.
 const SPLASH_VERTICES: u32 = 5 * 6;
 
@@ -57,6 +62,7 @@ pub struct RainSplashes {
     next: usize,
     spawned: u32,
 }
+
 impl Default for RainSplashes {
     fn default() -> Self {
         Self {
@@ -69,6 +75,7 @@ impl Default for RainSplashes {
         }
     }
 }
+
 impl RainSplashes {
     /// Overwrites the oldest splash once full.
     pub fn spawn(&mut self, position: Vec3, normal: Vec3, time: f32) {
@@ -80,6 +87,7 @@ impl RainSplashes {
         ];
         self.next = (self.next + 1) % SPLASH_CAPACITY;
     }
+
     fn alive(&self, time: f32) -> bool {
         self.instances
             .iter()
@@ -101,6 +109,7 @@ struct Layer {
     count: u32,
     alpha: f32,
 }
+
 /// Near drops carry detail; wider layers fill the distance at lower screen cost.
 const LAYERS: [Layer; 3] = [
     Layer {
@@ -122,17 +131,24 @@ const LAYERS: [Layer; 3] = [
         alpha: 0.3,
     },
 ];
+
 const FALL_SPEED: f32 = 8.5;
+
 /// Horizontal drift at unscaled weather wind.
 const DRIFT_SPEED: f32 = 2.5;
+
 /// Motion-blur length of a streak, as seconds of fall.
 const STREAK_SECONDS: f32 = 0.02;
+
 const DROP_WIDTH: f32 = 0.004;
 const SOFT_DEPTH: f32 = 0.35;
+
 /// Share of each box placed ahead of the camera, where drops are visible.
 const FORWARD_SHIFT: f32 = 0.3;
+
 /// Camera motion above this is a teleport or origin rebase, not movement to blur.
 const MAX_CAMERA_SPEED: f32 = 40.0;
+
 /// Smoothing time constant for camera velocity, in seconds.
 const CAMERA_SMOOTHING: f32 = 0.1;
 
@@ -142,16 +158,19 @@ struct CameraMotion {
     previous: Option<Vec3>,
     velocity: Vec3,
 }
+
 impl CameraMotion {
     fn update(&mut self, position: Option<Vec3>, dt: f32) -> Vec3 {
         if dt <= 0.0 {
             return self.velocity;
         }
+
         let Some(position) = position else {
             self.previous = None;
             self.velocity = Vec3::ZERO;
             return self.velocity;
         };
+
         if let Some(previous) = self.previous.replace(position) {
             let raw = (position - previous) / dt;
             let raw = if raw.length() <= MAX_CAMERA_SPEED {
@@ -163,6 +182,7 @@ impl CameraMotion {
                 .velocity
                 .lerp(raw, 1.0 - (-dt / CAMERA_SMOOTHING).exp());
         }
+
         self.velocity
     }
 }
@@ -192,15 +212,18 @@ struct RainFrame {
 }
 
 pub(crate) struct PrecipitationPlugin;
+
 impl Plugin for PrecipitationPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PrecipitationPresentation>()
             .init_resource::<RainFrame>()
             .init_resource::<RainSplashes>()
             .init_resource::<PrecipitationReference>();
+
         if app.get_sub_app(RenderApp).is_none() {
             return;
         }
+
         app.add_plugins((
             ExtractResourcePlugin::<RainFrame>::default(),
             ExtractResourcePlugin::<RainSplashes>::default(),
@@ -244,14 +267,17 @@ fn sync(
         -FALL_SPEED,
         direction.sin() * DRIFT_SPEED * wind,
     );
+
     // Integrate rather than multiply elapsed time by velocity: wind changes stay continuous.
     let step = f64::from(time.delta_secs().min(0.1));
+
     for (offset, layer) in offsets.iter_mut().zip(&LAYERS) {
         let size = [layer.size, layer.height, layer.size].map(f64::from);
         for axis in 0..3 {
             offset[axis] = (offset[axis] + f64::from(velocity[axis]) * step).rem_euclid(size[axis]);
         }
     }
+
     let mut first = 0;
     let mut uniform = RainUniform {
         velocity: velocity.extend(STREAK_SECONDS).to_array(),
@@ -266,6 +292,7 @@ fn sync(
         ..default()
     };
     let mut active = [0; 3];
+
     for (i, layer) in LAYERS.iter().enumerate() {
         let o = offsets[i];
         uniform.offsets[i] = [o[0] as f32, o[1] as f32, o[2] as f32, layer.size];
@@ -273,8 +300,10 @@ fn sync(
         active[i] = (layer.count as f32 * precipitation).round() as u32;
         first += layer.count;
     }
+
     *frame = RainFrame { uniform, active };
     let visible = presentation.enabled && active.iter().any(|&n| n > 0);
+
     for (entity, view) in &views {
         if visible && view.is_none() {
             commands.entity(entity).insert(PrecipitationView);
@@ -290,6 +319,7 @@ struct Pipelines {
     /// Indexed by [streaks, splashes] then MSAA.
     render: [[CachedRenderPipelineId; 2]; 2],
 }
+
 fn init(mut commands: Commands, server: Res<AssetServer>, cache: Res<PipelineCache>) {
     let layout = std::array::from_fn(|i| {
         BindGroupLayoutDescriptor::new(
@@ -382,9 +412,11 @@ fn draw(
     mut ctx: RenderContext,
 ) {
     let (_, target, depth, offset, msaa) = view.into_inner();
+
     if target.main_texture_format() != TextureFormat::Rgba16Float {
         return;
     }
+
     let index = usize::from(msaa.samples() > 1);
     let (Some(assets), Some(pipeline), Some(splash_pipeline), Some(view_binding)) = (
         assets,
@@ -446,12 +478,14 @@ fn draw(
     pass.set_pipeline(pipeline);
     pass.set_bind_group(0, &group, &[offset.offset]);
     let mut first = 0;
+
     for (layer, &active) in LAYERS.iter().zip(&rain.active) {
         if active > 0 {
             pass.draw(0..6, first..first + active);
         }
         first += layer.count;
     }
+
     if splashes.alive(rain.uniform.splash[0]) {
         pass.set_pipeline(splash_pipeline);
         pass.draw(0..SPLASH_VERTICES, 0..SPLASH_CAPACITY as u32);
@@ -484,9 +518,11 @@ mod tests {
             .init_resource::<RainFrame>()
             .init_resource::<PrecipitationReference>()
             .add_systems(Update, sync);
+
         for _ in 0..frames {
             app.update();
         }
+
         let visible = app.world().get::<PrecipitationView>(camera).is_some();
         (*app.world().resource::<RainFrame>(), visible)
     }
@@ -504,6 +540,7 @@ mod tests {
         assert_eq!(storm.active, LAYERS.map(|l| l.count));
         let (rain, _) = run(Some(WeatherKind::Rain), game, 0.016, 1);
         assert!(rain.active[0] > 0 && rain.active[0] < LAYERS[0].count);
+
         // Editors preview weather they set explicitly; isolated workspaces never show it.
         assert!(run(Some(WeatherKind::Storm), AtmosphereOwner::Editor, 0.016, 1).1);
         assert!(
@@ -521,9 +558,11 @@ mod tests {
     fn splashes_recycle_the_oldest_and_expire() {
         let mut splashes = RainSplashes::default();
         assert!(!splashes.alive(0.0));
+
         for i in 0..SPLASH_CAPACITY + 3 {
             splashes.spawn(Vec3::X * i as f32, Vec3::ZERO, 10.0);
         }
+
         assert_eq!(
             splashes.instances[0][4..7],
             [0.0, 1.0, 0.0],
@@ -538,15 +577,19 @@ mod tests {
     fn camera_motion_is_smoothed_and_teleports_are_ignored() {
         let mut motion = CameraMotion::default();
         assert_eq!(motion.update(Some(Vec3::ZERO), 0.1), Vec3::ZERO);
+
         for step in 1..=20 {
             motion.update(Some(Vec3::X * step as f32 * 0.5), 0.1);
         }
+
         assert!((motion.velocity.x - 5.0).abs() < 0.1, "{}", motion.velocity);
         let settled = motion.velocity;
+
         // An origin rebase or teleport decays towards zero instead of a huge streak.
         motion.update(Some(Vec3::X * 1000.0), 0.1);
         assert!(motion.velocity.length() < settled.length());
         assert!(motion.velocity.length() <= MAX_CAMERA_SPEED);
+
         // Without a reference there is nothing to stretch against.
         assert_eq!(motion.update(None, 0.1), Vec3::ZERO);
     }
@@ -554,12 +597,14 @@ mod tests {
     #[test]
     fn fall_offsets_stay_within_each_box_and_advance_with_time() {
         let (frame, _) = run(Some(WeatherKind::Rain), AtmosphereOwner::Game, 0.05, 7);
+
         for (offset, layer) in frame.uniform.offsets.iter().zip(&LAYERS) {
             assert!((0.0..layer.size).contains(&offset[0]));
             assert!((0.0..layer.height).contains(&offset[1]));
             assert!((0.0..layer.size).contains(&offset[2]));
             assert_eq!(offset[3], layer.size);
         }
+
         let expected = (-(FALL_SPEED * 0.35)).rem_euclid(LAYERS[0].height);
         assert!((frame.uniform.offsets[0][1] - expected).abs() < 1e-3);
     }

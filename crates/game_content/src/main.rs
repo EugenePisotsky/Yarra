@@ -1,14 +1,17 @@
 use game_types::{Invalid, PlaythroughId, require};
 use localization::Arguments;
 use save::{SaveDirectory, SaveSlot};
+
 use std::{
     env,
     path::{Path, PathBuf},
     process::ExitCode,
 };
+
 use yarra_game_content::{
     ANALYZER_VARIABLE, Asset, AssetId, ContentRepository, LoadedProject, Result, ScriptAnalysis,
 };
+
 const USAGE: &str = "Usage:
   yarra-game-content validate SOURCE_DIR|BUNDLE.sqlite [--language PACK.sqlite]...
   yarra-game-content scenario SOURCE_DIR SCENARIO.ron
@@ -23,6 +26,7 @@ package has one Fluent file per locale.
 Validation and builds run the scenario in isolation. Demo writes fresh save slots.
 Inspect reads only the requested assets; it never runs a scenario or loads translations.
 Existing bundle paths and demo save directories are never overwritten.";
+
 fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
@@ -32,6 +36,7 @@ fn main() -> ExitCode {
         }
     }
 }
+
 fn load(path: &Path, languages: &[PathBuf]) -> Result<LoadedProject> {
     if path.is_dir() {
         require(
@@ -43,6 +48,7 @@ fn load(path: &Path, languages: &[PathBuf]) -> Result<LoadedProject> {
         LoadedProject::materialize_with_languages_for_tools(path, languages)
     }
 }
+
 fn report(project: &LoadedProject) -> Result<()> {
     println!(
         "Validated: {} categories, {} items, {} actor templates, {} characters, {} dialogues, {} scenario steps.",
@@ -60,9 +66,11 @@ fn report(project: &LoadedProject) -> Result<()> {
         .map(|b| format!("{b:02x}"))
         .collect();
     println!("Content fingerprint: {fingerprint}");
+
     for warning in project.warnings() {
         eprintln!("warning: {warning}");
     }
+
     match project.analyze_scripts()? {
         ScriptAnalysis::Unavailable => eprintln!(
             "note: luau-analyze not found; scripts were compiled but not type-checked \
@@ -75,21 +83,27 @@ fn report(project: &LoadedProject) -> Result<()> {
             }
         }
     }
+
     Ok(())
 }
+
 fn run() -> Result<()> {
     let mut args = env::args_os().skip(1);
     let command = args.next().ok_or_else(|| Invalid(USAGE.into()))?;
+
     if command == "--help" || command == "-h" {
         println!("{USAGE}");
         return Ok(());
     }
+
     if command == "script-api" {
         // Type definitions of the host API, for luau-analyze and editors.
         print!("{}", scripting::API_DEFINITIONS);
         return Ok(());
     }
+
     let input = PathBuf::from(args.next().ok_or_else(|| Invalid(USAGE.into()))?);
+
     match command.to_str() {
         Some("scenario") => {
             let scenario = args
@@ -104,6 +118,7 @@ fn run() -> Result<()> {
         }
         Some("inspect") => {
             let mut roots = Vec::new();
+
             while let Some(flag) = args.next() {
                 require(roots.len() < 128, "inspect accepts at most 128 roots")?;
                 let value = args
@@ -118,12 +133,14 @@ fn run() -> Result<()> {
                     _ => return Err(Invalid(format!("unknown inspect option {flag:?}")).into()),
                 });
             }
+
             let repository = ContentRepository::open(input)?;
             println!(
                 "Publication: {} revision {}",
                 repository.manifest().content.id,
                 repository.manifest().content.revision
             );
+
             for id in &roots {
                 match repository.read(id)? {
                     Asset::Item(item) => println!("Item {}: {} g", item.id, item.weight_grams),
@@ -133,16 +150,19 @@ fn run() -> Result<()> {
                     _ => println!("Resolved {id:?}"),
                 }
             }
+
             Ok(())
         }
         Some("validate") => {
             let mut languages = Vec::new();
+
             while let Some(flag) = args.next() {
                 require(flag == "--language", USAGE)?;
                 languages.push(PathBuf::from(
                     args.next().ok_or_else(|| Invalid(USAGE.into()))?,
                 ));
             }
+
             report(&load(&input, &languages)?)
         }
         Some("build-language") => {
@@ -170,6 +190,7 @@ fn run() -> Result<()> {
             let mut languages = Vec::new();
             let mut locale = None;
             let mut directory = None;
+
             while let Some(flag) = args.next() {
                 match flag.to_str() {
                     Some("--language") => languages.push(PathBuf::from(
@@ -195,6 +216,7 @@ fn run() -> Result<()> {
                     }
                 }
             }
+
             let project = load(&input, &languages)?;
             report(&project)?;
             demo(
@@ -206,8 +228,10 @@ fn run() -> Result<()> {
         _ => Err(Invalid(USAGE.into()).into()),
     }
 }
+
 fn demo(project: &LoadedProject, locale: &str, directory: Option<PathBuf>) -> Result<()> {
     let args = Arguments::new();
+
     // Validate presentation before creating the requested output directory.
     for key in project.content().text_keys() {
         if project
@@ -222,6 +246,7 @@ fn demo(project: &LoadedProject, locale: &str, directory: Option<PathBuf>) -> Re
             .localization()
             .format(locale, &game_types::TextRef::Message(key.clone()), &args)?;
     }
+
     let directory = directory.unwrap_or_else(|| {
         env::temp_dir().join(format!("yarra-gameplay-{}", PlaythroughId::random()))
     });
@@ -231,15 +256,20 @@ fn demo(project: &LoadedProject, locale: &str, directory: Option<PathBuf>) -> Re
     let library = yarra_game_content::ContentLibrary::new(directory.join("content"))?;
     let identity = library.retain(&publication)?;
     std::fs::remove_file(publication)?;
+
     // Play the scenario against the published bundle, not the authored sources.
     let seed = project.start()?.into_state();
     let mut session = gameplay::GameSession::new(library.open(&identity)?, seed)?;
+
     for step in &project.scenario().steps {
         step.apply(&mut session)?;
     }
+
     let state = session.state();
+
     // Resolve all presentation before writing files, including invalid locale errors.
     let mut summary = Vec::new();
+
     for actor in state.actors.values() {
         let name = project.content().actor_name(actor)?;
         let name = project.localization().format(locale, name, &args)?.value;
@@ -253,10 +283,12 @@ fn demo(project: &LoadedProject, locale: &str, directory: Option<PathBuf>) -> Re
             named(&rules.stat(&rules.life)?.name)?.value,
             actor.resources[&rules.life]
         ));
+
         for (skill, rank) in &actor.skills {
             let name = &rules.skill(skill)?.name;
             summary.push(format!("  {}: rank {rank}", named(name)?.value));
         }
+
         // An inventory nobody has looked into is not listed.
         for entry in state.carried(actor.id).iter().flat_map(|bag| &bag.entries) {
             let name = &project.content().items.item(entry.definition)?.name;
@@ -267,6 +299,7 @@ fn demo(project: &LoadedProject, locale: &str, directory: Option<PathBuf>) -> Re
             ));
         }
     }
+
     for wallet in state.wallets.values() {
         summary.push(format!(
             "{:?} wallet {}: {} gold",
@@ -275,6 +308,7 @@ fn demo(project: &LoadedProject, locale: &str, directory: Option<PathBuf>) -> Re
             wallet.balance.units()
         ));
     }
+
     let saves = SaveDirectory::new(&directory, 3)?;
     saves.save(SaveSlot::Manual(1), &session, "Authored scenario")?;
     saves.quicksave(&session)?;
@@ -289,9 +323,11 @@ fn demo(project: &LoadedProject, locale: &str, directory: Option<PathBuf>) -> Re
         session.content().graphs.loaded(),
         project.content().game.dialogues.len()
     );
+
     for line in summary {
         println!("{line}");
     }
+
     println!("Save reopened; 3 saves in {}", directory.display());
     Ok(())
 }

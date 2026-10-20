@@ -2,57 +2,73 @@
 //! rebuilt on the
 //! CPU and uploaded into their images only when a rebuild changed them.
 use super::EnvironmentAssets;
+
 use crate::{
     forest_shadow::ForestShadow, shelter::RainShelter, shore::Shore, valley_mist::ValleyMist,
 };
+
 use bevy::{prelude::*, render::extract_resource::ExtractResource};
 
 /// A map with a revision that changes on every rebuild, and the image it is drawn into.
 pub(super) trait EnvironmentMap: Resource {
     fn revision(&self) -> u64;
+
     fn write(&self, image: &mut Image);
+
     fn image(assets: &EnvironmentAssets) -> &Handle<Image>;
 }
+
 impl EnvironmentMap for RainShelter {
     fn revision(&self) -> u64 {
         self.revision()
     }
+
     fn write(&self, image: &mut Image) {
         self.write(image)
     }
+
     fn image(assets: &EnvironmentAssets) -> &Handle<Image> {
         &assets.shelter
     }
 }
+
 impl EnvironmentMap for ForestShadow {
     fn revision(&self) -> u64 {
         self.revision()
     }
+
     fn write(&self, image: &mut Image) {
         self.write(image)
     }
+
     fn image(assets: &EnvironmentAssets) -> &Handle<Image> {
         &assets.forest_shadow
     }
 }
+
 impl EnvironmentMap for ValleyMist {
     fn revision(&self) -> u64 {
         self.revision()
     }
+
     fn write(&self, image: &mut Image) {
         self.write(image)
     }
+
     fn image(assets: &EnvironmentAssets) -> &Handle<Image> {
         &assets.mist
     }
 }
+
 impl EnvironmentMap for Shore {
     fn revision(&self) -> u64 {
         self.revision()
     }
+
     fn write(&self, image: &mut Image) {
         self.write(image)
     }
+
     fn image(assets: &EnvironmentAssets) -> &Handle<Image> {
         &assets.shore
     }
@@ -69,9 +85,11 @@ fn upload<M: EnvironmentMap>(
     let Some(assets) = assets else {
         return false;
     };
+
     if *published == Some(map.revision()) {
         return false;
     }
+
     let Some(mut image) = images.get_mut(M::image(assets)) else {
         return false;
     };

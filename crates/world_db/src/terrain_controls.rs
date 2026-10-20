@@ -6,6 +6,7 @@ use crate::{TerrainRenderResources, WorldDbError};
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 use std::io::Read;
 use std::path::Path;
+
 use world::{
     CONTROL_SAMPLES, CellCoord, PageDomain, RUNTIME_SCHEMA_VERSION, TerrainNodeKey, WorldSpaceId,
 };
@@ -16,6 +17,7 @@ pub fn encode_terrain_control(samples: &[u32]) -> Result<Vec<u8>, WorldDbError> 
     if samples.len() != CONTROL_SAMPLES * CONTROL_SAMPLES {
         return Err(invalid("terrain control tile size"));
     }
+
     let bytes: Vec<u8> = samples.iter().flat_map(|s| s.to_le_bytes()).collect();
     Ok(zstd::stream::encode_all(bytes.as_slice(), 3)?)
 }
@@ -25,9 +27,11 @@ pub fn decode_terrain_control(payload: &[u8]) -> Result<Vec<u32>, WorldDbError> 
     zstd::stream::read::Decoder::new(payload)?
         .take(TILE_BYTES as u64 + 1)
         .read_to_end(&mut bytes)?;
+
     if bytes.len() != TILE_BYTES {
         return Err(invalid("terrain control tile size"));
     }
+
     Ok(bytes
         .as_chunks::<4>()
         .0

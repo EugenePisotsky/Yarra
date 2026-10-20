@@ -34,16 +34,19 @@ use crate::{
         world_workspace_active,
     },
 };
+
 use bevy::{
     gizmos::transform_gizmo::{TransformGizmoPlugin, TransformGizmoSystems},
     prelude::*,
 };
+
 use bevy_egui::EguiPrimaryContextPass;
 
 pub(crate) use camera::{EditorCameraFocusRequest, update_editor_camera};
 pub(crate) use ground_tool::GroundToolInput;
 pub(crate) use input::handle_editor_shortcuts;
 pub(crate) use overlay::EditorOverlayGizmos;
+
 mod camera;
 mod gizmo;
 mod ground_tool;
@@ -68,6 +71,7 @@ impl Plugin for WorldWorkspacePlugin {
         app.world_mut()
             .resource_mut::<EditorToolRegistry>()
             .register(crate::tools::AREA_TOOL, false);
+
         for window in [
             WORLD_WINDOW,
             INSPECTOR_WINDOW,
@@ -81,6 +85,7 @@ impl Plugin for WorldWorkspacePlugin {
                 .resource_mut::<EditorWindowRegistry>()
                 .register(window);
         }
+
         app.init_resource::<EditorCameraDrag>()
             .init_resource::<EditorCameraFocusRequest>()
             .init_resource::<EditorSelection>()

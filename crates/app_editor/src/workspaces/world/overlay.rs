@@ -6,6 +6,7 @@ use crate::{
         PromotedEditorObject, source_object_position, visual_bounds_corners,
     },
 };
+
 use bevy::prelude::*;
 use engine::{WorldCatalog, WorldOrigin, WorldViewpoint};
 
@@ -13,6 +14,7 @@ const GRID_RADIUS_CELLS: i32 = 12;
 
 #[derive(Default, Reflect, GizmoConfigGroup)]
 pub(crate) struct EditorOverlayGizmos;
+
 pub(crate) fn draw_editor_grid(
     mut gizmos: Gizmos,
     catalog: Res<WorldCatalog>,
@@ -79,6 +81,7 @@ pub(crate) fn draw_promoted_editor_object(
         if !selection.contains(proxy.id) {
             continue;
         }
+
         let bounds = objects
             .current_view(proxy.id)
             .and_then(|selected| selected.visual_bounds)
@@ -89,6 +92,7 @@ pub(crate) fn draw_promoted_editor_object(
         } else {
             Color::srgb(0.95, 0.72, 0.24)
         };
+
         for (start, end) in [
             (0, 1),
             (1, 3),
@@ -120,6 +124,7 @@ pub(crate) fn draw_source_object_handles(
     if project.desired_window() != project.loaded_window() {
         return;
     }
+
     let Some(position) = viewpoint.position() else {
         return;
     };
@@ -127,6 +132,7 @@ pub(crate) fn draw_source_object_handles(
         return;
     };
     let color = Color::srgba(0.25, 0.78, 0.92, 0.8);
+
     for record in project.objects().iter().filter_map(|record| {
         objects.resolve_source_view(record).filter(|record| {
             record.object.space == position.space && !selection.contains(record.object.id)

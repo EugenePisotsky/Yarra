@@ -4,15 +4,18 @@ use crate::{
     ActiveWorldView, AtmosphereOwner, AtmosphereState, ObjectFootprint, StreamedTerrainSurface,
     StreamedVisualObject, WorldOrigin, sample_resident_terrain_surface,
 };
+
 use atmosphere::{
     precipitation::{PrecipitationReference, RainSplashes},
     shelter::{METRES_PER_TEXEL, RainShelter, SIZE, ShelterDisc},
 };
+
 use bevy::prelude::*;
 
 /// Impacts per square metre per second at full precipitation, around the ground the camera
 /// looks at. The spawn disc is capped so the 512-entry buffer covers every live splash.
 const SPLASHES_PER_SQUARE_METRE: f32 = 5.0;
+
 const SPLASH_RADIUS: [f32; 2] = [6.0, 10.0];
 
 /// The ground the camera looks at: where its view ray meets the height of the followed
@@ -44,6 +47,7 @@ pub(super) fn update_precipitation_reference(
         return;
     };
     let position = target.iter().next().map(|t| t.translation);
+
     if reference.0 != position {
         reference.0 = position;
     }
@@ -52,6 +56,7 @@ pub(super) fn update_precipitation_reference(
 /// Small generator for splash placement; variety, not statistical quality.
 #[derive(Default)]
 pub(super) struct SplashRandom(u64);
+
 impl SplashRandom {
     fn next(&mut self) -> f32 {
         self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
@@ -88,10 +93,12 @@ pub(super) fn spawn_rain_splashes(
         .filter(|_| atmosphere.owner == AtmosphereOwner::Game && atmosphere.profile.outdoor)
         .map_or(0.0, |w| w.precipitation.clamp(0.0, 1.0));
     let (random, due) = &mut *state;
+
     if precipitation <= 0.0 {
         *due = 0.0;
         return;
     }
+
     let (centre, radius) = splash_area(camera, target.iter().next().map(|t| t.translation.y));
     *due += SPLASHES_PER_SQUARE_METRE
         * std::f32::consts::PI
@@ -101,6 +108,7 @@ pub(super) fn spawn_rain_splashes(
         * time.delta_secs().min(0.1);
     let count = due.floor().min(128.0);
     *due -= count;
+
     for _ in 0..count as u32 {
         // Uniform over the disc.
         let angle = random.next() * std::f32::consts::TAU;
@@ -110,22 +118,28 @@ pub(super) fn spawn_rain_splashes(
         else {
             continue;
         };
+
         // Drops falling on the sea leave no splash on the seabed below it.
         if ground.normal[1] < 0.6 || sea.as_ref().and_then(|s| s.level) > Some(ground.height) {
             continue;
         }
+
         let impact = Vec3::new(point.x, ground.height, point.y);
+
         if random.next() > shelter.exposure(impact) {
             continue;
         }
+
         splashes.spawn(impact, Vec3::from_array(ground.normal), time.elapsed_secs());
     }
 }
 
 /// Rebuild after moving this far from the map centre, well inside its 64 m half size.
 const SHELTER_RECENTRE_METRES: f32 = 16.0;
+
 /// Streaming adds and removes objects over many frames; batch those rebuilds.
 const SHELTER_MIN_INTERVAL: f32 = 0.5;
+
 /// Crowns are narrower than their bounding boxes.
 const CROWN_RADIUS_SCALE: f32 = 0.9;
 
@@ -152,6 +166,7 @@ pub(super) fn update_rain_shelter(
         if shelter.enabled {
             shelter.disable();
         }
+
         *last = None;
         *pending = false;
         return;
@@ -161,9 +176,11 @@ pub(super) fn update_rain_shelter(
     let moved = centre.distance(shelter.centre()) > SHELTER_RECENTRE_METRES;
     let rebased = origin.is_some_and(|o| o.is_changed());
     let due = last.is_none_or(|t| now - t >= SHELTER_MIN_INTERVAL);
+
     if shelter.enabled && !moved && !rebased && (!*pending || !due) {
         return;
     }
+
     *pending = false;
     let reach = SIZE as f32 * METRES_PER_TEXEL * 0.5 * std::f32::consts::SQRT_2;
     shelter.rebuild(
@@ -248,6 +265,7 @@ mod tests {
             "centred near the character: {centre}"
         );
         assert_eq!(radius, SPLASH_RADIUS[1]);
+
         // A low grazing camera covers the ground ahead of it instead of the far horizon.
         let low = GlobalTransform::from(
             Transform::from_xyz(0.0, 1.6, 0.0).looking_to(Vec3::NEG_Z, Vec3::Y),

@@ -1,22 +1,28 @@
 use game_types::*;
 use std::collections::BTreeMap;
 use yarra_localization::*;
+
 const A: TextResourceId = TextResourceId([8; 16]);
 const B: TextResourceId = TextResourceId([9; 16]);
+
 fn key(s: &str) -> TextKey {
     TextKey::new(s).unwrap()
 }
+
 fn message(id: TextResourceId, k: &str) -> TextRef {
     TextRef::message(id, k).unwrap()
 }
+
 /// Resources as a package has them: the source language first, which sets the contract.
 fn localization(
     resources: &[(TextResourceId, &[(&str, &str)])],
 ) -> yarra_localization::Result<Localization> {
     let mut contracts = Vec::new();
     let mut wording = Vec::new();
+
     for (id, locales) in resources {
         let source = contract(*id, locales[0].1)?;
+
         for (locale, text) in *locales {
             wording.push(LanguageResource {
                 id: *id,
@@ -25,16 +31,20 @@ fn localization(
                 contract_hash: contract_hash(&source)?,
             });
         }
+
         contracts.push(source);
     }
+
     Localization::new("en", contracts, wording)
 }
+
 fn args(values: &[(&str, Argument)]) -> Arguments {
     values
         .iter()
         .map(|(name, value)| (name.to_string(), value.clone()))
         .collect()
 }
+
 #[test]
 fn the_contract_is_what_the_source_language_uses() {
     let source = "\
@@ -70,6 +80,7 @@ label = Ship
         arguments("greeting"),
         [("attitude".into(), attitude)].into()
     );
+
     // What a referenced message takes, its caller takes too; a term's `$case` is its own.
     assert_eq!(
         arguments("captain"),
@@ -78,6 +89,7 @@ label = Ship
     assert!(arguments("label").is_empty());
     assert!(!found.messages.contains_key(&key("title")));
 }
+
 #[test]
 fn identical_keys_are_kept_apart_and_locales_fall_back() {
     let service = localization(&[
@@ -96,6 +108,7 @@ fn identical_keys_are_kept_apart_and_locales_fall_back() {
     assert_eq!(say("en", message(B, "greeting")).value, "Second");
     assert_eq!(say("en", TextRef::Literal("My name".into())).locale, None);
 }
+
 #[test]
 fn arguments_are_checked_against_the_contract() {
     let source = "count = { $n ->\n [one] One item\n *[other] { $n } items\n}\nwelcome = Welcome { $name }\ngreeting = { $attitude ->\n [friendly] Hello\n *[hostile] Go away\n}";
@@ -104,6 +117,7 @@ fn arguments_are_checked_against_the_contract() {
     let format = |locale, name, values: &[(&str, Argument)]| {
         service.format(locale, &message(A, name), &args(values))
     };
+
     for (n, word) in [
         (1, "предмет"),
         (2, "предмети"),
@@ -113,6 +127,7 @@ fn arguments_are_checked_against_the_contract() {
         let said = format("uk", "count", &[("n", Argument::Number(n))]).unwrap();
         assert_eq!(said.value, word);
     }
+
     // Text shows numbers as well; a number does not take text.
     let shown = format("en", "welcome", &[("name", Argument::Number(3))]).unwrap();
     assert_eq!(shown.value, "Welcome \u{2068}3\u{2069}");
@@ -121,6 +136,7 @@ fn arguments_are_checked_against_the_contract() {
     let unknown = Argument::Text("unknown".into());
     assert!(format("en", "greeting", &[("attitude", unknown)]).is_err());
 }
+
 #[test]
 fn translations_may_leave_messages_out_but_not_add_or_change_them() {
     let source = "greeting = Hello { -brand }\nfarewell = Bye\n-brand = Yarra";
@@ -132,6 +148,7 @@ fn translations_may_leave_messages_out_but_not_add_or_change_them() {
             .validate_definitions(Some(&english))?;
         Ok::<_, LocalizationError>(service)
     };
+
     // Leaning on a term only the source defines, the message falls back whole.
     let service = check("greeting = Привіт { -brand }").unwrap();
     let said = service
@@ -147,10 +164,12 @@ fn translations_may_leave_messages_out_but_not_add_or_change_them() {
             .unwrap()
             .used_fallback
     );
+
     // A message the source does not have, or an argument it does not take, is an error.
     assert!(check("welcome = Ласкаво просимо").is_err());
     assert!(check("greeting = Привіт { $name }").is_err());
 }
+
 #[test]
 fn invalid_syntax_duplicates_cycles_and_unknown_references_fail() {
     for text in [
@@ -162,6 +181,7 @@ fn invalid_syntax_duplicates_cycles_and_unknown_references_fail() {
     ] {
         assert!(contract(A, text).is_err(), "{text}");
     }
+
     // Wording made for another contract is refused.
     let source = contract(A, "greeting = Hello").unwrap();
     let service = Localization::new(
@@ -177,6 +197,7 @@ fn invalid_syntax_duplicates_cycles_and_unknown_references_fail() {
     .unwrap();
     assert!(service.scope(A, "en").is_err());
 }
+
 #[test]
 fn term_arguments_attributes_and_deep_nesting() {
     let service = localization(&[(

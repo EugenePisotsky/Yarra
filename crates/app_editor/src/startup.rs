@@ -14,6 +14,7 @@ pub(crate) fn validate_databases(project: &Path, runtime: &Path) -> Result<(), S
     })?;
     let source = source.manifest();
     let cooked = cooked.manifest();
+
     if source.default_world_space != cooked.default_world_space
         || source.world_spaces.len() != cooked.world_spaces.len()
         || source.world_spaces.iter().any(|s| {
@@ -28,12 +29,14 @@ pub(crate) fn validate_databases(project: &Path, runtime: &Path) -> Result<(), S
             runtime.display()
         ));
     }
+
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn startup_accepts_the_current_world_and_rejects_missing_or_mismatched_databases() {
         let folder = std::env::temp_dir().join(format!("yarra-startup-{}", uuid::Uuid::new_v4()));
@@ -45,6 +48,7 @@ mod tests {
                 .unwrap_err()
                 .contains("-- init")
         );
+
         // The default island takes minutes to cook; any small world exercises the checks.
         world_cook::create_road_demo_project(&project).unwrap();
         assert!(

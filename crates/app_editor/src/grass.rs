@@ -94,9 +94,11 @@ fn sync_live_preview(
         if let Some(mut render_origin) = render_origin {
             render_origin.world_xz = [0.; 2];
         }
+
         *previous = None;
         return;
     }
+
     let enabled = *workspace.get() == EditorWorkspace::World
         && preview.catalog.is_some()
         && !paint.coverage_visible;
@@ -110,6 +112,7 @@ fn sync_live_preview(
         fields
     });
     let mut page_signature = Vec::new();
+
     if enabled {
         page_signature.extend(fields.iter().map(|(entity, page)| {
             (
@@ -131,6 +134,7 @@ fn sync_live_preview(
         }));
         page_signature.sort();
     }
+
     let signature = PreviewSignature {
         catalog_revision: preview.revision,
         environment_revision: environment.revision,
@@ -139,9 +143,11 @@ fn sync_live_preview(
         origin_cell: origin.cell(),
         pages: page_signature,
     };
+
     if previous.as_ref() == Some(&signature) {
         return;
     }
+
     // The accepted catalog and fields switch together after a definition edit. While a new
     // catalog is compiling, keep rendering the previously accepted ground-and-grass products.
     let Some(catalog) = environment

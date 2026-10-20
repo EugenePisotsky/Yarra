@@ -6,6 +6,7 @@ use bevy::{
     render::render_resource::{Extent3d, TextureFormat},
     window::PrimaryWindow,
 };
+
 use engine::{GameplaySystems, WorldViewCamera};
 
 pub(crate) struct GameRenderPlugin;
@@ -136,6 +137,7 @@ fn setup(
             handle: target.clone(),
             scale_factor: window.scale_factor() * settings.resolution_scale,
         }));
+
     if linear {
         commands
             .entity(camera.0)
@@ -148,6 +150,7 @@ fn setup(
             enabled: true,
         });
     }
+
     commands.spawn((
         Camera2d,
         Msaa::Off,
@@ -207,6 +210,7 @@ fn apply_settings(
     } else {
         window.scale_factor() * s.resolution_scale
     };
+
     // Linear filtering is already performed by the composite's image sampler.
     // Avoid the redundant native-sized intermediate and fullscreen copy pass.
     let upscale_size = if linear {
@@ -214,6 +218,7 @@ fn apply_settings(
     } else {
         window.physical_size().max(UVec2::ONE)
     };
+
     if images.get(&assets.upscaled).expect("upscale target").size() != upscale_size {
         images.get_mut(&assets.upscaled).unwrap().resize(Extent3d {
             width: upscale_size.x,
@@ -221,6 +226,7 @@ fn apply_settings(
             depth_or_array_layers: 1,
         });
     }
+
     let world_target = &assets.target;
     let image_size = if temporal {
         window.physical_size().max(UVec2::ONE)
@@ -232,9 +238,11 @@ fn apply_settings(
     } else {
         &assets.upscaled
     };
+
     if &composite.image != presentation {
         composite.image = presentation.clone();
     }
+
     if temporal {
         let request = upscaling::temporal::TemporalView {
             input_size: size,
@@ -263,8 +271,10 @@ fn apply_settings(
             bevy::core_pipeline::prepass::MotionVectorPrepass,
         )>();
     }
+
     let needs_image_target = !matches!(camera.1, RenderTarget::Image(target)
         if &target.handle == world_target && target.scale_factor == target_scale);
+
     if needs_image_target {
         // Preserve logical viewport dimensions (and tree LOD) while varying physical pixels.
         commands
@@ -274,6 +284,7 @@ fn apply_settings(
                 scale_factor: target_scale,
             }));
     }
+
     if images
         .get(&assets.target)
         .expect("game render target")
@@ -287,18 +298,23 @@ fn apply_settings(
             depth_or_array_layers: 1,
         });
     }
+
     if linear {
         if camera.3.is_some() {
             commands.entity(camera.0).remove::<upscaling::UpscaleView>();
         }
+
         let status = linear_status(size, window.physical_size());
+
         if camera.4 != Some(&status) {
             commands.entity(camera.0).insert(status);
         }
     }
+
     if !s.is_changed() {
         return;
     }
+
     if !linear {
         commands.entity(camera.0).insert(upscaling::UpscaleView {
             input: assets.target.clone(),
@@ -307,9 +323,11 @@ fn apply_settings(
             enabled: true,
         });
     }
+
     commands
         .entity(camera.0)
         .insert(if temporal { Msaa::Off } else { s.msaa });
+
     for (entity, mut visibility, saved) in &mut ui_roots {
         if s.show_ui {
             if let Some(saved) = saved {
@@ -443,6 +461,7 @@ mod tests {
             app.world().get::<Visibility>(label),
             Some(&Visibility::Inherited)
         );
+
         // Resizing must work even when quality settings have not changed.
         app.world_mut()
             .get_mut::<Window>(window)
@@ -513,6 +532,7 @@ mod tests {
                 .get::<bevy::core_pipeline::prepass::MotionVectorPrepass>(main)
                 .is_some()
         );
+
         // A resize updates the scene rectangle even without a settings change.
         app.world_mut()
             .get_mut::<Window>(window)
@@ -539,6 +559,7 @@ mod tests {
             settings.upscaler = upscaling::UpscaleMethod::MetalFxSpatial;
             settings.show_ui = false;
         }
+
         app.update();
         assert!(
             app.world()
@@ -576,6 +597,7 @@ mod tests {
             settings.upscaler = upscaling::UpscaleMethod::Linear;
             settings.show_ui = true;
         }
+
         app.update();
         assert!(app.world().get::<Camera>(ui).unwrap().is_active);
         assert!(app.world().get::<upscaling::UpscaleView>(main).is_none());
@@ -622,6 +644,7 @@ mod tests {
                 .size(),
             UVec2::new(600, 450)
         );
+
         // Resize the fused path without touching settings, then restore a separate backend.
         app.world_mut()
             .get_mut::<Window>(window)

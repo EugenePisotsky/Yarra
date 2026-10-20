@@ -1,13 +1,17 @@
 //! Platform-neutral image upscaling. Backend SDKs are optional implementation details.
 mod backends;
 mod capabilities;
+
 #[cfg(test)]
 mod gpu_tests;
+
 mod output;
 mod render;
 pub mod temporal;
+
 #[cfg(all(test, feature = "metalfx", any(target_os = "macos", target_os = "ios")))]
 mod temporal_motion_tests;
+
 #[cfg(test)]
 mod tests;
 
@@ -15,8 +19,10 @@ use bevy::{
     prelude::*,
     render::extract_component::{ExtractComponent, ExtractComponentPlugin},
 };
+
 pub(crate) use capabilities::*;
 pub use output::DirectTonemapOutput;
+
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
@@ -31,6 +37,7 @@ pub enum UpscaleMethod {
     MetalFxSpatial,
     MetalFxTemporal,
 }
+
 impl UpscaleMethod {
     pub const ALL: &[Self] = &[
         Self::Auto,
@@ -38,6 +45,7 @@ impl UpscaleMethod {
         Self::MetalFxSpatial,
         Self::MetalFxTemporal,
     ];
+
     pub fn label(self) -> &'static str {
         match self {
             Self::Auto => "Auto",
@@ -71,6 +79,7 @@ pub struct UpscaleStatus {
     pub input_size: UVec2,
     pub output_size: UVec2,
 }
+
 impl Default for UpscaleStatus {
     fn default() -> Self {
         Self {
@@ -82,6 +91,7 @@ impl Default for UpscaleStatus {
         }
     }
 }
+
 impl UpscaleStatus {
     pub fn description(&self) -> String {
         format!(
@@ -119,6 +129,7 @@ pub fn output_image(size: UVec2) -> Image {
 struct Messages {
     statuses: HashMap<Entity, UpscaleStatus>,
 }
+
 #[derive(Resource, Clone, Default)]
 struct Bridge(Arc<Mutex<Messages>>);
 
@@ -129,13 +140,16 @@ pub struct UpscalingDiagnostics {
 }
 
 pub struct UpscalingPlugin;
+
 impl Plugin for UpscalingPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<UpscalingDiagnostics>();
         let diagnostics = *app.world().resource::<UpscalingDiagnostics>();
+
         if let Some(render) = app.get_sub_app_mut(bevy::render::RenderApp) {
             render.insert_resource(diagnostics);
         }
+
         let bridge = Bridge::default();
         app.insert_resource(bridge.clone())
             .add_plugins(ExtractComponentPlugin::<UpscaleView>::default())
@@ -144,14 +158,17 @@ impl Plugin for UpscalingPlugin {
         temporal::install(app);
         output::install(app);
     }
+
     fn finish(&self, app: &mut App) {
         output::finish(app);
     }
 }
+
 fn receive(bridge: Res<Bridge>, mut views: Query<(Entity, &UpscaleView, &mut UpscaleStatus)>) {
     let Ok(mut messages) = bridge.0.lock() else {
         return;
     };
+
     for (entity, view, mut status) in &mut views {
         if let Some(value) = messages.statuses.remove(&entity) {
             // A delayed render result must not label a newly requested backend as active.
@@ -160,5 +177,6 @@ fn receive(bridge: Res<Bridge>, mut views: Query<(Entity, &UpscaleView, &mut Ups
             }
         }
     }
+
     messages.statuses.clear();
 }

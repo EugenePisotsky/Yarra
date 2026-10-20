@@ -109,6 +109,7 @@ pub(crate) fn install(app: &mut App) {
         return;
     };
     let route = repro.route;
+
     // 4× MSAA and no prepass unless asked for.
     *app.world_mut().resource_mut::<RuntimeSettings>() = RuntimeSettings {
         scene: Scene::Current,
@@ -123,6 +124,7 @@ pub(crate) fn install(app: &mut App) {
         temporal_debug: repro.temporal_view,
         ..app.world().resource::<RuntimeSettings>().clone()
     };
+
     if route == Route::ActorWalk {
         let view = app
             .world()
@@ -133,6 +135,7 @@ pub(crate) fn install(app: &mut App) {
         app.insert_resource(engine::PlayerRoute::new(view.route).with_speed(repro.walk_speed))
             .add_systems(Update, log_actor_walk);
     }
+
     app.insert_resource(ReproView(route))
         .insert_resource(ReproClock {
             frames: repro.frame_clock,
@@ -150,6 +153,7 @@ pub(crate) fn install(app: &mut App) {
     let frames = repro.frames;
     let screenshot = repro.snapshot;
     let screenshot_frames = repro.snapshot_frames;
+
     if frames.is_some() || screenshot.is_some() {
         assert!(
             frames.is_none_or(|v| v >= 900),
@@ -166,11 +170,13 @@ pub(crate) fn install(app: &mut App) {
 
 #[derive(Resource)]
 struct ReproView(Route);
+
 /// Whether routes advance by frame count (at 60 fps) instead of elapsed time.
 #[derive(Resource)]
 struct ReproClock {
     frames: bool,
 }
+
 #[derive(Resource)]
 struct ReproOutput {
     frames: Option<u32>,
@@ -218,6 +224,7 @@ fn log_actor_walk(
     if !frame.0.is_multiple_of(120) {
         return;
     }
+
     let Some(position) = viewpoint.position() else {
         return;
     };
@@ -274,16 +281,20 @@ fn move_camera(
             position.local[1],
             (at[1] + f64::from(position.local[2]) - offset[1]) as f32,
         );
+
         // Hold the heading while the cover grows to the full patch budget, then look behind
         // to one side and back every 20 s: most of the cover is replaced each time.
         let mut look = bookmark.clone();
         let t = time.elapsed_secs();
+
         if t > 60. && (((t - 60.) / 20.) as u32).is_multiple_of(2) {
             look.yaw_degrees += 180.;
         }
+
         **camera = engine::WorldStartView::camera_at(&look, relative);
         return;
     }
+
     if view.0.landscape() {
         let bookmark = start_view.0.as_ref().unwrap();
         let elapsed = profile.as_ref().map_or_else(
@@ -311,6 +322,7 @@ fn move_camera(
             bookmark,
             position - Vec3::new(offset[0] as f32, 0., offset[1] as f32),
         );
+
         if view.0 == Route::LandscapeTurn {
             // Turn in place, then dwell well beyond source residency's cooling period.
             // At 60 FPS each heading lasts ten seconds; no camera translation/rebase.
@@ -319,11 +331,14 @@ fn move_camera(
                 camera.rotation = Quat::from_rotation_y(135_f32.to_radians()) * camera.rotation;
             }
         }
+
         if let Some(space) = active_space.current() {
             active_space.request(space, position.to_array());
         }
+
         return;
     }
+
     let frame = profile.as_ref().map_or(frame.0, |p| p.reference_frame());
     **camera = match view.0 {
         Route::GrassClose | Route::GrassAway => {
@@ -366,6 +381,7 @@ fn move_camera(
         Route::GrassStream => stream_pose(frame),
         _ => pose(frame),
     };
+
     if view.0.streams()
         && let Some(space) = active_space.current()
     {
@@ -448,6 +464,7 @@ mod tests {
         assert_eq!(pose(0), pose(300));
         assert_eq!(pose(300), pose(900));
         assert!((pose(600).translation - Vec3::new(2.513, 1.730, -5.895)).length() < 0.0001);
+
         for frame in 301..=1500 {
             assert!((pose(frame).translation - pose(frame - 1).translation).length() < 0.034);
             assert_eq!(pose(frame).translation.y, 1.730);
@@ -467,6 +484,7 @@ mod tests {
                 .abs()
                 < 0.0001
         );
+
         for frame in 301..=6600 {
             assert!(
                 stream_pose(frame)
@@ -483,6 +501,7 @@ mod tests {
         assert_eq!(soak_focus(300), soak_focus(2100));
         assert_eq!(soak_focus(2100), soak_focus(3900));
         assert!(soak_focus(1200).z > 23.9);
+
         for frame in 301..=5700 {
             let distance = soak_focus(frame).distance(soak_focus(frame - 1));
             assert!((0.04..0.043).contains(&distance));

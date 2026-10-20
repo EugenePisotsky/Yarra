@@ -8,6 +8,7 @@ use crate::{
     ApplyAtmosphere, AtmospherePresentation, AtmosphereState, WorldEnvironmentView,
     environment::{EnvironmentAssets, EnvironmentParams},
 };
+
 use bevy::{
     core_pipeline::{Core3dSystems, schedule::Core3d},
     pbr::{GpuLights, LightMeta, ShadowSamplers, ViewLightsUniformOffset, ViewShadowBindings},
@@ -24,6 +25,7 @@ use bevy::{
         view::{ViewDepthStencilTexture, ViewTarget, ViewUniform, ViewUniformOffset, ViewUniforms},
     },
 };
+
 use bytemuck::{Pod, Zeroable};
 use world::atmosphere::evaluate;
 
@@ -42,9 +44,11 @@ struct Kind {
     drift: f32,
     rise: f32,
 }
+
 const MOTES: usize = 0;
 const FLUFF: usize = 1;
 const LEAVES: usize = 2;
+
 const KINDS: [Kind; 3] = [
     Kind {
         size: 6.0,
@@ -68,8 +72,10 @@ const KINDS: [Kind; 3] = [
         rise: 0.0,
     },
 ];
+
 /// Horizontal wind drift at unscaled weather wind, as for the rain.
 const DRIFT_SPEED: f32 = 2.5;
+
 /// Every periodic motion completes whole cycles in this many seconds, so wrapping the clock
 /// never makes a particle jump.
 const MOTION_PERIOD: f64 = 3600.0;
@@ -98,12 +104,15 @@ struct AmbientFrame {
 }
 
 pub(crate) struct AmbientParticlesPlugin;
+
 impl Plugin for AmbientParticlesPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<AmbientFrame>();
+
         if app.get_sub_app(RenderApp).is_none() {
             return;
         }
+
         app.add_plugins((
             ExtractResourcePlugin::<AmbientFrame>::default(),
             ExtractComponentPlugin::<AmbientParticlesView>::default(),
@@ -125,11 +134,13 @@ fn amounts(state: &AtmosphereState) -> [f32; 3] {
     if state.isolated() || !state.profile.outdoor {
         return [0.0; 3];
     }
+
     let sun = evaluate(&state.profile, state.phase).direction_to_sun[1];
     let day = smoothstep(-0.02, 0.08, sun);
     let (stir, rain) = state.weather.map_or((1.0, 0.0), |w| {
         (w.wind_strength, w.precipitation.clamp(0.0, 1.0))
     });
+
     // Rain washes the air; wet ground raises less.
     let dry = (1.0 - smoothstep(0.0, 0.3, rain)) * (1.0 - 0.7 * state.wetness.clamp(0.0, 1.0));
     let mut share = [0.0; 3];
@@ -138,6 +149,7 @@ fn amounts(state: &AtmosphereState) -> [f32; 3] {
     share[LEAVES] = (0.2 + 0.3 * stir).clamp(0.1, 1.0);
     share
 }
+
 fn smoothstep(a: f32, b: f32, x: f32) -> f32 {
     let t = ((x - a) / (b - a)).clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
@@ -169,14 +181,17 @@ fn sync(
     let drift = Vec3::new(direction.cos(), 0.0, direction.sin()) * DRIFT_SPEED * wind;
     let step = f64::from(time.delta_secs().min(0.1));
     let velocity = drift * gust(elapsed);
+
     for (offset, kind) in offsets.iter_mut().zip(&KINDS) {
         let v = [velocity.x * kind.drift, kind.rise, velocity.z * kind.drift];
         let size = [kind.size, kind.height, kind.size];
+
         for axis in 0..3 {
             offset[axis] =
                 (offset[axis] + f64::from(v[axis]) * step).rem_euclid(f64::from(size[axis]));
         }
     }
+
     let mut uniform = AmbientUniform {
         time: [
             (elapsed.rem_euclid(MOTION_PERIOD) / MOTION_PERIOD) as f32,
@@ -190,10 +205,12 @@ fn sync(
     };
     let mut first = 0;
     let mut active = [0; 3];
+
     for (i, kind) in KINDS.iter().enumerate() {
         let o = offsets[i];
         uniform.kinds[i] = [kind.size, kind.height, first as f32, kind.count as f32];
         uniform.offsets[i] = [o[0] as f32, o[1] as f32, o[2] as f32, kind.drift];
+
         // The shader fades the last 5% of the present share.
         active[i] = if amounts[i] > 0.0 {
             ((amounts[i] + 0.05).min(1.0) * kind.count as f32).ceil() as u32
@@ -202,8 +219,10 @@ fn sync(
         };
         first += kind.count;
     }
+
     *frame = AmbientFrame { uniform, active };
     let visible = active.iter().any(|&n| n > 0);
+
     for (entity, view) in &views {
         if visible && view.is_none() {
             commands.entity(entity).insert(AmbientParticlesView);
@@ -220,6 +239,7 @@ struct Pipelines {
     repeat: Sampler,
     clamp: Sampler,
 }
+
 fn init(
     mut commands: Commands,
     server: Res<AssetServer>,
@@ -331,9 +351,11 @@ fn draw(
     mut ctx: RenderContext,
 ) {
     let (_, target, depth, offset, light_offset, shadows, msaa) = view.into_inner();
+
     if target.main_texture_format() != TextureFormat::Rgba16Float {
         return;
     }
+
     let index = usize::from(msaa.samples() > 1);
     let (Some(assets), Some(pipeline), Some(view_binding), Some(light_binding)) = (
         assets,
@@ -397,6 +419,7 @@ fn draw(
     pass.set_pipeline(pipeline);
     pass.set_bind_group(0, &group, &[offset.offset, light_offset.offset]);
     let mut first = 0;
+
     for (kind, &active) in KINDS.iter().zip(&frame.active) {
         if active > 0 {
             pass.draw(0..6, first..first + active);
@@ -447,9 +470,11 @@ mod tests {
             .insert_resource(presentation)
             .init_resource::<AmbientFrame>()
             .add_systems(Update, sync);
+
         for _ in 0..frames {
             app.update();
         }
+
         let visible = app.world().get::<AmbientParticlesView>(camera).is_some();
         (*app.world().resource::<AmbientFrame>(), visible)
     }
@@ -458,6 +483,7 @@ mod tests {
     fn drift_stays_within_each_box_and_the_toggle_hides_every_kind() {
         let (frame, visible) = run(AtmospherePresentation::default(), 9);
         assert!(visible);
+
         for (i, kind) in KINDS.iter().enumerate() {
             let offset = frame.uniform.offsets[i];
             assert!((0.0..kind.size).contains(&offset[0]));
@@ -465,6 +491,7 @@ mod tests {
             assert!((0.0..kind.size).contains(&offset[2]));
             assert!(frame.active[i] > 0 && frame.active[i] <= kind.count);
         }
+
         assert_eq!(frame.uniform.kinds[LEAVES][2], (8000 + 800) as f32);
         let (frame, visible) = run(
             AtmospherePresentation {

@@ -7,6 +7,7 @@ pub struct EnvironmentDefinitionWrite {
     pub expected_revision: Option<u64>,
     pub definition: EnvironmentDefinition,
 }
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct EnvironmentSourceCommit {
     pub roads: Option<crate::road_store::RoadSourceCommit>,
@@ -14,6 +15,7 @@ pub struct EnvironmentSourceCommit {
     pub definitions: Vec<EnvironmentDefinition>,
     pub coverage: Vec<SourceEnvironmentCellRecord>,
 }
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum EnvironmentSourceWriteResult {
     RoadConflict {
@@ -64,6 +66,7 @@ impl ProjectWriter {
             }
         }
     }
+
     pub fn apply_environment_cell_transaction(
         &mut self,
         writes: &[EnvironmentCellWrite],
@@ -89,6 +92,7 @@ impl ProjectWriter {
             }
         }
     }
+
     pub fn apply_environment_source_transaction(
         &mut self,
         expected_library_revision: u64,
@@ -105,6 +109,7 @@ impl ProjectWriter {
             &[],
         )
     }
+
     pub fn apply_environment_and_roads_transaction(
         &mut self,
         expected_library_revision: u64,
@@ -135,18 +140,22 @@ impl ProjectWriter {
         {
             return Err(WorldDbError::InvalidEnvironmentCellTransaction);
         }
+
         let mut bytes = 0usize;
+
         for write in writes {
             let EnvironmentCellWrite {
                 expected_source_revision,
                 record,
             } = write;
+
             if expected_source_revision.is_some_and(|r| r < 0)
                 || record.source_revision < 0
                 || record.tiles.len() > 128
             {
                 return Err(WorldDbError::InvalidEnvironmentCellRecord);
             }
+
             for tile in &record.tiles {
                 bytes = bytes
                     .checked_add(tile.samples.len())
@@ -156,16 +165,19 @@ impl ProjectWriter {
                 }
             }
         }
+
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let plants = read_vegetation_catalog(&tx)?.unwrap_or_default();
         let saved_library = read_library(&tx)?;
+
         if saved_library.revision != expected_library_revision {
             return Ok(EnvironmentSourceWriteResult::LibraryConflict {
                 actual: saved_library,
             });
         }
+
         let changed_library = replacement_library
             .map(|next| revisioned_library(&saved_library, next))
             .transpose()?;
@@ -174,37 +186,46 @@ impl ProjectWriter {
         let mut previous = BTreeMap::new();
         let mut next = BTreeMap::new();
         let mut definition_bytes = 0;
+
         for write in definitions {
             let actual = read_definition(&tx, write.definition.space)?;
+
             if actual.as_ref().map(|d| d.revision) != write.expected_revision {
                 return Ok(EnvironmentSourceWriteResult::DefinitionConflict {
                     space: write.definition.space,
                     actual,
                 });
             }
+
             checked_definition(&write.definition, &plants, presets)?;
             validate_definition_references(&tx, &write.definition)?;
             definition_bytes +=
                 bincode::serde::encode_to_vec(&write.definition, bincode::config::standard())?
                     .len();
+
             if definition_bytes > 4 * MAX_DEFINITION_BYTES {
                 return Err(invalid("definition transaction exceeds the byte budget"));
             }
+
             let committed = revisioned_definition(actual.as_ref(), &write.definition)?;
             previous.insert(committed.space, actual);
             next.insert(committed.space, committed);
         }
+
         if read_definitions(&tx)?.len() + previous.values().filter(|d| d.is_none()).count()
             > MAX_ENVIRONMENT_DEFINITIONS
         {
             return Err(invalid("too many environment definitions"));
         }
+
         // A shared edit must leave all worlds valid, including layers outside the current viewport.
         for old in read_definitions(&tx)? {
             checked_definition(next.get(&old.space).unwrap_or(&old), &plants, presets)?;
         }
+
         let mut commits = Vec::new();
         let mut remaining = MAX_ENVIRONMENT_MASK_BYTES;
+
         for write in writes {
             let EnvironmentCellWrite {
                 expected_source_revision,
@@ -220,6 +241,7 @@ impl ProjectWriter {
             } else {
                 None
             };
+
             if actual.as_ref().map(|r| r.source_revision) != *expected_source_revision
                 || actual_definition.as_ref().map_or(0, |d| d.revision)
                     != record.definition_revision
@@ -229,6 +251,7 @@ impl ProjectWriter {
                     actual,
                 });
             }
+
             let mut committed = record.clone();
             committed.definition_revision = definition.revision;
             validate_cell(definition, &committed)?;
@@ -241,18 +264,22 @@ impl ProjectWriter {
             committed.tiles.sort_by_key(|t| t.layer);
             commits.push(committed);
         }
+
         for record in &commits {
             store_cell(&tx, record)?;
         }
+
         if changed_library.is_some() {
             store_library(&tx, presets)?;
         }
+
         for (space, definition) in &next {
             if let Some(old) = previous[space].as_ref() {
                 validate_transition(&tx, old, definition)?;
             }
             store_definition(&tx, definition)?;
         }
+
         for space in commits.iter().map(|r| r.space).collect::<BTreeSet<_>>() {
             let definition =
                 read_definition(&tx, space)?.ok_or_else(|| invalid("definition disappeared"))?;
@@ -265,6 +292,7 @@ impl ProjectWriter {
             CompilePlan::new(&definition, &plants, presets, CompileProfile::default())?
                 .validate_coverage(&cells, &coverage)?;
         }
+
         let roads = if roads.is_empty() {
             None
         } else {
@@ -291,6 +319,7 @@ impl ProjectWriter {
         ))
     }
 }
+
 fn validate_transition(
     tx: &Transaction<'_>,
     old: &EnvironmentDefinition,
@@ -301,10 +330,12 @@ fn validate_transition(
         [next.space.0],
         |row| row.get(0),
     )?;
+
     if has_masks && (old.cell_size != next.cell_size || old.mask_resolution != next.mask_resolution)
     {
         return Err(invalid("clear coverage before changing the source grid"));
     }
+
     for layer in old
         .layers
         .iter()
@@ -317,14 +348,17 @@ fn validate_transition(
             ));
         }
     }
+
     Ok(())
 }
+
 fn revisioned_definition(
     old: Option<&EnvironmentDefinition>,
     replacement: &EnvironmentDefinition,
 ) -> Result<EnvironmentDefinition, WorldDbError> {
     let mut next = replacement.clone();
     next.revision = next_revision(old.map_or(0, |d| d.revision))?;
+
     for layer in &mut next.layers {
         layer.revision =
             if let Some(previous) = old.and_then(|d| d.layers.iter().find(|l| l.id == layer.id)) {

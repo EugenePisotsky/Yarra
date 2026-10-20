@@ -1,5 +1,6 @@
 use super::*;
 use crate::AtmosphereState;
+
 use bevy::{
     asset::AssetEventSystems,
     mesh::MeshVertexBufferLayoutRef,
@@ -7,7 +8,9 @@ use bevy::{
     render::render_resource::{RenderPipelineDescriptor, SpecializedMeshPipelineError},
     shader::ShaderRef,
 };
+
 use std::collections::HashMap;
+
 #[derive(Asset, AsBindGroup, TypePath, Debug, Clone, Default)]
 pub struct EnvironmentExtension {
     #[storage(120, read_only)]
@@ -24,10 +27,12 @@ pub struct EnvironmentExtension {
     #[sampler(127)]
     pub terrain_shadow: Handle<Image>,
 }
+
 impl MaterialExtension for EnvironmentExtension {
     fn fragment_shader() -> ShaderRef {
         "shaders/lighting/material.wesl".into()
     }
+
     /// With 4x MSAA, LOD crossfades cover samples instead of dithering whole pixels
     /// (`shaders/crossfade.wesl`); the main pass resolves them into a smooth blend.
     fn specialize(
@@ -44,17 +49,23 @@ impl MaterialExtension for EnvironmentExtension {
         Ok(())
     }
 }
+
 pub type EnvironmentMaterial = ExtendedMaterial<StandardMaterial, EnvironmentExtension>;
+
 pub(crate) struct EnvironmentMaterialPlugin;
+
 /// Scene-material conversion completes before optional surface effects compose with it.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct EnvironmentMaterialSystems;
+
 /// Request this material pipeline in isolated workspaces for extensions that compose
 /// with it. An isolated atmosphere already disables cloud transmission in the shared data.
 #[derive(Component)]
 pub struct EnvironmentMaterialOptIn;
+
 #[derive(Component)]
 struct OriginalMaterial(Handle<StandardMaterial>);
+
 impl Plugin for EnvironmentMaterialPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(bevy::pbr::MaterialPlugin::<EnvironmentMaterial>::default())
@@ -67,6 +78,7 @@ impl Plugin for EnvironmentMaterialPlugin {
             );
     }
 }
+
 // Keep source handles alive and mirror edits. Unlit/editor overlay materials retain
 // their normal path. Other meshes are never converted while an isolated workspace owns lighting.
 #[allow(clippy::too_many_arguments)] // Independent asset collections and events.
@@ -88,6 +100,7 @@ fn convert(
     let Some(assets) = assets else {
         return;
     };
+
     for event in events.read() {
         if let AssetEvent::Modified { id } = event
             && let (Some(p), Some(handle)) = (source.get(*id), cache.get(id))
@@ -96,18 +109,23 @@ fn convert(
             material.base = p.clone();
         }
     }
+
     let live: std::collections::HashSet<_> = retained.iter().map(|p| p.0.id()).collect();
     cache.retain(|id, _| live.contains(id));
+
     for (e, handle, opt_in) in &meshes {
         if state.isolated() && !opt_in {
             continue;
         }
+
         let Some(base) = source.get(handle) else {
             continue;
         };
+
         if base.unlit {
             continue;
         }
+
         let material = cache
             .entry(handle.id())
             .or_insert_with(|| {
@@ -134,6 +152,7 @@ fn convert(
 mod tests {
     use super::*;
     use crate::AtmosphereOwner;
+
     #[test]
     fn isolated_conversion_requires_explicit_composition_opt_in() {
         let mut app = App::new();

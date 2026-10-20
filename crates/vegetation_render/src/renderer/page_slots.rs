@@ -27,13 +27,16 @@ impl RangeAllocator {
         if length == 0 {
             return Some(0);
         }
+
         let index = self.free.iter().position(|&(_, free)| free >= length)?;
         let (start, free) = self.free[index];
+
         if free == length {
             self.free.remove(index);
         } else {
             self.free[index] = (start + length, free - length);
         }
+
         Some(start)
     }
 
@@ -41,13 +44,16 @@ impl RangeAllocator {
         if length == 0 {
             return;
         }
+
         let index = self.free.partition_point(|&(s, _)| s < start);
         self.free.insert(index, (start, length));
+
         // Merge with the following range, then with the preceding one.
         if index + 1 < self.free.len() && start + length == self.free[index + 1].0 {
             self.free[index].1 += self.free[index + 1].1;
             self.free.remove(index + 1);
         }
+
         if index > 0 && self.free[index - 1].0 + self.free[index - 1].1 == start {
             self.free[index - 1].1 += self.free[index].1;
             self.free.remove(index);
@@ -106,6 +112,7 @@ impl PageSlots {
     ) -> Result<SlotPlan, Regrow> {
         let keyed =
             keys.len() == pages.len() && keys.iter().collect::<HashSet<_>>().len() == keys.len();
+
         if !keyed {
             self.reset(capacity);
         } else {
@@ -116,28 +123,35 @@ impl PageSlots {
                 .filter(|key| !current.contains(key))
                 .copied()
                 .collect();
+
             for key in departed {
                 let resident = self.pages.remove(&key).unwrap();
                 self.release(&resident);
             }
         }
+
         let mut layouts = Vec::with_capacity(pages.len());
         let mut uploads = Vec::new();
+
         for (index, page) in pages.iter().enumerate() {
             let surfaces = surface_samples(page);
             let coverage = coverage_samples(page);
+
             if keyed && let Some(resident) = self.pages.get(&keys[index]) {
                 if resident.surface_samples == surfaces && resident.coverage_samples == coverage {
                     layouts.push(resident.layout.clone());
                     continue;
                 }
+
                 // Same key, different shape: never read another page's samples.
                 let resident = self.pages.remove(&keys[index]).unwrap();
                 self.release(&resident);
             }
+
             let Some(layout) = self.allocate(surfaces, &coverage) else {
                 return Err(self.regrow(pages));
             };
+
             if keyed {
                 self.pages.insert(
                     keys[index],
@@ -148,9 +162,11 @@ impl PageSlots {
                     },
                 );
             }
+
             layouts.push(layout);
             uploads.push(index);
         }
+
         Ok(SlotPlan { layouts, uploads })
     }
 
@@ -166,18 +182,22 @@ impl PageSlots {
     fn allocate(&mut self, surfaces: u32, coverage: &[u32]) -> Option<PageLayout> {
         let surface = self.surfaces.allocate(surfaces)?;
         let mut offsets = Vec::with_capacity(coverage.len());
+
         for &samples in coverage {
             match self.coverage.allocate(samples) {
                 Some(offset) => offsets.push(offset),
                 None => {
                     self.surfaces.release(surface, surfaces);
+
                     for (&offset, &samples) in offsets.iter().zip(coverage) {
                         self.coverage.release(offset, samples);
                     }
+
                     return None;
                 }
             }
         }
+
         Some(PageLayout {
             surface,
             coverage: offsets,
@@ -261,6 +281,7 @@ mod tests {
         slots.reset(capacity);
         let first = slots.place(&pages[..3], &[1, 2, 3], capacity).unwrap();
         assert_eq!(first.uploads, vec![0, 1, 2]);
+
         // Page 1 leaves, page 4 arrives, page 3 moves in the list: only page 4 uploads, into
         // the range page 1 freed, and the others keep their ranges.
         let next = slots
@@ -284,9 +305,11 @@ mod tests {
         let mut slots = PageSlots::default();
         slots.reset(capacity);
         slots.place(&pages, &[7, 8, 9], capacity).unwrap();
+
         for keys in [&[][..], &[5, 5, 6][..]] {
             let plan = slots.place(&pages, keys, capacity).unwrap();
             assert_eq!(plan.uploads, vec![0, 1, 2]);
+
             // The same compact layout as the reference packer.
             assert_eq!(plan.layouts[0].surface, 0);
             assert_eq!(plan.layouts[1].surface, surface);

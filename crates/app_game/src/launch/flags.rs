@@ -99,6 +99,7 @@ const PANEL: Needs = Needs::Diagnostics(DiagnosticsMode::Panel);
 const FULL: Needs = Needs::Diagnostics(DiagnosticsMode::Full);
 const LAB: Needs = Needs::Flag("--lod-lab");
 const LOOK: Needs = Needs::Flag("--look-capture");
+
 use Group::{
     Captures, Diagnostics, GrassReference, Help, Input, LodLab, Look, Profile, Reference, Repro,
     Scene,
@@ -509,6 +510,7 @@ impl Args {
     pub(crate) fn collect(args: impl IntoIterator<Item = OsString>) -> Result<Self, String> {
         let mut values = BTreeMap::new();
         let mut args = args.into_iter();
+
         while let Some(arg) = args.next() {
             let name = arg.to_str().ok_or("Option names must be UTF-8")?;
             let name = if name == "-h" { "--help" } else { name };
@@ -524,10 +526,12 @@ impl Args {
                     .filter(|v| !v.is_empty() && !v.to_string_lossy().starts_with("--"))
                     .ok_or_else(|| format!("{} requires a value", flag.name))?
             };
+
             if values.insert(flag.name, value).is_some() {
                 return Err(format!("Duplicate option {}", flag.name));
             }
         }
+
         Ok(Self(values))
     }
 
@@ -619,12 +623,14 @@ impl Args {
 
 pub(crate) fn help() -> String {
     let mut help = String::from("Yarra game\nUsage: yarra-app-game [OPTIONS]\n");
+
     for group in Group::ALL {
         help.push_str(&format!("\n{}:\n", group.title()));
         for flag in FLAGS.iter().filter(|f| f.group == group) {
             help.push_str(&format!("  {}\n      {}\n", flag.usage(), flag.help));
         }
     }
+
     help.push_str("\nPrecedence: normal defaults, launch options, repro preset, profile presentation.\nProfile FPS owns pacing unless --profile-native-pacing is set.\nF1 Reset restores the effective launch configuration.\n");
     help
 }
@@ -633,6 +639,7 @@ pub(crate) fn help() -> String {
 #[cfg(test)]
 pub(crate) fn markdown_table() -> String {
     let mut table = String::from("| Purpose | Controls |\n| --- | --- |\n");
+
     for group in Group::ALL.into_iter().filter(|g| *g != Help) {
         let controls: Vec<_> = FLAGS
             .iter()
@@ -645,5 +652,6 @@ pub(crate) fn markdown_table() -> String {
             controls.join(", ")
         ));
     }
+
     table
 }

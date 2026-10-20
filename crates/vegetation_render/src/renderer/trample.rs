@@ -4,6 +4,7 @@
 //! camera's movement wraps onto new ground start unpressed.
 use crate::{GrassBenders, MAX_GRASS_BENDERS, VegetationProfileMode, VegetationRenderOrigin};
 use crate::{VegetationSettings, VegetationView};
+
 use bevy::{
     prelude::*,
     render::{
@@ -12,10 +13,12 @@ use bevy::{
         view::ExtractedView,
     },
 };
+
 use bytemuck::{Pod, Zeroable};
 
 /// Texels per side and metres per texel: 64 m of ground at 12.5 cm.
 pub(super) const SIDE: u32 = 512;
+
 pub(super) const TEXEL_METRES: f32 = 0.125;
 const FORMAT: TextureFormat = TextureFormat::Rgba16Float;
 const SHADER_PATH: &str = "shaders/vegetation/trample.wesl";
@@ -151,9 +154,11 @@ pub(super) fn prepare(
     let Some(view) = views.iter().next() else {
         return;
     };
+
     if settings.profile_mode == VegetationProfileMode::Disabled {
         return;
     }
+
     let centre = centre(view, &origin);
     let previous = map.centre.unwrap_or(centre);
     map.centre = Some(centre);
@@ -161,6 +166,7 @@ pub(super) fn prepare(
     gpu.centres = [centre[0], centre[1], previous[0], previous[1]];
     let mut count = 0;
     let mut delta = 0.0;
+
     if let Some(benders) = benders {
         delta = benders.delta_seconds.clamp(0.0, 0.1);
         for bender in benders.benders.iter().take(MAX_GRASS_BENDERS) {
@@ -174,8 +180,10 @@ pub(super) fn prepare(
             count += 1;
         }
     }
+
     gpu.params = [TEXEL_METRES, SIDE as f32, delta, count as f32];
     queue.write_buffer(&map.uniform, 0, bytemuck::bytes_of(&gpu));
+
     if map.bind_group.is_none() {
         let layout = cache.get_bind_group_layout(&map.layout);
         map.bind_group = Some(device.create_bind_group(
@@ -188,6 +196,7 @@ pub(super) fn prepare(
             )),
         ));
     }
+
     map.stamp = true;
 }
 

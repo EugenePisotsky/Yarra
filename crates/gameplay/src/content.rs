@@ -3,9 +3,11 @@ use crate::actors::ActorTemplate;
 use crate::dialogue::Dialogue;
 use crate::inventory::ItemCatalog;
 use crate::rules::Rules;
+
 use crate::{
     InteractionProfile, NamedPredicate, Participant, Result, ScriptModule, ScriptName, Scripts,
 };
+
 use crate::{dialogue, quests};
 use game_types::*;
 use serde::{Deserialize, Serialize};
@@ -19,10 +21,12 @@ pub enum Value {
     Int(i64),
     Text(String),
 }
+
 impl Value {
     pub fn same_type(&self, other: &Value) -> bool {
         std::mem::discriminant(self) == std::mem::discriminant(other)
     }
+
     fn validate(&self) -> game_types::Result<()> {
         match self {
             Self::Text(text) => require(text.len() <= 1024, "variable text exceeds 1024 bytes"),
@@ -30,6 +34,7 @@ impl Value {
         }
     }
 }
+
 /// A named value that content and scripts read and change, kept for the whole playthrough.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -39,6 +44,7 @@ pub struct VariableDefinition {
     #[serde(default)]
     pub scope: VariableScope,
 }
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum VariableScope {
     /// One value for the playthrough.
@@ -47,12 +53,14 @@ pub enum VariableScope {
     /// Every actor has a value of its own, e.g. what one NPC remembers.
     Actor,
 }
+
 /// Which stored value: the variable, and whose it is when the variable is per actor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct VariableKey {
     pub variable: VariableId,
     pub actor: Option<ActorId>,
 }
+
 impl From<VariableId> for VariableKey {
     fn from(variable: VariableId) -> Self {
         Self {
@@ -61,12 +69,14 @@ impl From<VariableId> for VariableKey {
         }
     }
 }
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Test {
     Is(Value),
     AtLeast(i64),
     AtMost(i64),
 }
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Condition {
     /// A script function returning a boolean.
@@ -134,6 +144,7 @@ pub enum Condition {
         minimum: u64,
     },
 }
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Action {
     /// A script function making changes through the script API.
@@ -235,6 +246,7 @@ pub enum Action {
         failure: Vec<Action>,
     },
 }
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ContentManifest {
@@ -243,6 +255,7 @@ pub struct ContentManifest {
     /// Immutable world publication identifier supplied by the composition layer.
     pub world_generation: String,
 }
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GameDefinitions {
@@ -270,6 +283,7 @@ pub struct GameDefinitions {
     #[serde(default, with = "crate::keyed::list")]
     pub loot: BTreeMap<LootId, crate::inventory::LootTable>,
 }
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GameContent {
@@ -285,6 +299,7 @@ pub struct GameContent {
     #[serde(skip)]
     pub graphs: crate::Graphs,
 }
+
 impl Action {
     /// The participants this action names itself, not those of actions inside it.
     pub fn participants(&self) -> Vec<&Participant> {
@@ -300,6 +315,7 @@ impl Action {
         }
     }
 }
+
 /// Names the record a mistake in content was found in.
 pub(crate) fn within(
     record: impl std::fmt::Display,
@@ -312,6 +328,7 @@ pub(crate) fn within(
         other => other,
     })
 }
+
 /// Each record is filed under its own identity.
 pub(crate) fn filed<V: Keyed>(map: &BTreeMap<V::Key, V>, what: &str) -> Result<()> {
     require(
@@ -320,6 +337,7 @@ pub(crate) fn filed<V: Keyed>(map: &BTreeMap<V::Key, V>, what: &str) -> Result<(
     )
     .map_err(Into::into)
 }
+
 impl GameContent {
     pub fn validate(&self) -> Result<()> {
         require(
@@ -329,31 +347,42 @@ impl GameContent {
             "invalid content manifest",
         )?;
         filed(&self.text, "text resources")?;
+
         for contract in self.text.values() {
             contract.validate()?;
         }
+
         filed(&self.game.variables, "variables")?;
+
         for variable in self.game.variables.values() {
             variable.initial.validate()?;
         }
+
         filed(&self.game.scripts, "script modules")?;
         self.validate_world()?;
         self.items.validate()?;
         self.game.rules.validate()?;
+
         for name in [&self.game.rules.derive, &self.game.rules.check] {
             self.scripts.engine(name)?;
         }
+
         for ability in &self.game.rules.abilities {
             self.scripts.engine(&ability.resolve)?;
         }
+
         for item in self.items.items.values() {
             self.game.rules.validate_mechanics(&item.mechanics)?;
         }
+
         filed(&self.game.loot, "loot tables")?;
+
         for table in self.game.loot.values() {
             table.validate(&self.items)?;
         }
+
         filed(&self.game.characters, "characters")?;
+
         for character in self.game.characters.values() {
             within(format!("character {}", character.id), || {
                 self.template(character.template)?;
@@ -363,13 +392,18 @@ impl GameContent {
                 }
             })?;
         }
+
         filed(&self.game.actors, "actor templates")?;
+
         for actor in self.game.actors.values() {
             actor.validate(&self.game.rules)?;
+
             if let Some(loot) = actor.loot {
                 self.loot(loot)?;
             }
+
             let mut slots = BTreeSet::new();
+
             for item in &actor.equipment {
                 let slot = self.items.item(*item)?.mechanics.slot.as_ref();
                 require(
@@ -381,6 +415,7 @@ impl GameContent {
                 )?;
             }
         }
+
         for object in self.game.world.objects.values() {
             if let crate::ObjectKind::Container {
                 loot: Some(loot), ..
@@ -389,19 +424,25 @@ impl GameContent {
                 self.loot(loot)?;
             }
         }
+
         filed(&self.game.dialogue_contracts, "dialogue contracts")?;
+
         for contract in self.game.dialogue_contracts.values() {
             within(format!("dialogue {}", contract.id), || {
                 contract.validate()?;
+
                 for role in contract.roles.values() {
                     if let crate::dialogue::Role::Actor(actor) = role {
                         self.character(*actor)?;
                     }
                 }
+
                 Ok(())
             })?;
         }
+
         filed(&self.game.dialogues, "dialogues")?;
+
         for graph in self.game.dialogues.values() {
             within(format!("dialogue {}", graph.id), || {
                 graph.validate()?;
@@ -410,46 +451,59 @@ impl GameContent {
                     "dialogue contract mismatch",
                 )?;
                 self.validate_dialogue_text(graph)?;
+
                 for node in &graph.nodes {
                     within(format!("node {}", node.id), || {
                         if let Some(condition) = &node.condition {
                             self.validate_condition(condition)?;
                         }
+
                         for action in &node.actions {
                             self.validate_action(action, 0)?;
                         }
+
                         Ok(())
                     })?;
                 }
+
                 Ok(())
             })?;
         }
+
         filed(&self.game.quests, "quests")?;
         filed(&self.game.predicates, "named predicates")?;
         filed(&self.game.profiles, "interaction profiles")?;
+
         for quest in self.game.quests.values() {
             within(format!("quest {}", quest.id), || Ok(quest.validate()?))?;
         }
+
         for rule in self.game.predicates.values() {
             within(format!("predicate {}", rule.id), || {
                 self.validate_condition(&rule.condition)
             })?;
         }
+
         for profile in self.game.profiles.values() {
             within(format!("interaction profile {}", profile.id), || {
                 profile.validate()?;
+
                 for rule in &profile.rules {
                     self.validate_condition(&rule.condition)?;
                 }
+
                 Ok(())
             })?;
         }
+
         Ok(())
     }
+
     /// Actions nest only so deep, so running them cannot exhaust the stack.
     pub(crate) fn validate_action(&self, action: &Action, depth: usize) -> Result<()> {
         self.validate_action_naming(action, depth, &|p| self.validate_participant(p))
     }
+
     /// As `validate_action`, with `participant` judging whom the action names: authored
     /// content names declared characters, a running script anyone in the playthrough.
     pub(crate) fn validate_action_naming(
@@ -459,9 +513,11 @@ impl GameContent {
         participant: &dyn Fn(&Participant) -> Result<()>,
     ) -> Result<()> {
         require(depth <= 8, "actions nested too deeply")?;
+
         for named in action.participants() {
             participant(named)?;
         }
+
         match action {
             Action::Script(name) => {
                 self.scripts.engine(name)?;
@@ -479,6 +535,7 @@ impl GameContent {
                     !then.is_empty() || !otherwise.is_empty(),
                     "a conditional action does nothing either way",
                 )?;
+
                 for action in then.iter().chain(otherwise) {
                     self.validate_action_naming(action, depth + 1, participant)?;
                 }
@@ -563,13 +620,16 @@ impl GameContent {
             } => {
                 self.game.rules.skill(skill)?;
                 require(*difficulty > 0, "zero check difficulty")?;
+
                 for action in success.iter().chain(failure) {
                     self.validate_action_naming(action, depth + 1, participant)?;
                 }
             }
         }
+
         Ok(())
     }
+
     /// A dialogue graph. Content assembled by a tool holds them all; a session's content
     /// reads one from its source the first time it is needed and keeps the most recently
     /// used. A graph that cannot be read, or that does not match its contract, is an error
@@ -578,6 +638,7 @@ impl GameContent {
         if let Some(graph) = self.graphs.cached(id) {
             return Ok(graph);
         }
+
         let graph = match self.authored(id) {
             Some(graph) => graph.clone(),
             None => {
@@ -596,20 +657,24 @@ impl GameContent {
         };
         Ok(self.graphs.keep(graph))
     }
+
     /// The graph if it is in memory already; nothing is read.
     pub fn loaded_dialogue(&self, id: DialogueId) -> Option<Rc<Dialogue>> {
         self.graphs
             .cached(id)
             .or_else(|| Some(self.graphs.keep(self.authored(id)?.clone())))
     }
+
     /// A graph the content was assembled with.
     pub(crate) fn authored(&self, id: DialogueId) -> Option<&Dialogue> {
         self.game.dialogues.get(&id)
     }
+
     pub fn variable(&self, id: VariableId) -> Result<&VariableDefinition> {
         let variable = self.game.variables.get(&id);
         variable.ok_or_else(|| Invalid(format!("unknown variable {id}")).into())
     }
+
     /// The definition, after checking that an actor is named exactly when the variable is
     /// per actor.
     pub fn variable_use(
@@ -624,27 +689,33 @@ impl GameContent {
         )?;
         Ok(definition)
     }
+
     pub fn loot(&self, id: LootId) -> Result<&crate::inventory::LootTable> {
         let table = self.game.loot.get(&id);
         table.ok_or_else(|| Invalid(format!("unknown loot table {id}")).into())
     }
+
     /// A declared character.
     pub fn character(&self, id: ActorId) -> Result<&crate::actors::CharacterDefinition> {
         let character = self.game.characters.get(&id);
         character.ok_or_else(|| Invalid(format!("unknown character {id}")).into())
     }
+
     /// What an actor is called: its own name in this playthrough, else its character's,
     /// else its template's.
     pub fn actor_name<'a>(&'a self, actor: &'a crate::actors::Actor) -> Result<&'a TextRef> {
         if let Some(name) = &actor.name_override {
             return Ok(name);
         }
+
         let character = self.game.characters.get(&actor.id);
+
         match character.and_then(|c| c.name.as_ref()) {
             Some(name) => Ok(name),
             None => Ok(&self.template(actor.template)?.name),
         }
     }
+
     /// A participant naming a character names a declared one.
     pub(crate) fn validate_participant(&self, participant: &Participant) -> Result<()> {
         if let Participant::Actor(id) = participant {
@@ -652,26 +723,32 @@ impl GameContent {
         }
         Ok(())
     }
+
     pub fn template(&self, id: ActorTemplateId) -> Result<&ActorTemplate> {
         let template = self.game.actors.get(&id);
         template.ok_or_else(|| Invalid(format!("unknown actor template {id}")).into())
     }
+
     /// Stable fingerprint of definitions, rules and world binding; excludes .ftl resources.
     pub fn fingerprint(&self) -> Result<[u8; 32]> {
         self.validate()?;
         self.validate_selection_links()?;
+
         // Every definition is in a map, so it serializes in order of identity whatever order
         // it was added in. Identities as bytes: a name shows only once something has parsed
         // it, and the fingerprint must not depend on that.
         let bytes = names::raw(|| serde_json::to_vec(self)).map_err(|e| Invalid(e.to_string()))?;
         Ok(*blake3::hash(&bytes).as_bytes())
     }
+
     pub fn text_keys(&self) -> Vec<&MessageRef> {
         let categories = self.items.categories.values();
         let mut refs: Vec<&TextRef> = categories.map(|c| &c.name).collect();
+
         for item in self.items.items.values() {
             refs.extend([&item.name, &item.description]);
         }
+
         refs.extend(self.game.world.objects.values().map(|o| &o.name));
         refs.extend(self.game.actors.values().map(|a| &a.name));
         refs.extend(
@@ -681,13 +758,16 @@ impl GameContent {
                 .filter_map(|c| c.name.as_ref()),
         );
         refs.extend(self.game.rules.names());
+
         for quest in self.game.quests.values() {
             refs.push(&quest.title);
             refs.extend(quest.objectives.iter().map(|o| &o.title));
         }
+
         for profile in self.game.profiles.values() {
             refs.extend(profile.rules.iter().filter_map(|r| r.topic.as_ref()));
         }
+
         for graph in self.game.dialogues.values() {
             for (text, arguments) in graph.messages() {
                 refs.push(text);
@@ -697,6 +777,7 @@ impl GameContent {
                 }));
             }
         }
+
         refs.into_iter()
             .filter_map(|r| {
                 if let TextRef::Message(k) = r {

@@ -3,10 +3,12 @@
 //! their ground changes), which terrain v2 draws in place of the published ones. Never modifies
 //! the source or runtime DB.
 use anyhow::{Context, Result, bail};
+
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     sync::Arc,
 };
+
 use world::*;
 use world_db::RuntimeReader;
 
@@ -26,6 +28,7 @@ pub fn published_terrain_leaf(
     let Some(page) = reader.read_page(key)? else {
         return Ok(None);
     };
+
     match page.decode()?.payload {
         PagePayload::TerrainHeightfield(page) => Ok(Some(page)),
         _ => bail!("unexpected terrain leaf payload"),
@@ -44,6 +47,7 @@ pub fn preview_terrain(
     if leaves.len() > MAX_PREVIEW_LEAVES {
         bail!("Live terrain exceeds 256 changed cells; Save & Publish to continue.")
     }
+
     let nodes = preview_nodes(reader, space, &leaves, &cancelled)?;
     let controls = preview_controls(reader, space, &leaves, &cancelled)?;
     Ok(TerrainPreviewProducts {
@@ -69,10 +73,12 @@ fn preview_nodes(
         .collect();
     let mut nodes = BTreeMap::new();
     let mut changed = BTreeSet::new();
+
     for (&cell, page) in leaves {
         if cancelled() {
             bail!("superseded terrain preview")
         }
+
         let key = TerrainNodeKey::leaf(space, cell);
         let old = reader
             .read_terrain_node(key)?
@@ -86,11 +92,13 @@ fn preview_nodes(
                 .context("missing leaf samples")?
                 .resolution,
         )?;
+
         if node != old {
             changed.insert(key);
             nodes.insert(key, Arc::new(node));
         }
     }
+
     for &key in &changed {
         let h = nodes[&key].heightfield.as_ref().unwrap();
         for (dx, dz) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
@@ -106,12 +114,14 @@ fn preview_nodes(
                     .map(|e| e.decode().map(Arc::new))
                     .transpose()?,
             };
+
             if let Some(other) = node {
                 let b = other
                     .heightfield
                     .as_ref()
                     .context("missing neighbor samples")?;
                 let n = usize::from(h.resolution);
+
                 for i in 0..n {
                     let (a_i, b_i) = match (dx, dz) {
                         (-1, 0) => (i * n, i * n + n - 1),
@@ -131,17 +141,21 @@ fn preview_nodes(
             }
         }
     }
+
     while !changed.is_empty() {
         let parents: BTreeSet<_> = changed
             .iter()
             .filter(|k| !roots.contains(k))
             .filter_map(|k| k.parent().ok().flatten())
             .collect();
+
         for &key in &parents {
             if cancelled() {
                 bail!("superseded terrain preview")
             }
+
             let mut children: [Option<Arc<TerrainNode>>; 4] = Default::default();
+
             for (i, child) in key
                 .children()?
                 .context("missing children")?
@@ -156,11 +170,14 @@ fn preview_nodes(
                         .transpose()?,
                 };
             }
+
             let node = TerrainNode::parent(key, std::array::from_fn(|i| children[i].as_deref()))?;
             nodes.insert(key, Arc::new(node));
         }
+
         changed = parents;
     }
+
     Ok(nodes)
 }
 
@@ -187,10 +204,12 @@ fn preview_controls(
         .cell_size;
     let mut controls = BTreeMap::new();
     let mut changed = BTreeSet::new();
+
     for (&cell, page) in leaves {
         if cancelled() {
             bail!("superseded terrain preview")
         }
+
         let slots: Vec<u16> = page
             .surfaces
             .iter()
@@ -201,15 +220,18 @@ fn preview_controls(
         controls.insert(key, Arc::new(samples));
         changed.insert(key);
     }
+
     for _ in 0..CONTROL_TOP_LEVEL {
         let parents: BTreeSet<_> = changed
             .iter()
             .filter_map(|k| k.parent().ok().flatten())
             .collect();
+
         for &key in &parents {
             if cancelled() {
                 bail!("superseded terrain preview")
             }
+
             let children = key.children()?.context("missing children")?;
             let published = reader.read_terrain_controls(&children)?;
             let tiles: Vec<Option<Arc<Vec<u32>>>> = children
@@ -228,8 +250,10 @@ fn preview_controls(
             }));
             controls.insert(key, Arc::new(tile));
         }
+
         changed = parents;
     }
+
     Ok(controls)
 }
 

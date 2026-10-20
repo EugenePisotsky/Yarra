@@ -4,12 +4,14 @@
 use super::layout::TreeDrawLayout;
 use super::pool::TreePool;
 use super::{FORCED_MASK, FORCED_NOTHING, MAX_SHADOW_VIEWS, TreeInstancing};
+
 use bevy::{
     camera::primitives::{CascadesFrusta, Frustum},
     light::CascadeShadowConfig,
     prelude::*,
     render::{extract_resource::ExtractResource, sync_world::MainEntity, view::RetainedViewEntity},
 };
+
 use std::sync::Arc;
 
 #[derive(Resource, Clone, Default, ExtractResource)]
@@ -25,6 +27,7 @@ pub(super) struct TreeGpuFrame {
 /// Bands are widened by this share and these metres before a representation is ruled out:
 /// beyond the 4% hysteresis, an instance keeps dissolving out of its band for 0.6 s.
 const BAND_SHARE: f32 = 0.1;
+
 const BAND_METRES: f32 = 20.0;
 
 #[derive(Clone)]
@@ -93,16 +96,20 @@ fn representations(
     let forms = &layout.forms;
     let mut drawn = vec![0u8; forms.len()];
     let mut cast = vec![vec![0u8; forms.len()]; cascades.len()];
+
     for batch in pool.batches() {
         let Some(form) = forms.get(batch.form as usize) else {
             continue;
         };
+
         if form.ready == 0 || batch.position[3] == 0.0 {
             continue;
         }
+
         let origin = Vec3::from_slice(&batch.position);
         let (lo, hi) = (origin + batch.roots.0, origin + batch.roots.1);
         let (smin, smax) = batch.scales;
+
         // Every representation's bounds round the root, at the largest scale.
         let reach = (0..form.representations as usize)
             .flat_map(|r| {
@@ -117,15 +124,19 @@ fn representations(
         let nearest = eye.distance(eye.clamp(lo, hi));
         let farthest = eye.distance(Vec3::select((eye - lo).cmpgt(hi - eye), lo, hi));
         let mut representations = 0u8;
+
         match batch.flags & FORCED_MASK {
             0 => {
                 for r in 0..form.representations as usize {
                     let (start, end) = (form.band_start[r / 4][r % 4], form.band_end[r / 4][r % 4]);
+
                     if start < 0.0 {
                         continue;
                     }
+
                     let near = start * smin * (1.0 - BAND_SHARE) - BAND_METRES;
                     let far = end * smax * (1.0 + BAND_SHARE) + BAND_METRES;
+
                     if near <= farthest && far >= nearest {
                         representations |= 1 << r;
                     }
@@ -134,9 +145,11 @@ fn representations(
             FORCED_NOTHING => {}
             forced => representations = 1 << (forced - 1),
         }
+
         if representations == 0 {
             continue;
         }
+
         if box_in(
             planes,
             outer_lo,
@@ -145,14 +158,18 @@ fn representations(
         ) {
             drawn[batch.form as usize] |= representations;
         }
+
         let meshes = form.meshes as usize;
         let mut casters = 0u8;
+
         for r in (0..meshes).filter(|r| representations & (1 << r) != 0) {
             casters |= 1 << (r + shadow_lod as usize).min(meshes - 1);
         }
+
         if casters == 0 {
             continue;
         }
+
         for (view, cascade) in cascades.iter().enumerate() {
             if box_in(
                 &cascade.planes,
@@ -164,6 +181,7 @@ fn representations(
             }
         }
     }
+
     (drawn, cast)
 }
 
@@ -193,6 +211,7 @@ pub(super) fn collect(
         let eye = view.transform.translation();
         let forward = view.transform.forward().as_vec3();
         let mut cascades = Vec::new();
+
         for (light, directional, frusta, config, transform, visible) in &lights {
             if !directional.shadow_maps_enabled || !visible.get() {
                 continue;
@@ -202,6 +221,7 @@ pub(super) fn collect(
                     warn_once!("GPU trees: more than {MAX_SHADOW_VIEWS} shadow views; the rest get no tree shadows");
                     break;
                 }
+
                 let [near, far] = receiver_depths(config, index, eye, forward);
                 cascades.push(ShadowView {
                     retained: RetainedViewEntity::new(
@@ -214,6 +234,7 @@ pub(super) fn collect(
                 });
             }
         }
+
         let planes = planes(view.frustum);
         let (drawn, cast) = representations(
             &pool,

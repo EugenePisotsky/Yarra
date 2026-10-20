@@ -10,6 +10,7 @@ pub struct Objective {
     pub title: TextRef,
     pub required: bool,
 }
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Quest {
@@ -17,6 +18,7 @@ pub struct Quest {
     pub title: TextRef,
     pub objectives: Vec<Objective>,
 }
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Status {
     NotStarted,
@@ -24,6 +26,7 @@ pub enum Status {
     Completed,
     Failed,
 }
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Progress {
@@ -31,6 +34,7 @@ pub struct Progress {
     pub status: Status,
     pub completed: BTreeSet<Key>,
 }
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Transition {
     Start,
@@ -38,17 +42,21 @@ pub enum Transition {
     Complete,
     Fail,
 }
+
 impl Quest {
     pub fn validate(&self) -> Result<()> {
         self.title.validate()?;
         require(!self.objectives.is_empty(), "a quest has objectives")?;
         let mut ids = BTreeSet::new();
+
         for objective in &self.objectives {
             require(ids.insert(&objective.id), "duplicate quest objective")?;
             objective.title.validate()?;
         }
+
         Ok(())
     }
+
     pub fn objective(&self, id: &Key) -> Result<&Objective> {
         self.objectives
             .iter()
@@ -56,6 +64,7 @@ impl Quest {
             .ok_or_else(|| Invalid("unknown quest objective".into()))
     }
 }
+
 impl Progress {
     pub fn new(quest: QuestId) -> Self {
         Self {
@@ -64,14 +73,17 @@ impl Progress {
             completed: BTreeSet::new(),
         }
     }
+
     pub fn validate(&self, definition: &Quest) -> Result<()> {
         require(
             self.quest == definition.id,
             "quest progress identity mismatch",
         )?;
+
         for id in &self.completed {
             definition.objective(id)?;
         }
+
         require(
             self.status != Status::NotStarted || self.completed.is_empty(),
             "unstarted quest has completed objectives",
@@ -86,9 +98,11 @@ impl Progress {
             "quest has incomplete required objectives",
         )
     }
+
     /// Terminal progress cannot restart. Duplicate objective completion is rejected explicitly.
     pub fn apply(&mut self, definition: &Quest, transition: &Transition) -> Result<()> {
         self.validate(definition)?;
+
         match transition {
             Transition::Start => {
                 require(
@@ -120,6 +134,7 @@ impl Progress {
                 self.status = Status::Failed;
             }
         }
+
         Ok(())
     }
 }
@@ -127,9 +142,11 @@ impl Progress {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     fn key(s: &str) -> Key {
         Key::new(s).unwrap()
     }
+
     fn quest() -> Quest {
         Quest {
             id: QuestId([1; 16]),
@@ -148,6 +165,7 @@ mod tests {
             ],
         }
     }
+
     #[test]
     fn required_objectives_gate_completion_and_optional_objectives_do_not() {
         let q = quest();
@@ -163,10 +181,12 @@ mod tests {
         assert!(!p.completed.contains(&key("secret")));
         p.validate(&q).unwrap();
     }
+
     #[test]
     fn invalid_and_terminal_transitions_never_mutate_progress() {
         let q = quest();
         let mut p = Progress::new(q.id);
+
         for action in [
             Transition::Complete,
             Transition::Fail,
@@ -176,9 +196,11 @@ mod tests {
             assert!(p.apply(&q, &action).is_err());
             assert_eq!(p, before);
         }
+
         p.apply(&q, &Transition::Start).unwrap();
         p.apply(&q, &Transition::CompleteObjective(key("key")))
             .unwrap();
+
         for action in [
             Transition::Start,
             Transition::CompleteObjective(key("missing")),
@@ -188,6 +210,7 @@ mod tests {
             assert!(p.apply(&q, &action).is_err());
             assert_eq!(p, before);
         }
+
         p.apply(&q, &Transition::Fail).unwrap();
         let before = p.clone();
         assert!(p.apply(&q, &Transition::Start).is_err());
@@ -197,6 +220,7 @@ mod tests {
         );
         assert_eq!(p, before);
     }
+
     #[test]
     fn invalid_definitions_and_saved_progress_are_rejected() {
         let mut q = quest();

@@ -3,15 +3,20 @@ pub(crate) mod collection;
 mod editor;
 mod fixture;
 mod road_styles;
+
 #[cfg(test)]
 mod tests;
+
 mod ui;
 mod viewport;
 mod visual_changes;
+
 use super::EditorWorkspace;
+
 use crate::{
     domain_editing::SourceWorkingSets, project_store::ProjectEditorStore, shell::EditorUiSet,
 };
+
 use bevy::prelude::*;
 use bevy_egui::{EguiPrimaryContextPass, egui};
 use environment::{PresetId, PresetLibrary};
@@ -19,7 +24,9 @@ use fixture::Footprint;
 use world::{TerrainSurfaceId, WorldSpaceId};
 
 pub(crate) use viewport::PresetWorkspaceCamera;
+
 pub(crate) struct PresetWorkspacePlugin;
+
 impl Plugin for PresetWorkspacePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PresetAuthoringState>()
@@ -39,22 +46,26 @@ impl Plugin for PresetWorkspacePlugin {
             );
     }
 }
+
 #[derive(Clone)]
 struct Draft {
     base: PresetLibrary,
     library: PresetLibrary,
 }
+
 impl Draft {
     fn dirty(&self) -> bool {
         self.base != self.library
     }
 }
+
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 enum Mode {
     #[default]
     Environment,
     Roads,
 }
+
 #[derive(Resource)]
 pub(crate) struct PresetAuthoringState {
     mode: Mode,
@@ -81,6 +92,7 @@ pub(crate) struct PresetAuthoringState {
     texture: egui::TextureId,
     image: Handle<Image>,
 }
+
 impl Default for PresetAuthoringState {
     fn default() -> Self {
         Self {
@@ -110,11 +122,13 @@ impl Default for PresetAuthoringState {
         }
     }
 }
+
 impl PresetAuthoringState {
     pub(crate) fn open(&mut self, space: WorldSpaceId, preset: Option<PresetId>) {
         self.mode = Mode::Environment;
         self.requested = Some((space, preset));
     }
+
     pub(crate) fn open_road(
         &mut self,
         space: WorldSpaceId,
@@ -125,19 +139,24 @@ impl PresetAuthoringState {
         self.styles.request(style);
         self.bump();
     }
+
     pub(crate) fn dirty(&self) -> bool {
         self.draft.as_ref().is_some_and(Draft::dirty) || self.styles.dirty()
     }
+
     fn bump(&mut self) {
         self.revision = self.revision.wrapping_add(1).max(1);
     }
+
     fn refresh(&mut self, dense: &SourceWorkingSets, project: &ProjectEditorStore) {
         if self.styles.refresh(&dense.roads) {
             self.bump();
         }
+
         let Some(library) = dense.presets() else {
             return;
         };
+
         if !self.styles.reference_initialized
             && let Some(d) = &self.styles.draft
         {
@@ -156,6 +175,7 @@ impl PresetAuthoringState {
             self.styles.reference_initialized = true;
             self.bump();
         }
+
         if self
             .draft
             .as_ref()
@@ -169,29 +189,37 @@ impl PresetAuthoringState {
                 base: library.clone(),
                 library: library.clone(),
             });
+
             if visual_changed {
                 self.bump();
             }
         }
+
         if let Some((space, preset)) = self.requested.take() {
             if self.space != Some(space) {
                 self.base = dense.definition(space).map(|d| d.base_surface);
             }
+
             self.space = Some(space);
+
             if let Some(preset) = preset {
                 self.select(preset);
             }
+
             self.navigation.clear();
         }
+
         if self.space.is_none() {
             self.space = project.manifest().map(|m| m.default_world_space);
         }
+
         if self.base.is_none() {
             self.base = self
                 .space
                 .and_then(|s| dense.definition(s))
                 .map(|d| d.base_surface);
         }
+
         if self.selected.is_some_and(|id| {
             self.draft
                 .as_ref()
@@ -200,12 +228,14 @@ impl PresetAuthoringState {
             self.selected = None;
             self.navigation.clear();
         }
+
         if self.selected.is_none()
             && let Some(p) = library.presets.first()
         {
             self.select(p.id);
         }
     }
+
     fn select(&mut self, id: PresetId) {
         if self.selected != Some(id) {
             if let Some(old) = self.selected {
@@ -214,11 +244,13 @@ impl PresetAuthoringState {
                     self.navigation.remove(0);
                 }
             }
+
             self.selected = Some(id);
             self.underlay = None;
             self.bump();
         }
     }
+
     fn preview_underlay(&self) -> Option<PresetId> {
         if self.mode == Mode::Roads {
             self.styles.underlay
@@ -226,6 +258,7 @@ impl PresetAuthoringState {
             self.underlay
         }
     }
+
     fn camera(&self) -> Transform {
         let target = Vec3::new(
             f32::from(self.size) / 2.0,

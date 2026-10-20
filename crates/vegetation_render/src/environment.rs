@@ -88,6 +88,7 @@ impl VegetationWind {
         if !self.enabled {
             return 0.0;
         }
+
         let direction = self.direction.try_normalize().unwrap_or(Vec2::X);
         let cross_direction = Vec2::new(-direction.y, direction.x);
         let frequency = self.spatial_frequency.max(0.001);
@@ -116,6 +117,7 @@ pub(crate) fn advance_vegetation_wind(time: Res<Time>, mut wind: ResMut<Vegetati
     if wind.externally_driven {
         return;
     }
+
     // Bound hitch recovery so a paused debugger does not produce a single violent deformation.
     // The rate bound keeps one frame's advance below the grass history-reset threshold.
     let rate = if wind.rate.is_finite() {
@@ -133,6 +135,7 @@ pub(crate) fn advance_vegetation_wind(time: Res<Time>, mut wind: ResMut<Vegetati
 #[derive(Resource, ExtractResource, Debug, Clone, Copy, PartialEq)]
 #[extract_app(bevy::render::RenderApp)]
 pub struct VegetationAmbientGain(pub f32);
+
 impl Default for VegetationAmbientGain {
     fn default() -> Self {
         Self(1.0)
@@ -248,6 +251,7 @@ mod tests {
         assert!((advance(1.0, 0.05) - 0.05).abs() < 1e-5);
         assert!((advance(1.5, 0.05) - 0.075).abs() < 1e-5);
         assert_eq!(advance(0.0, 0.05), 0.0);
+
         // Hitches and invalid rates stay below the 0.25 s grass history-reset threshold.
         assert!((advance(5.0, 1.0) - 0.2).abs() < 1e-5);
         assert!((advance(f32::NAN, 0.05) - 0.05).abs() < 1e-5);

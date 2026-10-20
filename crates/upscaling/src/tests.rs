@@ -9,6 +9,7 @@ fn selection_distinguishes_requested_backend_from_fallback() {
             reason: Some("Unavailable on this device".into()),
         }],
     };
+
     for request in [UpscaleMethod::Auto, UpscaleMethod::MetalFxSpatial] {
         assert_eq!(
             caps.select(request),
@@ -18,6 +19,7 @@ fn selection_distinguishes_requested_backend_from_fallback() {
             )
         );
     }
+
     caps.backends[0].supported = true;
     caps.backends[0].reason = None;
     assert_eq!(

@@ -1,11 +1,13 @@
 //! MetalFX owns history; Bevy/wgpu owns all resources and submission.
 use crate::temporal::Inputs;
 use bevy::{prelude::*, render::renderer::RenderDevice};
+
 use objc2::{
     Message,
     rc::{Retained, autoreleasepool},
     runtime::{AnyClass, ProtocolObject},
 };
+
 use objc2_metal::{MTLCommandBuffer, MTLCommandBufferStatus, MTLPixelFormat, MTLTexture};
 use objc2_metal_fx::{MTLFXTemporalScaler, MTLFXTemporalScalerBase, MTLFXTemporalScalerDescriptor};
 
@@ -24,6 +26,7 @@ pub(crate) fn support(device: &RenderDevice) -> Result<(), String> {
             .ok_or("Device does not support MetalFX Temporal".into())
     }
 }
+
 pub(crate) struct Temporal {
     scaler: Retained<ProtocolObject<dyn MTLFXTemporalScaler>>,
     initialized: Vec<bevy::render::render_resource::TextureId>,
@@ -32,11 +35,15 @@ pub(crate) struct Temporal {
     frame: u64,
     pending_timing: std::collections::VecDeque<PendingTiming>,
 }
+
 /// A frame number, whether MetalFX ran, and the command buffer to read its timing from.
 type PendingTiming = (u64, bool, Retained<ProtocolObject<dyn MTLCommandBuffer>>);
+
 // SAFETY: private native mutation requires &mut self and is serialized in RenderWorld.
 unsafe impl Send for Temporal {}
+
 unsafe impl Sync for Temporal {}
+
 impl Temporal {
     pub fn new(device: &RenderDevice, input: UVec2, output: UVec2) -> Result<Self, String> {
         support(device)?;
@@ -49,6 +56,7 @@ impl Temporal {
                 .raw_device()
                 .clone();
             let d = MTLFXTemporalScalerDescriptor::new();
+
             // The main pass renders a region at the top left of full-size textures. The scaler
             // takes the full size and is told that region (input content properties). A scaler
             // sized to the region itself skipped MetalFX's copy of it (0.5 ms at 50% of
@@ -62,6 +70,7 @@ impl Temporal {
             d.setDepthTextureFormat(MTLPixelFormat::Depth32Float);
             d.setMotionTextureFormat(MTLPixelFormat::RG16Float);
             d.setOutputTextureFormat(MTLPixelFormat::RGBA16Float);
+
             // Scene HDR is already camera-exposed (including custom grass). A second
             // auto exposure gives MetalFX a different brightness than our tone mapper.
             d.setAutoExposureEnabled(false);
@@ -98,6 +107,7 @@ impl Temporal {
             })
         })
     }
+
     pub(crate) fn set_timing(&mut self, enabled: bool) {
         self.timing = enabled;
     }
@@ -111,6 +121,7 @@ impl Temporal {
         // No resource destruction or queue submission occurs through the native API.
         autoreleasepool(|_| unsafe {
             self.frame = self.frame.wrapping_add(1);
+
             while let Some((frame, reset, b)) = self.pending_timing.front() {
                 if b.status() == MTLCommandBufferStatus::Error {
                     warn!("METALFX_TIMING frame={frame} command_buffer_failed=true");
@@ -127,6 +138,7 @@ impl Temporal {
                 }
                 self.pending_timing.pop_front();
             }
+
             let retain = |t: &bevy::render::render_resource::Texture| {
                 t.as_hal::<wgpu::hal::api::Metal>()
                     .map(|t| t.raw_handle().retain())
@@ -137,6 +149,7 @@ impl Temporal {
             let motion = retain(i.motion)?;
             let output = retain(i.output)?;
             let exposure = retain(&self.exposure)?;
+
             if !color.usage().contains(self.scaler.colorTextureUsage())
                 || !depth.usage().contains(self.scaler.depthTextureUsage())
                 || !motion.usage().contains(self.scaler.motionTextureUsage())
@@ -144,6 +157,7 @@ impl Temporal {
             {
                 return Err("Temporal texture usage requirements not satisfied".into());
             }
+
             self.scaler.setColorTexture(Some(&color));
             self.scaler.setDepthTexture(Some(&depth));
             self.scaler.setMotionTexture(Some(&motion));
@@ -153,6 +167,7 @@ impl Temporal {
             self.scaler.setInputContentHeight(i.size.y as usize);
             self.scaler.setJitterOffsetX(-i.jitter.x);
             self.scaler.setJitterOffsetY(-i.jitter.y);
+
             // Shared motion convention: current UV minus previous UV, excluding jitter.
             self.scaler.setMotionVectorScaleX(-(i.size.x as f32));
             self.scaler.setMotionVectorScaleY(-(i.size.y as f32));
@@ -162,8 +177,10 @@ impl Temporal {
             let mut prep = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("temporal resources"),
             });
+
             // Register each ping-pong allocation once before bypassing the wgpu writer.
             let initialize = !self.initialized.contains(&i.output.id());
+
             if initialize {
                 let _pass = prep.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("initialize temporal output"),
@@ -179,6 +196,7 @@ impl Temporal {
                     ..Default::default()
                 });
             }
+
             if self.initialized.is_empty() {
                 let view = self.exposure.create_view(&Default::default());
                 let _pass = prep.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -195,6 +213,7 @@ impl Temporal {
                     ..Default::default()
                 });
             }
+
             prep.transition_resources(
                 std::iter::empty(),
                 [
@@ -229,24 +248,29 @@ impl Temporal {
             let mut native = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("MetalFX Temporal"),
             });
+
             // A fresh encoder must be exclusively native (wgpu29 forbids mixing encoders).
             native.as_hal_mut::<wgpu::hal::api::Metal, _, _>(|raw| {
                 let buffer = raw
                     .and_then(|e| e.raw_command_buffer())
                     .ok_or("Metal command buffer unavailable")?;
                 self.scaler.encodeToCommandBuffer(buffer);
+
                 if self.timing && self.frame.is_multiple_of(120) && self.pending_timing.len() < 4 {
                     self.pending_timing
                         .push_back((self.frame, i.reset, buffer.retain()));
                 }
+
                 Ok::<_, String>(())
             })?;
+
             if initialize {
                 if self.initialized.len() == 2 {
                     self.initialized.remove(0);
                 }
                 self.initialized.push(i.output.id());
             }
+
             Ok([prep.finish(), native.finish()])
         })
     }

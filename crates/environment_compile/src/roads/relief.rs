@@ -11,6 +11,7 @@ pub struct TerrainSource {
     pub loaded_cells: Vec<CellCoord>,
     pub cells: Vec<TerrainSourceCell>,
 }
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TerrainSourceCell {
     /// Original constant-height cells can retain a four-vertex mesh when relief is absent.
@@ -20,6 +21,7 @@ pub struct TerrainSourceCell {
     pub resolution: u16,
     pub heights: Vec<f32>,
 }
+
 impl TerrainSource {
     fn validate(&self, targets: &[CellCoord]) -> Result<(), CompileError> {
         if self.loaded_cells.len() > 9
@@ -32,15 +34,19 @@ impl TerrainSource {
         {
             return Err(road_error("invalid source-height halo"));
         }
+
         let loaded = self
             .loaded_cells
             .iter()
             .copied()
             .collect::<std::collections::BTreeSet<_>>();
+
         if loaded.len() != self.loaded_cells.len() {
             return Err(road_error("duplicate height halo cell"));
         }
+
         let mut pages = BTreeMap::new();
+
         for page in &self.cells {
             if !loaded.contains(&page.cell)
                 || pages.insert(page.cell, page).is_some()
@@ -55,6 +61,7 @@ impl TerrainSource {
                 return Err(road_error("invalid original terrain height samples"));
             }
         }
+
         for &cell in targets {
             if !pages.contains_key(&cell) {
                 return Err(road_error("missing original terrain cell"));
@@ -68,15 +75,18 @@ impl TerrainSource {
                 }
             }
         }
+
         for page in &self.cells {
             let n = usize::from(page.resolution);
             for (dx, dz) in [(1, 0), (0, 1)] {
                 let Some(other) = pages.get(&offset(page.cell, dx, dz)?) else {
                     continue;
                 };
+
                 if other.resolution != page.resolution {
                     return Err(road_error("adjacent heightfields need the same resolution"));
                 }
+
                 for i in 0..n {
                     let (a, b) = if dx == 1 {
                         (i * n + n - 1, i * n)
@@ -89,9 +99,11 @@ impl TerrainSource {
                 }
             }
         }
+
         Ok(())
     }
 }
+
 fn offset(cell: CellCoord, dx: i32, dz: i32) -> Result<CellCoord, CompileError> {
     Ok(CellCoord {
         x: cell
@@ -117,14 +129,17 @@ impl RoadPlan {
                 let road = &self.roads[*index];
                 let p = &road.profile;
                 let relief = &p.relief;
+
                 if !relief.enabled() {
                     return 0.0;
                 }
+
                 let closest = curves
                     .iter()
                     .map(|i| road.curves[*i].closest(cell, uv, f64::from(self.size)))
                     .min_by(|a, b| a.distance_squared.total_cmp(&b.distance_squared))
                     .unwrap();
+
                 // Entirely inside the corridor: independent of cosmetic edge noise and wear.
                 let bed = smooth(
                     (closest.width * 0.5 - closest.distance_squared.sqrt())
@@ -136,13 +151,16 @@ impl RoadPlan {
                 let depth = f64::from(relief.road_depth)
                     * (1.0 + f64::from(relief.road_variation) * broad)
                     * bed;
+
                 // Ruts too narrow for the height grid are near terrain detail's to draw.
                 if !p.carves_ruts(height_step) {
                     return self.joined_depth(road.source.id, cell, uv, depth);
                 }
+
                 let shared = signed_noise(relief.track_variation_length, road.source.seed ^ 0x418c);
                 let mut ruts: f64 = 0.0;
                 let tracks = road.baked.tracks(closest.point);
+
                 for ((centre, half), salt) in tracks.into_iter().zip([0x41ab, 0x873d]) {
                     let distance = (closest.lateral - centre).hypot(closest.longitudinal);
                     let t = (distance / half).min(1.0);
@@ -157,6 +175,7 @@ impl RoadPlan {
                             * shape,
                     );
                 }
+
                 self.joined_depth(road.source.id, cell, uv, depth + ruts)
             })
             .fold(0.0, f64::max);
@@ -179,17 +198,20 @@ impl RoadPlan {
         let page = pages[&cell];
         let n = usize::from(page.resolution);
         let step = source.cell_size / (n - 1) as f32;
+
         for (index, curves) in &self.cells[&cell] {
             let p = &self.roads[*index].profile;
             if !curves.is_empty() {
                 p.validate_relief_detail(step).map_err(road_error)?;
             }
         }
+
         for j in &self.junctions {
             if j.bounds.contains(cell) {
                 j.profile.validate_relief_detail(step).map_err(road_error)?;
             }
         }
+
         let sample = |page: &TerrainSourceCell, x: usize, z: usize| {
             let count = usize::from(page.resolution);
             page.heights[z * count + x]
@@ -201,6 +223,7 @@ impl RoadPlan {
         };
         let mut heights = Vec::with_capacity(n * n);
         let mut normals = Vec::with_capacity(n * n);
+
         for z in 0..n {
             for x in 0..n {
                 let center = sample(page, x, z);
@@ -208,9 +231,11 @@ impl RoadPlan {
                 let neighbour = |dx: i32, dz: i32| -> Result<(f32, f32), CompileError> {
                     let nx = x as i32 + dx;
                     let nz = z as i32 + dz;
+
                     if (0..n as i32).contains(&nx) && (0..n as i32).contains(&nz) {
                         return Ok((sample(page, nx as usize, nz as usize), 1.0));
                     }
+
                     let other = offset(
                         cell,
                         if nx < 0 {
@@ -228,6 +253,7 @@ impl RoadPlan {
                             0
                         },
                     )?;
+
                     if let Some(page) = pages.get(&other) {
                         let ox = if nx < 0 {
                             n - 2
@@ -258,6 +284,7 @@ impl RoadPlan {
                 normals.push([-dx / length, 1.0 / length, -dz / length]);
             }
         }
+
         if page.flat
             && heights.windows(2).all(|v| v[0] == v[1])
             && normals.iter().all(|n| *n == [0.0, 1.0, 0.0])
@@ -271,6 +298,7 @@ impl RoadPlan {
             )
             .map_err(|_| road_error("flat terrain exceeds world height bounds"));
         }
+
         world::TerrainHeightfield::from_heights_and_normals(
             page.resolution,
             &heights,
@@ -297,10 +325,12 @@ impl CompilePlan {
         profile: RoadCompileProfile,
     ) -> Result<CompiledCell, CompileError> {
         terrain.validate(&[cell])?;
+
         if terrain.space != self.definition.space || terrain.cell_size != self.definition.cell_size
         {
             return Err(road_error("source terrain belongs to another world/grid"));
         }
+
         let mut halo = terrain.loaded_cells.clone();
         halo.sort();
         let road_plan = RoadPlan::new(self, &halo, roads, profile)?;
@@ -318,6 +348,7 @@ impl CompilePlan {
                 .unwrap()
                 .resolution,
         );
+
         if (n * n * 5).saturating_mul(
             segments
                 .saturating_add(road_plan.junctions.len() * 16)
@@ -326,6 +357,7 @@ impl CompilePlan {
         {
             return Err(CompileError::Budget("road relief sample work"));
         }
+
         let step = terrain.cell_size / (n - 1) as f32;
         let mut compiled = self
             .compile_with_influences(&[cell], coverage, Some(&road_plan), Some(step))?
@@ -347,9 +379,11 @@ impl CompilePlan {
             &canonical,
             bincode::config::standard(),
         )?);
+
         for c in halo {
             hash.update(&road_plan.fingerprint(c, [0; 32])?);
         }
+
         compiled.input_fingerprint = *hash.finalize().as_bytes();
         Ok(compiled)
     }

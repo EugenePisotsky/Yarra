@@ -1,18 +1,24 @@
 //! Authored RON/Fluent projects and immutable SQLite content bundles.
 //! Domain crates never depend on this filesystem/composition layer.
 use gameplay::inventory;
+
 mod analysis;
+
 pub use analysis::{ANALYZER_VARIABLE, ScriptAnalysis};
+
 mod asset;
 mod bundle;
 mod languages;
 mod materialize;
+
 pub use languages::{LanguageRepository, LanguageSource, LanguageStats};
+
 mod project;
 mod repository;
 mod runtime;
 mod scenario;
 mod script;
+
 pub use asset::{Asset, AssetHeader, AssetId, AssetKind, MAX_ASSET_BYTES};
 pub use bundle::{BUNDLE_APPLICATION_ID, BUNDLE_SCHEMA_VERSION, BundleManifest};
 pub use project::{LoadedProject, PackageFile, ProjectFile, SOURCE_FORMAT_VERSION};
@@ -56,7 +62,9 @@ pub enum ContentError {
     #[error("corrupt asset {id:?}: {message}")]
     CorruptAsset { id: AssetId, message: String },
 }
+
 pub type Result<T> = std::result::Result<T, ContentError>;
+
 pub(crate) fn contextual<T, E: std::fmt::Display>(
     context: impl Into<String>,
     result: std::result::Result<T, E>,

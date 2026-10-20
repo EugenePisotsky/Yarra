@@ -3,10 +3,12 @@ use super::{
     ActiveWorldSpace, SourceResidency, StreamedPageEntity, StreamingStats, WorldOrigin,
     WorldStream, WorldStreamingSystems, WorldViewpoint,
 };
+
 use crate::{
     GameplaySystems, actor::WorldStreamFocus, character::CharacterPresentationReady,
     object_lod::ScreenSpaceLod,
 };
+
 use bevy::prelude::*;
 use std::collections::BTreeSet;
 use world::{CellCoord, PageKey, WorldPosition, WorldSpaceId};
@@ -15,6 +17,7 @@ use world::{CellCoord, PageKey, WorldPosition, WorldSpaceId};
 /// checks page/entity ownership and gameplay activation, then exits the application.
 /// Requires game streaming and gameplay; omit this plugin for ordinary launches.
 pub struct StreamingSmokePlugin;
+
 impl Plugin for StreamingSmokePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<StreamingSmokeState>().add_systems(
@@ -53,6 +56,7 @@ fn report_streaming_smoke(
             !lod_objects.is_empty(),
             "the smoke-test camera did not stream any LOD object"
         );
+
         for lod_object in &lod_objects {
             for variant in lod_object.variants() {
                 let Some(scene) = &variant.scene else {
@@ -65,6 +69,7 @@ fn report_streaming_smoke(
                 );
             }
         }
+
         assert_eq!(
             stats.gameplay_objects, 0,
             "distant gameplay objects were activated in the overworld"
@@ -104,6 +109,7 @@ fn report_streaming_smoke(
         };
         return;
     }
+
     // Leave a small integration-frame margin beyond the two-second cooling
     // deadline. Stats are sampled after bounded page attachment/removal and
     // can otherwise report the just-expired cooling set for one final frame.
@@ -156,6 +162,7 @@ fn report_streaming_smoke(
         };
         return;
     }
+
     if let StreamingSmokeState::Transition { expected_space } = *smoke
         && time.elapsed_secs() >= 11.0
     {
@@ -182,12 +189,14 @@ fn report_streaming_smoke(
             stats.owned_entities,
             "tracked page ownership does not match live streamed root entities"
         );
+
         for entity in &streamed_entities {
             assert_eq!(
                 entity.0.space, expected_space,
                 "an entity from the previous world space survived the transition"
             );
         }
+
         println!(
             "YARRA_STREAMING_SMOKE multi-world passed active_space={} demanded={} resident={} \
              cooling={} owned_entities={} gameplay_objects={} definitions_cached={} failed={}",
@@ -234,6 +243,7 @@ fn assert_traversal_sources(
         position.cell, expected_cell,
         "traversal did not reach its canonical destination"
     );
+
     for key in pages {
         assert_eq!(
             key.space, expected_space,

@@ -5,6 +5,7 @@
 use super::impostor::{ImpostorBatch, ImpostorBatchDone, ImpostorDescriptor};
 use crate::ActiveWorldView;
 use atmosphere::forest_shadow::{ForestCrown, ForestShadow, ForestShadowMap};
+
 use bevy::{
     prelude::*,
     tasks::{AsyncComputeTaskPool, Task, futures::check_ready},
@@ -44,6 +45,7 @@ pub(crate) fn rebuild(
     let Some(mut forest) = forest else {
         return;
     };
+
     if !added.is_empty()
         || !moved.is_empty()
         || removed.read().count() > 0
@@ -51,16 +53,19 @@ pub(crate) fn rebuild(
     {
         builder.dirty = true;
     }
+
     let Some(view) = view.active() else {
         return;
     };
     let eye = view.transform.translation().xz();
+
     if builder
         .centre
         .is_none_or(|centre| centre.distance(eye) > RECENTRE_METRES)
     {
         builder.dirty = true;
     }
+
     if let Some(task) = &mut builder.task {
         let Some(map) = check_ready(task) else {
             return;
@@ -68,16 +73,20 @@ pub(crate) fn rebuild(
         forest.publish(map);
         builder.task = None;
     }
+
     if !builder.dirty {
         return;
     }
+
     builder.dirty = false;
     let mut crowns = Vec::new();
+
     for (batch, transform) in &batches {
         let Some(descriptor) = descriptors.get(&batch.descriptor) else {
             continue;
         };
         let crown = descriptor.crown;
+
         for instance in &batch.instances {
             let root = transform.transform_point(instance.translation);
             let offset = Quat::from_rotation_y(instance.yaw)
@@ -92,11 +101,13 @@ pub(crate) fn rebuild(
             });
         }
     }
+
     if crowns.is_empty() {
         forest.disable();
         builder.centre = None;
         return;
     }
+
     builder.centre = Some(eye);
     builder.task = Some(
         AsyncComputeTaskPool::get().spawn(async move { ForestShadowMap::rasterize(eye, crowns) }),

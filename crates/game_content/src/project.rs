@@ -7,6 +7,7 @@ use gameplay::rules::Rules;
 use gameplay::{ContentManifest, GameContent, GameDefinitions, KeyedMap, keyed_map};
 use localization::{LanguageResource, Localization, contract_hash};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
+
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs::File,
@@ -18,6 +19,7 @@ pub const SOURCE_FORMAT_VERSION: u32 = 11;
 pub(crate) const MAX_DOCUMENT_BYTES: usize = 16 * 1024 * 1024;
 const MAX_TRANSLATION_BYTES: usize = 2 * 1024 * 1024;
 const MAX_SCRIPT_BYTES: usize = 1024 * 1024;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectFile {
@@ -28,6 +30,7 @@ pub struct ProjectFile {
     pub packages: Vec<String>,
     pub scenario: String,
 }
+
 /// A package's `package.ron`, which it needs only to declare these.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -39,6 +42,7 @@ pub struct PackageFile {
     #[serde(default)]
     pub variables: Vec<gameplay::VariableDefinition>,
 }
+
 /// What a file in a package holds, by its name.
 enum Kind {
     Package,
@@ -56,6 +60,7 @@ enum Kind {
     Script,
     Text(String),
 }
+
 fn kind(path: &str) -> Result<Option<Kind>> {
     let name = Path::new(path)
         .file_name()
@@ -101,6 +106,7 @@ fn kind(path: &str) -> Result<Option<Kind>> {
         return Ok(None);
     }))
 }
+
 /// Eager authoring snapshot. Runtime uses indexed content and language repositories.
 pub struct LoadedProject {
     pub(crate) content: GameContent,
@@ -110,14 +116,17 @@ pub struct LoadedProject {
     localization: Localization,
     warnings: Vec<String>,
 }
+
 impl LoadedProject {
     pub fn load_directory(root: impl AsRef<Path>) -> Result<Self> {
         Self::load_project(root.as_ref(), None)
     }
+
     /// Tool-only alternative exercise; the path follows the same project-root bounds as assets.
     pub fn load_directory_with_scenario(root: impl AsRef<Path>, scenario: &str) -> Result<Self> {
         Self::load_project(root.as_ref(), Some(scenario))
     }
+
     fn load_project(root: &Path, exercise: Option<&str>) -> Result<Self> {
         let mut source = SourceReader::new(root)?;
         #[derive(Deserialize)]
@@ -127,9 +136,11 @@ impl LoadedProject {
         let text = source.text("project.ron", MAX_DOCUMENT_BYTES)?;
         let header: Header =
             ron::from_str(&text).map_err(|e| source_error(&root.join("project.ron"), e))?;
+
         if header.format != SOURCE_FORMAT_VERSION {
             return Err(ContentError::SourceVersion(header.format));
         }
+
         let project: ProjectFile =
             ron::from_str(&text).map_err(|e| source_error(&root.join("project.ron"), e))?;
         require(!project.packages.is_empty(), "a project has packages")?;
@@ -148,9 +159,11 @@ impl LoadedProject {
         let mut loot = BTreeMap::new();
         let mut contracts = Vec::new();
         let mut translations = Vec::new();
+
         // Which file defined each identity, to name both when one is defined twice.
         let mut defined: BTreeMap<String, String> = BTreeMap::new();
         let mut packages = BTreeSet::new();
+
         for directory in &project.packages {
             let name = Path::new(directory)
                 .file_name()
@@ -163,6 +176,7 @@ impl LoadedProject {
             require(packages.insert(text_id), &format!("package {name} twice"))?;
             let mut wording: BTreeMap<String, String> = BTreeMap::new();
             let files = source.files(directory)?;
+
             // A message written as a bare key is in this package's text.
             in_package(text_id, || -> Result<()> {
                 for path in &files {
@@ -176,6 +190,7 @@ impl LoadedProject {
                     let Some(kind) = kind(path)? else {
                         continue;
                     };
+
                     match kind {
                         Kind::Package => {
                             require(
@@ -183,9 +198,11 @@ impl LoadedProject {
                                 "package.ron belongs at the top of its package",
                             )?;
                             let package: PackageFile = source.ron(path)?;
+
                             for area in package.areas {
                                 world.areas.insert(area);
                             }
+
                             for variable in package.variables {
                                 define(format!("variable {}", variable.id))?;
                                 variables.add(variable);
@@ -197,12 +214,15 @@ impl LoadedProject {
                         }
                         Kind::Items => {
                             let catalog: ItemCatalog = source.ron(path)?;
+
                             for id in catalog.categories.keys() {
                                 define(format!("item category {id}"))?;
                             }
+
                             for id in catalog.items.keys() {
                                 define(format!("item {id}"))?;
                             }
+
                             if let Some(items) = &mut items {
                                 require(
                                     items.id == catalog.id && items.revision == catalog.revision,
@@ -272,17 +292,21 @@ impl LoadedProject {
                         }
                         Kind::Text(locale) => {
                             let text = source.text(path, MAX_TRANSLATION_BYTES)?;
+
                             // Several files of one locale are one text, in path order.
                             let joined = wording.entry(locale).or_default();
+
                             if !joined.is_empty() {
                                 joined.push('\n');
                             }
+
                             joined.push_str(&text);
                         }
                     }
                 }
                 Ok(())
             })?;
+
             // The source language says what messages the package has and what they take.
             let Some(source_text) = wording.get(&project.source_locale) else {
                 require(
@@ -299,6 +323,7 @@ impl LoadedProject {
                 localization::contract(text_id, source_text),
             )?;
             let hash = contract_hash(&contract)?;
+
             for (locale, source) in wording {
                 translations.push(LanguageResource {
                     id: text_id,
@@ -307,8 +332,10 @@ impl LoadedProject {
                     contract_hash: hash,
                 });
             }
+
             contracts.push(contract);
         }
+
         // Kept by identity, so neither the order of packages nor of files in them matters.
         let content = GameContent {
             manifest: project.manifest,
@@ -332,35 +359,45 @@ impl LoadedProject {
             graphs: Default::default(),
         };
         let mut scenario: Scenario = source.ron(exercise.unwrap_or(&project.scenario))?;
+
         if let Some(base) = scenario.base.clone() {
             scenario = contextual(
                 format!("scenario base {base}"),
                 scenario.starting_from(source.ron(&base)?),
             )?;
         }
+
         Self::from_parts(content, scenario, project.source_locale, translations)
     }
+
     pub fn content(&self) -> &GameContent {
         &self.content
     }
+
     pub fn scenario(&self) -> &Scenario {
         &self.scenario
     }
+
     pub fn localization(&self) -> &Localization {
         &self.localization
     }
+
     pub fn source_locale(&self) -> &str {
         &self.source_locale
     }
+
     pub fn warnings(&self) -> &[String] {
         &self.warnings
     }
+
     pub fn start(&self) -> Result<gameplay::GameSession> {
         self.scenario.instantiate(&self.content)
     }
+
     pub fn run_scenario(&self) -> Result<gameplay::GameSession> {
         self.scenario.run(&self.content)
     }
+
     pub(crate) fn from_parts(
         mut content: GameContent,
         scenario: Scenario,
@@ -375,6 +412,7 @@ impl LoadedProject {
         content.validate_selection_links()?;
         crate::asset::validate_locale(&source_locale)?;
         let mut locales = BTreeSet::new();
+
         for translation in &translations {
             crate::asset::validate_locale(&translation.locale)?;
             locales.insert(translation.locale.clone());
@@ -383,9 +421,11 @@ impl LoadedProject {
                 "translation resource has no contract",
             )?;
         }
+
         let contracts = content.text.values().cloned().collect();
         let localization = Localization::new(&source_locale, contracts, translations.clone())?;
         let mut warnings = Vec::new();
+
         for reference in content.text_keys().into_iter().chain(scenario.text_keys()) {
             require(
                 content
@@ -399,6 +439,7 @@ impl LoadedProject {
                 ),
             )?;
         }
+
         // Mechanical-only materialization is useful for validation/automation without packs.
         if !translations.is_empty() {
             localization
@@ -410,10 +451,12 @@ impl LoadedProject {
                     localization.scope(contract.id, &source_locale),
                 )?;
                 contextual(context(&source_locale), source.validate_definitions(None))?;
+
                 for locale in locales.iter().filter(|l| **l != source_locale) {
                     let scope =
                         contextual(context(locale), localization.scope(contract.id, locale))?;
                     contextual(context(locale), scope.validate_definitions(Some(&source)))?;
+
                     for key in contract.messages.keys() {
                         if scope.validate(key).is_err() {
                             warnings.push(format!(
@@ -426,6 +469,7 @@ impl LoadedProject {
                 }
             }
         }
+
         for asset in content
             .items
             .categories
@@ -455,6 +499,7 @@ impl LoadedProject {
                 )?;
             }
         }
+
         for reference in scenario.text_keys() {
             require(
                 content.text[&reference.resource].messages[&reference.key]
@@ -463,6 +508,7 @@ impl LoadedProject {
                 "starting name cannot require arguments",
             )?;
         }
+
         contextual("scenario", scenario.run(&content))?;
         Ok(Self {
             content,
@@ -478,6 +524,7 @@ impl LoadedProject {
 struct SourceReader {
     root: PathBuf,
 }
+
 impl SourceReader {
     fn new(root: &Path) -> Result<Self> {
         let root = root
@@ -486,10 +533,12 @@ impl SourceReader {
         require(root.is_dir(), "source project must be a directory")?;
         Ok(Self { root })
     }
+
     fn ron<T: DeserializeOwned>(&mut self, path: &str) -> Result<T> {
         let text = self.text(path, MAX_DOCUMENT_BYTES)?;
         ron::from_str(&text).map_err(|error| source_error(&self.root.join(path), error))
     }
+
     /// Every file under a directory of the project, by path from the root, in order.
     /// Hidden files are left out.
     fn files(&self, directory: &str) -> Result<Vec<String>> {
@@ -500,15 +549,19 @@ impl SourceReader {
                 .collect::<std::io::Result<_>>()
                 .map_err(|error| source_error(&full, error))?;
             entries.sort_by_key(|entry| entry.file_name());
+
             for entry in entries {
                 let name = entry.file_name();
                 let Some(name) = name.to_str() else {
                     return Err(source_error(&entry.path(), "file name is not UTF-8"));
                 };
+
                 if name.starts_with('.') {
                     continue;
                 }
+
                 let path = at.join(name);
+
                 if entry
                     .file_type()
                     .map_err(|e| source_error(&entry.path(), e))?
@@ -519,6 +572,7 @@ impl SourceReader {
                     into.push(path.to_string_lossy().into_owned());
                 }
             }
+
             Ok(())
         }
         self.check_path(directory)?;
@@ -526,6 +580,7 @@ impl SourceReader {
         walk(&self.root, Path::new(directory), &mut files)?;
         Ok(files)
     }
+
     /// A path relative to the root that stays inside it.
     fn check_path(&self, path: &str) -> Result<()> {
         let relative = Path::new(path);
@@ -538,6 +593,7 @@ impl SourceReader {
         )
         .map_err(Into::into)
     }
+
     fn text(&mut self, path: &str, limit: usize) -> Result<String> {
         self.check_path(path)?;
         let relative = Path::new(path);
@@ -554,12 +610,15 @@ impl SourceReader {
         File::open(&canonical)
             .and_then(|file| file.take(limit as u64 + 1).read_to_string(&mut text))
             .map_err(|error| source_error(&full, error))?;
+
         if text.len() > limit {
             return Err(source_error(&full, format!("file exceeds {limit} bytes")));
         }
+
         Ok(text)
     }
 }
+
 fn source_error(path: &Path, error: impl std::fmt::Display) -> ContentError {
     ContentError::Source {
         path: path.into(),

@@ -2,6 +2,7 @@
 use bevy::{
     asset::RenderAssetUsages, mesh::Indices, prelude::*, render::render_resource::PrimitiveTopology,
 };
+
 use world::TerrainHeightfield;
 
 /// Builds the page-local raster mesh from the same height samples used by CPU surface queries.
@@ -13,6 +14,7 @@ pub fn build_heightfield_mesh(
     cell_size: f32,
 ) -> Result<Mesh, String> {
     heightfield.validate().map_err(|error| error.to_string())?;
+
     if !cell_size.is_finite() || cell_size <= 0.0 {
         return Err("terrain cell size must be finite and positive".into());
     }
@@ -22,6 +24,7 @@ pub fn build_heightfield_mesh(
     let mut positions = Vec::with_capacity(resolution * resolution);
     let mut normals = Vec::with_capacity(resolution * resolution);
     let mut uvs = Vec::with_capacity(resolution * resolution);
+
     for z in 0..resolution {
         for x in 0..resolution {
             let u = x as f32 / intervals;
@@ -37,6 +40,7 @@ pub fn build_heightfield_mesh(
     }
 
     let mut indices = Vec::with_capacity((resolution - 1) * (resolution - 1) * 6);
+
     for z in 0..resolution - 1 {
         for x in 0..resolution - 1 {
             let lower_left = (z * resolution + x) as u32;

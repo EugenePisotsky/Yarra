@@ -1,8 +1,10 @@
 use super::*;
 use crate::repro::Route;
+
 fn parse(args: &[&str]) -> Result<LaunchOptions, String> {
     LaunchOptions::parse(args.iter().map(OsString::from))
 }
+
 #[test]
 fn defaults_and_paths_are_explicit() {
     let options = parse(&[]).unwrap();
@@ -29,6 +31,7 @@ fn defaults_and_paths_are_explicit() {
     let audit = parse(&["--render-audit"]).unwrap();
     assert!(audit.panel_open && audit.audit_log);
 }
+
 #[test]
 fn malformed_options_fail_before_startup() {
     for args in [
@@ -44,6 +47,7 @@ fn malformed_options_fail_before_startup() {
         assert!(parse(&args).is_err(), "{args:?}");
     }
 }
+
 #[test]
 fn profile_and_repro_ownership_is_validated() {
     for args in [
@@ -82,6 +86,7 @@ fn profile_and_repro_ownership_is_validated() {
         .is_ok()
     );
 }
+
 #[test]
 fn supported_automation_commands_keep_their_configuration() {
     let options = parse(&[
@@ -110,6 +115,7 @@ fn supported_automation_commands_keep_their_configuration() {
     assert_eq!(options.repro.unwrap().route, Route::GrassSoak);
     assert!(options.candidate_reference);
     assert!(options.audit_log);
+
     for route in Route::ALL {
         let name = route.name();
         let mut args = vec![
@@ -122,10 +128,12 @@ fn supported_automation_commands_keep_their_configuration() {
             "--render-snapshot-frames",
             "600,900",
         ];
+
         if route.needs_start_view() {
             assert!(parse(&args).is_err(), "{name} needs a start view");
             args.extend(["--start-view", "view.ron"]);
         }
+
         assert!(parse(&args).is_ok(), "{name}");
     }
 }
@@ -133,6 +141,7 @@ fn supported_automation_commands_keep_their_configuration() {
 #[test]
 fn diagnostic_composition_is_explicit_and_rejects_incompatible_controls() {
     assert_eq!(parse(&[]).unwrap().diagnostics, DiagnosticsMode::Full);
+
     for (mode, expected) in [
         ("off", DiagnosticsMode::Off),
         ("panel", DiagnosticsMode::Panel),
@@ -143,6 +152,7 @@ fn diagnostic_composition_is_explicit_and_rejects_incompatible_controls() {
             expected
         );
     }
+
     for args in [
         vec!["--diagnostics", "typo"],
         vec!["--diagnostics", "off", "--performance-open"],
@@ -156,7 +166,9 @@ fn diagnostic_composition_is_explicit_and_rejects_incompatible_controls() {
     ] {
         assert!(parse(&args).is_err(), "{args:?}");
     }
+
     assert!(parse(&["--diagnostics", "panel", "--performance-open"]).is_ok());
+
     // Finite repro and timed profile automation work independently of F1/probes.
     assert!(
         parse(&[
@@ -171,6 +183,7 @@ fn diagnostic_composition_is_explicit_and_rejects_incompatible_controls() {
     );
     assert!(parse(&["--diagnostics", "off", "--profile-seconds", "10"]).is_ok());
 }
+
 #[test]
 fn weather_defaults_to_automatic_play_and_authored_measurements() {
     assert_eq!(parse(&[]).unwrap().weather, engine::WeatherStart::Automatic);
@@ -199,6 +212,7 @@ fn weather_defaults_to_automatic_play_and_authored_measurements() {
     assert!(parse(&["--weather", "snow"]).is_err());
     assert!(parse(&["--weather"]).is_err());
 }
+
 #[test]
 fn time_passes_in_play_and_holds_in_measurements() {
     let play = parse(&[]).unwrap();
@@ -216,9 +230,11 @@ fn time_passes_in_play_and_holds_in_measurements() {
         parse(&["--time", "06:30"]).unwrap().time,
         Some(390.0 / 1440.0)
     );
+
     for bad in ["24:00", "7", "7:60", "-1:00", "07:300"] {
         assert!(parse(&["--time", bad]).is_err(), "{bad}");
     }
+
     assert!(parse(&["--day-clock", "fast"]).is_err());
 }
 
@@ -247,9 +263,11 @@ fn one_mode_holds_the_camera_and_ends_the_run() {
     let capture =
         std::env::temp_dir().join(format!("yarra-launch-{}.gputrace", std::process::id()));
     let capture = capture.to_str().unwrap();
+
     if cfg!(target_vendor = "apple") {
         let options = parse(&["--metal-capture", capture]).unwrap();
         assert_eq!(options.mode, RunMode::Play);
+
         // A capture is a measurement: authored weather, held time.
         assert_eq!(options.weather, engine::WeatherStart::Authored);
         assert!(!options.day_clock);
@@ -290,6 +308,7 @@ fn every_option_needs_what_it_configures() {
     ] {
         assert!(parse(&args).is_err(), "{args:?}");
     }
+
     let repro = |extra: &[&str]| parse(&[&["--render-repro", "grass-close"], extra].concat());
     let options = repro(&["--render-frame-clock", "--render-temporal-view", "depth"])
         .unwrap()
@@ -338,6 +357,7 @@ fn lod_lab_and_look_capture_options_are_parsed_once() {
     assert_eq!(options.stand, Some(("pack/other".into(), 12, 4.5)));
     assert_eq!(options.yaws, [45., 135.]);
     assert_eq!(options.scale, 0.5);
+
     for extra in [
         &["--lod-lab-capture", "a", "--lod-lab-screenshot", "b.png"][..],
         &["--lod-lab-distances", "1"],
@@ -346,6 +366,7 @@ fn lod_lab_and_look_capture_options_are_parsed_once() {
     ] {
         assert!(lab(extra).is_err(), "{extra:?}");
     }
+
     assert!(parse(&["--lod-lab", "pack/tree"]).is_err());
 
     let look = parse(&[
@@ -381,6 +402,7 @@ fn presentation_options_and_profile_scale() {
     assert_eq!(options.story, Some(PathBuf::from("story")));
     assert_eq!(options.tree_shadow_lod, 2);
     assert_eq!(options.resolution_scale, Some(0.75));
+
     for args in [
         vec!["--tree-shadow-lod", "3"],
         vec!["--resolution-scale", "0.6"],
@@ -388,6 +410,7 @@ fn presentation_options_and_profile_scale() {
     ] {
         assert!(parse(&args).is_err(), "{args:?}");
     }
+
     let profile = |extra: &[&str]| parse(&[&["--profile-seconds", "10"], extra].concat());
     let scaled = profile(&["--profile-size", "game", "--resolution-scale", "0.75"])
         .unwrap()
@@ -399,6 +422,7 @@ fn presentation_options_and_profile_scale() {
         .profile
         .unwrap();
     assert_eq!(default.resolution_scale(), 0.5);
+
     // A fixed pixel size has no scale to honour.
     assert!(profile(&["--resolution-scale", "0.75"]).is_err());
     let switches = profile(&[

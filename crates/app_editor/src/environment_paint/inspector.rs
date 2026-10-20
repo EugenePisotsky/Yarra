@@ -8,11 +8,13 @@ pub(super) struct DefinitionForm {
 
     layer: Option<LayerId>,
 }
+
 impl DefinitionForm {
     fn changed(&self) -> bool {
         self.original != self.draft
     }
 }
+
 impl EnvironmentPaintState {
     pub(crate) fn has_unapplied_changes(&self) -> bool {
         self.definition_form
@@ -20,15 +22,19 @@ impl EnvironmentPaintState {
             .is_some_and(DefinitionForm::changed)
     }
 }
+
 fn id() -> [u8; 16] {
     *uuid::Uuid::new_v4().as_bytes()
 }
+
 fn add_layer(definition: &mut EnvironmentDefinition, preset: PresetId) -> LayerId {
     let layer = LayerId(id());
     definition.layers.sort_by_key(|l| (l.order, l.id));
+
     for (i, l) in definition.layers.iter_mut().enumerate() {
         l.order = i as i32;
     }
+
     definition.layers.push(Layer {
         id: layer,
         revision: 1,
@@ -43,8 +49,10 @@ fn add_layer(definition: &mut EnvironmentDefinition, preset: PresetId) -> LayerI
     });
     layer
 }
+
 fn move_layer(definition: &mut EnvironmentDefinition, layer: LayerId, up: bool) {
     definition.layers.sort_by_key(|l| (l.order, l.id));
+
     if let Some(i) = definition.layers.iter().position(|l| l.id == layer) {
         let next = if up {
             i.saturating_add(1)
@@ -55,10 +63,12 @@ fn move_layer(definition: &mut EnvironmentDefinition, layer: LayerId, up: bool) 
             definition.layers.swap(i, next);
         }
     }
+
     for (i, l) in definition.layers.iter_mut().enumerate() {
         l.order = i as i32;
     }
 }
+
 fn commit(
     paint: &mut EnvironmentPaintState,
     dense: &mut SourceWorkingSets,
@@ -73,6 +83,7 @@ fn commit(
         Err(error) => paint.status = Some(error),
     }
 }
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn inspector(
     ui: &mut egui::Ui,
@@ -94,11 +105,13 @@ pub(crate) fn inspector(
         ui.weak("Environment presets are loading…");
         return;
     };
+
     if paint.space != space {
         paint.space = space;
         paint.selected = None;
         paint.definition_form = None;
     }
+
     if !definition
         .layers
         .iter()
@@ -111,6 +124,7 @@ pub(crate) fn inspector(
             .map(|l| l.id);
         paint.definition_form = None;
     }
+
     if paint
         .definition_form
         .as_ref()
@@ -118,12 +132,14 @@ pub(crate) fn inspector(
     {
         paint.definition_form = None;
     }
+
     let unapplied = paint.has_unapplied_changes();
     let idle = !busy && !dense.gesture_active && !dense.saving() && !dense.has_any_conflict();
     let mut immediate = None;
     ui.horizontal(|ui| {
         ui.selectable_value(&mut browser.all, false, "Nearby");
         ui.selectable_value(&mut browser.all, true, "All");
+
         if ui
             .add_enabled(idle && !unapplied, egui::Button::new("Presets…"))
             .clicked()
@@ -142,14 +158,17 @@ pub(crate) fn inspector(
     });
     ui.add(egui::TextEdit::singleline(&mut browser.search).hint_text("Find layers"));
     let nearby = browser.nearby(dense, definition.space);
+
     if !browser.all {
         let status = browser.status();
         ui.add(egui::Label::new(egui::RichText::new(&status).weak()).truncate())
             .on_hover_text(status);
+
         if ui.small_button("Refresh nearby").clicked() {
             browser.refresh();
         }
     }
+
     ui.label("Layers · highest priority first");
     let mut layers = definition.layers.iter().collect::<Vec<_>>();
     layers.sort_by_key(|l| (l.order, l.id));
@@ -166,6 +185,7 @@ pub(crate) fn inspector(
                 ui.add_enabled_ui(idle && !unapplied, |ui| {
                     ui.horizontal(|ui| {
                         let mut enabled = layer.enabled;
+
                         if ui
                             .checkbox(&mut enabled, "")
                             .on_hover_text("Enable this layer")
@@ -179,6 +199,7 @@ pub(crate) fn inspector(
                                 .enabled = enabled;
                             immediate = Some(next);
                         }
+
                         if ui
                             .selectable_label(paint.selected == Some(layer.id), &layer.name)
                             .clicked()
@@ -186,9 +207,11 @@ pub(crate) fn inspector(
                             paint.selected = Some(layer.id);
                             paint.definition_form = None;
                         }
+
                         if let Some(mask) = &layer.imported_mask {
                             ui.weak(format!("· imports {mask}"));
                         }
+
                         if !browser.all
                             && paint.selected == Some(layer.id)
                             && !nearby.contains(&layer.id)
@@ -226,6 +249,7 @@ pub(crate) fn inspector(
                     .iter()
                     .max_by_key(|l| (l.order, l.id))
                     .map(|l| l.id);
+
                 for (label, up, enabled) in [
                     ("Up", true, max != Some(selected)),
                     ("Down", false, min != Some(selected)),
@@ -239,12 +263,15 @@ pub(crate) fn inspector(
             }
         });
     });
+
     if let Some(next) = immediate {
         commit(paint, dense, history, &next);
         return;
     }
+
     ui.checkbox(&mut paint.show_coverage,"Show selected layer coverage").on_hover_text("Raw painted mask over loaded ground. Dark is empty; cyan is full. Grass is hidden temporarily.");
     ui.separator();
+
     if let Some(selected) = paint.selected {
         let form = paint.definition_form.get_or_insert_with(|| DefinitionForm {
             original: definition.clone(),
@@ -264,6 +291,7 @@ pub(crate) fn inspector(
                 ui.label("Distribution seed");
                 ui.add(egui::DragValue::new(&mut layer.seed));
                 let mut imported = layer.imported_mask.is_some();
+
                 if ui
                     .checkbox(&mut imported, "Coverage from terrain import")
                     .on_hover_text(
@@ -274,6 +302,7 @@ pub(crate) fn inspector(
                 {
                     layer.imported_mask = imported.then(String::new);
                 }
+
                 if let Some(mask) = &mut layer.imported_mask {
                     ui.horizontal(|ui| {
                         ui.label("Mask");
@@ -283,26 +312,31 @@ pub(crate) fn inspector(
                                 .hint_text("sand"),
                         );
                     });
+
                     if !environment::valid_mask_name(mask) {
                         ui.colored_label(
                             egui::Color32::YELLOW,
                             "Use lowercase letters, digits and underscores, starting with a letter.",
                         );
                     }
+
                     ui.small("The next terrain import fills it; until then it keeps its coverage.");
                 }
             });
             let previous = layer.preset;
             controls::preset_selector(ui, "environment_preset", &mut layer.preset, &library, None);
+
             if previous != layer.preset {
                 layer.overrides.clear();
             }
+
             ui.small("Choosing another preset resets this layer's overrides; paint is preserved.");
             egui::CollapsingHeader::new("Quick settings")
                 .default_open(true)
                 .show(ui, |ui| {
                     controls::quick_controls(ui, &library, layer.preset, &mut layer.overrides);
                 });
+
             if ui
                 .add_enabled(!form.changed(), egui::Button::new("Edit shared preset…"))
                 .clicked()
@@ -328,12 +362,14 @@ pub(crate) fn inspector(
         });
         let mut apply = false;
         let mut discard = false;
+
         if changed {
             ui.colored_label(
                 egui::Color32::YELLOW,
                 "Apply or discard these settings before painting or saving.",
             );
         }
+
         ui.horizontal(|ui| {
             apply = ui
                 .add_enabled(
@@ -345,6 +381,7 @@ pub(crate) fn inspector(
                 .add_enabled(idle && changed, egui::Button::new("Discard"))
                 .clicked();
         });
+
         if apply {
             let next = form.draft.clone();
             commit(paint, dense, history, &next);
@@ -354,6 +391,7 @@ pub(crate) fn inspector(
     } else {
         ui.weak("Create a layer to start painting this world.");
     }
+
     ui.separator();
     let imported = paint.selected.is_some_and(|selected| {
         definition
@@ -361,9 +399,11 @@ pub(crate) fn inspector(
             .iter()
             .any(|l| l.id == selected && l.imported_mask.is_some())
     });
+
     if imported {
         ui.weak("This layer's coverage comes from the terrain import.");
     }
+
     ui.add_enabled_ui(
         idle && !paint.has_unapplied_changes() && paint.selected.is_some() && !imported,
         |ui| {
@@ -377,9 +417,11 @@ pub(crate) fn inspector(
         },
     );
     ui.small("Drag on ground to paint. Shift-drag erases; Esc cancels a stroke. Each drag or applied settings edit is one undo step.");
+
     if let Some(status) = &paint.status {
         ui.colored_label(egui::Color32::YELLOW, status);
     }
+
     if let Some(error) = &preview.error {
         ui.colored_label(egui::Color32::LIGHT_RED, format!("Preview: {error}"));
     } else if preview.pending() > 0 {
@@ -390,6 +432,7 @@ pub(crate) fn inspector(
     } else {
         ui.weak("Ground and grass preview current");
     }
+
     ui.small("Save stores applied presets, layers and masks together. Save & Publish also updates the game world.");
     ui.collapsing("History", |ui| {
         ui.label(format!("{} undo commands", history.undo_len()));

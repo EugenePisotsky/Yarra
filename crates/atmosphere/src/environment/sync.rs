@@ -4,6 +4,7 @@ use super::{EnvironmentOrigin, EnvironmentParams, MIST_NOISE_PERIOD, WAVE_PERIOD
 use crate::clouds::{CloudClock, CloudQuality, CloudView};
 use crate::{AtmosphereOwner, AtmosphereState, WorldEnvironmentView};
 use bevy::prelude::*;
+
 use world::{
     atmosphere::{AtmosphereProfile, EvaluatedAtmosphere, linear_rgb},
     weather::VISIBILITY_EXTINCTION,
@@ -12,21 +13,28 @@ use world::{
 /// The moon's face is drawn as the sunlit moon by day. At night it is dimmed to stay readable
 /// at the night exposure: its seas show instead of a glare-white disc.
 const MOON_NIGHT_GAIN: f32 = 0.09;
+
 /// Earthshine on the moon's dark side, as a share of its sunlit face's light with the earth
 /// full as seen from the moon (a new moon from here).
 const EARTHSHINE: f32 = 0.04;
+
 /// Light of the moonless night sky just above the horizon, as a share of the night's sky light
 /// (as the haze's own light).
 const NIGHT_SKY_GLOW: f32 = 0.15;
+
 /// Mean normal albedo of the moon's drawn face (`moon_albedo` in `shaders/sky/celestial.wesl`).
 const MOON_MEAN_ALBEDO: f32 = 0.11;
+
 /// The moon's path on the sea as the eye sees it: each wave facet mirrors the whole disc, which
 /// the sea's averaged glitter spreads into nothing, so its image is drawn this much brighter.
 const MOON_GLITTER: f32 = 40.;
+
 /// Mist drifts slowly with the cloud wind.
 const MIST_DRIFT_METRES_PER_SECOND: f64 = 0.6;
+
 /// A newly published mist map fades in rather than appearing at once.
 const MIST_FADE_SECONDS: f32 = 3.;
+
 const LUMINANCE: Vec3 = Vec3::new(0.2126, 0.7152, 0.0722);
 
 /// Inputs for the low air and the sea: valley mist, presentation switches, look tuning, the
@@ -38,6 +46,7 @@ type LowAir<'w> = (
     Option<Res<'w, crate::SeaSurface>>,
     Res<'w, crate::shore::Shore>,
 );
+
 #[allow(clippy::too_many_arguments)] // The environment's inputs.
 pub(super) fn sync(
     mut commands: Commands,
@@ -70,9 +79,11 @@ pub(super) fn sync(
         && profile.outdoor
         && p.enabled
         && p.validate().is_ok();
+
     if active && (state.owner == AtmosphereOwner::Game || clock.playing) {
         clock.seconds += time.delta_secs_f64();
     }
+
     // The world's sky, sea and weather; an isolated workspace shows none of them.
     let world = profile.outdoor && !state.isolated();
     let value = state.evaluate(profile);
@@ -94,10 +105,13 @@ pub(super) fn sync(
         terrain_light: terrain.light(),
         ..cloud_layer(profile, &value, sun, active, clock.seconds, origin.0)
     };
+
     if world && profile.night.enabled {
         moon(params, profile, &value);
     }
+
     let flash = state.lightning.filter(|_| world);
+
     if let Some(flash) = flash {
         params.lightning = flash
             .top
@@ -106,6 +120,7 @@ pub(super) fn sync(
         params.lightning_channel = [flash.channel, 0., 0., 0.];
         params.lightning_segments = flash.segments;
     }
+
     if let Some(level) = sea.and_then(|s| s.level).filter(|_| world) {
         let wind = p.wind_degrees.to_radians();
         params.ocean = [
@@ -122,12 +137,14 @@ pub(super) fn sync(
         ];
         params.shore_map = shore.parameters(origin.0);
     }
+
     let altitude = views
         .iter()
         .find_map(|(_, _, _, t)| t.map(|t| t.translation().y))
         .unwrap_or(0.);
     let visibility = visibility_override.unwrap_or(profile.visibility_metres);
     let near_sun = sunlight(params, profile, &value, sun, visibility, altitude);
+
     if world {
         params.weather = [
             state.wetness.clamp(0., 1.),
@@ -136,6 +153,7 @@ pub(super) fn sync(
             0.,
         ];
     }
+
     weather_transition(params, &state);
     let light = air_light(
         params,
@@ -144,6 +162,7 @@ pub(super) fn sync(
         near_sun,
         flash.map_or(0., |f| f.flash),
     );
+
     if let Some(fog) = state
         .weather_fog()
         .filter(|f| profile.outdoor && f.extinction > 0.)
@@ -153,16 +172,20 @@ pub(super) fn sync(
             .extend(fog.extinction)
             .to_array();
     }
+
     // The map also gives falling leaves their ground.
     if world {
         params.mist_map = mist.parameters(origin.0);
     }
+
     // Ground haze and valley mist in every weather; rain fog adds to them.
     if mist_fade.0 != mist.revision() {
         *mist_fade = (mist.revision(), 0.);
     }
+
     mist_fade.1 = (mist_fade.1 + time.delta_secs() / MIST_FADE_SECONDS).min(1.);
     let fog = &profile.fog;
+
     if world
         && fog.enabled
         && fog.validate().is_ok()
@@ -191,6 +214,7 @@ pub(super) fn sync(
             0.,
             0.,
         ];
+
         if presentation.is_none_or(|p| p.light_shafts) {
             // Humid morning air under the crowns holds more.
             params.shafts = [
@@ -203,6 +227,7 @@ pub(super) fn sync(
             ];
         }
     }
+
     for (e, view, _, _) in &views {
         if active && view.is_none() {
             commands.entity(e).insert(CloudView);
@@ -321,9 +346,11 @@ fn sunlight(
     let cloud = through(p.base_metres + 0.5 * p.thickness_metres);
     let cloud_lux = cloud.dot(LUMINANCE);
     params.sun[3] = sun_lux * cloud_lux;
+
     if cloud_lux > 0. {
         params.sun_color = (sun_linear * cloud / cloud_lux).extend(0.).to_array();
     }
+
     params.near_sun = near_sun.extend(0.).to_array();
     near_sun
 }
@@ -385,6 +412,7 @@ struct AirLight {
     moon: Vec3,
     flash: Vec3,
 }
+
 /// Fog is lit by the sky; a cloud deck hides the sun and moon, and the light under it is close
 /// to neutral grey, not blue skylight. Also sends how closed the deck is.
 fn air_light(
@@ -404,6 +432,7 @@ fn air_light(
     let ambient = ambient.lerp(Vec3::splat(ambient.element_sum() / 3.), overcast * 0.8)
         * value.ambient_lux
         * 0.3;
+
     // The haze and far clouds take the clear sky's horizon colour; under a closing deck they
     // turn to its grey instead.
     params.weather[2] = overcast;
@@ -430,6 +459,7 @@ fn cloud_illuminance(lux: f32, elevation_sine: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn wind_reaches_render_inputs_in_game_and_editor_without_double_advancing() {
         let mut app = App::new();
@@ -540,11 +570,14 @@ mod tests {
                 0.0065,
             ) * light.sun_lux
         };
+
         for hour in [0., 5.3, 18.3, 23.] {
             assert_eq!(sunlight(hour, 30.), Vec3::ZERO, "{hour}");
             assert_eq!(sunlight(hour, 2000.), Vec3::ZERO, "{hour}");
         }
+
         assert!(sunlight(12., 30.).y > 50_000.);
+
         // No switch from full moonlight to zero at the horizon.
         assert!(cloud_illuminance(100_000., 0.0001) < 1.);
         assert_eq!(cloud_illuminance(100_000., -0.0001), 0.);

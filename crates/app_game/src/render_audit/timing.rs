@@ -2,6 +2,7 @@
 //! System wrappers preserve access, conditions, ordering and deferred commands (Bevy 0.20).
 #[path = "timing/gpu.rs"]
 mod gpu;
+
 use bevy::{
     ecs::{
         change_detection::{CheckChangeTicks, Tick},
@@ -17,6 +18,7 @@ use bevy::{
     },
     utils::prelude::DebugName,
 };
+
 use std::{
     collections::VecDeque,
     sync::{
@@ -27,6 +29,7 @@ use std::{
 };
 
 const HISTORY: usize = 8192;
+
 #[derive(Resource, ExtractResource, Clone, Copy, Debug, Default)]
 #[extract_app(bevy::render::RenderApp)]
 pub(super) struct Stamp {
@@ -34,6 +37,7 @@ pub(super) struct Stamp {
     pub epoch: u64,
     pub detailed: bool,
 }
+
 #[derive(Clone, Debug)]
 pub(super) struct GpuSample {
     pub stamp: Stamp,
@@ -41,6 +45,7 @@ pub(super) struct GpuSample {
     pub scopes: Vec<(String, f64)>,
     pub invalid_scopes: usize,
 }
+
 #[derive(Clone, Debug)]
 pub(super) struct CpuSample {
     pub stamp: Stamp,
@@ -48,6 +53,7 @@ pub(super) struct CpuSample {
     pub work: [f64; KINDS],
     pub systems: Vec<(String, f64)>,
 }
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(usize)]
 pub(super) enum Kind {
@@ -64,7 +70,9 @@ pub(super) enum Kind {
     RenderCall,
     Graph,
 }
+
 pub(super) const KINDS: usize = 12;
+
 impl Kind {
     pub fn label(self) -> &'static str {
         match self {
@@ -83,6 +91,7 @@ impl Kind {
         }
     }
 }
+
 pub(super) const MAIN_KINDS: [Kind; 5] = [
     Kind::Streaming,
     Kind::Terrain,
@@ -90,6 +99,7 @@ pub(super) const MAIN_KINDS: [Kind; 5] = [
     Kind::Simulation,
     Kind::Other,
 ];
+
 #[derive(Default)]
 struct Bus {
     gpu: Vec<GpuSample>,
@@ -97,8 +107,10 @@ struct Bus {
     status: String,
     dropped: u64,
 }
+
 #[derive(Resource, Clone, Default)]
 struct Bridge(Arc<Mutex<Bus>>);
+
 #[derive(Resource)]
 pub(super) struct History {
     pub enabled: bool,
@@ -109,6 +121,7 @@ pub(super) struct History {
     pub dropped: u64,
     pub gpu_received: Option<Instant>,
 }
+
 impl Default for History {
     fn default() -> Self {
         Self {
@@ -123,6 +136,7 @@ impl Default for History {
         }
     }
 }
+
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(super) struct CollectTimings;
 
@@ -131,11 +145,13 @@ struct Probe {
     kind: Kind,
     ns: AtomicU64,
 }
+
 #[derive(Resource, Default)]
 struct Probes {
     entries: Vec<Arc<Probe>>,
     render: bool,
 }
+
 #[derive(Resource, Default)]
 struct GraphTime(AtomicU64);
 
@@ -144,6 +160,7 @@ pub(super) struct TimingPlugin {
     pub log: bool,
     pub gpu_off: bool,
 }
+
 impl Plugin for TimingPlugin {
     fn build(&self, app: &mut App) {
         let bridge = Bridge::default();
@@ -160,6 +177,7 @@ impl Plugin for TimingPlugin {
             .add_systems(First, receive)
             .add_systems(Update, log_timings.run_if(move || logging))
             .add_systems(Last, collect_cpu.in_set(CollectTimings));
+
         // YARRA_SPIKE_LOG=<ms> names the systems behind every slow frame.
         if let Ok(value) = std::env::var("YARRA_SPIKE_LOG") {
             match value.parse::<f64>() {
@@ -172,6 +190,7 @@ impl Plugin for TimingPlugin {
                 _ => warn!("YARRA_SPIKE_LOG expects milliseconds, got {value:?}"),
             }
         }
+
         let render = app.sub_app_mut(RenderApp);
         render
             .insert_resource(bridge)
@@ -180,34 +199,43 @@ impl Plugin for TimingPlugin {
             .add_systems(Render, collect_cpu.after(RenderSystems::PostCleanup));
         gpu::install(render, !self.gpu_off);
     }
+
     fn finish(&self, app: &mut App) {
         // All plugins have populated their schedules, and the opaque-pass replacement is in place.
         instrument(app.world_mut(), false);
         instrument(app.sub_app_mut(RenderApp).world_mut(), true);
     }
 }
+
 fn receive(bridge: Res<Bridge>, mut history: ResMut<History>) {
     let Ok(mut bus) = bridge.0.lock() else {
         return;
     };
+
     if !bus.gpu.is_empty() {
         history.gpu_received = Some(Instant::now());
     }
+
     for sample in bus.gpu.drain(..) {
         history.gpu.push_back(sample);
     }
+
     for sample in bus.cpu.drain(..) {
         history.cpu.push_back(sample);
     }
+
     while history.gpu.len() > HISTORY {
         history.gpu.pop_front();
     }
+
     while history.cpu.len() > HISTORY {
         history.cpu.pop_front();
     }
+
     history.status.clone_from(&bus.status);
     history.dropped = bus.dropped;
 }
+
 fn collect_cpu(
     stamp: Res<Stamp>,
     probes: Res<Probes>,
@@ -220,24 +248,30 @@ fn collect_cpu(
         work: [0.0; KINDS],
         systems: Vec::new(),
     };
+
     for probe in &probes.entries {
         let ms = probe.ns.swap(0, Ordering::Relaxed) as f64 / 1_000_000.0;
         sample.work[probe.kind as usize] += ms;
+
         if ms >= 0.02 {
             sample.systems.push((probe.name.clone(), ms));
         }
     }
+
     if let Some(graph) = graph {
         sample.work[Kind::Graph as usize] = graph.0.swap(0, Ordering::Relaxed) as f64 / 1_000_000.0;
     }
+
     sample.systems.sort_by(|a, b| b.1.total_cmp(&a.1));
     sample.systems.truncate(8);
+
     if let Ok(mut bus) = bridge.0.lock()
         && bus.cpu.len() < HISTORY
     {
         bus.cpu.push(sample);
     }
 }
+
 fn classify(name: &str, schedule: &str, render: bool) -> Kind {
     if name.ends_with("::prepare_windows") {
         Kind::Acquire
@@ -265,12 +299,14 @@ fn classify(name: &str, schedule: &str, render: bool) -> Kind {
         Kind::Other
     }
 }
+
 fn instrument(world: &mut World, render: bool) {
     let mut probes = Probes {
         render,
         ..default()
     };
     let mut schedules = world.resource_mut::<Schedules>();
+
     for (label, schedule) in schedules.iter_mut() {
         let label = format!("{label:?}");
         let wanted = if render {
@@ -288,12 +324,15 @@ fn instrument(world: &mut World, render: bool) {
             ]
             .contains(&label.as_str())
         };
+
         if !wanted {
             continue;
         }
+
         if schedule.graph().systems.is_empty() {
             continue;
         }
+
         assert!(
             !schedule.graph().systems.is_initialized(),
             "timing adapters must precede schedule initialization: {label}"
@@ -305,20 +344,25 @@ fn instrument(world: &mut World, render: bool) {
             .iter()
             .map(|(key, _, _)| key)
             .collect();
+
         for key in keys {
             let slot = schedule.graph_mut().systems.get_mut(key).unwrap();
             let name = slot.name().to_string();
+
             if name.contains(module_path!()) || name.contains("camera_driver") {
                 continue;
             }
+
             let probe = Arc::new(Probe {
                 kind: classify(&name, &label, render),
                 name: name.clone(),
                 ns: AtomicU64::new(0),
             });
+
             if render && label == "RenderGraph" {
                 root_sets.extend(slot.default_system_sets());
             }
+
             // Deferred flags are populated by initialize, which has not run yet.
             let gpu = render && !["Render", "ExtractSchedule"].contains(&label.as_str());
             let original = std::mem::replace(
@@ -332,10 +376,12 @@ fn instrument(world: &mut World, render: bool) {
             }));
             probes.entries.push(probe);
         }
+
         for set in root_sets {
             schedule.configure_sets(gpu::FrameBegin.before(set));
         }
     }
+
     world.insert_resource(probes);
 }
 
@@ -345,33 +391,42 @@ struct Measured {
     probe: Arc<Probe>,
     gpu: bool,
 }
+
 impl System for Measured {
     type In = ();
     type Out = ();
+
     fn name(&self) -> DebugName {
         self.inner.name()
     }
+
     fn system_type(&self) -> std::any::TypeId {
         self.inner.system_type()
     }
+
     fn flags(&self) -> SystemStateFlags {
         self.inner.flags()
     }
+
     unsafe fn run_unsafe(
         &mut self,
         input: (),
         world: UnsafeWorldCell,
     ) -> Result<(), RunSystemError> {
         let start = Instant::now();
+
         // SAFETY: identical access, flags and input to the wrapped system; no world access added.
         let result = unsafe { self.inner.run_unsafe(input, world) };
+
         if result.is_ok() {
             self.probe
                 .ns
                 .fetch_add(start.elapsed().as_nanos() as u64, Ordering::Relaxed);
         }
+
         result
     }
+
     fn apply_deferred(&mut self, world: &mut World) {
         let previous = gpu::take_pending(DeferredWorld::from(&mut *world), self.gpu);
         let start = Instant::now();
@@ -381,6 +436,7 @@ impl System for Measured {
             .fetch_add(start.elapsed().as_nanos() as u64, Ordering::Relaxed);
         gpu::wrap_pending(DeferredWorld::from(&mut *world), previous, &self.probe.name);
     }
+
     fn queue_deferred(&mut self, mut world: DeferredWorld) {
         let previous = gpu::take_pending(world.reborrow(), self.gpu);
         let start = Instant::now();
@@ -390,18 +446,23 @@ impl System for Measured {
             .fetch_add(start.elapsed().as_nanos() as u64, Ordering::Relaxed);
         gpu::wrap_pending(world, previous, &self.probe.name);
     }
+
     fn initialize(&mut self, world: &mut World) -> SystemAccess {
         self.inner.initialize(world)
     }
+
     fn check_change_tick(&mut self, check: CheckChangeTicks) {
         self.inner.check_change_tick(check);
     }
+
     fn default_system_sets(&self) -> Vec<InternedSystemSet> {
         self.inner.default_system_sets()
     }
+
     fn get_last_run(&self) -> Tick {
         self.inner.get_last_run()
     }
+
     fn set_last_run(&mut self, tick: Tick) {
         self.inner.set_last_run(tick);
     }
@@ -410,6 +471,7 @@ impl System for Measured {
 pub(super) fn cpu_main_ms(sample: &CpuSample) -> f64 {
     MAIN_KINDS.iter().map(|k| sample.work[*k as usize]).sum()
 }
+
 pub(super) fn render_tail_ms(sample: &CpuSample) -> Option<f64> {
     let call = sample.work[Kind::RenderCall as usize];
     let graph = sample.work[Kind::Graph as usize];
@@ -434,19 +496,26 @@ fn log_spikes(
         "acquire", "call", "graph",
     ];
     let now = time.elapsed_secs_f64();
+
     // Update cadence, not presentation: the Metal HUD log shows frames actually shown late.
     let fps = pacing.map_or(0, |p| p.rate.fps());
     let interval = time.delta_secs_f64() * 1000.0;
+
     if fps > 0 && interval > 1050.0 / f64::from(fps) {
         warn!("FRAME_SPIKE kind=interval t={now:.3} ms={interval:.2}");
     }
+
     let mut newest = *reported;
+
     for s in history.cpu.iter().rev().take(24) {
         let slot = usize::from(s.render);
+
         if reported[slot].is_some_and(|f| s.stamp.frame <= f) {
             continue;
         }
+
         newest[slot] = Some(newest[slot].map_or(s.stamp.frame, |f| f.max(s.stamp.frame)));
+
         // The render call contains graph encoding and submission; acquisition waits for a
         // drawable, so it is idle time rather than work.
         let total = if s.render {
@@ -456,9 +525,11 @@ fn log_spikes(
         } else {
             cpu_main_ms(s)
         };
+
         if total <= threshold.0 {
             continue;
         }
+
         let work: Vec<_> = (0..KINDS)
             .filter(|&k| s.work[k] >= 0.05)
             .map(|k| format!("{}={:.2}", SHORT[k], s.work[k]))
@@ -480,6 +551,7 @@ fn log_spikes(
             systems.join(" ")
         );
     }
+
     *reported = newest;
 }
 
@@ -498,13 +570,16 @@ fn log_pipelines(
         ShaderDefVal::Int(name, value) => format!("{name}={value}"),
         ShaderDefVal::UInt(name, value) => format!("{name}={value}"),
     };
+
     for (id, pipeline) in cache.pipelines().enumerate() {
         if ready.len() <= id {
             ready.resize(id + 1, false);
         }
+
         if ready[id] || !matches!(pipeline.state, CachedPipelineState::Ok(_)) {
             continue;
         }
+
         ready[id] = true;
         let shader = |handle: &bevy::asset::Handle<bevy::shader::Shader>| {
             handle
@@ -562,6 +637,7 @@ fn log_timings(time: Res<Time<Real>>, history: Res<History>, mut last: Local<f64
     if time.elapsed_secs_f64() - *last < 1.0 {
         return;
     }
+
     *last = time.elapsed_secs_f64();
     let gpu = history.gpu.iter().rev().find(|s| !s.stamp.detailed);
     let detail = history.gpu.iter().rev().find(|s| s.stamp.detailed);
@@ -594,16 +670,20 @@ mod tests {
 
     #[derive(Resource, Default)]
     struct Count(u32);
+
     #[derive(Component)]
     struct Spawned;
+
     fn create(mut commands: Commands, mut count: ResMut<Count>) {
         count.0 += 1;
         commands.spawn(Spawned);
     }
+
     fn observe(query: Query<&Spawned>, mut count: ResMut<Count>) {
         assert_eq!(query.iter().count(), 1);
         count.0 += 10;
     }
+
     fn skipped(mut count: ResMut<Count>) {
         count.0 += 100;
     }

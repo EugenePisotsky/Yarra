@@ -7,6 +7,7 @@ use bevy::prelude::*;
 
 /// Nearest and farthest strikes, metres from the camera.
 const NEAREST: f32 = 1500.0;
+
 const FARTHEST: f32 = 7000.0;
 
 #[derive(Resource, Default)]
@@ -32,20 +33,24 @@ impl GameLightning {
     pub fn strike_now(&mut self) {
         self.request = Some(Request { hold: None });
     }
+
     /// A strike ahead of the camera held `age` seconds in, for look captures.
     pub fn hold(&mut self, age: f32) {
         self.request = Some(Request { hold: Some(age) });
     }
+
     /// The age a strike is held at, if any.
     pub fn holding(&self) -> Option<f32> {
         self.request.and_then(|r| r.hold).or(self.held)
     }
+
     /// No strike, and none held.
     pub fn clear(&mut self) {
         self.strike = None;
         self.request = None;
         self.held = None;
     }
+
     fn random(&mut self) -> f32 {
         // xorshift: plenty for spacing strikes.
         let mut x = self.random.max(1);
@@ -79,19 +84,24 @@ fn strike(
         if atmosphere.lightning.is_some() {
             atmosphere.lightning = None;
         }
+
         state.strike = None;
         return;
     }
+
     let Some(camera) = view.current().map(|view| view.transform) else {
         return;
     };
     let state = &mut *state;
+
     if state.random == 0 {
         state.random = (weather.seed() as u32) | 1;
     }
+
     if state.held.is_none() && !weather.paused {
         state.clock += f64::from(time.delta_secs().min(0.1));
     }
+
     let rate = weather
         .runtime()
         .map_or(0.0, |r| r.current().lightning_per_minute());
@@ -123,10 +133,12 @@ fn strike(
             started: state.clock,
         });
     };
+
     if let Some(request) = state.request.take() {
         start(state, true);
         state.held = request.hold;
     }
+
     if state.strike.is_none() && state.held.is_none() && rate > 0.0 {
         let next = match state.next {
             Some(next) => next,
@@ -141,18 +153,22 @@ fn strike(
             start(state, false);
         }
     }
+
     if rate <= 0.0 {
         state.next = None;
     }
+
     let flash = state.strike.and_then(|strike| {
         let now = state
             .held
             .map_or(state.clock, |age| strike.started + f64::from(age));
         lightning::flash(&strike, now)
     });
+
     if flash.is_none() && state.held.is_none() {
         state.strike = None;
     }
+
     if atmosphere.lightning != flash {
         atmosphere.lightning = flash;
     }

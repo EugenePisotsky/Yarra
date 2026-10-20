@@ -5,15 +5,19 @@ use super::*;
 use crate::publication::RuntimePublicationPaths;
 use engine::{LiveTerrainPreview, TerrainPreviewRequest};
 use environment::roads::RoadCellBounds;
+
 use std::{
     path::Path,
     sync::atomic::{AtomicU64, Ordering},
     time::{Duration, Instant},
 };
+
 use world::{TerrainHeightfieldPage, TerrainPreviewProducts};
 use world_db::RuntimeReader;
+
 type SourceContext = (WorldSpaceId, u64, u64, u64, String);
 type SourceSignature = (SourceContext, u64, u64, Vec<CellCoord>);
+
 #[cfg(test)]
 mod tests;
 
@@ -32,6 +36,7 @@ struct Input {
     global: bool,
     base: Option<Arc<Snapshot>>,
 }
+
 struct Snapshot {
     input: InputSummary,
     cells: BTreeMap<Key, (Stamp, CompiledCell)>,
@@ -39,27 +44,32 @@ struct Snapshot {
     products: Arc<TerrainPreviewProducts>,
     catalog: vegetation::VegetationCatalog,
 }
+
 struct InputSummary {
     context: SourceContext,
     plan: Stamp,
     records: Vec<SourceEnvironmentCellRecord>,
     regions: Option<Vec<RoadCellBounds>>,
 }
+
 struct ResultMessage {
     revision: u64,
     result: Result<Arc<Snapshot>, String>,
 }
+
 /// Compiles one preview at a time. Dropping it cancels the compile in flight through `latest`
 /// and does not wait for the thread.
 struct LiveWorker {
     worker: crate::worker::Worker<Input, ResultMessage>,
     latest: Arc<AtomicU64>,
 }
+
 impl Drop for LiveWorker {
     fn drop(&mut self) {
         self.latest.store(u64::MAX, Ordering::Relaxed);
     }
 }
+
 impl LiveWorker {
     fn start(paths: &RuntimePublicationPaths) -> Result<Self, String> {
         let project = paths.project_database.clone();
@@ -114,6 +124,7 @@ pub(crate) fn update(
     if *source.workspace.get() != EditorWorkspace::World {
         return;
     }
+
     let (Some(space), Some(plants), Some(presets)) = (
         source.origin.space(),
         source.grass.catalog(),
@@ -153,11 +164,13 @@ pub(crate) fn update(
         source.dense.roads.revision,
         resident.clone(),
     );
+
     if state.signature.as_ref() != Some(&signature) {
         let changed_world = state
             .accepted
             .as_ref()
             .is_some_and(|s| s.input.context.0 != space || s.input.context.4 != context.4);
+
         if changed_world {
             state.accepted = None;
             preview.accepted.clear();
@@ -165,11 +178,14 @@ pub(crate) fn update(
             preview.bump();
             live.applied = None;
         }
+
         state.signature = Some(signature);
         state.revision = state.revision.wrapping_add(1).max(1);
+
         if let Some(worker) = &state.worker {
             worker.latest.store(state.revision, Ordering::Relaxed);
         }
+
         state.pending = None;
         state.queued = None;
         live.request = None;
@@ -185,12 +201,14 @@ pub(crate) fn update(
                 ..default()
             },
         );
+
         // Every world must still compile with the catalog; the catalog itself is shared.
         let catalog = source
             .dense
             .definitions()
             .try_for_each(|d| CompilePlan::new(d, plants, presets, default()).map(drop))
             .map(|()| plants.clone());
+
         match (plan, catalog) {
             (Ok(plan), Ok(catalog)) => {
                 let records = source
@@ -228,6 +246,7 @@ pub(crate) fn update(
             (Err(e), _) | (_, Err(e)) => preview.error = Some(e.to_string()),
         }
     }
+
     if let Some(result) = state.worker.as_ref().and_then(|w| w.worker.try_recv().ok()) {
         state.in_flight = false;
         if result.revision == state.revision {
@@ -245,9 +264,11 @@ pub(crate) fn update(
             }
         }
     }
+
     if let Some(e) = &live.error {
         preview.error = Some(e.clone());
     }
+
     if state.pending.as_ref().is_some_and(|(revision, _)| {
         live.ready == Some(*revision) && *revision == state.revision && live.error.is_none()
     }) {
@@ -265,15 +286,18 @@ pub(crate) fn update(
         state.accepted = Some(snapshot);
         live.commit = Some(revision);
     }
+
     preview.desired = preview
         .accepted
         .iter()
         .map(|(k, (s, _))| (*k, *s))
         .collect();
+
     if state.queued.is_some() || state.pending.is_some() || state.in_flight {
         // One stable pending indicator, not a changing list of half-compiled cells.
         preview.desired.insert((space, center), [0; 32]);
     }
+
     if state.in_flight
         || state
             .queued_at
@@ -281,6 +305,7 @@ pub(crate) fn update(
     {
         return;
     }
+
     if let Some(job) = state.queued.take() {
         if state.worker.is_none() {
             match LiveWorker::start(&paths) {
@@ -291,8 +316,10 @@ pub(crate) fn update(
                 }
             }
         }
+
         let worker = state.worker.as_ref().unwrap();
         worker.latest.store(job.revision, Ordering::Relaxed);
+
         match worker.worker.try_send(job) {
             Ok(()) => state.in_flight = true,
             Err(e) => preview.error = Some(e.to_string()),
@@ -318,15 +345,19 @@ fn compile_inner(
     use anyhow::bail;
     let cancelled = || token.load(Ordering::Relaxed) != job.revision;
     let reader = RuntimeReader::open_immutable(runtime)?;
+
     if reader.manifest().generation_id != job.context.4 {
         bail!("Published terrain changed during preview; retry after adoption")
     }
+
     let source = ProjectReader::open_read_only(project)?;
     let space = job.context.0;
     let mut cells: BTreeSet<_> = job.resident.iter().copied().collect();
+
     if let Some(base) = &job.base {
         cells.extend(base.products.leaves.keys());
     }
+
     for r in job
         .records
         .iter()
@@ -341,9 +372,11 @@ fn compile_inner(
             }
         }
     }
+
     let global = job.global
         || job.regions.is_none()
         || job.base.as_ref().is_some_and(|b| b.input.regions.is_none());
+
     if global {
         let mut pending: Vec<_> = reader
             .read_terrain_roots(space)?
@@ -354,6 +387,7 @@ fn compile_inner(
             if cancelled() {
                 bail!("superseded terrain preview")
             }
+
             if key.level == 0 {
                 cells.insert(CellCoord { x: key.x, z: key.z });
             } else {
@@ -362,6 +396,7 @@ fn compile_inner(
                         .ok_or_else(|| anyhow::anyhow!("terrain children"))?,
                 );
             }
+
             if cells.len() > MAX_PREVIEW_CELLS {
                 bail!(
                     "This shared edit affects more than 256 terrain cells. Save & Publish to update the whole landscape; the previous live preview is retained."
@@ -376,11 +411,13 @@ fn compile_inner(
         ) {
             let area = (i64::from(b.maximum.x) - i64::from(b.minimum.x) + 1)
                 * (i64::from(b.maximum.z) - i64::from(b.minimum.z) + 1);
+
             if area > 4096 {
                 bail!(
                     "Road edit exceeds the live terrain region budget; Save & Publish to continue"
                 )
             }
+
             for z in b.minimum.z..=b.maximum.z {
                 for x in b.minimum.x..=b.maximum.x {
                     cells.insert(CellCoord { x, z });
@@ -388,6 +425,7 @@ fn compile_inner(
             }
         }
     }
+
     let assets = source
         .read_collection_assets(&job.plan.collection_assets())?
         .into_iter()
@@ -407,16 +445,20 @@ fn compile_inner(
     let roads = blake3::hash(ron::to_string(&job.roads)?.as_bytes());
     let mut bytes = 0;
     let mut objects = 0;
+
     for cell in cells {
         if cancelled() {
             bail!("superseded terrain preview")
         }
+
         let Some(baseline) = world_cook::published_terrain_leaf(&reader, space, cell)? else {
             continue;
         };
+
         if compiled.len() >= MAX_PREVIEW_CELLS {
             bail!("Live terrain exceeds 256 affected/source cells; Save & Publish to continue")
         }
+
         let mut hash = blake3::Hasher::new();
         hash.update(&dependency_stamp(
             job.plan.fingerprint(),
@@ -425,6 +467,7 @@ fn compile_inner(
             cell,
             &stamps,
         ));
+
         if job
             .regions
             .as_ref()
@@ -432,6 +475,7 @@ fn compile_inner(
         {
             hash.update(roads.as_bytes());
         }
+
         let stamp = *hash.finalize().as_bytes();
         let result = if let Some((_, c)) = job
             .base
@@ -457,11 +501,13 @@ fn compile_inner(
         };
         bytes += compiled_bytes(&result);
         objects += result.objects.len();
+
         if bytes > MAX_PREVIEW_BYTES / 2 || objects > 4096 {
             bail!(
                 "Live source preview exceeds its memory/object budget; reduce the edited region or Save & Publish"
             )
         }
+
         let page = TerrainHeightfieldPage {
             heightfield: result
                 .terrain
@@ -471,17 +517,21 @@ fn compile_inner(
             weight_pages: result.ground.weight_pages.clone(),
             wear: result.wear.clone(),
         };
+
         if page == baseline {
             leaves.remove(&cell);
         } else {
             leaves.insert(cell, Arc::new(page));
         }
+
         compiled.insert((space, cell), (stamp, result));
     }
+
     let products = if let Some(base) = job.base.as_ref().filter(|b| b.products.leaves == leaves) {
         base.products.clone()
     } else {
         let mut p = world_cook::preview_terrain(&reader, space, leaves, cancelled)?;
+
         // Explicit baseline replacements undo earlier edits, including keys that
         // have since left the current source neighborhood.
         if let Some(base) = &job.base {
@@ -504,9 +554,11 @@ fn compile_inner(
                 }
             }
         }
+
         if p.bytes() > 96 * 1024 * 1024 {
             bail!("Live terrain retained-product budget exceeded; Save & Publish to continue")
         }
+
         Arc::new(p)
     };
     Ok(Arc::new(Snapshot {
@@ -544,17 +596,20 @@ pub(crate) fn apply_sources(
         let height = cell
             .and_then(|c| c.terrain.as_ref())
             .or_else(|| page.map(|p| &p.heightfield));
+
         if let Some(height) = height
             && surface.heightfield != *height
         {
             surface.heightfield = height.clone();
         }
+
         let Some(mut wear) = wear else {
             continue;
         };
         let surfaces = cell
             .map(|c| &c.ground.surfaces)
             .or_else(|| page.map(|p| &p.surfaces));
+
         if let (Some(surfaces), Some(r)) = (surfaces, project.terrain_resources(surface.key.space))
         {
             let layers: Vec<u16> = surfaces
@@ -570,7 +625,9 @@ pub(crate) fn apply_sources(
                 wear.layers = layers;
             }
         }
+
         let field = cell.map(|c| &c.wear).or_else(|| page.map(|p| &p.wear));
+
         if let Some(field) = field
             && wear.wear != *field
         {

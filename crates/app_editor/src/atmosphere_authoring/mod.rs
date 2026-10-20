@@ -1,7 +1,9 @@
 //! World atmosphere authoring. Preview transport never mutates project source.
 #[cfg(test)]
 mod tests;
+
 pub(crate) mod working;
+
 use crate::{
     domain_editing::SourceWorkingSets,
     editing::EditorHistory,
@@ -13,22 +15,27 @@ use crate::{
     },
     workspaces::{EditorFramePacing, EditorWorkspace, FramePacingOwner, world_workspace_active},
 };
+
 use bevy::prelude::*;
 use bevy_egui::{EguiPrimaryContextPass, egui};
 use engine::{ApplyAtmosphere, AtmosphereOwner, AtmosphereState, WorldCatalog, WorldOrigin};
 use std::collections::BTreeMap;
+
 use world::{
     WorldSpaceId,
     atmosphere::{AtmosphereProfile, PHASE_NAMES, PHASE_TIMES, evaluate},
     weather::{WeatherKind, WeatherParams, WeatherSettings},
 };
+
 pub(crate) const WINDOW: EditorWindowDescriptor = EditorWindowDescriptor {
     id: EditorWindowId("world.atmosphere"),
     workspace: EditorWorkspace::World,
     label: "Atmosphere",
     default_open: false,
 };
+
 pub(crate) struct AtmosphereAuthoringPlugin;
+
 impl Plugin for AtmosphereAuthoringPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Preview>()
@@ -46,6 +53,7 @@ impl Plugin for AtmosphereAuthoringPlugin {
             );
     }
 }
+
 struct Controls {
     phase: f32,
     playing: bool,
@@ -62,6 +70,7 @@ struct Controls {
     /// Preset shown in the saved Weather editor.
     weather_target: WeatherKind,
 }
+
 impl Controls {
     fn new(p: &AtmosphereProfile) -> Self {
         Self {
@@ -79,6 +88,7 @@ impl Controls {
             weather_target: WeatherKind::Rain,
         }
     }
+
     fn advance(&mut self, seconds: f64, day_seconds: f32) {
         if self.playing {
             self.phase = (f64::from(self.phase) + seconds * f64::from(self.speed / day_seconds))
@@ -89,6 +99,7 @@ impl Controls {
         }
     }
 }
+
 #[derive(Resource, Default)]
 struct Preview {
     worlds: BTreeMap<WorldSpaceId, Controls>,
@@ -96,6 +107,7 @@ struct Preview {
     game_start: bool,
     gameplay: Option<(WorldSpaceId, AtmosphereProfile, f32)>,
 }
+
 fn reconcile(
     mut dense: ResMut<SourceWorkingSets>,
     mut project: ResMut<ProjectEditorStore>,
@@ -113,6 +125,7 @@ fn reconcile(
         save.transaction_finished(committed);
     }
 }
+
 #[allow(clippy::too_many_arguments)]
 fn sync(
     workspace: Res<State<EditorWorkspace>>,
@@ -126,20 +139,26 @@ fn sync(
     mut cloud_clock: Option<ResMut<atmosphere::clouds::CloudClock>>,
 ) {
     pacing.release(FramePacingOwner::AtmospherePreview);
+
     if let Some(clock) = cloud_clock.as_deref_mut() {
         clock.playing = false;
     }
+
     // Weather is only ever a deliberate preview in the editor.
     clear_weather(&mut state);
+
     if *workspace.get() != EditorWorkspace::World {
         state.owner = AtmosphereOwner::Isolated;
+
         for controls in preview.worlds.values_mut() {
             controls.playing = false;
             controls.clouds_playing = false;
         }
+
         preview.gameplay = None;
         return;
     }
+
     state.owner = AtmosphereOwner::Editor;
     let Some(id) = origin.space() else {
         return;
@@ -147,6 +166,7 @@ fn sync(
     let Some(entry) = dense.atmospheres.entries.get(&id) else {
         return;
     };
+
     if preview.game_start {
         if preview
             .gameplay
@@ -158,10 +178,13 @@ fn sync(
                 clock.seconds = 0.;
             }
         }
+
         if let Some(clock) = cloud_clock.as_deref_mut() {
             clock.playing = true;
         }
+
         pacing.request(FramePacingOwner::AtmospherePreview);
+
         // Hold the phase the game starts at; its day clock advances from there.
         let (_, profile, phase) = preview.gameplay.as_ref().unwrap();
         state.profile = profile.clone();
@@ -169,6 +192,7 @@ fn sync(
         state.exposure_override = None;
         return;
     }
+
     preview.gameplay = None;
     let controls = preview
         .worlds
@@ -183,20 +207,25 @@ fn sync(
         &entry.current
     };
     controls.advance(time.delta_secs_f64(), profile.day_seconds);
+
     if controls.playing || controls.clouds_playing {
         pacing.request(FramePacingOwner::AtmospherePreview);
     }
+
     if let Some(clock) = cloud_clock.as_deref_mut() {
         clock.seconds = controls.cloud_seconds;
     }
+
     state.profile = profile.clone();
     state.phase = controls.phase;
     state.exposure_override = controls.exposure;
+
     if let Some(kind) = controls.weather {
         state.weather = Some(profile.weather.preset(kind));
         state.wetness = controls.wetness;
     }
 }
+
 fn clear_weather(state: &mut AtmosphereState) {
     if state.weather.is_some() || state.weather_transition.is_some() || state.wetness != 0. {
         state.weather = None;
@@ -222,9 +251,11 @@ fn draw(
     let Some(root) = frame.0.as_mut() else {
         return;
     };
+
     if root.ctx().input(|i| i.key_pressed(egui::Key::Escape)) {
         dense.atmospheres.cancel_gesture();
     }
+
     if !root.ctx().input(|i| i.pointer.any_down())
         && (!root.ctx().text_edit_focused()
             || root.ctx().input(|i| i.key_pressed(egui::Key::Enter)))
@@ -232,10 +263,13 @@ fn draw(
     {
         history.record_atmosphere(id, before, after);
     }
+
     let mut open = windows.is_open(WINDOW.id);
+
     if !open {
         return;
     }
+
     let rect = root.available_rect_before_wrap();
     egui::Window::new("Atmosphere")
         .id(egui::Id::new(WINDOW.id.0))
@@ -261,10 +295,12 @@ fn draw(
             ui.small("Changes preview on the landscape. Save & Publish updates the game.");
             ui.checkbox(&mut preview.game_start, "Game start")
                 .on_hover_text("Show the edited profile as the game starts: its initial phase, clouds running.");
+
             if preview.game_start {
                 ui.label("Turn off Game start to edit atmosphere.");
                 return;
             }
+
             let controls = preview
                 .worlds
                 .entry(id)
@@ -307,11 +343,13 @@ fn draw(
             ui.horizontal(|ui| {
                 ui.selectable_value(&mut controls.published, false, "Edited");
                 ui.selectable_value(&mut controls.published, true, "Published");
+
                 if ui.button("Reset preview").clicked() {
                     *controls = Controls::new(&before);
                 }
             });
             let mut locked = controls.exposure.is_some();
+
             if ui.checkbox(&mut locked, "Lock preview exposure").changed() {
                 let profile = if controls.published {
                     catalog.world_space(id).map_or(&before, |s| &s.atmosphere)
@@ -320,20 +358,25 @@ fn draw(
                 };
                 controls.exposure = locked.then(|| evaluate(profile, controls.phase).exposure_ev100);
             }
+
             if let Some(ev) = &mut controls.exposure {
                 ui.add(egui::Slider::new(ev, 0.0..=20.0).text("Preview EV100"));
             }
+
             ui.horizontal_wrapped(|ui| {
                 ui.label("Weather");
                 ui.selectable_value(&mut controls.weather, None, "Off");
+
                 for kind in WeatherKind::ALL {
                     ui.selectable_value(&mut controls.weather, Some(kind), kind.label());
                 }
             });
+
             if controls.weather.is_some() {
                 ui.add(egui::Slider::new(&mut controls.wetness, 0.0..=1.0).text("Preview wetness"))
                     .on_hover_text("In the game, wetness builds up over minutes of rain and dries afterwards.");
             }
+
             ui.separator();
             ui.strong("World settings · saved");
             let can_edit = !controls.published
@@ -402,10 +445,12 @@ fn draw(
                                     }
                                 });
                         });
+
                         if ui.button("Preview this phase").clicked() {
                             controls.phase = PHASE_TIMES[controls.target];
                             controls.playing = false;
                         }
+
                         let p = &mut edited.phases[controls.target];
                         color(ui, "Ambient tint", &mut p.ambient_srgb);
                         ui.add(
@@ -418,6 +463,7 @@ fn draw(
                         controls.phase = PHASE_TIMES[0];
                         controls.playing = false;
                     }
+
                     ui.checkbox(&mut edited.night.enabled, "Moon light");
                     color(ui, "Moon tint", &mut edited.night.light_srgb);
                     ui.add(egui::Slider::new(&mut edited.night.illuminance_lux, 0.0..=20_000.0)
@@ -456,9 +502,11 @@ fn draw(
                         .text("Mist visibility · m"));
                     ui.add(egui::Slider::new(&mut f.mist_depth_metres, 0.0..=300.0)
                         .text("Mist depth · m"));
+
                     for (amount, name) in f.mist_amount.iter_mut().zip(PHASE_NAMES) {
                         ui.add(egui::Slider::new(amount, 0.0..=1.0).text(format!("Mist · {name}")));
                     }
+
                     ui.add(egui::Slider::new(&mut f.mist_after_rain, 0.0..=1.0)
                         .text("Extra mist after rain"));
                     ui.add(egui::Slider::new(&mut f.canopy_air_visibility_metres, 100.0..=100_000.0)
@@ -475,15 +523,18 @@ fn draw(
                 });
                 egui::CollapsingHeader::new("Startup and cycle").show(ui, |ui| {
                     let mut hour = edited.initial_phase * 24.0;
+
                     if ui
                         .add(egui::Slider::new(&mut hour, 0.0..=23.999).text("Initial time"))
                         .changed()
                     {
                         edited.initial_phase = hour / 24.0;
                     }
+
                     if ui.button("Use preview as startup").clicked() {
                         edited.initial_phase = controls.phase;
                     }
+
                     ui.add(
                         egui::Slider::new(&mut edited.day_seconds, 10.0..=604_800.0)
                             .logarithmic(true)
@@ -493,23 +544,29 @@ fn draw(
                         "Game time stays fixed in this first slice. Preview Play tests the cycle.",
                     );
                 });
+
                 if before != saved && ui.button("Revert unsaved atmosphere edits").clicked() {
                     edited = saved;
                 }
             });
+
             if edited != before && let Err(error) = edited.validate() {
                 ui.colored_label(egui::Color32::YELLOW, format!("Not applied: {error}"));
             }
+
             if edited != before && edited.validate().is_ok() {
                 if dense.atmospheres.gesture.is_none() {
                     dense.atmospheres.gesture = Some((id, before));
                 }
+
                 dense.atmospheres.entries.get_mut(&id).unwrap().current = edited;
                 dense.atmospheres.error = None;
             }
+
             if let Some(error) = &dense.atmospheres.error {
                 ui.colored_label(egui::Color32::YELLOW, error);
             }
+
             if dense.atmospheres.conflict.is_some() {
                 ui.horizontal(|ui| {
                     for (label, keep) in [("Keep my edits", true), ("Use database", false)] {
@@ -520,7 +577,9 @@ fn draw(
                     }
                 });
             }
+
             let dirty = dense.atmospheres.dirty_count();
+
             if dirty > 0 {
                 ui.colored_label(
                     egui::Color32::YELLOW,
@@ -535,6 +594,7 @@ fn draw(
         });
     windows.set_open(WINDOW.id, open);
 }
+
 /// Presets and the random sequence the game plays. Values match `WeatherParams::validate`.
 fn weather_editor(ui: &mut egui::Ui, weather: &mut WeatherSettings, controls: &mut Controls) {
     ui.horizontal(|ui| {
@@ -546,6 +606,7 @@ fn weather_editor(ui: &mut egui::Ui, weather: &mut WeatherSettings, controls: &m
                     ui.selectable_value(&mut controls.weather_target, kind, kind.label());
                 }
             });
+
         if ui.button("Preview").clicked() {
             controls.weather = Some(controls.weather_target);
         }
@@ -572,9 +633,11 @@ fn weather_editor(ui: &mut egui::Ui, weather: &mut WeatherSettings, controls: &m
             .text("Wind speed ×"),
     );
     ui.add(egui::Slider::new(&mut p.precipitation, 0.0..=1.0).text("Rain"));
+
     if ui.button("Reset preset").clicked() {
         *p = kind.preset();
     }
+
     ui.separator();
     ui.strong("Random sequence");
     let schedule = &mut weather.schedule;
@@ -588,6 +651,7 @@ fn weather_editor(ui: &mut egui::Ui, weather: &mut WeatherSettings, controls: &m
             ui.label("Holds");
             ui.label("seconds");
             ui.end_row();
+
             for kind in WeatherKind::ALL {
                 ui.label(kind.label());
                 seconds_range(ui, &mut schedule.hold_seconds[kind.index()]);
@@ -599,12 +663,16 @@ fn weather_editor(ui: &mut egui::Ui, weather: &mut WeatherSettings, controls: &m
         .striped(true)
         .show(ui, |ui| {
             ui.label("");
+
             for kind in WeatherKind::ALL {
                 ui.label(&kind.label()[..2]).on_hover_text(kind.label());
             }
+
             ui.end_row();
+
             for from in WeatherKind::ALL {
                 ui.label(from.label());
+
                 for to in WeatherKind::ALL {
                     ui.add(
                         egui::DragValue::new(&mut schedule.next_weights[from.index()][to.index()])
@@ -613,14 +681,17 @@ fn weather_editor(ui: &mut egui::Ui, weather: &mut WeatherSettings, controls: &m
                             .fixed_decimals(2),
                     );
                 }
+
                 ui.end_row();
             }
         });
     ui.small("Zero forbids a change. Each state needs at least one positive weight.");
+
     if ui.button("Reset sequence").clicked() {
         *schedule = Default::default();
     }
 }
+
 fn seconds_range(ui: &mut egui::Ui, range: &mut [f32; 2]) {
     ui.add(
         egui::DragValue::new(&mut range[0])
@@ -635,11 +706,13 @@ fn seconds_range(ui: &mut egui::Ui, range: &mut [f32; 2]) {
             .speed(1.0)
             .suffix(" s"),
     );
+
     // Keep the pair ordered rather than rejecting the edit.
     if range[1] < range[0] {
         range[1] = range[0];
     }
 }
+
 fn preview_hour(ui: &mut egui::Ui, controls: &mut Controls) {
     let mut hour = controls.phase * 24.0;
     // Always-clamping also rounds every frame, marking an advancing clock as an
@@ -657,12 +730,15 @@ fn preview_hour(ui: &mut egui::Ui, controls: &mut Controls) {
         controls.playing = false;
     }
 }
+
 fn color(ui: &mut egui::Ui, label: &str, value: &mut [f32; 3]) {
     ui.horizontal(|ui| {
         let mut c = value.map(|v| (v * 255.0).round() as u8);
+
         if ui.color_edit_button_srgb(&mut c).changed() {
             *value = c.map(|v| f32::from(v) / 255.0);
         }
+
         ui.label(label);
     });
 }

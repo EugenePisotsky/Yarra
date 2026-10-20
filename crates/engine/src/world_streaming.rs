@@ -1,37 +1,54 @@
 mod catalog;
+
 use catalog::adopt_runtime_manifest;
 pub use catalog::{WorldCatalog, WorldSpaceInfo};
+
 mod database;
+
 use database::{DatabaseRequest, DatabaseResult, NotSent, RequestId, WorldDatabaseWorker};
+
 mod far_objects;
 mod generation;
+
 pub use generation::WorldGenerationReload;
+
 mod origin;
+
 pub use origin::{WorldOrigin, WorldViewpoint};
+
 mod replies;
 mod residency;
+
 use residency::SourceResidency;
 pub use residency::StreamingStats;
+
 #[cfg(test)]
 use residency::{PageState, attachment::PageAttachment};
+
 mod rebase;
 mod smoke;
 mod source_demand;
 mod surface;
+
 pub use surface::{
     StreamedTerrainSurface, StreamedTerrainWear, StreamedVegetationFieldPage,
     sample_resident_terrain_surface,
 };
+
 mod valley_mist;
 mod world_space;
+
 pub use crate::object_lod::{
     GeneratedEnvironmentObject, StreamedVisualObject, VisualLodScale, spawn_collection_visual,
 };
+
 pub use rebase::WorldRenderRoot;
 pub use smoke::StreamingSmokePlugin;
 pub use world_space::ActiveWorldSpace;
 pub(crate) use world_space::sync_world_atmosphere;
+
 pub(crate) mod terrain_clipmap;
+
 pub use terrain_clipmap::{
     ClipmapStats, ClipmapTerrain, LiveTerrainPreview, TerrainPreviewRequest,
 };
@@ -43,12 +60,15 @@ use bevy::{
     prelude::*,
     transform::TransformSystems,
 };
+
 use crossbeam_channel::TryRecvError;
 use vegetation::{VegetationCatalog, VegetationFieldPageData};
+
 use world::{
     CellCoord, ObjectDefinitionId, PageDomain, PageKey, StableObjectId, TerrainHeightfield,
     WorldPosition, WorldSpaceId,
 };
+
 use world_db::{CellDescriptor, RuntimeManifest};
 
 use crate::actor::{CharacterMotion, CharacterMotor, MoveIntent, WorldStreamFocus};

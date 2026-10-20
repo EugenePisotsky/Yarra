@@ -2,10 +2,12 @@
 use crate::Result;
 use crate::*;
 use game_types::*;
+
 pub struct ToolContent {
     content: GameContent,
     identity: ContentIdentity,
 }
+
 impl ToolContent {
     pub fn new(content: GameContent) -> Result<Self> {
         let identity = ContentIdentity {
@@ -15,16 +17,19 @@ impl ToolContent {
         Ok(Self { content, identity })
     }
 }
+
 impl ContentSource for ToolContent {
     fn identity(&self) -> ContentIdentity {
         self.identity.clone()
     }
+
     fn core(&mut self) -> Result<GameContent> {
         let mut core = self.content.clone();
         core.text.clear();
         core.game.dialogues.clear();
         Ok(core)
     }
+
     fn dialogue(&mut self, id: DialogueId) -> Result<dialogue::Dialogue> {
         let graph = self.content.authored(id);
         graph

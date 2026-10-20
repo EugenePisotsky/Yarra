@@ -285,10 +285,12 @@ fn apply_character_preview(
                 .entity(entity)
                 .insert(CharacterPresentationRef::new(preview.profile_id.clone()));
         }
+
         let mut desired = CharacterMotion {
             playback_rate: if preview.playing { preview.speed } else { 0.0 },
             ..default()
         };
+
         match preview.clip {
             CharacterPreviewClip::Idle => {}
             CharacterPreviewClip::Walk => {
@@ -304,6 +306,7 @@ fn apply_character_preview(
                 desired.phase = CharacterMotionPhase::Moving;
             }
         }
+
         if let Some(mut motion) = motion {
             *motion = desired;
         } else {
@@ -331,9 +334,11 @@ fn restart_character_preview(
         let Ok(mut restart_state) = restart_states.get_mut(animator.actor) else {
             continue;
         };
+
         if restart_state.0 == preview.restart_generation {
             continue;
         }
+
         let Some(animations) = assets.prepared_movement_set(&animator.movement_set_id) else {
             continue;
         };
@@ -399,6 +404,7 @@ fn resolve_character_presentations(
                 commands.entity(visual).despawn();
             }
         }
+
         commands.entity(actor).remove::<(
             ResolvedCharacterPresentation,
             CharacterMotorConfig,
@@ -469,6 +475,7 @@ fn prepare_character_animation_graphs(
                 .expect("validated Jog clip must exist"),
         ];
         let mut resolved_clips = Vec::with_capacity(clip_definitions.len());
+
         for definition in clip_definitions {
             let Some(handle) = gltf
                 .named_animations
@@ -489,6 +496,7 @@ fn prepare_character_animation_graphs(
             };
             resolved_clips.push(handle);
         }
+
         if resolved_clips.len() != 3 {
             continue;
         }
@@ -575,6 +583,7 @@ fn drive_character_animation(
             continue;
         };
         let desired = locomotion_visual(motion);
+
         if desired != animator.visual {
             let phase = locomotion_phase(
                 animator.visual,
@@ -628,6 +637,7 @@ fn locomotion_phase(
     {
         return 0.0;
     }
+
     let duration = clip_duration(source, clips, animation_clips);
     player.animation(nodes.get(source)).map_or(0.0, |active| {
         (active.seek_time() / duration).rem_euclid(1.0)

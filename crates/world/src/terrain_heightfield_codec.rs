@@ -9,10 +9,12 @@ use crate::{
     MAX_TERRAIN_HEIGHTFIELD_RESOLUTION, TERRAIN_HEIGHT_STEP, TERRAIN_NORMAL_BITS,
     TerrainHeightfield,
 };
+
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de, ser};
 
 /// About ±2,000 km: far beyond any world, and small enough that predictions cannot overflow.
 const MAX_HEIGHT_STEPS: i64 = 1 << 31;
+
 const NORMAL_SHIFT: u32 = 16 - TERRAIN_NORMAL_BITS;
 const MAX_NORMAL_VALUE: i64 = (1 << (TERRAIN_NORMAL_BITS - 1)) - 1;
 
@@ -64,17 +66,21 @@ impl<'de> Deserialize<'de> for TerrainHeightfield {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let packed = PackedTerrainHeightfield::deserialize(deserializer)?;
         let n = usize::from(packed.resolution);
+
         if !(2..=usize::from(MAX_TERRAIN_HEIGHTFIELD_RESOLUTION)).contains(&n) {
             return Err(de::Error::custom("terrain heightfield resolution"));
         }
+
         let mut heights = packed.heights.as_slice();
         let steps = unpack_plane(&mut heights, n, MAX_HEIGHT_STEPS).map_err(de::Error::custom)?;
         let mut normals = packed.normals.as_slice();
         let x = unpack_plane(&mut normals, n, MAX_NORMAL_VALUE).map_err(de::Error::custom)?;
         let z = unpack_plane(&mut normals, n, MAX_NORMAL_VALUE).map_err(de::Error::custom)?;
+
         if !heights.is_empty() || !normals.is_empty() {
             return Err(de::Error::custom("terrain heightfield trailing samples"));
         }
+
         let field = Self {
             resolution: packed.resolution,
             heights: steps
@@ -106,36 +112,46 @@ fn pack_plane(plane: &[i64], n: usize, output: &mut Vec<u8>) {
     for index in 0..plane.len() {
         let residual = plane[index] - predict(plane, n, index);
         let mut value = ((residual << 1) ^ (residual >> 63)) as u64;
+
         while value >= 0x80 {
             output.push(value as u8 | 0x80);
             value >>= 7;
         }
+
         output.push(value as u8);
     }
 }
 
 fn unpack_plane(bytes: &mut &[u8], n: usize, limit: i64) -> Result<Vec<i64>, &'static str> {
     let mut plane = Vec::with_capacity(n * n);
+
     for index in 0..n * n {
         let mut value = 0_u64;
         let mut shift = 0;
+
         loop {
             let (&byte, rest) = bytes
                 .split_first()
                 .ok_or("terrain heightfield samples are truncated")?;
             *bytes = rest;
+
             if shift == 63 && byte > 1 {
                 return Err("terrain heightfield residual overflows");
             }
+
             value |= u64::from(byte & 0x7f) << shift;
+
             if byte & 0x80 == 0 {
                 break;
             }
+
             shift += 7;
+
             if shift > 63 {
                 return Err("terrain heightfield residual overflows");
             }
         }
+
         let residual = (value >> 1) as i64 ^ -((value & 1) as i64);
         let sample = predict(&plane, n, index)
             .checked_add(residual)
@@ -143,6 +159,7 @@ fn unpack_plane(bytes: &mut &[u8], n: usize, limit: i64) -> Result<Vec<i64>, &'s
             .ok_or("terrain heightfield sample outside the encodable range")?;
         plane.push(sample);
     }
+
     Ok(plane)
 }
 
@@ -220,6 +237,7 @@ mod tests {
                 .with_fixed_int_encoding(),
         )
         .unwrap();
+
         // One height and two normal axes per sample. Float heights and 16-bit normals took
         // 8 bytes per sample (8,712 here).
         assert!(bytes.len() < 33 * 33 * 4, "{} bytes", bytes.len());
@@ -236,6 +254,7 @@ mod tests {
             bincode::serde::decode_from_slice::<TerrainHeightfield, _>(bytes, config).map(|v| v.0)
         };
         assert_eq!(decode(&valid).unwrap(), field);
+
         // Resolution (u16), then the height plane's u64 length and bytes.
         let heights_len = u64::from_le_bytes(valid[2..10].try_into().unwrap()) as usize;
         let mut truncated = valid.clone();
@@ -248,9 +267,11 @@ mod tests {
         assert!(decode(&extended).is_err());
         let mut overlong = valid.clone();
         overlong[2..10].copy_from_slice(&(heights_len as u64 + 10).to_le_bytes());
+
         for _ in 0..10 {
             overlong.insert(10, 0xff);
         }
+
         assert!(decode(&overlong).is_err());
         let mut resolution = valid;
         resolution[0..2].copy_from_slice(&1_u16.to_le_bytes());

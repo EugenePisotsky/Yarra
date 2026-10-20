@@ -13,6 +13,7 @@ pub struct TreeWindTuning {
     pub flutter: f32,
     pub rhythm: f32,
 }
+
 impl Default for TreeWindTuning {
     fn default() -> Self {
         Self {
@@ -27,11 +28,13 @@ impl Default for TreeWindTuning {
         }
     }
 }
+
 #[derive(Resource, Default)]
 pub(super) struct WindTuningState {
     saved: Option<(f32, f32, Vec2)>,
     manual_pose: Option<(f32, f32, Vec2)>,
 }
+
 impl WindTuningState {
     // Restore the automatic input before weather updates it. Keep the smoothed
     // manual output separately so changing weather cannot poison its baseline.
@@ -44,6 +47,7 @@ impl WindTuningState {
             wind.direction = direction;
         }
     }
+
     pub fn apply(&mut self, wind: &mut VegetationWind, tuning: &TreeWindTuning, dt: f32) {
         if wind.externally_driven {
             self.manual_pose = None;
@@ -68,6 +72,7 @@ impl WindTuningState {
         }
     }
 }
+
 pub(super) fn restore_automatic(
     wind: Option<ResMut<VegetationWind>>,
     mut state: ResMut<WindTuningState>,
@@ -76,9 +81,11 @@ pub(super) fn restore_automatic(
         state.restore(&mut wind);
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn manual_override_settles_and_restores_without_resetting_transport() {
         let mut wind = VegetationWind::default();
@@ -90,10 +97,12 @@ mod tests {
             strength: 0.,
             ..default()
         };
+
         for _ in 0..240 {
             state.restore(&mut wind);
             state.apply(&mut wind, &tuning, 1. / 60.);
         }
+
         assert!(wind.strength < 0.003);
         assert_eq!(wind.phase_seconds(), 42.);
         tuning.manual = false;
@@ -106,6 +115,7 @@ mod tests {
         state.apply(&mut wind, &tuning, 1.);
         assert_eq!(wind.strength, original.strength);
     }
+
     #[test]
     fn weather_changes_under_manual_wind_and_opposite_headings_work() {
         let mut wind = VegetationWind::default();
@@ -116,11 +126,13 @@ mod tests {
             heading: 180.,
             ..default()
         };
+
         for _ in 0..300 {
             state.restore(&mut wind);
             wind.strength = 1.4; // Automatic producer keeps changing below the override.
             state.apply(&mut wind, &tuning, 1. / 60.);
         }
+
         assert!(wind.direction.x < -0.99);
         tuning.manual = false;
         state.restore(&mut wind);

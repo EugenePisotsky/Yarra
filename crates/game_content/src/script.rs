@@ -6,6 +6,7 @@ use gameplay::inventory::{TradeLine, TradeOffer, TradeParticipants};
 use gameplay::{Command, GameSession};
 use gameplay::{actors, quests};
 use serde::{Deserialize, Serialize};
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum Step {
@@ -147,6 +148,7 @@ pub enum Step {
         rank: u8,
     },
 }
+
 fn entry(
     session: &GameSession,
     inventory: InventoryId,
@@ -161,19 +163,23 @@ fn entry(
         .map(|e| e.id)
         .ok_or_else(|| Invalid(format!("inventory {inventory} has no item {definition}")).into())
 }
+
 fn trade_lines(
     session: &GameSession,
     inventory: InventoryId,
     amounts: &[ItemAmount],
 ) -> Result<Vec<TradeLine>> {
     let mut lines = Vec::new();
+
     for amount in amounts {
         require(amount.quantity > 0, "trade quantity must be positive")?;
         let mut remaining = amount.quantity;
+
         for entry in &session.state().inventory(inventory)?.entries {
             if entry.definition != amount.definition || remaining == 0 {
                 continue;
             }
+
             let quantity = remaining.min(entry.quantity);
             remaining -= quantity;
             lines.push(TradeLine {
@@ -181,10 +187,13 @@ fn trade_lines(
                 quantity,
             });
         }
+
         require(remaining == 0, "insufficient stock for scenario trade")?;
     }
+
     Ok(lines)
 }
+
 impl Step {
     pub(crate) fn kind(&self) -> &'static str {
         match self {
@@ -219,6 +228,7 @@ impl Step {
             Self::ExpectSkill { .. } => "ExpectSkill",
         }
     }
+
     pub fn apply(&self, session: &mut GameSession) -> Result<()> {
         let command = match self {
             Self::World(command) => Command::World(command.clone()),
@@ -269,6 +279,7 @@ impl Step {
                     speaker: *speaker,
                 };
                 let expected = session.conversation_view(key)?.token;
+
                 if matches!(self, Self::AdvanceLine { .. }) {
                     Command::AdvanceLine { key, expected }
                 } else {
@@ -365,6 +376,7 @@ impl Step {
             } => {
                 require(item.quantity > 0, "transfer quantity must be positive")?;
                 let mut remaining = item.quantity;
+
                 while remaining > 0 {
                     let id = entry(session, *source, item.definition)?;
                     let quantity = session
@@ -381,6 +393,7 @@ impl Step {
                     })?;
                     remaining -= quantity;
                 }
+
                 return Ok(());
             }
             Self::Trade {

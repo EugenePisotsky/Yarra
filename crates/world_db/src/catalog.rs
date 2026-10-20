@@ -3,12 +3,14 @@ use crate::storage::blob_array;
 use crate::{WorldDbError, WorldSpaceRecord, atmosphere};
 use rusqlite::{Connection, OptionalExtension, params};
 use vegetation::VegetationCatalog;
+
 use world::{
     MAX_DECODED_PAGE_BYTES, TerrainProfile, TerrainSurface, TerrainSurfaceId, TerrainTextureLayer,
     TerrainTextureSet, TerrainTextureSetId, WorldSpaceId,
 };
 
 pub(crate) const VEGETATION_CATALOG_FORMAT_VERSION: i64 = 13;
+
 pub(crate) fn write_vegetation_catalog(
     transaction: &Connection,
     catalog: Option<&VegetationCatalog>,
@@ -54,6 +56,7 @@ pub(crate) fn read_vegetation_catalog(
                     actual: format_version,
                 });
             }
+
             let (catalog, consumed): (VegetationCatalog, usize) =
                 bincode::serde::decode_from_slice(
                     &payload,
@@ -62,12 +65,14 @@ pub(crate) fn read_vegetation_catalog(
                         .with_fixed_int_encoding()
                         .with_limit::<{ MAX_DECODED_PAGE_BYTES as usize }>(),
                 )?;
+
             if consumed != payload.len() {
                 return Err(WorldDbError::VegetationCatalogTrailingBytes {
                     consumed,
                     total: payload.len(),
                 });
             }
+
             catalog.validate()?;
             Ok(catalog)
         })
@@ -100,6 +105,7 @@ pub(crate) fn write_terrain_catalog(
             ],
         )?;
     }
+
     for texture_set in texture_sets {
         transaction.execute(
             "INSERT INTO terrain_texture_sets( \
@@ -124,6 +130,7 @@ pub(crate) fn write_terrain_catalog(
             ],
         )?;
     }
+
     for layer in texture_layers {
         transaction.execute(
             "INSERT INTO terrain_texture_set_layers(texture_set_id, layer, surface_id) \
@@ -135,6 +142,7 @@ pub(crate) fn write_terrain_catalog(
             ],
         )?;
     }
+
     for profile in profiles {
         transaction.execute(
             "INSERT INTO world_space_terrain_profiles( \
@@ -153,6 +161,7 @@ pub(crate) fn write_terrain_catalog(
             ],
         )?;
     }
+
     Ok(())
 }
 
@@ -272,6 +281,7 @@ pub(crate) fn query_world_spaces(
     )?;
     let mut rows = statement.query([])?;
     let mut spaces = Vec::new();
+
     while let Some(row) = rows.next()? {
         let bytes: Vec<u8> = row.get(5)?;
         let profile = atmosphere::decode(&bytes)?;
@@ -286,10 +296,12 @@ pub(crate) fn query_world_spaces(
             sea_level: row.get(7)?,
         });
     }
+
     if spaces.len() > 32 {
         return Err(WorldDbError::Cook(
             "at most 32 world atmospheres are supported".into(),
         ));
     }
+
     Ok(spaces)
 }

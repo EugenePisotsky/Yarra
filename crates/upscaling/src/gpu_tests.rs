@@ -1,5 +1,6 @@
 //! Small readback probe for native command ordering, sRGB handling and resource recreation.
 use super::*;
+
 use bevy::render::{
     renderer::{RenderDevice, initialize_renderer},
     settings::{Backends, WgpuSettings},
@@ -31,6 +32,7 @@ fn spatial_backends_preserve_colour_orientation_and_updates() {
     let device = &resources.0;
     let queue = &resources.1;
     let linear = backends::linear::Linear::new(device);
+
     for (width, height, out_width, out_height) in [(64, 32, 128, 64), (63, 35, 129, 73)] {
         let mut image =
             Image::new_target_texture(width, height, wgpu::TextureFormat::Bgra8UnormSrgb, None);
@@ -38,6 +40,7 @@ fn spatial_backends_preserve_colour_orientation_and_updates() {
         let input = gpu_image(device, image.clone());
         let upload = gpu_image(device, image);
         let output = gpu_image(device, output_image(UVec2::new(out_width, out_height)));
+
         // A second render pass samples the result exactly as Bevy's UI will.
         let mut sampled_image = output_image(UVec2::new(out_width, out_height));
         sampled_image.texture_descriptor.usage |= wgpu::TextureUsages::COPY_SRC;
@@ -64,6 +67,7 @@ fn spatial_backends_preserve_colour_orientation_and_updates() {
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
+
         for frame in 0..4 {
             let mut colours = [
                 [32u8, 82, 144, 255],
@@ -73,6 +77,7 @@ fn spatial_backends_preserve_colour_orientation_and_updates() {
             ];
             colours.rotate_left(frame);
             let mut pixels = Vec::new();
+
             for y in 0..height {
                 for x in 0..width {
                     let [r, g, b, a] =
@@ -80,6 +85,7 @@ fn spatial_backends_preserve_colour_orientation_and_updates() {
                     pixels.extend_from_slice(&[b, g, r, a]);
                 }
             }
+
             queue.write_texture(
                 upload.texture.as_image_copy(),
                 &pixels,
@@ -103,6 +109,7 @@ fn spatial_backends_preserve_colour_orientation_and_updates() {
             let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("sample upscale result"),
             });
+
             if native {
                 buffers.extend(
                     spatial
@@ -114,6 +121,7 @@ fn spatial_backends_preserve_colour_orientation_and_updates() {
             } else {
                 linear.encode(&mut encoder, &src_bind, &output);
             }
+
             linear.encode(&mut encoder, &output_bind, &sampled);
             encoder.copy_texture_to_buffer(
                 sampled.texture.as_image_copy(),
@@ -148,6 +156,7 @@ fn spatial_backends_preserve_colour_orientation_and_updates() {
                 .slice(..)
                 .get_mapped_range()
                 .expect("readback is mapped");
+
             for (quadrant, expected) in colours.iter().enumerate() {
                 let x = out_width * (if quadrant % 2 == 0 { 1 } else { 3 }) / 4;
                 let y = out_height * (if quadrant < 2 { 1 } else { 3 }) / 4;
@@ -164,6 +173,7 @@ fn spatial_backends_preserve_colour_orientation_and_updates() {
                     "colour/orientation mismatch: got {actual:?}, expected {expected:?}"
                 );
             }
+
             drop(bytes);
             readback.unmap();
         }
@@ -202,6 +212,7 @@ fn temporal_preserves_hdr_and_resets_history() {
         usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
+
     for frame in 0..8 {
         let expected = if frame < 4 {
             [0.25, 0.5, 0.75]
@@ -209,6 +220,7 @@ fn temporal_preserves_hdr_and_resets_history() {
             [0.75, 0.25, 0.125]
         };
         let mut encoder = device.create_command_encoder(&default());
+
         {
             let _pass = encoder.begin_render_pass(&RenderPassDescriptor {
                 label: None,
@@ -248,6 +260,7 @@ fn temporal_preserves_hdr_and_resets_history() {
                 ..default()
             });
         }
+
         let mut commands = vec![encoder.finish()];
         commands.extend(
             scaler
@@ -298,6 +311,7 @@ fn temporal_preserves_hdr_and_resets_history() {
             .slice(..)
             .get_mapped_range()
             .expect("readback is mapped");
+
         for (channel, expected) in expected.iter().enumerate() {
             let offset = 32 * 512 + 32 * 8 + channel * 2;
             let half = u16::from_le_bytes([data[offset], data[offset + 1]]);
@@ -308,6 +322,7 @@ fn temporal_preserves_hdr_and_resets_history() {
                 "frame {frame}, channel {channel}: {actual} vs {expected}"
             );
         }
+
         drop(data);
         readback.unmap();
     }

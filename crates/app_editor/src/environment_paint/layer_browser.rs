@@ -9,7 +9,9 @@ struct Query {
     epoch: u64,
     definition_revision: u64,
 }
+
 type Worker = crate::worker::Worker<Query, (Query, Result<EnvironmentLayerPresence, String>)>;
+
 fn start_worker(path: std::path::PathBuf) -> Result<Worker, String> {
     Worker::project_reader("layer-browser", path, |reader, q: &Query| {
         reader
@@ -22,7 +24,9 @@ fn start_worker(path: std::path::PathBuf) -> Result<Worker, String> {
             .map_err(|e| e.to_string())
     })
 }
+
 type MembershipCache = (Query, u64, u64, BTreeSet<LayerId>);
+
 #[derive(Resource, Default)]
 pub(crate) struct EnvironmentLayerBrowser {
     cached: Option<MembershipCache>,
@@ -35,12 +39,14 @@ pub(crate) struct EnvironmentLayerBrowser {
     pub(crate) search: String,
     error: Option<String>,
 }
+
 fn inside(cell: CellCoord, window: ProjectQueryWindow) -> bool {
     cell.x >= window.minimum.x
         && cell.x <= window.maximum.x
         && cell.z >= window.minimum.z
         && cell.z <= window.maximum.z
 }
+
 /// Replace complete touched-cell membership, including erasures, before collecting layer IDs.
 fn membership<R: std::borrow::Borrow<SourceEnvironmentCellRecord>>(
     window: ProjectQueryWindow,
@@ -48,11 +54,14 @@ fn membership<R: std::borrow::Borrow<SourceEnvironmentCellRecord>>(
     local: impl IntoIterator<Item = R>,
 ) -> BTreeSet<LayerId> {
     let mut entries = saved.into_iter().collect::<BTreeSet<_>>();
+
     for record in local {
         let record = record.borrow();
+
         if record.space != window.space || !inside(record.cell, window) {
             continue;
         }
+
         entries.retain(|(cell, _)| *cell != record.cell);
         entries.extend(
             record
@@ -62,13 +71,16 @@ fn membership<R: std::borrow::Borrow<SourceEnvironmentCellRecord>>(
                 .map(|t| (record.cell, t.layer)),
         );
     }
+
     entries.into_iter().map(|(_, layer)| layer).collect()
 }
+
 impl EnvironmentLayerBrowser {
     fn set_desired(&mut self, desired: Option<Query>) {
         if self.desired == desired {
             return;
         }
+
         // Discovery is asynchronous: keep the last complete list while moving within
         // this world, rather than treating a pending query as empty coverage.
         if self
@@ -78,6 +90,7 @@ impl EnvironmentLayerBrowser {
         {
             self.accepted = None;
         }
+
         self.desired = desired;
         self.cached = None;
         self.error = None;
@@ -86,10 +99,13 @@ impl EnvironmentLayerBrowser {
 
     fn accept(&mut self, q: Query, result: Result<EnvironmentLayerPresence, String>) {
         self.in_flight = false;
+
         if Some(q) != self.desired {
             return;
         }
+
         self.cached = None;
+
         match result {
             Ok(p) if p.definition_revision == q.definition_revision => {
                 self.accepted = Some((q, p));
@@ -106,6 +122,7 @@ impl EnvironmentLayerBrowser {
         self.submitted = None;
         self.error = None;
     }
+
     pub(crate) fn includes(
         &self,
         layer: &environment::Layer,
@@ -128,10 +145,12 @@ impl EnvironmentLayerBrowser {
         let Some(desired) = self.desired.filter(|q| q.window.space == space) else {
             return BTreeSet::new();
         };
+
         // Saved membership and local edits must use the same completed window until
         // its replacement arrives; filtering old entries by the new window would
         // still remove rows prematurely while the cursor moves.
         let q = self.accepted.as_ref().map_or(desired, |(q, _)| *q);
+
         if let Some((key, edits, definitions, layers)) = &self.cached
             && *key == q
             && *edits == dense.edit_revision()
@@ -139,6 +158,7 @@ impl EnvironmentLayerBrowser {
         {
             return layers.clone();
         }
+
         let saved = self
             .accepted
             .as_ref()
@@ -147,6 +167,7 @@ impl EnvironmentLayerBrowser {
             .flat_map(|(_, p)| p.entries.iter().copied());
         let local = dense.dirty_environment_cells();
         let mut result = membership(q.window, saved, local);
+
         for d in dense
             .dirty_definition_snapshots()
             .iter()
@@ -160,6 +181,7 @@ impl EnvironmentLayerBrowser {
                     .map(|l| l.id),
             );
         }
+
         self.cached = Some((
             q,
             dense.edit_revision(),
@@ -168,6 +190,7 @@ impl EnvironmentLayerBrowser {
         ));
         result
     }
+
     pub(crate) fn status(&self) -> String {
         if let Some(e) = &self.error {
             return if self.accepted.is_some() {
@@ -176,15 +199,18 @@ impl EnvironmentLayerBrowser {
                 format!("Nearby layers unavailable: {e}")
             };
         }
+
         if let Some((_, p)) = &self.accepted {
             if p.truncated {
                 return "Partial nearby results · use All to find other layers".into();
             }
             return "Nearby · 5 × 5 cells around the editing focus".into();
         }
+
         "Loading nearby layers… Selected and new layers stay visible.".into()
     }
 }
+
 pub(super) fn update(
     mut browser: ResMut<EnvironmentLayerBrowser>,
     project: Res<ProjectEditorStore>,
@@ -213,15 +239,19 @@ pub(super) fn update(
     };
     browser.set_desired(desired);
     let completion = browser.worker.as_ref().and_then(|w| w.try_recv().ok());
+
     if let Some((q, result)) = completion {
         browser.accept(q, result);
     }
+
     let Some(q) = browser.desired else {
         return;
     };
+
     if browser.in_flight || browser.submitted == Some(q) {
         return;
     }
+
     if browser.worker.is_none() {
         match start_worker(path.0.clone()) {
             Ok(w) => browser.worker = Some(w),
@@ -232,6 +262,7 @@ pub(super) fn update(
             }
         }
     }
+
     if browser.worker.as_ref().unwrap().try_send(q).is_ok() {
         browser.submitted = Some(q);
         browser.in_flight = true;
@@ -241,6 +272,7 @@ pub(super) fn update(
 #[cfg(test)]
 mod tests {
     use super::*;
+
     fn window() -> ProjectQueryWindow {
         ProjectQueryWindow {
             space: WorldSpaceId(1),
@@ -248,6 +280,7 @@ mod tests {
             maximum: CellCoord { x: 2, z: 2 },
         }
     }
+
     fn record(cell: CellCoord, layer: LayerId, value: u8) -> SourceEnvironmentCellRecord {
         SourceEnvironmentCellRecord {
             space: WorldSpaceId(1),
@@ -260,6 +293,7 @@ mod tests {
             }],
         }
     }
+
     fn query(x: i32) -> Query {
         let mut window = window();
         window.minimum.x += x;
@@ -270,6 +304,7 @@ mod tests {
             definition_revision: 1,
         }
     }
+
     fn presence(q: Query, entries: &[(CellCoord, LayerId)]) -> EnvironmentLayerPresence {
         EnvironmentLayerPresence {
             definition_revision: q.definition_revision,
@@ -277,6 +312,7 @@ mod tests {
             truncated: false,
         }
     }
+
     fn complete(browser: &mut EnvironmentLayerBrowser, q: Query, entries: &[(CellCoord, LayerId)]) {
         browser.submitted = Some(q);
         browser.accept(q, Ok(presence(q, entries)));
@@ -394,6 +430,7 @@ mod tests {
         );
         assert_eq!(result, BTreeSet::from([a]));
     }
+
     #[test]
     fn selection_stays_visible_outside_the_window_and_search_includes_disabled_layers() {
         let layer = environment::Layer {

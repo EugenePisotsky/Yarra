@@ -2,7 +2,9 @@ use game_types::*;
 use gameplay::{Command, Driver, GameSession};
 use save::{SaveDirectory, SaveSlot};
 use yarra_game_content::*;
+
 mod support;
+
 use support::Temp;
 
 #[test]
@@ -19,9 +21,11 @@ fn retained_generation_restores_without_sources_and_missing_generation_fails() {
         project.start().unwrap().into_state(),
     )
     .unwrap();
+
     for step in &project.scenario().steps {
         step.apply(&mut session).unwrap();
     }
+
     let expected = session.state().clone();
     let saves = SaveDirectory::new(temp.0.join("slots"), 2).unwrap();
     saves
@@ -37,14 +41,17 @@ fn retained_generation_restores_without_sources_and_missing_generation_fails() {
     std::fs::remove_dir_all(temp.0.join("retained")).unwrap();
     assert!(library.load(&saves, SaveSlot::Manual(1)).is_err());
 }
+
 #[test]
 fn authored_operations_run_through_published_content_and_the_shared_driver() {
     let temp = Temp::new();
     let project = LoadedProject::load_directory(temp.source()).unwrap();
     let mut session = support::runtime(&temp, &project);
+
     for step in &project.scenario().steps {
         step.apply(&mut session).unwrap();
     }
+
     let time = session.header().time;
     let mut driver = Driver::new(session, 20, 3).unwrap();
     assert_eq!(

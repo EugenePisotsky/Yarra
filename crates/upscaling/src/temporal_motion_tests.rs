@@ -1,6 +1,7 @@
 //! Analytic moving-image probe: exercises the production MetalFX backend with
 //! known colour sampling positions and motion, independently of scene complexity.
 use super::*;
+
 use bevy::render::{
     render_resource::*,
     renderer::initialize_renderer,
@@ -130,14 +131,17 @@ struct Output { @location(0) color:vec4<f32>, @location(1) motion:vec2<f32> }
         usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
+
     for (name, delta) in [
         ("static", Vec2::ZERO),
         ("horizontal", Vec2::new(1.25, 0.0)),
         ("vertical", Vec2::new(0.0, 1.25)),
     ] {
         let mut errors = Vec::new();
+
         for sign in [1.0, -1.0] {
             let mut scaler = backends::Temporal::new(device, input, output_size).unwrap();
+
             for frame in 0..32 {
                 let position = delta * frame as f32;
                 let jitter = temporal::jitter(frame);
@@ -166,6 +170,7 @@ struct Output { @location(0) color:vec4<f32>, @location(1) motion:vec2<f32> }
                         }],
                     });
                 let mut encoder = device.create_command_encoder(&default());
+
                 {
                     let attachment = |view| {
                         Some(RenderPassColorAttachment {
@@ -196,6 +201,7 @@ struct Output { @location(0) color:vec4<f32>, @location(1) motion:vec2<f32> }
                     pass.set_viewport(0.0, 0.0, 128.0, 128.0, 0.0, 1.0);
                     pass.draw(0..3, 0..1);
                 }
+
                 let mut commands = vec![encoder.finish()];
                 commands.extend(
                     scaler
@@ -214,6 +220,7 @@ struct Output { @location(0) color:vec4<f32>, @location(1) motion:vec2<f32> }
                         )
                         .unwrap(),
                 );
+
                 if frame == 31 {
                     let mut encoder = device.create_command_encoder(&default());
                     encoder.copy_texture_to_buffer(
@@ -230,8 +237,10 @@ struct Output { @location(0) color:vec4<f32>, @location(1) motion:vec2<f32> }
                     );
                     commands.push(encoder.finish());
                 }
+
                 queue.submit(commands);
             }
+
             let (tx, rx) = std::sync::mpsc::channel();
             readback.slice(..).map_async(MapMode::Read, move |r| {
                 let _ = tx.send(r);
@@ -251,6 +260,7 @@ struct Output { @location(0) color:vec4<f32>, @location(1) motion:vec2<f32> }
                 .expect("readback is mapped");
             let mut squared = 0.0f64;
             let mut n = 0;
+
             for y in 48..208 {
                 for x in 48..208 {
                     let q = (Vec2::new(x as f32, y as f32) + Vec2::splat(0.5)) * 0.5 - delta * 31.0;
@@ -271,6 +281,7 @@ struct Output { @location(0) color:vec4<f32>, @location(1) motion:vec2<f32> }
                     n += 1;
                 }
             }
+
             let rmse = (squared / f64::from(n)).sqrt();
             errors.push(rmse);
             println!(
@@ -280,9 +291,11 @@ struct Output { @location(0) color:vec4<f32>, @location(1) motion:vec2<f32> }
             drop(bytes);
             readback.unmap();
         }
+
         if diagnostic {
             continue;
         }
+
         assert!(errors[0] < 0.02, "{name}: reconstruction error {errors:?}");
         assert!(
             errors[0] < errors[1] * 0.5,

@@ -12,6 +12,7 @@ use thiserror::Error;
 
 pub mod fixtures;
 mod placement;
+
 pub use placement::*;
 
 /// A grass type's stable identity, derived from its key so packs may reorder types freely.
@@ -134,9 +135,11 @@ impl Lattice for GrassType {
     fn seed(&self) -> u32 {
         self.id().seed()
     }
+
     fn spacing(&self) -> f32 {
         GrassType::spacing(self)
     }
+
     fn clumps(&self) -> GrassClumps {
         self.clumps
     }
@@ -271,6 +274,7 @@ pub fn wear_share(band: [f32; 3], wear: f64) -> f64 {
         let t = t.clamp(0.0, 1.0);
         t * t * (3.0 - 2.0 * t)
     };
+
     if wear <= peak {
         smooth((wear - from) / (peak - from))
     } else if to > peak {
@@ -284,9 +288,11 @@ impl Lattice for DetailType {
     fn seed(&self) -> u32 {
         self.id().seed()
     }
+
     fn spacing(&self) -> f32 {
         self.density.sqrt().recip()
     }
+
     fn clumps(&self) -> GrassClumps {
         GrassClumps {
             size: self.clumps.size,
@@ -329,7 +335,9 @@ impl VegetationCatalog {
         if self.grass.len() + self.details.len() > MAX_GRASS_TYPES {
             return Err(CatalogValidationError::TooManyTypes);
         }
+
         let mut ids = HashSet::new();
+
         for grass in &self.grass {
             if !ids.insert(grass.id()) {
                 return Err(CatalogValidationError::DuplicateType(grass.key.clone()));
@@ -338,6 +346,7 @@ impl VegetationCatalog {
                 return Err(CatalogValidationError::InvalidType(grass.key.clone()));
             }
         }
+
         for detail in &self.details {
             if !ids.insert(detail.id()) {
                 return Err(CatalogValidationError::DuplicateType(detail.key.clone()));
@@ -346,12 +355,16 @@ impl VegetationCatalog {
                 return Err(CatalogValidationError::InvalidType(detail.key.clone()));
             }
         }
+
         let mut surfaces = HashSet::new();
+
         for surface in &self.surfaces {
             if !surfaces.insert(surface.surface) {
                 return Err(CatalogValidationError::DuplicateSurface(surface.surface));
             }
+
             let mut types = HashSet::new();
+
             for amount in &surface.grass {
                 if !ids.contains(&amount.grass)
                     || !types.insert(amount.grass)
@@ -361,6 +374,7 @@ impl VegetationCatalog {
                 }
             }
         }
+
         Ok(())
     }
 
@@ -408,6 +422,7 @@ impl VegetationCatalog {
     pub fn cover(&self, surface: [u8; 16]) -> GrassCover {
         let mut total = 0.0;
         let mut color = [0.0; 3];
+
         for a in self.on_surface(surface) {
             let Some(grass) = self.grass(a.grass) else {
                 continue;
@@ -415,13 +430,16 @@ impl VegetationCatalog {
             let share = a.amount * Self::cover_share(grass);
             let field = grass.colors.field();
             total += share;
+
             for (c, f) in color.iter_mut().zip(field) {
                 *c += f * share;
             }
         }
+
         if total <= 0.0 {
             return GrassCover::default();
         }
+
         GrassCover {
             amount: total.min(1.0),
             color: color.map(|c| c / total),
@@ -433,6 +451,7 @@ impl VegetationCatalog {
     /// type changed.
     pub fn adopt_looks(&mut self, other: &VegetationCatalog) -> bool {
         let mut changed = false;
+
         for grass in &mut self.grass {
             if let Some(source) = other.grass.iter().find(|g| g.key == grass.key)
                 && source != grass
@@ -441,6 +460,7 @@ impl VegetationCatalog {
                 changed = true;
             }
         }
+
         for detail in &mut self.details {
             if let Some(source) = other.details.iter().find(|d| d.key == detail.key)
                 && source != detail
@@ -449,6 +469,7 @@ impl VegetationCatalog {
                 changed = true;
             }
         }
+
         changed
     }
 }
@@ -535,6 +556,7 @@ impl GrassField {
         if !page.owns(world_xz) || self.resolution == 0 {
             return 0.0;
         }
+
         let resolution = usize::from(self.resolution);
         let local_x = ((world_xz[0] - page.origin_xz[0]) / page.size).clamp(0.0, 0.999_999);
         let local_z = ((world_xz[1] - page.origin_xz[1]) / page.size).clamp(0.0, 0.999_999);
@@ -558,18 +580,23 @@ pub struct VegetationFieldPageData {
 impl VegetationFieldPageData {
     pub fn validate(&self, catalog: &VegetationCatalog) -> Result<(), PageValidationError> {
         let mut types = HashSet::new();
+
         for field in &self.fields {
             if catalog.grass(field.grass).is_none() && catalog.detail(field.grass).is_none() {
                 return Err(PageValidationError::MissingType(field.grass));
             }
+
             if !types.insert(field.grass) {
                 return Err(PageValidationError::DuplicateType(field.grass));
             }
+
             let resolution = usize::from(field.resolution);
+
             if resolution == 0 || resolution > 256 || field.coverage.len() != resolution.pow(2) {
                 return Err(PageValidationError::InvalidField(field.grass));
             }
         }
+
         Ok(())
     }
 
@@ -591,26 +618,33 @@ impl VegetationFieldPageData {
             })
             .collect();
         let resolution = fields.first()?.0.resolution;
+
         if fields.iter().any(|(f, _, _)| f.resolution != resolution) {
             return None;
         }
+
         let texels = usize::from(resolution).pow(2);
         let mut rgba = Vec::with_capacity(texels * 4);
+
         for i in 0..texels {
             let mut total = 0.0;
             let mut color = [0.0; 3];
+
             for (field, share, field_color) in &fields {
                 let share = f32::from(field.coverage[i]) / 255.0 * share;
                 total += share;
+
                 for (c, f) in color.iter_mut().zip(field_color) {
                     *c += f * share;
                 }
             }
+
             let unit = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
             let color = color.map(|c| if total > 0.0 { c / total } else { 0.0 });
             rgba.extend(color.map(|c| unit(c.sqrt())));
             rgba.push(unit(total));
         }
+
         Some((resolution, rgba))
     }
 }
@@ -638,9 +672,11 @@ impl VegetationFieldPage {
         {
             return Err(PageValidationError::InvalidExtent);
         }
+
         if !self.surface.is_valid() {
             return Err(PageValidationError::InvalidSurface);
         }
+
         self.data().validate(catalog)
     }
 
@@ -727,6 +763,7 @@ impl VegetationSurfaceField {
         world_xz: [f32; 2],
     ) -> VegetationSurfaceSample {
         let resolution = usize::from(self.resolution);
+
         // Scene admission validates every height once. Sampling must remain O(1),
         // including debug builds used by the editor.
         debug_assert!((2..=257).contains(&resolution));
@@ -753,6 +790,7 @@ impl VegetationSurfaceField {
         let mut height = 0.0;
         let mut normal = [0.0; 3];
         let mut validity = 0.0;
+
         for (index, weight) in indices.into_iter().zip(weights) {
             height += self.heights[index] * weight;
             let decoded = decode_octahedral_normal(self.normals_oct[index]);
@@ -761,6 +799,7 @@ impl VegetationSurfaceField {
             normal[2] += decoded[2] * weight;
             validity += f32::from(self.validity[index]) / 255.0 * weight;
         }
+
         VegetationSurfaceSample {
             height,
             normal: normalize3_or(normal, [0.0, 1.0, 0.0]),
@@ -783,12 +822,14 @@ pub fn encode_octahedral_normal(normal: [f32; 3]) -> [i16; 2] {
     let normal = normalize3_or(normal, [0.0, 1.0, 0.0]);
     let inverse_l1 = (normal[0].abs() + normal[1].abs() + normal[2].abs()).recip();
     let mut encoded = [normal[0] * inverse_l1, normal[2] * inverse_l1];
+
     if normal[1] < 0.0 {
         encoded = [
             (1.0 - encoded[1].abs()) * encoded[0].signum(),
             (1.0 - encoded[0].abs()) * encoded[1].signum(),
         ];
     }
+
     [
         (encoded[0].clamp(-1.0, 1.0) * f32::from(i16::MAX)).round() as i16,
         (encoded[1].clamp(-1.0, 1.0) * f32::from(i16::MAX)).round() as i16,
@@ -805,11 +846,13 @@ pub fn decode_octahedral_normal(encoded: [i16; 2]) -> [f32; 3] {
         1.0 - encoded[0].abs() - encoded[1].abs(),
         encoded[1],
     ];
+
     if normal[1] < 0.0 {
         let original_x = normal[0];
         normal[0] = (1.0 - normal[2].abs()) * original_x.signum();
         normal[2] = (1.0 - original_x.abs()) * normal[2].signum();
     }
+
     normalize3_or(normal, [0.0, 1.0, 0.0])
 }
 
@@ -822,10 +865,12 @@ pub struct VegetationScene {
 impl VegetationScene {
     pub fn validate(&self) -> Result<(), SceneValidationError> {
         self.catalog.validate()?;
+
         for (index, page) in self.pages.iter().enumerate() {
             page.validate(&self.catalog)
                 .map_err(|source| SceneValidationError::Page { index, source })?;
         }
+
         for (first, first_page) in self.pages.iter().enumerate() {
             for (second, second_page) in self.pages.iter().enumerate().skip(first + 1) {
                 if pages_overlap(first_page, second_page) {
@@ -833,6 +878,7 @@ impl VegetationScene {
                 }
             }
         }
+
         Ok(())
     }
 }
@@ -859,9 +905,11 @@ fn pages_overlap(first: &VegetationFieldPage, second: &VegetationFieldPage) -> b
 
 fn normalize3_or(value: [f32; 3], fallback: [f32; 3]) -> [f32; 3] {
     let length_squared = value[0] * value[0] + value[1] * value[1] + value[2] * value[2];
+
     if length_squared <= 1e-10 {
         return fallback;
     }
+
     let inverse_length = length_squared.sqrt().recip();
     [
         value[0] * inverse_length,
@@ -888,6 +936,7 @@ mod tests {
         let meadow = fixtures::meadow();
         assert_eq!(meadow.id(), GrassTypeId::from_key("meadow"));
         assert_ne!(meadow.id(), fixtures::tufts().id());
+
         // Pinned: cooked fields name types by these bytes, and placement seeds from them.
         assert_eq!(
             GrassTypeId::from_key("meadow").0,
@@ -933,6 +982,7 @@ mod tests {
         assert!(near(0.0, 0.0) && near(0.1, 0.0));
         assert!(near(0.2, 0.5) && near(0.3, 1.0) && near(0.45, 0.5));
         assert!(near(0.6, 0.0) && near(1.0, 0.0));
+
         // A band ending at its peak stays full above it.
         assert_eq!(wear_share([0.5, 0.8, 0.8], 1.0), 1.0);
     }
@@ -974,6 +1024,7 @@ mod tests {
                 _ => None,
             })
             .unwrap();
+
         // Details share the grass types' ID space; grass cover ignores them.
         let on_path = path.on_surface([9; 16]);
         assert_eq!(on_path.len(), 1);
@@ -1037,6 +1088,7 @@ mod tests {
         assert_eq!(tufts.blades_per_square_metre(), 2.0 * tufts.density);
         let both = catalog.cover([3; 16]);
         assert!(both.amount <= 1.0 && both.amount > even.amount);
+
         for c in 0..3 {
             let (a, b) = (even.color[c], tufted.color[c]);
             assert!(both.color[c] >= a.min(b) && both.color[c] <= a.max(b));
@@ -1052,6 +1104,7 @@ mod tests {
             resolution: 2,
             coverage: coverage.to_vec(),
         };
+
         // Meadow everywhere but a worn texel; tufts in one corner.
         let data = VegetationFieldPageData {
             fields: vec![
@@ -1067,10 +1120,12 @@ mod tests {
         let tufted = (share + VegetationCatalog::cover_share(&catalog.grass[1])).min(1.0);
         assert_eq!(rgba[7], (tufted * 255.0).round() as u8);
         let field_color = catalog.grass[0].colors.field();
+
         for c in 0..3 {
             let decoded = (f32::from(rgba[c]) / 255.0).powi(2);
             assert!((decoded - field_color[c]).abs() < 0.01);
         }
+
         assert!(
             VegetationFieldPageData { fields: vec![] }
                 .cover_map(&catalog)

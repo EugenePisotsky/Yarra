@@ -3,6 +3,7 @@ use game_types::{CatalogId, ContentId, require};
 use gameplay::ContentManifest;
 use rusqlite::{Connection, OpenFlags, params};
 use serde::{Deserialize, Serialize};
+
 use std::{
     collections::BTreeSet,
     fs::{self, OpenOptions},
@@ -11,6 +12,7 @@ use std::{
 
 pub const BUNDLE_APPLICATION_ID: i64 = 0x59474342;
 pub const BUNDLE_SCHEMA_VERSION: i64 = 13;
+
 const SCHEMA: &str = "
 CREATE TABLE bundle_manifest (
  singleton INTEGER PRIMARY KEY CHECK(singleton=1),
@@ -44,6 +46,7 @@ pub struct BundleManifest {
     pub publication_hash: [u8; 32],
     pub scenario_hash: [u8; 32],
 }
+
 impl BundleManifest {
     pub(crate) fn validate(&self) -> Result<()> {
         require(
@@ -57,6 +60,7 @@ impl BundleManifest {
         validate_locale(&self.source_locale)
     }
 }
+
 pub(crate) fn publication_hash(
     manifest: &BundleManifest,
     headers: &[AssetHeader],
@@ -73,11 +77,13 @@ pub(crate) fn publication_hash(
     ))?);
     let mut sorted: Vec<_> = headers.iter().collect();
     sorted.sort_by_key(|h| &h.id);
+
     for header in sorted {
         let encoded = serde_json::to_vec(header)?;
         hasher.update(&(encoded.len() as u64).to_le_bytes());
         hasher.update(&encoded);
     }
+
     Ok(*hasher.finalize().as_bytes())
 }
 
@@ -106,6 +112,7 @@ impl LoadedProject {
             let assets = self.assets();
             let mut ids = BTreeSet::new();
             let mut headers = Vec::new();
+
             for (position, asset) in &assets {
                 asset.validate_local()?;
                 let id = asset.id();
@@ -135,6 +142,7 @@ impl LoadedProject {
                 )?;
                 headers.push(header);
             }
+
             let scenario = serde_json::to_vec(&self.scenario)?;
             require(
                 scenario.len() <= MAX_DOCUMENT_BYTES,
@@ -160,6 +168,7 @@ impl LoadedProject {
             tx.pragma_update(None, "user_version", BUNDLE_SCHEMA_VERSION)?;
             tx.commit()?;
             connection.close().map_err(|(_, error)| error)?;
+
             // Closed sibling file: atomic publication that refuses existing targets.
             fs::hard_link(&stage, output)?;
             Ok(())
@@ -169,6 +178,7 @@ impl LoadedProject {
         cleanup?;
         Ok(())
     }
+
     pub(crate) fn assets(&self) -> Vec<(u32, Asset)> {
         let mut assets = Vec::new();
         macro_rules! append {

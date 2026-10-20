@@ -6,22 +6,29 @@
 //! shadows ([`forest_shadow`]). The LOD lab ([`lab`]) compares one tree's representations.
 mod bark;
 mod cards;
+
 #[cfg(test)]
 mod depth_tests;
+
 pub(crate) mod forest_shadow;
 mod gpu;
 pub(crate) mod impostor;
 mod lab;
 mod material;
+
 #[cfg(test)]
 mod scene_tests;
+
 mod tuning;
 mod wind;
+
 pub use cards::tree_gltf_plugin;
 pub use gpu::TreeInstancing;
+
 pub use lab::{
     LabAsset, LabBand, LabRepresentation, LabTree, LabVariant, LodLabPlugin, spawn_lab_tree,
 };
+
 pub use tuning::TreeWindTuning;
 pub use wind::TreeWindResponse;
 
@@ -29,14 +36,17 @@ use bevy::{
     prelude::*,
     render::{Render, RenderApp, RenderSystems, extract_resource::ExtractResourcePlugin},
 };
+
 use wind::{WindBuffer, WindPose};
 
 /// Requires the atmosphere environment material pipeline and VegetationRenderPlugin's clock.
 /// Installed explicitly by game/editor composition, independently of world streaming.
 pub struct TreeWindPlugin;
+
 /// Wind producers that run in PostUpdate must finish before this snapshot is taken.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TreeWindSystems;
+
 impl Plugin for TreeWindPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<TreeWindTuning>()
@@ -51,9 +61,11 @@ impl Plugin for TreeWindPlugin {
                     .after(bevy::transform::TransformSystems::Propagate),
             );
         gpu::plugin(app);
+
         if app.get_sub_app(RenderApp).is_none() {
             return;
         }
+
         app.add_plugins((
             ExtractResourcePlugin::<WindPose>::default(),
             ExtractResourcePlugin::<WindBuffer>::default(),

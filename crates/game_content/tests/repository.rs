@@ -4,7 +4,9 @@ use gameplay::{ContentSource, GameSession};
 use rusqlite::{Connection, params};
 use std::{fs, path::Path};
 use yarra_game_content::*;
+
 mod support;
+
 use support::{Temp, read, sample, write};
 
 fn build(temp: &Temp) -> std::path::PathBuf {
@@ -15,9 +17,11 @@ fn build(temp: &Temp) -> std::path::PathBuf {
         .unwrap();
     path
 }
+
 fn open(path: &Path) -> ContentRepository {
     ContentRepository::open(path).unwrap()
 }
+
 fn item_ids(path: &Path) -> Vec<AssetId> {
     open(path)
         .headers(AssetKind::Item)
@@ -40,6 +44,7 @@ fn opening_reads_the_manifest_only_and_damage_is_reported_by_the_read_that_meets
         params![ids[1].kind() as i64, ids[1].key()],
     )
     .unwrap();
+
     // The runtime never reads the tool scenario, and opening decodes no asset.
     let mut repo = open(&path);
     assert!(matches!(repo.read(&ids[0]).unwrap(), Asset::Item(_)));
@@ -51,6 +56,7 @@ fn opening_reads_the_manifest_only_and_damage_is_reported_by_the_read_that_meets
         repo.read(&AssetId::Item(ItemDefinitionId::random())),
         Err(ContentError::MissingAsset(_))
     ));
+
     // Items are always-loaded definitions, so a session refuses the damaged bundle.
     assert!(repo.core().is_err());
     assert!(LoadedProject::materialize_bundle_for_tools(path).is_err());
@@ -94,24 +100,29 @@ fn a_session_over_a_large_catalog_loads_definitions_once_and_graphs_on_demand() 
     let temp = Temp::new();
     let source = temp.source();
     let mut items: ItemCatalog = read(source.join("packages/core/items.ron"));
+
     for i in items.items.len()..5_000 {
         let mut item = items.items.values().next().unwrap().clone();
         item.id = ItemDefinitionId((100_000 + i as u128).to_be_bytes());
         items.items.insert(item.id, item);
     }
+
     write(source.join("packages/core/items.ron"), &items);
     let project = LoadedProject::load_directory(&source).unwrap();
     let bundle = temp.0.join("large.sqlite");
     project.build(&bundle).unwrap();
+
     // The runtime cannot fall back to reading authored files.
     let seed = project.start().unwrap().into_state();
     fs::remove_dir_all(source).unwrap();
     let mut session = GameSession::new(open(&bundle), seed).unwrap();
     assert_eq!(session.content().items.items.len(), 5_000);
     assert!(session.content().graphs.loaded() == 0);
+
     for step in &project.scenario().steps {
         step.apply(&mut session).unwrap();
     }
+
     assert_eq!(session.content().graphs.loaded(), 1);
     assert!(project.content().game.dialogues.len() > 1);
 }
@@ -125,9 +136,11 @@ fn text_contracts_have_stable_ids_and_are_read_explicitly() {
         .unwrap()
         .build(&original)
         .unwrap();
+
     // Where a package keeps its text is not part of any identity.
     let resource = TextResourceId::named("core");
     fs::create_dir(source.join("packages/core/text")).unwrap();
+
     for locale in ["en", "uk"] {
         let file = format!("packages/core/{locale}.ftl");
         fs::rename(
@@ -136,6 +149,7 @@ fn text_contracts_have_stable_ids_and_are_read_explicitly() {
         )
         .unwrap();
     }
+
     let renamed = temp.0.join("renamed.sqlite");
     LoadedProject::load_directory(&source)
         .unwrap()
@@ -153,6 +167,7 @@ fn text_contracts_have_stable_ids_and_are_read_explicitly() {
         repo.read(&AssetId::Text(TextResourceId::random())),
         Err(ContentError::MissingAsset(_))
     ));
+
     // Sessions never load text contracts; formatting asks for them separately.
     assert!(repo.core().unwrap().text.is_empty());
 }
@@ -242,6 +257,7 @@ fn a_package_needs_its_source_text_and_each_message_once() {
         .unwrap()
         .to_string();
     assert!(error.contains("translations but no en.ftl"), "{error}");
+
     // Several files of one locale are joined; a message defined in two is an error.
     fs::write(&english, &original).unwrap();
     fs::create_dir(source.join("packages/core/more")).unwrap();
@@ -259,6 +275,7 @@ fn failure_mid_publication_cleans_staging_and_preserves_previous_generation() {
     let previous = build(&temp);
     let previous_hash = open(&previous).manifest().publication_hash;
     let source = temp.source();
+
     // Source FTL fits its 2 MiB authoring limit; its encoded record exceeds the publication limit.
     let path = source.join("packages/core/en.ftl");
     let mut text = fs::read_to_string(&path).unwrap();

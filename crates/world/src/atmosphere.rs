@@ -73,8 +73,10 @@ pub struct AtmosphereProfile {
 pub const PHASE_NAMES: [&str; 4] = ["Night", "Sunrise", "Day", "Sunset"];
 // Low visible sun for inspection, just above the geometric horizon crossing.
 pub const PHASE_TIMES: [f32; 4] = [0.0, 0.265, 0.5, 0.735];
+
 /// Days from one new moon to the next.
 pub const SYNODIC_MONTH_DAYS: f32 = 29.530_59;
+
 /// The moon's phases by eighths of a month, from new.
 pub const MOON_PHASE_NAMES: [&str; 8] = [
     "new moon",
@@ -86,27 +88,35 @@ pub const MOON_PHASE_NAMES: [&str; 8] = [
     "last quarter",
     "waning crescent",
 ];
+
 /// Index into [`MOON_PHASE_NAMES`] of the phase nearest a moon `age` days old.
 pub fn moon_phase(age: f32) -> usize {
     (age.rem_euclid(SYNODIC_MONTH_DAYS) / SYNODIC_MONTH_DAYS * 8.0).round() as usize % 8
 }
+
 /// The sun stops lighting even the high sky by the end of astronomical twilight; it fades out
 /// over the last degrees before.
 const SUN_FADING_DEGREES: f32 = -10.0;
+
 const SUN_GONE_DEGREES: f32 = -18.0;
+
 /// Sun depression by which the sky light has the night's hue: twilight turns blue well before
 /// it is dark.
 const TWILIGHT_BLUE_DEGREES: f32 = 4.0;
+
 /// Share of the night sky light's saturation taken away at the start of night. The night's
 /// blue is authored for the colourless look presentation gives full night; earlier, while
 /// colours still show, it read electric.
 const TWILIGHT_PALE: f32 = 0.5;
+
 /// Depth below the horizon over which moonlight fades out after the moon's disc has set.
 const MOON_SETTING_DEGREES: f32 = 3.0;
+
 /// Moonlight is authored for a moon this high. A higher moon lights open ground more steeply,
 /// which is partly balanced so the night keeps its tone as the moon climbs: under a moon at
 /// 50° open ground gets about 1.4 times the light, where it would get 3.7.
 const MOON_TONE_ELEVATION_DEGREES: f32 = 12.0;
+
 const MOON_HEIGHT_BALANCE: f32 = 0.75;
 
 impl Default for AtmosphereProfile {
@@ -154,6 +164,7 @@ impl Default for AtmosphereProfile {
 fn range(value: f32, minimum: f32, maximum: f32) -> bool {
     value.is_finite() && (minimum..=maximum).contains(&value)
 }
+
 fn color(value: [f32; 3]) -> bool {
     value.into_iter().all(|v| range(v, 0.0, 1.0))
 }
@@ -185,6 +196,7 @@ impl AtmosphereProfile {
         {
             return Err("Atmosphere settings contain an invalid color, time or physical range");
         }
+
         self.clouds.validate()?;
         self.fog.validate()?;
         self.weather.validate()?;
@@ -263,6 +275,7 @@ pub fn evaluate_at(profile: &AtmosphereProfile, day: i32, phase: f32) -> Evaluat
     let phase = phase.rem_euclid(1.0);
     let maximum = profile.maximum_elevation_degrees.to_radians();
     let azimuth = profile.azimuth_degrees.to_radians();
+
     // Tilted great-circle path: rising at orbit 0, at the configured maximum elevation at
     // orbit 90°. The sun is at orbit 0 at 6:00.
     let across = [azimuth.cos(), 0.0, -azimuth.sin()];
@@ -292,6 +305,7 @@ pub fn evaluate_at(profile: &AtmosphereProfile, day: i32, phase: f32) -> Evaluat
         )
     };
     let t = smoothstep(t);
+
     // Mist burns off more slowly than the light changes: it lasts well into the morning.
     let mist = {
         let amount = &profile.fog.mist_amount;
@@ -305,9 +319,11 @@ pub fn evaluate_at(profile: &AtmosphereProfile, day: i32, phase: f32) -> Evaluat
         };
         amount[a] + (amount[b] - amount[a]) * t
     };
+
     // The night's light: after sunset, reaching the authored night by -12°. Shallow sun paths
     // still reach night at midnight and remain continuous.
     let night = smoothstep(-elevation.to_degrees() / profile.maximum_elevation_degrees.min(12.0));
+
     // The moon lags the sun along its path by its elongation, which grows by a turn a month.
     let age =
         (f64::from(profile.night.age_days) + time).rem_euclid(f64::from(SYNODIC_MONTH_DAYS)) as f32;
@@ -316,6 +332,7 @@ pub fn evaluate_at(profile: &AtmosphereProfile, day: i32, phase: f32) -> Evaluat
     let moon_lit = 0.5 * (1.0 - elongation.cos());
     let reference = MOON_TONE_ELEVATION_DEGREES.to_radians().sin();
     let moon_height = (reference / direction_to_moon[1].max(reference)).powf(MOON_HEIGHT_BALANCE);
+
     // After its disc has set the moon stops lighting the sky over a few degrees.
     let moon_radius = (profile.night.diameter_degrees * 0.5).to_radians();
     let moon_up = smoothstep(
@@ -337,6 +354,7 @@ pub fn evaluate_at(profile: &AtmosphereProfile, day: i32, phase: f32) -> Evaluat
         0.
     };
     let mut ambient_linear = mix_color(a.ambient_srgb, b.ambient_srgb);
+
     if elevation < 0.0 {
         // Twilight sky light takes the night's colour while it dims: blue, not the sunset's,
         // and paler until night.
@@ -351,16 +369,20 @@ pub fn evaluate_at(profile: &AtmosphereProfile, day: i32, phase: f32) -> Evaluat
             (from[i] / lf + (to[i] / lt - from[i] / lf) * blue) * brightness
         });
     }
+
     let mean = ambient_linear.iter().sum::<f32>() / 3.;
+
     for c in &mut ambient_linear {
         *c += (mean - *c) * overcast * 0.35;
     }
+
     // One sun above the atmosphere: the atmosphere alone reddens it, so the sky stays blue
     // around a low sun and turns deep blue after it has set.
     let sun_up = smoothstep(
         (elevation.to_degrees() - SUN_GONE_DEGREES) / (SUN_FADING_DEGREES - SUN_GONE_DEGREES),
     );
     let ambient_lux = mix(a.ambient_lux, b.ambient_lux) * (1. + overcast * 0.4);
+
     // The eye adapts to the light on open ground: the exposure opens just enough that it never
     // reads darker than under the authored moonlit night, and the night's loss of colour
     // follows the exposure. Adapting to the sun's elevation instead left a dusk and a dawn a
@@ -386,6 +408,7 @@ pub fn evaluate_at(profile: &AtmosphereProfile, day: i32, phase: f32) -> Evaluat
         let adaptation = night.sqrt();
         (day_ev + (night_ev - day_ev) * adaptation, adaptation)
     };
+
     // The orbit's pole, on the side above the horizon.
     let pole = [
         -up[1] * across[2],
@@ -434,31 +457,39 @@ mod tests {
             + p.night.illuminance_lux * MOON_TONE_ELEVATION_DEGREES.to_radians().sin();
         let night_exposed = moonlit / p.night.exposure_ev100.exp2();
         let mut previous: Option<f32> = None;
+
         for i in 0..2000 {
             let e = evaluate(&p, i as f32 / 2000.);
             let elevation = e.direction_to_sun[1].clamp(-1., 1.).asin();
             let ground =
                 e.sun_lux * sun_transmittance(elevation) * elevation.sin().max(0.) + e.ambient_lux;
+
             // Until the eye has fully adapted; from then on the moon lights the night.
             let exposed = ground / e.exposure_ev100.exp2();
+
             if e.adaptation < 0.999 {
                 assert!(
                     exposed >= night_exposed * 0.999,
                     "{i}: {exposed} < {night_exposed}"
                 );
             }
+
             if let Some(ev) = previous {
                 assert!((e.exposure_ev100 - ev).abs() < 0.1, "{i}: exposure jumps");
             }
+
             previous = Some(e.exposure_ev100);
+
             if elevation.to_degrees() > 3. {
                 assert_eq!(e.colour_loss, 0.);
             }
+
             if elevation.to_degrees() < -1. {
                 assert!((e.colour_loss - e.adaptation).abs() < 1e-6);
             }
         }
     }
+
     #[test]
     fn moon_and_exposure_blend_continuously_and_leave_daylight_unchanged() {
         let p = AtmosphereProfile::default();
@@ -478,6 +509,7 @@ mod tests {
             },
             ..p.clone()
         };
+
         // Up to the authored height a full moon gives the authored light; higher, less.
         let balance = |e: &EvaluatedAtmosphere| {
             let reference = MOON_TONE_ELEVATION_DEGREES.to_radians().sin();
@@ -489,6 +521,7 @@ mod tests {
         let high = midnight.moon_lux * midnight.direction_to_moon[1];
         let low = p.night.illuminance_lux * MOON_TONE_ELEVATION_DEGREES.to_radians().sin();
         assert!(high > low && high < 1.6 * low, "{high} {low}");
+
         for maximum in [5.0, 60.0, 85.0] {
             let p = AtmosphereProfile {
                 maximum_elevation_degrees: maximum,
@@ -501,12 +534,14 @@ mod tests {
                 assert!((a.exposure_ev100 - b.exposure_ev100).abs() < 0.001);
             }
         }
+
         let mut disabled = p;
         disabled.night.enabled = false;
         assert_eq!(evaluate(&disabled, 0.0).moon_lux, 0.0);
         disabled.night.exposure_ev100 = f32::NAN;
         assert!(disabled.validate().is_err());
     }
+
     #[test]
     fn the_moon_lags_the_sun_by_its_age_and_lights_by_its_phase() {
         let p = AtmosphereProfile::default();
@@ -521,6 +556,7 @@ mod tests {
             evaluate(&profile, phase)
         };
         let dot = |a: [f32; 3], b: [f32; 3]| a.iter().zip(b).map(|(a, b)| a * b).sum::<f32>();
+
         // New: beside the sun, unlit and dark. Full: opposite, all lit, highest at midnight.
         // Ages are counted from midnight.
         let new = at_age(SYNODIC_MONTH_DAYS - 0.5, 0.5);
@@ -533,6 +569,7 @@ mod tests {
             (full.direction_to_moon[1].asin().to_degrees() - p.maximum_elevation_degrees).abs()
                 < 0.01
         );
+
         // A half moon gives a third of a full moon's light, a thin crescent next to none.
         let quarter = at_age(SYNODIC_MONTH_DAYS / 4.0 - 0.875, 0.875);
         assert!((quarter.moon_lit - 0.5).abs() < 1e-3);
@@ -540,14 +577,18 @@ mod tests {
         let height = (reference / quarter.direction_to_moon[1]).powf(MOON_HEIGHT_BALANCE);
         let ratio = quarter.moon_lux / p.night.illuminance_lux / height;
         assert!((0.3..0.4).contains(&ratio), "{ratio}");
+
         for (i, v) in quarter.moon_north.into_iter().enumerate() {
             assert!((v - full.moon_north[i]).abs() < 1e-6);
         }
+
         assert!(dot(quarter.moon_north, quarter.direction_to_moon).abs() < 1e-5);
         assert!(dot(quarter.moon_north, quarter.direction_to_sun).abs() < 1e-5);
+
         // No moonlight by day, even with the moon up.
         let day = at_age(SYNODIC_MONTH_DAYS / 4.0 - 0.6, 0.6);
         assert!(day.direction_to_moon[1] > 0.0 && day.moon_lux == 0.0);
+
         // Days move the moon: it rises later each day, about 50 minutes.
         let rise = |day: i32| {
             (0..2880)
@@ -565,6 +606,7 @@ mod tests {
             evaluate_at(&p, 3, 0.2).moon_age_days,
             evaluate_at(&p, 2, 1.2).moon_age_days
         );
+
         // Moonlight changes gradually through the night, rising, setting and dawn included: no
         // more than a fifth of a full moon's light a minute.
         for day in 0..30 {
@@ -578,6 +620,7 @@ mod tests {
             }
         }
     }
+
     #[test]
     fn twilight_turns_blue_and_the_sun_leaves_the_sky_by_its_end() {
         let p = AtmosphereProfile::default();
@@ -588,6 +631,7 @@ mod tests {
         };
         let night = linear_rgb(p.phases[0].ambient_srgb);
         let hue = |c: [f32; 3]| c.map(|v| v / luminance(c));
+
         // Blue while still light, paler than the night's blue; the night's own by its start.
         let sunset = hue(linear_rgb(p.phases[3].ambient_srgb));
         let twilight = depression(TWILIGHT_BLUE_DEGREES);
@@ -595,17 +639,21 @@ mod tests {
         assert!(twilight.night_weight < 0.5);
         assert!(blue[2] / blue[0] > sunset[2] / sunset[0]);
         assert!(blue[2] / blue[0] < hue(night)[2] / hue(night)[0]);
+
         for (a, b) in hue(depression(12.0).ambient_linear)
             .into_iter()
             .zip(hue(night))
         {
             assert!((a - b).abs() < 1e-3);
         }
+
         assert_eq!(depression(10.0).sun_lux, p.sun_lux);
         assert_eq!(depression(18.0).sun_lux, 0.0);
+
         // The sun's colour above the atmosphere never changes.
         assert_eq!(depression(-30.0).sun_linear, depression(-1.0).sun_linear);
     }
+
     #[test]
     fn cycle_wraps_and_sunrise_and_sunset_have_distinct_palettes() {
         let p = AtmosphereProfile::default();
@@ -622,12 +670,14 @@ mod tests {
             evaluate(&p, 0.34).ambient_linear,
             evaluate(&p, 1.34).ambient_linear
         );
+
         for i in 0..1000 {
             let e = evaluate(&p, i as f32 / 1000.0);
             let length: f32 = e.direction_to_sun.iter().map(|v| v * v).sum();
             assert!((length - 1.0).abs() < 1e-5);
         }
     }
+
     #[test]
     fn shallow_sun_paths_remain_continuous_at_noon_and_midnight() {
         for maximum in [5.0, 15.0, 60.0, 85.0] {
@@ -638,9 +688,11 @@ mod tests {
             for phase in [0.0, 0.5] {
                 let a = evaluate(&p, phase - 1e-5);
                 let b = evaluate(&p, phase + 1e-5);
+
                 for (a, b) in a.ambient_linear.into_iter().zip(b.ambient_linear) {
                     assert!((a - b).abs() < 1e-4);
                 }
+
                 assert!((a.sun_lux - b.sun_lux).abs() < 0.1);
             }
         }
@@ -654,12 +706,14 @@ mod tests {
         assert!((evaluate(&p, 0.5).mist - amount[2]).abs() < 1e-4);
         assert!((evaluate(&p, 0.75).mist - amount[3]).abs() < 1e-4);
         assert!((evaluate(&p, 0.0).mist - amount[0]).abs() < 1e-4);
+
         // The game's morning still holds part of the dawn mist.
         let morning = evaluate(&p, p.initial_phase).mist;
         assert!(
             morning > amount[2] + 0.2 && morning < amount[1],
             "{morning}"
         );
+
         for i in 0..1000 {
             let (a, b) = (i as f32 / 1000.0, (i as f32 + 1.0) / 1000.0);
             assert!((evaluate(&p, a).mist - evaluate(&p, b).mist).abs() < 0.02);

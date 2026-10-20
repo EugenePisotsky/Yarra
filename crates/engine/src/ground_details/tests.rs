@@ -39,6 +39,7 @@ fn placement_follows_density_stays_on_its_page_and_repeats() {
     let pieces = pieces();
     let page = full_coverage_page([32., -16.], 16., detail.id());
     let objects = place(&page, &page.fields[0], &detail, [0.; 2], &pieces);
+
     // Clumps thin their edges and vary in density, so somewhat under 2 per square metre.
     let expected = detail.density * page.size * page.size;
     assert!(
@@ -46,14 +47,17 @@ fn placement_follows_density_stays_on_its_page_and_repeats() {
         "{} of {expected}",
         objects.len()
     );
+
     for (piece, t) in &objects {
         let x = t.translation.x;
         let z = t.translation.z;
         assert!((32. ..48.).contains(&x) && (-16. ..0.).contains(&z));
+
         // Sunk by its share of the piece's height, on flat ground.
         assert!((t.translation.y + detail.sink * piece.height * t.scale.x).abs() < 1e-4);
         assert!((0.8..=1.2).contains(&t.scale.x));
     }
+
     let again = place(&page, &page.fields[0], &detail, [0.; 2], &pieces);
     assert_eq!(objects.len(), again.len());
     assert!(
@@ -73,6 +77,7 @@ fn objects_stay_on_the_world_lattice_when_the_render_origin_moves() {
     let a = place(&here, &here.fields[0], &detail, [0.; 2], &pieces);
     let b = place(&shifted, &shifted.fields[0], &detail, [64., -32.], &pieces);
     assert_eq!(a.len(), b.len());
+
     for ((_, a), (_, b)) in a.iter().zip(&b) {
         assert!((a.translation - (b.translation + Vec3::new(64., 0., -32.))).length() < 1e-3);
     }

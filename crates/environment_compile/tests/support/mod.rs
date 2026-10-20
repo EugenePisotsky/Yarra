@@ -57,12 +57,15 @@ pub fn fixture() -> (
     };
     let coverage = snapshot(&definition, &CELLS, |layer, x, z| {
         let hole = (1.0..=3.0).contains(&x) && (1.0..=3.0).contains(&z);
+
         if layer == DRY {
             return if hole { 0.0 } else { 1.0 };
         }
+
         if layer == GREEN {
             return ((x - 6.0) / 4.0).clamp(0.0, 1.0);
         }
+
         // A sampled painted mask, not the future editable road-curve implementation.
         let distance = (z - (4.0 + (x * 0.3).sin() * 0.7)).abs();
         ((1.25 - distance) / 0.5).clamp(0.0, 1.0)
@@ -113,6 +116,7 @@ pub fn snapshot(
     value: impl Fn(LayerId, f64, f64) -> f64,
 ) -> CoverageSnapshot {
     let mut cells = BTreeSet::new();
+
     for cell in requested {
         for z in -1..=1 {
             for x in -1..=1 {
@@ -123,6 +127,7 @@ pub fn snapshot(
             }
         }
     }
+
     let n = usize::from(definition.mask_resolution);
     let size = f64::from(definition.cell_size);
     CoverageSnapshot {
@@ -225,6 +230,7 @@ pub fn soil(library: &mut PresetLibrary, id: PresetId) -> &mut GroundTreatment {
     };
     v
 }
+
 pub fn children(library: &mut PresetLibrary, id: PresetId) -> &mut Vec<PresetUse> {
     let PresetKind::Composition(v) = &mut library
         .presets
@@ -237,6 +243,7 @@ pub fn children(library: &mut PresetLibrary, id: PresetId) -> &mut Vec<PresetUse
     };
     v
 }
+
 pub fn append(library: &mut PresetLibrary, parent: PresetId, id: PresetId, kind: PresetKind) {
     library.presets.push(Preset {
         id,

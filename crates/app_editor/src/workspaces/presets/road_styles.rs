@@ -1,6 +1,7 @@
 //! Shared cart-road style drafts. Applying is a normal road command; saving stays atomic with
 //! ground presets, geometry and painted coverage.
 use super::*;
+
 use crate::{
     editing::EditorHistory,
     road_authoring::{
@@ -8,10 +9,13 @@ use crate::{
         working::{RoadChange, RoadWorkingSet, same},
     },
 };
+
 use environment::{PresetKind, roads::*};
 use world_db::{RoadRecordKey, RoadSourceRecord};
+
 mod limits;
 mod relief;
+
 pub(super) use limits::bounded_metres;
 use limits::{GeometryField, GeometryLimits};
 
@@ -20,6 +24,7 @@ pub(super) struct StyleDraft {
     base: Option<CartTrackProfile>,
     pub value: CartTrackProfile,
 }
+
 impl StyleDraft {
     pub fn dirty(&self) -> bool {
         !same(
@@ -27,18 +32,21 @@ impl StyleDraft {
             Some(&RoadSourceRecord::Profile(self.value.clone())),
         )
     }
+
     pub fn apply(
         &mut self,
         dense: &mut SourceWorkingSets,
         history: &mut EditorHistory,
     ) -> Result<(), String> {
         let key = RoadRecordKey::Profile(self.value.id);
+
         if !same(
             dense.roads.get(key),
             self.base.clone().map(RoadSourceRecord::Profile).as_ref(),
         ) {
             return Err("This shared style changed while its draft was open. Discard the draft to reload it.".into());
         }
+
         let before = dense.roads.changes([key]);
         dense.roads.apply(&[RoadChange {
             key,
@@ -49,6 +57,7 @@ impl StyleDraft {
         Ok(())
     }
 }
+
 #[derive(Default)]
 pub(super) struct Styles {
     pub selected: Option<RoadProfileId>,
@@ -61,29 +70,36 @@ pub(super) struct Styles {
     pub underlay: Option<PresetId>,
     pub reference_initialized: bool,
 }
+
 impl Styles {
     pub fn dirty(&self) -> bool {
         self.draft.as_ref().is_some_and(StyleDraft::dirty)
     }
+
     pub fn request(&mut self, id: Option<RoadProfileId>) {
         self.requested = id;
     }
+
     pub fn refresh(&mut self, roads: &RoadWorkingSet) -> bool {
         if self.width == 0.0 {
             self.width = 3.5;
         }
+
         if self.dirty() {
             return false;
         }
+
         if let Some(id) = self.requested.take() {
             self.selected = Some(id);
         }
+
         if self.selected.is_none() {
             self.selected = roads.entries.values().find_map(|e| match &e.current {
                 Some(RoadSourceRecord::Profile(p)) => Some(p.id),
                 _ => None,
             });
         }
+
         let value = self
             .selected
             .and_then(|id| match roads.get(RoadRecordKey::Profile(id)) {
@@ -93,14 +109,17 @@ impl Styles {
         let changed = self.draft.as_ref().map(|d| &d.value) != value.as_ref();
         let visual_changed =
             !visual_changes::same_road(self.draft.as_ref().map(|d| &d.value), value.as_ref());
+
         if changed {
             self.draft = value.map(|p| StyleDraft {
                 base: Some(p.clone()),
                 value: p,
             });
         }
+
         visual_changed
     }
+
     pub fn discard(&mut self) {
         self.draft = None;
     }
@@ -116,6 +135,7 @@ pub(super) fn validate(
     let Some(PresetKind::Ground(ground)) = library.get(p.ground).map(|p| &p.kind) else {
         return Err("Choose a Ground preset for the road surface.".into());
     };
+
     if let Some(usages) = roads.style_usage.get(&p.id) {
         for usage in usages {
             if usage.minimum_width.is_some_and(|w| w < p.minimum_width()) {
@@ -126,10 +146,12 @@ pub(super) fn validate(
                     p.minimum_width()
                 ));
             }
+
             let definition = definitions
                 .iter()
                 .find(|d| d.space == usage.space)
                 .ok_or("A dependent world's surfaces are unavailable")?;
+
             if ground
                 .surfaces
                 .iter()
@@ -142,6 +164,7 @@ pub(super) fn validate(
             }
         }
     }
+
     for e in roads.entries.values() {
         if let Some(RoadSourceRecord::Road(r)) = &e.current
             && r.road.profile == p.id
@@ -154,12 +177,14 @@ pub(super) fn validate(
             return Err("Ground mixture is unavailable in a dependent world.".into());
         }
     }
+
     if limits::minimum_corridor(p, roads).is_some_and(|w| w < p.minimum_width()) {
         return Err(format!(
             "An edited road is too narrow for this style's {:.2} m minimum. Reduce wheel spacing, track width or edge sizes; otherwise widen and save the road first, or duplicate the style.",
             p.minimum_width()
         ));
     }
+
     Ok(())
 }
 
@@ -176,6 +201,7 @@ pub(super) fn validate_in_project(
         .map(|d| dense.definition(d.space).unwrap_or(d).clone())
         .collect::<Vec<_>>();
     validate(p, &dense.roads, library, &definitions)?;
+
     for space in dependent_spaces(p, &dense.roads, preview_space) {
         p.validate_relief_detail(
             project
@@ -184,6 +210,7 @@ pub(super) fn validate_in_project(
         )
         .map_err(|e| format!("World {}: {e}", space.0))?;
     }
+
     Ok(())
 }
 
@@ -200,6 +227,7 @@ fn dependent_spaces(
         .map(|u| u.space)
         .chain(preview_space)
         .collect::<std::collections::BTreeSet<_>>();
+
     for e in roads.entries.values() {
         if let Some(RoadSourceRecord::Road(r)) = &e.current
             && r.road.profile == p.id
@@ -207,6 +235,7 @@ fn dependent_spaces(
             spaces.insert(r.space);
         }
     }
+
     spaces
 }
 
@@ -235,9 +264,11 @@ pub(super) fn panels(
         .show(root, |ui| {
             ui.heading("Road styles");
             ui.small("Shared across every road using the style.");
+
             if !ready {
                 ui.weak("Loading styles and road dependencies…");
             }
+
             ui.add_enabled_ui(
                 idle && ready && !state.styles.dirty() && styles.len() < MAX_ROAD_RECORDS,
                 |ui| {
@@ -294,6 +325,7 @@ pub(super) fn panels(
                     }
                 });
             });
+
             if state.styles.dirty() {
                 ui.small("Apply or discard this draft before choosing another style.");
             }
@@ -317,56 +349,69 @@ pub(super) fn panels(
                 if ui.button("Edit ground mixture…").clicked() { edit_ground = Some(p.ground); }
                 ui.small("The road wears the natural ground down to what the terrain pack names for it; the linked Ground preset's strength sets how strongly. Editing it affects all its uses.");
                 let mut thins = p.vegetation_channel == environment::GRASS_CHANNEL;
+
                 if ui.checkbox(&mut thins, "Thins grass").changed() {
                     p.vegetation_channel = if thins { environment::GRASS_CHANNEL } else { environment::ChannelId([0; 16]) };
                 }
+
                 ui.separator(); ui.label("Wheel tracks");
                 let mut footpath = p.track_spacing == 0.0;
+
                 if ui.checkbox(&mut footpath, "One track (footpath)").changed() {
                     p.track_spacing = if footpath { 0.0 } else { (p.track_width + 0.6).max(0.1) };
                 }
+
                 if let Ok(limits) = &limits {
                     if !footpath {
                         GeometryField::Spacing.control(ui, p, *limits);
                     }
+
                     GeometryField::TrackWidth.control(ui, p, *limits);
                     GeometryField::Wander.control(ui, p, *limits);
                     GeometryField::WanderLength.control(ui, p, *limits);
                     ui.small("Each track wanders across the road by up to its wander, and its width by half that, independently along the road.");
                 }
+
                 ui.small("How worn the tracks, the strip between them and the shoulders are comes from each road's traffic.");
                 ui.separator(); ui.label("Edges");
+
                 if let Ok(limits) = &limits {
                     GeometryField::Softness.control(ui, p, *limits);
                     GeometryField::Variation.control(ui, p, *limits);
                     GeometryField::EdgePatch.control(ui, p, *limits);
+
                     if let Some(range) = limits.range(GeometryField::Softness, p) {
                         ui.small(format!("Softness range: {:.4}–{:.4} m. It cannot exceed track width; the road corridor must also fit both edges.", range.start(), range.end()));
                     }
                 }
+
                 ui.separator(); ui.label("Wear breakup");
                 ratio(ui, "Unworn patches", &mut p.breakup);
                 if let Ok(limits) = &limits { GeometryField::BreakupPatch.control(ui, p, *limits); }
                 ui.small("Unworn patches preserve the surrounding ground and grass: this much at medium traffic, fewer on busier roads. Roads never add grass where none was painted.");
                 if let Ok(limits) = &limits { relief::controls(ui, p, limits.height_step); }
                 ui.label(format!("Minimum road width: {:.2} m", p.minimum_width()));
+
                 if let Ok(limits) = &limits && let Some(width) = limits.corridor {
                     ui.small(format!("Narrowest road using this style: {width:.2} m. For a wider style, widen and save its roads first, or duplicate the style."));
                 }
             });
         });
     });
+
     if !visual_changes::same_road(
         before.as_ref(),
         state.styles.draft.as_ref().map(|d| &d.value),
     ) {
         state.bump();
     }
+
     if let Some(id) = edit_ground {
         state.mode = Mode::Environment;
         state.select(id);
     }
 }
+
 fn ratio(ui: &mut egui::Ui, label: &str, v: &mut f32) {
     ui.add(egui::Slider::new(v, 0.0..=1.0).text(label));
 }
@@ -377,6 +422,7 @@ mod tests {
     use crate::editing::EditorObjectWorkingSet;
     use std::collections::BTreeSet;
     use world_db::*;
+
     #[test]
     fn style_draft_isolated_then_undoable_across_source_save_and_stale_edits_rejected() {
         let path =
@@ -444,6 +490,7 @@ mod tests {
         drop(reader);
         std::fs::remove_file(path).unwrap();
     }
+
     #[test]
     fn style_validation_includes_offscreen_widths_and_world_surfaces() {
         let p = default_profile(

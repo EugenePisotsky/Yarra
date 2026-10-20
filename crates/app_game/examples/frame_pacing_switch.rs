@@ -9,6 +9,7 @@ use bevy::{
     prelude::*,
     window::{PresentMode, PrimaryWindow, WindowResolution},
 };
+
 use frame_pacing::{FramePacing, FrameRate};
 use std::time::Instant;
 
@@ -56,6 +57,7 @@ fn advance(
     if run.phase == RATES.len() {
         return;
     }
+
     let now = Instant::now();
     let Some(start) = run.started else {
         run.started = Some(now);
@@ -72,6 +74,7 @@ fn advance(
         .as_secs_f64()
         * 1000.0;
     run.max_interval_ms = run.max_interval_ms.max(interval);
+
     if elapsed >= SETTLE {
         if !run.measuring {
             run.measuring = true;
@@ -83,9 +86,11 @@ fn advance(
             run.samples.push(interval);
         }
     }
+
     if elapsed < SETTLE + SAMPLE {
         return;
     }
+
     run.samples.sort_by(f64::total_cmp);
     let count = run.samples.len();
     let mean = run.samples.iter().sum::<f64>() / count as f64;
@@ -100,9 +105,11 @@ fn advance(
         window.focused
     );
     assert!(count >= 30, "event loop stalled during transition");
+
     if run.phase > 0 {
         assert!(run.max_interval_ms < 250.0, "transition stalled");
     }
+
     // This native probe targets the user's 120 Hz ProMotion display. Unlike this
     // assertion, the production cap also supports slower displays / OS restrictions.
     if target != 0 {
@@ -112,11 +119,14 @@ fn advance(
             1000.0 / mean
         );
     }
+
     run.phase += 1;
+
     if run.phase == RATES.len() {
         exit.write(AppExit::Success);
         return;
     }
+
     pacing.rate = FrameRate::new(RATES[run.phase]);
     run.started = Some(now);
     run.measuring = false;

@@ -34,6 +34,7 @@ impl TerrainRoadJunction {
         let d = (local[0] - f64::from(self.centre[0])).hypot(local[1] - f64::from(self.centre[1]));
         junction_blend(d, self.radius, world, self.seed)
     }
+
     /// How much of its ground the patch lays at `world` (XZ), over everything, `road` being its
     /// road's drawing: worn bare in patches a metre or so across, trampled between them.
     pub fn ground(&self, road: &TerrainRoad, local: [f64; 2], world: [f64; 2]) -> f64 {
@@ -46,6 +47,7 @@ impl TerrainRoadJunction {
             * self.blend(local, world)
             * f64::from(road.strength)
     }
+
     pub fn joins(&self, road: usize) -> bool {
         road < 32 && self.members & (1 << road) != 0
     }
@@ -129,6 +131,7 @@ impl RoadShape {
         let half_spacing = f64::from(self.track_spacing) * 0.5;
         let half_width = f64::from(self.track_width) * 0.5;
         let mut tracks = [(-half_spacing, half_width), (half_spacing, half_width)];
+
         if self.track_wander > 0.0 {
             let wander = f64::from(self.track_wander);
             let mut n = value4(
@@ -136,17 +139,21 @@ impl RoadShape {
                 self.seed ^ 0x5a1,
             )
             .map(|v| v * 2.0 - 1.0);
+
             // A footpath's one track (no spacing) wanders as one.
             if self.track_spacing == 0.0 {
                 n = [n[0], n[0], n[2], n[2]];
             }
+
             tracks[0].0 += wander * n[0];
             tracks[1].0 += wander * n[1];
             tracks[0].1 += wander * 0.5 * n[2];
             tracks[1].1 += wander * 0.5 * n[3];
         }
+
         tracks
     }
+
     /// How far the road's edges stand out at `world` (negative: in): broad patches and fine bites.
     pub fn ragged(&self, world: [f64; 2]) -> f64 {
         let size = f64::from(self.edge_patch_size);
@@ -154,6 +161,7 @@ impl RoadShape {
         let bites = value(world.map(|v| v * 5.0 / size), self.seed ^ 0x2e1) * 2.0 - 1.0;
         (broad * 0.7 + bites * 0.3) * f64::from(self.edge_variation)
     }
+
     /// The road's parts at a point `offset` from its centre line, `world` (XZ, metres).
     pub fn zones(&self, offset: &RoadOffset, world: [f64; 2]) -> RoadZones {
         let irregular = self.ragged(world);
@@ -169,6 +177,7 @@ impl RoadShape {
             )
         };
         let tracks = track(left, left_half).max(track(right, right_half)) * corridor;
+
         // The strip between the tracks' inner edges, and outside each track its shoulder.
         let inner = [left + left_half, right - right_half];
         let middle = (inner[0] + inner[1]) * 0.5;
@@ -208,6 +217,7 @@ impl TerrainRoad {
         if self.track_depth <= 0.0 {
             return 0.0;
         }
+
         let shape = &self.shape;
         let centre = offset.point;
         let along = |size: f64, seed: u32| value4(centre.map(|v| v / size), shape.seed ^ seed);
@@ -234,6 +244,7 @@ impl TerrainRoad {
                     * hole;
                 let distance = |from: f64| (offset.lateral - from).hypot(offset.longitudinal);
                 let trough = profile(distance(at), half, power);
+
                 // The wheel: the groove an iron tyre presses into soft ground, a few times its
                 // own width and never finer than the wear field resolves, off the track's middle.
                 let groove_half = (half * 0.45).clamp(0.1, 0.2);
@@ -287,6 +298,7 @@ impl TerrainRoads {
 
     fn nearest_of(&self, local: [f64; 2], keep: impl Fn(usize) -> bool) -> Option<RoadHit> {
         let mut best: Option<(f64, RoadHit)> = None;
+
         for s in self.segments.iter().filter(|s| keep(usize::from(s.road))) {
             let a = s.a.map(f64::from);
             let ab = [f64::from(s.b[0]) - a[0], f64::from(s.b[1]) - a[1]];
@@ -300,9 +312,11 @@ impl TerrainRoads {
             let q = [a[0] + ab[0] * t, a[1] + ab[1] * t];
             let delta = [local[0] - q[0], local[1] - q[1]];
             let distance_squared = delta[0] * delta[0] + delta[1] * delta[1];
+
             if best.is_some_and(|(d, _)| d <= distance_squared) {
                 continue;
             }
+
             let m = [0, 1].map(|i| {
                 f64::from(s.normal_a[i]) + (f64::from(s.normal_b[i]) - f64::from(s.normal_a[i])) * t
             });
@@ -330,6 +344,7 @@ impl TerrainRoads {
                 },
             ));
         }
+
         best.map(|(_, hit)| hit)
     }
 
@@ -370,6 +385,7 @@ impl TerrainRoads {
         let mut kept = 1.0;
         let mut rut = 0.0_f64;
         let mut strongest = (0.0, [0.0; 2]);
+
         for (road, drawn) in self.roads.iter().enumerate() {
             let Some(mut hit) = self.nearest_on(road, local) else {
                 continue;
@@ -384,13 +400,16 @@ impl TerrainRoads {
             let amount = drawn.ground(&hit.offset, world) * (1.0 - joined);
             kept *= 1.0 - amount;
             rut = rut.max(drawn.rut(&hit.offset) * (1.0 - joined));
+
             if amount > strongest.0 {
                 strongest = (amount, [hit.normal[1], -hit.normal[0]]);
             }
         }
+
         for j in &self.junctions {
             kept *= 1.0 - j.ground(&self.roads[usize::from(j.road)], local, world);
         }
+
         crate::WearSample {
             wear: 1.0 - kept,
             rut,
@@ -427,6 +446,7 @@ pub fn road_patch(p: [f64; 2], size: f32, seed: u32) -> f64 {
     let p = [p[0] + warp[0] * 0.6, p[1] + warp[1] * 0.6];
     value(p, seed) * 0.75 + value(p.map(|v| v * 2.0), seed ^ 0x463) * 0.25
 }
+
 fn hash32(mut v: u32) -> u32 {
     v ^= v >> 16;
     v = v.wrapping_mul(0x7feb_352d);
@@ -434,6 +454,7 @@ fn hash32(mut v: u32) -> u32 {
     v = v.wrapping_mul(0x846c_a68b);
     v ^ (v >> 16)
 }
+
 fn hash_bits(x: i64, z: i64, seed: u32) -> u32 {
     hash32(
         (x as i32 as u32).wrapping_mul(0x8da6_b343)
@@ -441,12 +462,15 @@ fn hash_bits(x: i64, z: i64, seed: u32) -> u32 {
             ^ seed,
     )
 }
+
 fn hash(x: i64, z: i64, seed: u32) -> f64 {
     f64::from(hash_bits(x, z, seed)) / 4_294_967_296.0
 }
+
 fn quintic(t: f64) -> f64 {
     t * t * t * (t * (t * 6.0 - 15.0) + 10.0)
 }
+
 fn value(p: [f64; 2], seed: u32) -> f64 {
     let x = p[0].floor() as i64;
     let z = p[1].floor() as i64;
@@ -456,6 +480,7 @@ fn value(p: [f64; 2], seed: u32) -> f64 {
     let b = hash(x, z + 1, seed) * (1.0 - u) + hash(x + 1, z + 1, seed) * u;
     a * (1.0 - v) + b * v
 }
+
 /// Four value noises at once, 0..1: each lattice corner's hash gives a byte to each.
 fn value4(p: [f64; 2], seed: u32) -> [f64; 4] {
     let x = p[0].floor() as i64;
@@ -471,10 +496,12 @@ fn value4(p: [f64; 2], seed: u32) -> [f64; 4] {
         (a[i] * (1.0 - u) + b[i] * u) * (1.0 - v) + (c[i] * (1.0 - u) + d[i] * u) * v
     })
 }
+
 fn smooth(t: f64) -> f64 {
     let t = t.clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
 }
+
 fn falloff(distance: f64, radius: f64, softness: f64) -> f64 {
     smooth((radius + softness - distance) / (2.0 * softness))
 }

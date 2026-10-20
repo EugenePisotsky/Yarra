@@ -43,13 +43,16 @@ pub(super) type Roots<'w, 's> = Query<
 pub(super) fn shift_roots(roots: &mut Roots, old: CellCoord, new: CellCoord, size: f32) {
     let [x, z] = old.offset_from(new, size);
     let shift = Vec3::new(x as f32, 0., z as f32);
+
     for (mut transform, global, intent) in roots {
         transform.translation += shift;
+
         // Pointer rays in this Update must see the same origin as terrain queries.
         // Child transforms are propagated normally before rendering.
         if let Some(mut global) = global {
             *global = GlobalTransform::from(*transform);
         }
+
         if let Some(mut intent) = intent {
             intent.rebase(shift);
         }
@@ -150,6 +153,7 @@ mod tests {
             domain: PageDomain::Terrain,
             ..key
         };
+
         {
             let mut stream = app.world_mut().resource_mut::<SourceResidency>();
             stream.pages.insert(
@@ -163,6 +167,7 @@ mod tests {
                 .pages
                 .insert(pending, PageState::Loading { request_id: 41 });
         }
+
         app.update();
         let w = app.world();
         assert_eq!(

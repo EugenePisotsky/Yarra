@@ -26,23 +26,30 @@ pub(super) fn encode(profile: &AtmosphereProfile) -> Result<Vec<u8>, WorldDbErro
         .validate()
         .map_err(|e| WorldDbError::Cook(e.into()))?;
     let bytes = bincode::serde::encode_to_vec(profile, bincode::config::standard())?;
+
     if bytes.len() > 4096 {
         return Err(WorldDbError::Cook("atmosphere exceeds 4096 bytes".into()));
     }
+
     Ok(bytes)
 }
+
 pub(super) fn decode(bytes: &[u8]) -> Result<AtmosphereProfile, WorldDbError> {
     if bytes.len() > 4096 {
         return Err(WorldDbError::Cook("atmosphere exceeds 4096 bytes".into()));
     }
+
     let (p, consumed): (AtmosphereProfile, _) =
         bincode::serde::decode_from_slice(bytes, bincode::config::standard().with_limit::<4096>())?;
+
     if consumed != bytes.len() {
         return Err(WorldDbError::Cook("trailing atmosphere bytes".into()));
     }
+
     p.validate().map_err(|e| WorldDbError::Cook(e.into()))?;
     Ok(p)
 }
+
 impl ProjectWriter {
     /// All worlds in the bounded batch commit together, or no source record changes.
     pub fn write_atmospheres(
@@ -54,6 +61,7 @@ impl ProjectWriter {
                 "invalid atmosphere transaction size".into(),
             ));
         }
+
         let mut ids = HashSet::new();
         let payloads = writes
             .iter()
@@ -72,6 +80,7 @@ impl ProjectWriter {
         let tx = self
             .connection
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+
         for w in writes {
             let (revision, bytes): (i64, Vec<u8>) = tx.query_row(
                 "SELECT atmosphere_revision, atmosphere FROM world_spaces WHERE id=?1",
@@ -86,12 +95,14 @@ impl ProjectWriter {
                 });
             }
         }
+
         for (w, payload) in writes.iter().zip(payloads) {
             tx.execute(
                 "UPDATE world_spaces SET atmosphere=?1, atmosphere_revision=?2 WHERE id=?3",
                 params![payload, w.expected_revision + 1, w.space.0],
             )?;
         }
+
         tx.commit()?;
         Ok(AtmosphereWriteResult::Committed(
             writes
@@ -107,6 +118,7 @@ mod tests {
     use super::*;
     use crate::{catalog::query_world_spaces, schema};
     use rusqlite::Connection;
+
     #[test]
     fn authored_profiles_round_trip_without_accepting_corruption() {
         let mut p = AtmosphereProfile::default();
@@ -133,11 +145,13 @@ mod tests {
         invalid.fog.haze_height_metres = 0.;
         assert!(encode(&invalid).is_err());
     }
+
     #[test]
     fn conflict_rolls_back_the_entire_batch_and_round_trips_colors_and_clouds() {
         let connection = Connection::open_in_memory().unwrap();
         schema::create_project_schema(&connection).unwrap();
         let p = AtmosphereProfile::default();
+
         for id in [1, 2] {
             connection
                 .execute(
@@ -146,6 +160,7 @@ mod tests {
                 )
                 .unwrap();
         }
+
         let mut writer = ProjectWriter { connection };
         let mut changed = p.clone();
         changed.sun_srgb = [0.8, 0.5, 0.2];

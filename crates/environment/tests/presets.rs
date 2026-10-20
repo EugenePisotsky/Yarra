@@ -1,9 +1,11 @@
 use world::TerrainSurfaceId;
 use yarra_environment::fixtures::*;
 use yarra_environment::*;
+
 fn fixture() -> PresetLibrary {
     meadow_library(TerrainSurfaceId([1; 16]), TerrainSurfaceId([2; 16]))
 }
+
 fn children(lib: &mut PresetLibrary, id: PresetId) -> &mut Vec<PresetUse> {
     let PresetKind::Composition(v) = &mut lib.presets.iter_mut().find(|p| p.id == id).unwrap().kind
     else {
@@ -11,6 +13,7 @@ fn children(lib: &mut PresetLibrary, id: PresetId) -> &mut Vec<PresetUse> {
     };
     v
 }
+
 fn exclusion(lib: &mut PresetLibrary, id: PresetId) -> &mut Exclusion {
     let PresetKind::Exclusion(v) = &mut lib.presets.iter_mut().find(|p| p.id == id).unwrap().kind
     else {
@@ -18,6 +21,7 @@ fn exclusion(lib: &mut PresetLibrary, id: PresetId) -> &mut Exclusion {
     };
     v
 }
+
 fn density(lib: &PresetLibrary, root: PresetId, overrides: &[PresetOverride]) -> Vec<f32> {
     lib.uses(root, overrides)
         .unwrap()
@@ -31,6 +35,7 @@ fn density(lib: &PresetLibrary, root: PresetId, overrides: &[PresetOverride]) ->
         })
         .collect()
 }
+
 #[test]
 fn repeated_nested_uses_have_independent_overrides_and_stable_output_identities() {
     let mut lib = fixture();
@@ -77,6 +82,7 @@ fn repeated_nested_uses_have_independent_overrides_and_stable_output_identities(
     lib.presets.reverse();
     assert_eq!(before, lib.resolve(root, &edits).unwrap());
 }
+
 #[test]
 fn explicit_overrides_survive_default_changes_and_reset_resumes_inheritance() {
     let mut lib = fixture();
@@ -96,9 +102,11 @@ fn explicit_overrides_survive_default_changes_and_reset_resumes_inheritance() {
     assert_eq!(density(&lib, CLEARING, &[]), vec![0.6]);
     assert_eq!(density(&lib, CLEARING, &edits), vec![1.0]);
 }
+
 #[test]
 fn invalid_override_targets_types_duplicates_and_values_are_rejected() {
     let lib = fixture();
+
     for edit in [
         PresetOverride {
             path: vec![PresetUseId([99; 16])],
@@ -119,6 +127,7 @@ fn invalid_override_targets_types_duplicates_and_values_are_rejected() {
     ] {
         assert!(lib.resolve(CLEARING, &[edit]).is_err());
     }
+
     let edit = PresetOverride {
         path: vec![CLEAR_USE],
         value: QuickValue::ExclusionInfluence(0.5),
@@ -135,6 +144,7 @@ fn invalid_override_targets_types_duplicates_and_values_are_rejected() {
         .is_err()
     );
 }
+
 #[test]
 fn missing_references_cycles_and_depth_are_rejected_even_if_unused() {
     let lib = fixture();
@@ -150,6 +160,7 @@ fn missing_references_cycles_and_depth_are_rejected_even_if_unused() {
     assert!(bad.validate().is_err());
     let mut deep = lib;
     let mut last = CLEAR_GRASS;
+
     for n in 0..=MAX_PRESET_DEPTH {
         let id = PresetId([100 + n as u8; 16]);
         deep.presets.push(Preset {
@@ -165,8 +176,10 @@ fn missing_references_cycles_and_depth_are_rejected_even_if_unused() {
         });
         last = id;
     }
+
     assert!(deep.validate().is_err());
 }
+
 #[test]
 fn expansion_and_duplicate_use_budgets_are_enforced() {
     let mut lib = fixture();
@@ -198,6 +211,7 @@ fn expansion_and_duplicate_use_budgets_are_enforced() {
     lib.presets.push(parent);
     assert!(lib.validate().is_err());
 }
+
 #[test]
 fn resolved_dependencies_only_include_reachable_presets() {
     let mut lib = fixture();
@@ -216,6 +230,7 @@ fn resolved_dependencies_only_include_reachable_presets() {
         .revision += 1;
     assert_ne!(before, lib.resolve(CLEARING, &[]).unwrap());
 }
+
 #[test]
 fn imported_mask_names_are_checked_with_their_layer() {
     let lib = fixture();
@@ -240,9 +255,11 @@ fn imported_mask_names_are_checked_with_their_layer() {
             imported_mask: mask.map(Into::into),
         }],
     };
+
     for mask in [None, Some("sand"), Some("rock_2"), Some(&*"a".repeat(32))] {
         assert!(layer(mask).validate_layers(&lib).is_ok(), "{mask:?}");
     }
+
     for mask in ["", "Sand", "2rock", "wet ness", "_sand", &"a".repeat(33)] {
         assert!(layer(Some(mask)).validate_layers(&lib).is_err(), "{mask:?}");
     }

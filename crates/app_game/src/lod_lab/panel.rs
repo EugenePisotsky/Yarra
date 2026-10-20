@@ -4,9 +4,11 @@ use super::{LodLab, label, switches};
 use crate::game_render::GameUiCamera;
 use crate::runtime_settings::RuntimeSettings;
 use bevy::{prelude::*, window::PrimaryWindow};
+
 use bevy_egui::{
     EguiContexts, EguiGlobalSettings, EguiPlugin, EguiPrimaryContextPass, PrimaryEguiContext, egui,
 };
+
 use engine::{AtmosphereState, LabRepresentation, LabTree, WorldSun};
 
 pub(super) fn install(app: &mut App) {
@@ -52,9 +54,11 @@ fn panel(
                 return;
             };
             ui.heading(&tree.asset.key);
+
             if !tree.ready {
                 ui.label("Loading...");
             }
+
             let mut view = lab.view;
             ui.add(
                 egui::Slider::new(&mut view.distance, 2.0..=2000.0)
@@ -92,22 +96,30 @@ fn panel(
             ui.horizontal_wrapped(|ui| {
                 ui.label("Draw:");
                 ui.radio_value(&mut chosen, LabRepresentation::Auto, "game");
+
                 for lod in 0..tree.asset.meshes() {
                     ui.radio_value(&mut chosen, LabRepresentation::Mesh(lod), format!("LOD{lod}"));
                 }
+
                 if tree.asset.impostor().is_some() {
                     ui.radio_value(&mut chosen, LabRepresentation::Impostor, "impostor");
                 }
+
                 ui.radio_value(&mut chosen, LabRepresentation::Hidden, "hidden");
             });
+
             if chosen != *representation {
                 lab.blink = None;
+
                 if chosen != LabRepresentation::Auto && chosen != lab.forced[1] {
                     lab.forced = [lab.forced[1], chosen];
                 }
+
                 *representation = chosen;
             }
+
             let mut blinking = lab.blink.is_some();
+
             if ui
                 .checkbox(
                     &mut blinking,
@@ -121,6 +133,7 @@ fn panel(
             {
                 lab.blink = blinking.then(|| Timer::from_seconds(0.5, TimerMode::Repeating));
             }
+
             ui.checkbox(&mut lab.wind, "Wind");
 
             ui.separator();
@@ -140,9 +153,11 @@ fn panel(
                 Vec3::new(a.sin() * e.cos(), e.sin(), a.cos() * e.cos())
             };
             let wanted = overridden.then_some(direction);
+
             if atmosphere.direction_override != wanted {
                 atmosphere.direction_override = wanted;
             }
+
             let mut shadows = settings.shadows;
             ui.horizontal(|ui| {
                 ui.label("Shadows:");
@@ -150,6 +165,7 @@ fn panel(
                 ui.radio_value(&mut shadows, 1, "hardware 2×2");
                 ui.radio_value(&mut shadows, 2, "off");
             });
+
             if shadows != settings.shadows {
                 settings.shadows = shadows;
             }
@@ -169,6 +185,7 @@ fn panel(
                 logical * window.scale_factor()
             ));
             ui.label(format!("The game draws {} here", drawn.join(" + ")));
+
             if let Some((cell, radius)) = tree.impostor_view {
                 let texels = cell as f32 * d
                     / (2.0 * radius * scale * tree.pixels_per_metre * window.scale_factor());
@@ -177,6 +194,7 @@ fn panel(
                     if texels < 1.0 { " (magnified)" } else { "" }
                 ));
             }
+
             ui.small("Keys: Up/Down distance, Left/Right bearing, PageUp/PageDown pitch, F next switch, 0 game, 1-9 LOD, I impostor, H hide, B blink");
         });
     Ok(())

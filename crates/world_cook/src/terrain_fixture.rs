@@ -14,6 +14,7 @@ pub(crate) fn mountain_project(half_cells: i32) -> ProjectDocument {
     project.terrain_cell_heightfields.clear();
     project.environment_cells.clear();
     project.objects.clear();
+
     for x in -half_cells..half_cells {
         for z in -half_cells..half_cells {
             let cell = CellCoord { x, z };
@@ -44,5 +45,6 @@ pub(crate) fn mountain_project(half_cells: i32) -> ProjectDocument {
                 });
         }
     }
+
     project
 }

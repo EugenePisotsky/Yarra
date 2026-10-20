@@ -83,6 +83,7 @@ fn live_road_edit_move_save_undo_and_cancel() {
     assert!(!edited.products.controls.is_empty());
     assert!(!edited.products.leaves.is_empty());
     let edited_leaves = edited.products.leaves.clone();
+
     // A preview of the published pages reproduces the published control tiles, roads included.
     let cell = *edited_leaves.keys().next().unwrap();
     let page = world_cook::published_terrain_leaf(&reader, space, cell)
@@ -100,23 +101,27 @@ fn live_road_edit_move_save_undo_and_cancel() {
         same.controls.len(),
         usize::from(world::CONTROL_TOP_LEVEL) + 1
     );
+
     for (key, tile) in &same.controls {
         assert_eq!(
             Some(tile.to_vec()),
             world_cook::published_terrain_control(&reader, *key).unwrap()
         );
     }
+
     // Leaving the road source neighborhood retains the same hierarchy products.
     job.base = Some(edited.clone());
     job.resident = vec![CellCoord { x: 6, z: 6 }];
     let moved = compile_inner(&source, &runtime, &job, &token).unwrap();
     assert!(Arc::ptr_eq(&edited.products, &moved.products));
+
     // Save changes the source baseline, not the runtime publication or visible edit.
     for r in &mut document.roads.records {
         if matches!(r,world_db::RoadSourceRecord::Profile(p) if p.id==profile.id) {
             *r = world_db::RoadSourceRecord::Profile(profile.clone());
         }
     }
+
     std::fs::remove_file(&source).unwrap();
     world_db::write_project_database(&source, &document).unwrap();
     job.base = Some(moved);
@@ -126,12 +131,14 @@ fn live_road_edit_move_save_undo_and_cancel() {
     let saved = compile_inner(&source, &runtime, &job, &token).unwrap();
     assert_eq!(saved.products.leaves, edited_leaves);
     assert_eq!(reader.manifest().generation_id, manifest.generation_id);
+
     // Unsaved undo must override the newly saved source as well as the live products.
     job.base = Some(saved);
     job.roads = vec![change(original)];
     job.regions = None;
     let undone = compile_inner(&source, &runtime, &job, &token).unwrap();
     assert!(undone.products.leaves.is_empty());
+
     for (key, node) in &undone.products.nodes {
         assert_eq!(
             **node,
@@ -143,13 +150,16 @@ fn live_road_edit_move_save_undo_and_cancel() {
                 .unwrap()
         );
     }
+
     assert!(!undone.products.controls.is_empty());
+
     for (key, tile) in &undone.products.controls {
         assert_eq!(
             Some(tile.to_vec()),
             world_cook::published_terrain_control(&reader, *key).unwrap()
         );
     }
+
     token.store(2, Ordering::Relaxed);
     assert!(
         compile_inner(&source, &runtime, &job, &token)

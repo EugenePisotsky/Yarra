@@ -14,6 +14,7 @@ pub struct CloudSettings {
     pub wind_metres_per_second: f32,
     pub seed: u32,
 }
+
 impl Default for CloudSettings {
     fn default() -> Self {
         Self {
@@ -30,6 +31,7 @@ impl Default for CloudSettings {
         }
     }
 }
+
 impl CloudSettings {
     pub fn scattered() -> Self {
         Self {
@@ -37,6 +39,7 @@ impl CloudSettings {
             ..Self::default()
         }
     }
+
     pub fn overcast() -> Self {
         Self {
             enabled: true,
@@ -47,6 +50,7 @@ impl CloudSettings {
             ..Self::default()
         }
     }
+
     pub fn validate(&self) -> Result<(), &'static str> {
         let valid = [
             (self.coverage, 0., 1.),
@@ -66,17 +70,21 @@ impl CloudSettings {
             Err("Cloud settings contain an invalid physical range")
         }
     }
+
     pub fn period_metres(&self) -> f64 {
         f64::from(self.size_metres) * 16.
     }
+
     /// Wrapping in f64 preserves detail through origin rebases and long sessions.
     pub fn wrapped_origin(&self, origin: [f64; 2]) -> [f32; 2] {
         origin.map(|v| v.rem_euclid(self.period_metres()) as f32)
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn bounds_and_rebasing() {
         let mut p = CloudSettings::scattered();

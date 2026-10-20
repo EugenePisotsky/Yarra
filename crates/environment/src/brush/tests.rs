@@ -1,5 +1,6 @@
 use super::*;
 use crate::{Layer, PresetId};
+
 fn definition() -> EnvironmentDefinition {
     EnvironmentDefinition {
         space: world::WorldSpaceId(1),
@@ -23,6 +24,7 @@ fn definition() -> EnvironmentDefinition {
         }],
     }
 }
+
 fn brush() -> CoverageBrush {
     CoverageBrush {
         radius: 3.0,
@@ -31,6 +33,7 @@ fn brush() -> CoverageBrush {
         operation: BrushOperation::Paint,
     }
 }
+
 fn empty(cell: CellCoord) -> CoverageCell {
     CoverageCell {
         cell,
@@ -38,6 +41,7 @@ fn empty(cell: CellCoord) -> CoverageCell {
         tiles: vec![],
     }
 }
+
 #[test]
 fn continuous_stroke_is_independent_of_event_frequency_and_dwell() {
     let def = definition();
@@ -73,6 +77,7 @@ fn continuous_stroke_is_independent_of_event_frequency_and_dwell() {
             .any(|(a, b)| a > b)
     );
 }
+
 #[test]
 fn neighboring_positive_and_negative_cells_share_identical_endpoints() {
     let def = definition();
@@ -94,6 +99,7 @@ fn neighboring_positive_and_negative_cells_share_identical_endpoints() {
         })
         .collect::<std::collections::BTreeMap<_, _>>();
     let n = usize::from(def.mask_resolution);
+
     for z in [-1, 0] {
         for row in 0..n {
             assert_eq!(
@@ -102,6 +108,7 @@ fn neighboring_positive_and_negative_cells_share_identical_endpoints() {
             );
         }
     }
+
     for x in [-1, 0] {
         for col in 0..n {
             assert_eq!(
@@ -111,6 +118,7 @@ fn neighboring_positive_and_negative_cells_share_identical_endpoints() {
         }
     }
 }
+
 #[test]
 fn erase_preserves_other_layers_and_prunes_zero_tiles() {
     let def = definition();
@@ -140,6 +148,7 @@ fn erase_preserves_other_layers_and_prunes_zero_tiles() {
         .unwrap();
     assert_eq!(result.tiles, vec![before.tiles[1].clone()]);
 }
+
 #[test]
 fn invalid_and_unbounded_strokes_are_rejected() {
     assert!(brush().cells(0.0, [0.0, 0.0], [1.0, 1.0]).is_err());
@@ -187,6 +196,7 @@ fn distant_non_integer_grids_still_share_exact_border_samples() {
         .apply_segment(&def, def.layers[0].id, &right, &right, point, point)
         .unwrap();
     let n = usize::from(def.mask_resolution);
+
     for row in 0..n {
         assert_eq!(
             left.tiles[0].samples[row * n + n - 1],

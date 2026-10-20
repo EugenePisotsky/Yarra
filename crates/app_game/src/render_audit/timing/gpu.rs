@@ -1,6 +1,7 @@
 //! Stage-boundary timestamps, never CommandEncoder::write_timestamp (macOS workaround).
 //! Fixed readback ring: no waits, no growth, no reuse until map completion and unmap.
 use super::*;
+
 use bevy::{
     ecs::world::DeferredWorld,
     render::{
@@ -9,10 +10,13 @@ use bevy::{
         renderer::{PendingCommandBuffers, RenderDevice, RenderQueue},
     },
 };
+
 use std::sync::atomic::{AtomicU8, Ordering};
 use wgpu::{CommandBuffer, ComputePassTimestampWrites, QuerySet, QuerySetDescriptor, QueryType};
+
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub(super) struct FrameBegin;
+
 const QUERIES: u32 = 128;
 const BYTES: u64 = QUERIES as u64 * 8;
 const SLOTS: usize = 4;
@@ -20,10 +24,12 @@ const SAMPLE_EVERY: u32 = 6;
 // Pass markers serialize GPU command groups and can substantially perturb tile GPUs.
 // Keep them infrequent and never present those frames as normal whole-frame costs.
 const DETAIL_EVERY: u32 = 60;
+
 fn sampled_stamp(mut stamp: Stamp) -> Stamp {
     stamp.detailed &= stamp.frame.is_multiple_of(DETAIL_EVERY);
     stamp
 }
+
 struct Slot {
     queries: QuerySet,
     resolve: Buffer,
@@ -33,6 +39,7 @@ struct Slot {
     scopes: Vec<String>,
     used: u32,
 }
+
 #[derive(Resource)]
 struct Timer {
     slots: Vec<Slot>,
@@ -43,6 +50,7 @@ struct Timer {
     marker_pipeline: Option<ComputePipeline>,
     graph_start: Option<Instant>,
 }
+
 impl FromWorld for Timer {
     fn from_world(world: &mut World) -> Self {
         let device = world.resource::<RenderDevice>();
@@ -116,6 +124,7 @@ impl FromWorld for Timer {
         }
     }
 }
+
 #[derive(Resource)]
 struct GpuTimingEnabled(bool);
 
@@ -135,6 +144,7 @@ pub(super) fn install(render: &mut SubApp, enabled: bool) {
         )
         .add_systems(RenderGraph, finish.after(RenderGraphSystems::Finish));
 }
+
 fn marker(
     device: &RenderDevice,
     pipeline: &ComputePipeline,
@@ -144,6 +154,7 @@ fn marker(
     let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor {
         label: Some("performance stage marker"),
     });
+
     {
         let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
             label: Some("performance stage timestamp"),
@@ -153,13 +164,16 @@ fn marker(
                 end_of_pass_write_index: (!index.is_multiple_of(2)).then_some(index),
             }),
         });
+
         // Metal does not reliably sample empty encoders. A single no-op invocation makes
         // this a real stage without touching scene resources or requiring a blocking wait.
         pass.set_pipeline(pipeline);
         pass.dispatch_workgroups(1, 1, 1);
     }
+
     encoder.finish()
 }
+
 fn begin(
     mut timer: ResMut<Timer>,
     stamp: Res<Stamp>,
@@ -170,6 +184,7 @@ fn begin(
     timer.graph_start = Some(Instant::now());
     timer.active = None;
     let period_ns = timer.period_ns;
+
     for slot in &mut timer.slots {
         match slot.state.load(Ordering::Acquire) {
             2 => {
@@ -207,6 +222,7 @@ fn begin(
                 slot.readback.unmap();
                 slot.state.store(0, Ordering::Release);
                 let mut bus = bridge.0.lock().unwrap();
+
                 if let Some(sample) = sample {
                     if bus.gpu.len() < HISTORY {
                         bus.gpu.push(sample);
@@ -225,9 +241,11 @@ fn begin(
             _ => {}
         }
     }
+
     if !timer.supported || !stamp.frame.is_multiple_of(SAMPLE_EVERY) {
         return;
     }
+
     if let Some(index) = timer
         .slots
         .iter()
@@ -242,6 +260,7 @@ fn begin(
         bridge.0.lock().unwrap().dropped += 1;
     }
 }
+
 /// Isolate exactly the command buffers of a system, preserving the previous pending order.
 pub(super) fn take_pending(mut world: DeferredWorld, enabled: bool) -> Option<Vec<CommandBuffer>> {
     if !enabled
@@ -258,6 +277,7 @@ pub(super) fn take_pending(mut world: DeferredWorld, enabled: bool) -> Option<Ve
             .collect(),
     )
 }
+
 pub(super) fn wrap_pending(
     mut world: DeferredWorld,
     previous: Option<Vec<CommandBuffer>>,
@@ -277,6 +297,7 @@ pub(super) fn wrap_pending(
         let mut timer = world.resource_mut::<Timer>();
         let pipeline = timer.marker_pipeline.as_ref().unwrap().clone();
         let slot = timer.active.map(|i| &mut timer.slots[i]).unwrap();
+
         if slot.used + 2 > QUERIES {
             None
         } else {
@@ -289,6 +310,7 @@ pub(super) fn wrap_pending(
     };
     let mut pending = world.resource_mut::<PendingCommandBuffers>();
     pending.push(previous);
+
     if let Some((start, end)) = pair {
         pending.push([start]);
         pending.push(commands);
@@ -297,6 +319,7 @@ pub(super) fn wrap_pending(
         pending.push(commands);
     }
 }
+
 fn resolve(
     mut timer: ResMut<Timer>,
     device: Res<RenderDevice>,
@@ -307,6 +330,7 @@ fn resolve(
     };
     let slot = &timer.slots[index];
     let pipeline = timer.marker_pipeline.as_ref().unwrap();
+
     // All renderer commands are encoded before queue submission. Presentation is outside this span.
     let commands: Vec<_> = pending.finish().collect();
     pending.push([marker(&device, pipeline, &slot.queries, 0)]);
@@ -314,12 +338,14 @@ fn resolve(
     pending.push([marker(&device, pipeline, &slot.queries, 1)]);
     timer.submitted = Some(index);
 }
+
 fn finish(mut timer: ResMut<Timer>, graph: Res<GraphTime>, queue: Res<RenderQueue>) {
     if let Some(start) = timer.graph_start.take() {
         graph
             .0
             .store(start.elapsed().as_nanos() as u64, Ordering::Relaxed);
     }
+
     let Some(index) = timer.submitted.take() else {
         return;
     };
@@ -328,29 +354,37 @@ fn finish(mut timer: ResMut<Timer>, graph: Res<GraphTime>, queue: Res<RenderQueu
     let state = slot.state.clone();
     queue.on_submitted_work_done(move || state.store(2, Ordering::Release));
 }
+
 fn decode(stamp: Stamp, times: &[u64], labels: &[String], period_ns: f64) -> Option<GpuSample> {
     if times.len() != 2 + labels.len() * 2 || !period_ns.is_finite() || period_ns <= 0.0 {
         return None;
     }
+
     let duration = |a: u64, b: u64| -> Option<f64> {
         let ms = b.checked_sub(a)? as f64 * period_ns / 1_000_000.0;
         (a > 0 && ms.is_finite() && (0.0..60_000.0).contains(&ms)).then_some(ms)
     };
     let elapsed_ms = duration(times[0], times[1])?;
+
     if elapsed_ms == 0.0 {
         return None;
     }
+
     let mut scopes = vec![];
     let mut invalid_scopes = 0;
+
     for (i, name) in labels.iter().enumerate() {
         let start = times[2 + i * 2];
         let end = times[3 + i * 2];
+
         if start < times[0] || end > times[1] || duration(start, end).is_none() {
             invalid_scopes += 1;
             continue;
         }
+
         scopes.push((name.clone(), duration(start, end)?));
     }
+
     Some(GpuSample {
         stamp,
         elapsed_ms,
@@ -412,6 +446,7 @@ mod tests {
         for values in [&[0, 100][..], &[100, 0], &[100, 100], &[200, 100], &[]] {
             assert!(decode(default(), values, &[], 1.0).is_none());
         }
+
         assert!(decode(default(), &[100, 200], &[], f64::NAN).is_none());
         let partial = decode(default(), &[100, 200, 90, 150], &["outside".into()], 1.0).unwrap();
         assert!(partial.scopes.is_empty());

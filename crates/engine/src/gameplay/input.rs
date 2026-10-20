@@ -3,11 +3,13 @@ use super::{
     GameInputEnabled, GamePointerInputBlocked, GameplaySystems,
     camera::{CAMERA_MAX_DISTANCE, CAMERA_MIN_DISTANCE, CameraRig, MainCamera},
 };
+
 use crate::{
     CameraInputDiagnostics, StreamedTerrainSurface, WorldOrigin,
     actor::{CharacterGait, MoveIntent, PlayerControlled},
     sample_resident_terrain_surface,
 };
+
 use bevy::{
     input::{
         gestures::{PanGesture, PinchGesture},
@@ -20,6 +22,7 @@ use bevy::{
 /// Reads native player and orbit-camera input. Requires GameplayPlugin, Bevy InputPlugin,
 /// and a gameplay camera for camera-relative controls. UI capture still permits keyboard/gamepad.
 pub struct GameInputPlugin;
+
 impl Plugin for GameInputPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<TouchTapState>().add_systems(
@@ -73,6 +76,7 @@ fn set_target_from_pointer(
         *touch_tap = TouchTapState::default();
         return;
     }
+
     let pointer_position = if mouse.just_pressed(MouseButton::Left) {
         window.cursor_position()
     } else {
@@ -90,9 +94,11 @@ fn set_target_from_pointer(
             if direction.y.abs() < 1.0e-5 {
                 return None;
             }
+
             let distance = (player.0.translation.y - ray.origin.y) / direction.y;
             (distance >= 0.0).then(|| ray.origin + direction * distance)
         });
+
     if let Some(point) = point {
         player.1.set_destination(point, CharacterGait::Walk);
     }
@@ -110,6 +116,7 @@ fn raycast_streamed_terrain(
 
     let mut previous: Option<(f32, f32)> = None;
     let step_count = (MAXIMUM_DISTANCE / STEP_METERS) as usize;
+
     for step in 0..=step_count {
         let distance = step as f32 * STEP_METERS;
         let point = ray_origin + ray_direction * distance;
@@ -124,9 +131,11 @@ fn raycast_streamed_terrain(
             previous = Some((distance, clearance));
             continue;
         };
+
         if previous_clearance >= 0.0 && clearance <= 0.0 {
             let mut above = previous_distance;
             let mut below = distance;
+
             for _ in 0..REFINEMENT_STEPS {
                 let middle = (above + below) * 0.5;
                 let middle_point = ray_origin + ray_direction * middle;
@@ -137,19 +146,23 @@ fn raycast_streamed_terrain(
                 ) else {
                     break;
                 };
+
                 if middle_point.y >= middle_surface.height {
                     above = middle;
                 } else {
                     below = middle;
                 }
             }
+
             let hit = ray_origin + ray_direction * ((above + below) * 0.5);
             let surface =
                 sample_resident_terrain_surface(origin, terrain_pages.iter(), [hit.x, hit.z])?;
             return Some(Vec3::new(hit.x, surface.height, hit.z));
         }
+
         previous = Some((distance, clearance));
     }
+
     None
 }
 
@@ -164,6 +177,7 @@ fn touch_tap_position(touches: &Touches, state: &mut TouchTapState) -> Option<Ve
             state.disqualified = true;
         }
     }
+
     if active_touch_count > 1 {
         state.disqualified = true;
     }
@@ -183,6 +197,7 @@ fn touch_tap_position(touches: &Touches, state: &mut TouchTapState) -> Option<Ve
         state.primary_touch = None;
         state.disqualified = false;
     }
+
     None
 }
 
@@ -211,18 +226,23 @@ fn update_player_move_intent(
 
 fn direct_movement_input(keys: &ButtonInput<KeyCode>, gamepads: &Query<&Gamepad>) -> Vec2 {
     let mut keyboard = Vec2::ZERO;
+
     if keys.pressed(KeyCode::KeyA) {
         keyboard.x -= 1.0;
     }
+
     if keys.pressed(KeyCode::KeyD) {
         keyboard.x += 1.0;
     }
+
     if keys.pressed(KeyCode::KeyS) {
         keyboard.y -= 1.0;
     }
+
     if keys.pressed(KeyCode::KeyW) {
         keyboard.y += 1.0;
     }
+
     if keyboard != Vec2::ZERO {
         return keyboard.normalize();
     }
@@ -242,6 +262,7 @@ fn direct_movement_input(keys: &ButtonInput<KeyCode>, gamepads: &Query<&Gamepad>
 
 fn apply_stick_dead_zone(stick: Vec2) -> Vec2 {
     let length = stick.length().min(1.0);
+
     if length <= CAMERA_STICK_DEAD_ZONE {
         return Vec2::ZERO;
     }
@@ -277,10 +298,12 @@ fn update_camera_controls(
             ..default()
         };
     }
+
     // Always consume native gestures, including while locked/captured, so unlocking cannot
     // replay a pending pan or pinch. Keyboard and gamepad remain usable over the HUD.
     let touch_pan: Vec2 = pan_gestures.read().map(|gesture| gesture.0).sum();
     let touch_pinch: f32 = pinch_gestures.read().map(|gesture| gesture.0).sum();
+
     // Clamp individual native events, not a frame's accumulated movement. At
     // 60 FPS the same gesture may put twice as many events in one update as at 120.
     let scroll: Vec2 = mouse_scroll
@@ -296,18 +319,23 @@ fn update_camera_controls(
                     Vec2::new(CAMERA_TRACKPAD_ORBIT_SPEED, CAMERA_TRACKPAD_ZOOM_SPEED),
                 ),
             };
+
             if let Some(d) = diagnostics.as_deref_mut() {
                 d.record_wheel(event, limit);
             }
+
             Vec2::new(event.x, event.y).clamp(Vec2::splat(-limit), Vec2::splat(limit)) * speed
         })
         .sum();
+
     if let Some(d) = diagnostics.as_deref_mut() {
         d.requested_orbit = -scroll.x;
     }
+
     if !enabled.0 {
         return;
     }
+
     if !pointer_blocked.0 && mouse_buttons.pressed(MouseButton::Right) {
         rig.yaw -= mouse_motion.delta.x * CAMERA_MOUSE_ORBIT_SPEED;
         rig.target_yaw = rig.yaw;
@@ -327,20 +355,25 @@ fn update_camera_controls(
         .max_by(|left, right| left.length_squared().total_cmp(&right.length_squared()))
         .unwrap_or_default();
     let gamepad_yaw_delta = right_stick.x * CAMERA_GAMEPAD_ORBIT_SPEED * time.delta_secs();
+
     if gamepad_yaw_delta != 0.0 {
         rig.yaw -= gamepad_yaw_delta;
         rig.target_yaw = rig.yaw;
     }
+
     rig.pitch_offset = (rig.pitch_offset
         + right_stick.y * CAMERA_GAMEPAD_ORBIT_SPEED * time.delta_secs())
     .clamp(-CAMERA_MAX_PITCH_OFFSET, CAMERA_MAX_PITCH_OFFSET);
 
     let previous_target_yaw = rig.target_yaw;
+
     if !pointer_blocked.0 && time.elapsed_secs() > 0.5 {
         rig.target_yaw -= scroll.x;
+
         if let Some(d) = diagnostics.as_deref_mut() {
             d.applied_orbit = -scroll.x;
         }
+
         rig.target_distance =
             (rig.target_distance - scroll.y).clamp(CAMERA_MIN_DISTANCE, CAMERA_MAX_DISTANCE);
     }
@@ -364,6 +397,7 @@ fn update_camera_controls(
     );
     let zoom_blend = 1.0 - (-CAMERA_ZOOM_SMOOTHING * time.delta_secs()).exp();
     rig.distance += (rig.target_distance - rig.distance) * zoom_blend;
+
     if let Some(d) = diagnostics.as_deref_mut() {
         d.yaw_after = rig.yaw;
         d.target_yaw = rig.target_yaw;
@@ -372,10 +406,13 @@ fn update_camera_controls(
 
 fn smooth_camera_orbit(yaw: f32, previous_target: f32, target: f32, dt: f32) -> f32 {
     let step = CAMERA_ORBIT_SMOOTHING * dt;
+
     if step <= 0.0 {
         return yaw;
     }
+
     let blend = -(-step).exp_m1();
+
     // Integrate the existing exponential smoother with gesture movement spread
     // across the elapsed interval. Applying the entire batch at the start of
     // the interval exaggerates packet-to-packet velocity changes at lower FPS.

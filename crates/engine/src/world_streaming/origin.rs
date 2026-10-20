@@ -65,9 +65,11 @@ impl WorldOrigin {
         world: [f64; 3],
     ) -> Option<Vec3> {
         let (open, [x, z]) = self.offset(catalog)?;
+
         if open != space {
             return None;
         }
+
         Some(Vec3::new(
             (world[0] - x) as f32,
             world[1] as f32,
@@ -120,6 +122,7 @@ pub(super) fn update_world_origin(
         return;
     };
     let desired_cell = desired_origin_cell(*origin, position);
+
     if origin.space == Some(position.space) && origin.cell == desired_cell {
         return;
     }
@@ -127,6 +130,7 @@ pub(super) fn update_world_origin(
     let previous = *origin;
     origin.space = Some(position.space);
     origin.cell = desired_cell;
+
     // CPU source pages use canonical keys. Keep them and their pending work on a
     // same-space rebase; only render roots need translating.
     if previous.space == origin.space
@@ -138,9 +142,11 @@ pub(super) fn update_world_origin(
     {
         rebase::shift_roots(&mut roots, previous.cell, origin.cell, size);
     }
+
     if previous.space != origin.space {
         clear_streamed_pages(&mut commands, &mut stream, &mut residency);
     }
+
     info!(
         "rebased render origin from {:?}:{:?} to {:?}:{:?}",
         previous.space, previous.cell, origin.space, origin.cell
@@ -170,8 +176,10 @@ mod tests {
         let (space, world) = origin.to_world(&catalog, render).unwrap();
         assert_eq!((space, world), (WorldSpaceId(7), [33.0, 5.0, -14.0]));
         assert_eq!(origin.to_render(&catalog, space, world), Some(render));
+
         // A position in another space is not in this one's render space.
         assert!(origin.to_render(&catalog, WorldSpaceId(8), world).is_none());
+
         // Before a world is open there is nothing to convert against.
         let unopened = WorldOrigin::default();
         assert!(unopened.to_world(&catalog, render).is_none());

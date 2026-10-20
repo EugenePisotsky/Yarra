@@ -1,15 +1,19 @@
 //! The whole mutable playthrough, held in memory. Records that were never changed are absent
 //! and read as their defaults, so a save only contains what differs from the authored world.
 use crate::actors::{Actor, Relationship, RelationshipKey};
+
 use crate::dialogue::{
     Conversation, History, HistoryKey, Interaction, InteractionKey, Mode, RunStatus,
 };
+
 use crate::inventory::{Inventory, InventoryRole, Wallet};
 use crate::rules::{Modifier, RandomState, Stats};
+
 use crate::{
     ConversationKey, GameContent, LocationState, ObjectKind, ObjectState, Result, TriggerState,
     Value, quests,
 };
+
 use crate::{VariableKey, VariableScope};
 use game_types::*;
 use serde::{Deserialize, Serialize};
@@ -19,12 +23,14 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 mod pairs {
     use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error};
     use std::collections::BTreeMap;
+
     pub fn serialize<S: Serializer, K: Serialize, V: Serialize>(
         map: &BTreeMap<K, V>,
         serializer: S,
     ) -> Result<S::Ok, S::Error> {
         serializer.collect_seq(map.iter())
     }
+
     pub fn deserialize<'de, D, K, V>(deserializer: D) -> Result<BTreeMap<K, V>, D::Error>
     where
         D: Deserializer<'de>,
@@ -32,11 +38,13 @@ mod pairs {
         V: Deserialize<'de>,
     {
         let mut map = BTreeMap::new();
+
         for (key, value) in Vec::<(K, V)>::deserialize(deserializer)? {
             if map.insert(key, value).is_some() {
                 return Err(D::Error::custom("duplicate record identity"));
             }
         }
+
         Ok(map)
     }
 }
@@ -87,6 +95,7 @@ pub enum ModifierSource {
     /// A status effect, by its name in the rules.
     Effect(Key),
 }
+
 /// The characters travelling together. They take part in every conversation any of them
 /// has, and share their experience and their gold.
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -100,6 +109,7 @@ pub struct Party {
     /// The shared purse.
     pub wallet: Option<WalletId>,
 }
+
 /// Conversations under way, in the order they started. The first blocking one is on screen
 /// and holds the world still; the first ambient one is being spoken. The rest wait their turn.
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -108,6 +118,7 @@ pub struct Floor {
     pub blocking: VecDeque<ConversationKey>,
     pub ambient: VecDeque<ConversationKey>,
 }
+
 impl Floor {
     pub fn queue(&self, mode: Mode) -> &VecDeque<ConversationKey> {
         match mode {
@@ -115,12 +126,14 @@ impl Floor {
             Mode::Ambient => &self.ambient,
         }
     }
+
     pub(crate) fn queue_mut(&mut self, mode: Mode) -> &mut VecDeque<ConversationKey> {
         match mode {
             Mode::Blocking => &mut self.blocking,
             Mode::Ambient => &mut self.ambient,
         }
     }
+
     /// The conversation of this kind that has the floor.
     pub fn current(&self, mode: Mode) -> Option<ConversationKey> {
         self.queue(mode).front().copied()
@@ -152,9 +165,11 @@ impl SessionState {
             world: Default::default(),
         }
     }
+
     pub fn add_actor(&mut self, actor: Actor) {
         self.actors.insert(actor.id, actor);
     }
+
     /// Adds a character as its template describes it, with its stats worked out and its
     /// resources full.
     pub fn spawn(
@@ -167,48 +182,58 @@ impl SessionState {
         let mut actor = Actor::from_template(content.template(template)?, rules)?;
         actor.id = id;
         actor.stats = self.sheet(content, &actor)?;
+
         for (resource, maximum) in rules.resources() {
             let cap = actor.stats[maximum].max(0);
             actor.resources.insert(resource.clone(), cap);
         }
+
         require(!self.actors.contains_key(&id), "actor spawned twice")?;
         Ok(self.actors.entry(id).or_insert(actor))
     }
+
     pub fn add_inventory(&mut self, inventory: Inventory) {
         if let Some(actor) = inventory.carried_by() {
             self.carried.insert(actor, inventory.id);
         }
         self.inventories.insert(inventory.id, inventory);
     }
+
     pub fn add_wallet(&mut self, wallet: Wallet) {
         self.wallets.insert(wallet.id, wallet);
     }
+
     pub fn actor(&self, id: ActorId) -> Result<&Actor> {
         self.actors
             .get(&id)
             .ok_or_else(|| Invalid("unknown actor".into()).into())
     }
+
     pub fn inventory(&self, id: InventoryId) -> Result<&Inventory> {
         self.inventories
             .get(&id)
             .ok_or_else(|| Invalid("unknown inventory".into()).into())
     }
+
     pub fn wallet(&self, id: WalletId) -> Result<&Wallet> {
         self.wallets
             .get(&id)
             .ok_or_else(|| Invalid("unknown wallet".into()).into())
     }
+
     pub fn carried(&self, actor: ActorId) -> Result<&Inventory> {
         self.carried
             .get(&actor)
             .and_then(|id| self.inventories.get(id))
             .ok_or_else(|| Invalid("actor has no carried inventory".into()).into())
     }
+
     pub fn conversation(&self, key: ConversationKey) -> Result<&Conversation> {
         self.conversations
             .get(&key)
             .ok_or_else(|| Invalid("conversation has not started".into()).into())
     }
+
     /// An unstarted quest has no record.
     pub fn quest(&self, id: QuestId) -> quests::Progress {
         self.quests
@@ -216,6 +241,7 @@ impl SessionState {
             .cloned()
             .unwrap_or_else(|| quests::Progress::new(id))
     }
+
     /// Actors who never interacted are neutral.
     pub fn relationship(&self, key: RelationshipKey) -> Relationship {
         self.relationships
@@ -223,15 +249,18 @@ impl SessionState {
             .cloned()
             .unwrap_or_else(|| Relationship::neutral(key))
     }
+
     pub fn selection(&self, key: InteractionKey) -> Option<&crate::dialogue::Selection> {
         self.interactions.get(&key)?.current.as_ref()
     }
+
     pub fn history(&self, key: HistoryKey) -> History {
         self.histories
             .get(&key)
             .cloned()
             .unwrap_or_else(|| History::empty(key))
     }
+
     /// An untouched object is in its authored state, whether or not its region is loaded.
     pub fn object(&self, content: &GameContent, id: ObjectId) -> Result<ObjectState> {
         match self.world.objects.get(&id) {
@@ -239,11 +268,13 @@ impl SessionState {
             None => Ok(ObjectState::initial(content.object(id)?)),
         }
     }
+
     /// The areas the actor was last reported inside; none until the engine has reported.
     pub fn areas(&self, actor: ActorId) -> &BTreeSet<AreaId> {
         static NONE: BTreeSet<AreaId> = BTreeSet::new();
         self.world.locations.get(&actor).map_or(&NONE, |l| &l.areas)
     }
+
     /// A variable nobody has set still has its initial value, for every actor.
     pub fn variable(&self, content: &GameContent, key: impl Into<VariableKey>) -> Result<Value> {
         let key = key.into();
@@ -253,15 +284,18 @@ impl SessionState {
             None => content.variable(key.variable)?.initial.clone(),
         })
     }
+
     pub(crate) fn check_variable(&self, content: &GameContent, key: VariableKey) -> Result<()> {
         let definition = content.variable(key.variable)?;
         require(
             (definition.scope == VariableScope::Actor) == key.actor.is_some(),
             "variable scope mismatch",
         )?;
+
         if let Some(actor) = key.actor {
             self.actor(actor)?;
         }
+
         require(
             self.variables
                 .get(&key)
@@ -270,6 +304,7 @@ impl SessionState {
         )
         .map_err(Into::into)
     }
+
     pub fn trigger(&self, id: TriggerId) -> TriggerState {
         self.world
             .triggers
@@ -277,6 +312,7 @@ impl SessionState {
             .cloned()
             .unwrap_or_else(|| TriggerState::initial(id))
     }
+
     /// A stat after equipment and effects, or how much of a resource the actor has now.
     pub fn stat(&self, content: &GameContent, actor: ActorId, stat: &Key) -> Result<i32> {
         content.game.rules.stat(stat)?;
@@ -288,6 +324,7 @@ impl SessionState {
             .copied()
             .ok_or_else(|| Invalid(format!("{} has no {}", actor.id, stat.as_str())).into())
     }
+
     /// What is in the party's shared purse.
     pub fn gold(&self) -> Result<u64> {
         Ok(match self.party.wallet {
@@ -295,6 +332,7 @@ impl SessionState {
             None => 0,
         })
     }
+
     /// What a character's equipment and effects do to its stats, each with where it comes
     /// from.
     fn modifiers<'a>(
@@ -306,6 +344,7 @@ impl SessionState {
         let wear = |item: ItemDefinitionId| -> Result<&'a crate::rules::ItemMechanics> {
             Ok(&content.items.item(item)?.mechanics)
         };
+
         if !self.carried.contains_key(&actor.id) {
             // Nobody has looked into this character's inventory yet. What its template
             // says it wears counts all the same.
@@ -316,6 +355,7 @@ impl SessionState {
         } else if !actor.equipment.is_empty() {
             let carried = self.carried(actor.id)?;
             let mut ids = BTreeSet::new();
+
             for (slot, item) in &actor.equipment {
                 require(ids.insert(*item), "item equipped more than once")?;
                 let definition = carried.entry(*item)?.definition;
@@ -328,13 +368,16 @@ impl SessionState {
                 modifiers.extend(mechanics.modifiers.iter().map(|m| (source.clone(), m)));
             }
         }
+
         for effect in &actor.effects {
             let source = ModifierSource::Effect(effect.effect.clone());
             let definition = content.game.rules.effect(&effect.effect)?;
             modifiers.extend(definition.modifiers.iter().map(|m| (source.clone(), m)));
         }
+
         Ok(modifiers)
     }
+
     /// What changes one of a character's stats, and where each change comes from: for a
     /// tooltip that explains a number.
     pub fn modifiers_of(
@@ -351,6 +394,7 @@ impl SessionState {
             .map(|(source, modifier)| (source, modifier.op))
             .collect())
     }
+
     /// Every primary and derived stat of a character as it is built now: base values,
     /// then equipment and effects, with the derived ones from the rules script.
     pub fn sheet(&self, content: &GameContent, actor: &Actor) -> Result<Stats> {
@@ -370,6 +414,7 @@ impl SessionState {
         rules.add_derived(&mut stats, &derived, modifiers)?;
         Ok(stats)
     }
+
     fn valid_owner(&self, content: &GameContent, owner: &OwnerRef) -> bool {
         match owner.kind {
             OwnerKind::Actor => self.actors.contains_key(&ActorId(owner.id.0)),
@@ -380,6 +425,7 @@ impl SessionState {
             OwnerKind::Party => self.owners.contains(owner),
         }
     }
+
     fn loot_random(&self, owner: [u8; 16]) -> RandomState {
         // Its own stream per owner, so what is found does not depend on what was opened
         // before it or on anything else that rolled.
@@ -392,6 +438,7 @@ impl SessionState {
             bytes.as_bytes()[..8].try_into().expect("eight bytes"),
         ))
     }
+
     /// The carried inventory a character will have once something first needs it: what its
     /// template wears, equipped, and what its loot table yields. The same whenever asked.
     pub fn unopened_inventory(
@@ -409,20 +456,24 @@ impl SessionState {
             .0
             .copy_from_slice(&id.finalize().as_bytes()[..16]);
         let mut equipment = BTreeMap::new();
+
         for definition in &template.equipment {
             let slot = content.items.item(*definition)?.mechanics.slot.clone();
             let slot = slot.ok_or_else(|| Invalid("template equipment has no slot".into()))?;
             let ids = inventory.grant(&content.items, *definition, 1)?;
             equipment.insert(slot, ids[0]);
         }
+
         if let Some(loot) = template.loot {
             let mut random = self.loot_random(actor.id.0);
             content
                 .loot(loot)?
                 .roll(&content.items, &mut random, &mut inventory)?;
         }
+
         Ok((inventory, equipment))
     }
+
     /// How many of an item a character carries, whether or not anything has looked into
     /// its inventory yet: what an unopened one will hold is already decided.
     pub fn item_count(
@@ -440,6 +491,7 @@ impl SessionState {
                 .map(|e| u64::from(e.quantity))
                 .sum()
         };
+
         match self.carried.contains_key(&actor) {
             true => Ok(count(self.carried(actor)?)),
             false => Ok(count(
@@ -447,6 +499,7 @@ impl SessionState {
             )),
         }
     }
+
     /// What a container holds the first time it is opened.
     pub fn unopened_container(&self, content: &GameContent, object: ObjectId) -> Result<Inventory> {
         let ObjectKind::Container {
@@ -458,14 +511,17 @@ impl SessionState {
         };
         let mut inventory = Inventory::new(OwnerRef::object(object), InventoryRole::Contents);
         inventory.id = id;
+
         if let Some(loot) = loot {
             let mut random = self.loot_random(object.0);
             content
                 .loot(loot)?
                 .roll(&content.items, &mut random, &mut inventory)?;
         }
+
         Ok(inventory)
     }
+
     /// `deep` works the stats out again and compares; without it only their shape and
     /// what they rest on is checked.
     pub(crate) fn check_actor(
@@ -476,6 +532,7 @@ impl SessionState {
     ) -> Result<()> {
         content.template(actor.template)?;
         actor.validate(&content.game.rules)?;
+
         if deep {
             require(
                 actor.stats == self.sheet(content, actor)?,
@@ -484,32 +541,39 @@ impl SessionState {
         } else {
             self.modifiers(content, actor)?;
         }
+
         require(
             self.timed.contains(&actor.id) == actor.next_event().is_some(),
             "list of characters with pending effects is stale",
         )?;
+
         if self.party.members.contains(&actor.id) {
             require(
                 actor.level >= content.game.rules.level_for(self.party.experience),
                 "party member below the level the party has earned",
             )?;
         }
+
         Ok(())
     }
+
     pub(crate) fn check_inventory(&self, content: &GameContent, inv: &Inventory) -> Result<()> {
         inv.validate(&content.items)?;
         require(
             self.valid_owner(content, &inv.owner),
             "invalid inventory identity/owner/role",
         )?;
+
         if let Some(actor) = inv.carried_by() {
             require(
                 self.carried.get(&actor) == Some(&inv.id),
                 "carried inventory index is stale",
             )?;
         }
+
         Ok(())
     }
+
     pub(crate) fn check_wallet(&self, content: &GameContent, wallet: &Wallet) -> Result<()> {
         wallet.validate()?;
         require(
@@ -518,6 +582,7 @@ impl SessionState {
         )
         .map_err(Into::into)
     }
+
     pub(crate) fn check_history(&self, content: &GameContent, h: &History) -> Result<()> {
         h.validate(content.dialogue_contract(h.key.dialogue)?, self.time)?;
         require(
@@ -530,6 +595,7 @@ impl SessionState {
         )
         .map_err(Into::into)
     }
+
     pub(crate) fn check_relationship(&self, r: &Relationship) -> Result<()> {
         r.validate()?;
         require(
@@ -538,6 +604,7 @@ impl SessionState {
         )
         .map_err(Into::into)
     }
+
     pub(crate) fn check_interaction(&self, content: &GameContent, i: &Interaction) -> Result<()> {
         require(
             i.key.participant != i.key.speaker
@@ -545,6 +612,7 @@ impl SessionState {
                 && self.actors.contains_key(&i.key.speaker),
             "invalid interaction actors/identity",
         )?;
+
         if let Some(selection) = &i.current {
             let profile = content.profile(selection.profile)?;
             require(
@@ -563,24 +631,29 @@ impl SessionState {
                 "selected conversation is missing",
             )?;
         }
+
         Ok(())
     }
+
     /// A graph that is not loaded is checked against its always-present contract.
     pub(crate) fn check_conversation(&self, content: &GameContent, c: &Conversation) -> Result<()> {
         require(
             self.actors.contains_key(&c.participant) && self.actors.contains_key(&c.speaker),
             "invalid conversation participants/identity",
         )?;
+
         match content.loaded_dialogue(c.dialogue) {
             Some(graph) => c.validate(&graph)?,
             None => c.validate_contract(content.dialogue_contract(c.dialogue)?)?,
         }
+
         require(
             c.bindings.values().all(|id| self.actors.contains_key(id)),
             "unknown bound actor",
         )
         .map_err(Into::into)
     }
+
     /// A conversation waiting for its turn is under way, in the queue of its kind.
     pub(crate) fn check_floor(&self, content: &GameContent, key: ConversationKey) -> Result<()> {
         let mode = content.dialogue_contract(key.dialogue)?.mode;
@@ -593,8 +666,10 @@ impl SessionState {
         )
         .map_err(Into::into)
     }
+
     pub(crate) fn check_object(&self, content: &GameContent, o: &ObjectState) -> Result<()> {
         let definition = content.object(o.id)?;
+
         if let ObjectKind::Container { inventory, .. } = definition.kind
             && let Some(bag) = self.inventories.get(&inventory)
         {
@@ -603,19 +678,24 @@ impl SessionState {
                 "container inventory ownership mismatch",
             )?;
         }
+
         require(
             !(o.open && (o.locked || o.destroyed)),
             "invalid object state",
         )
         .map_err(Into::into)
     }
+
     pub(crate) fn check_location(&self, content: &GameContent, l: &LocationState) -> Result<()> {
         self.actor(l.actor)?;
+
         for id in &l.areas {
             content.area(*id)?;
         }
+
         Ok(())
     }
+
     pub(crate) fn check_trigger(&self, content: &GameContent, t: &TriggerState) -> Result<()> {
         content.trigger(t.id)?;
         require(
@@ -625,10 +705,12 @@ impl SessionState {
         )
         .map_err(Into::into)
     }
+
     pub(crate) fn check_movement(&self, content: &GameContent, m: &crate::Movement) -> Result<()> {
         self.actor(m.actor)?;
         content.area(m.to)
     }
+
     /// Checks every record and the invariants that span records. Used when a playthrough is
     /// created or loaded, after its stats were worked out again; commands only re-check the
     /// records they changed.
@@ -637,11 +719,14 @@ impl SessionState {
             self.generation > 0 && self.generation <= i64::MAX as u64,
             "invalid session generation",
         )?;
+
         for owner in &self.owners {
             require(owner.kind != OwnerKind::Actor, "invalid external owner")?;
         }
+
         let mut roles = BTreeSet::new();
         let mut entries = BTreeSet::new();
+
         for (id, inv) in &self.inventories {
             require(*id == inv.id, "inventory identity mismatch")?;
             self.check_inventory(content, inv)?;
@@ -649,10 +734,12 @@ impl SessionState {
                 roles.insert((&inv.owner, &inv.role)),
                 "invalid inventory identity/owner/role",
             )?;
+
             for item in &inv.entries {
                 require(entries.insert(item.id), "duplicate global item identity")?;
             }
         }
+
         for (actor, id) in &self.carried {
             let inv = self.inventory(*id)?;
             require(
@@ -660,48 +747,61 @@ impl SessionState {
                 "carried inventory index is stale",
             )?;
         }
+
         for (id, actor) in &self.actors {
             require(*id == actor.id, "actor identity mismatch")?;
             self.check_actor(content, actor, false)?;
         }
+
         require(
             self.timed.iter().all(|id| self.actors.contains_key(id)),
             "unknown character with pending effects",
         )?;
+
         for wallet in self.wallets.values() {
             self.check_wallet(content, wallet)?;
         }
+
         for h in self.histories.values() {
             self.check_history(content, h)?;
         }
+
         for q in self.quests.values() {
             q.validate(content.quest(q.quest)?)?;
         }
+
         for r in self.relationships.values() {
             self.check_relationship(r)?;
         }
+
         for i in self.interactions.values() {
             self.check_interaction(content, i)?;
         }
+
         for c in self.conversations.values() {
             self.check_conversation(content, c)?;
         }
+
         let mut waiting = BTreeSet::new();
+
         for mode in [Mode::Blocking, Mode::Ambient] {
             for key in self.floor.queue(mode) {
                 require(waiting.insert(*key), "conversation waits twice")?;
                 self.check_floor(content, *key)?;
             }
         }
+
         require(
             self.conversations
                 .iter()
                 .all(|(key, c)| c.status != RunStatus::Active || waiting.contains(key)),
             "conversation under way without a turn",
         )?;
+
         for key in self.variables.keys() {
             self.check_variable(content, *key)?;
         }
+
         let party = &self.party;
         require(
             party.members.len() <= content.game.rules.party_size

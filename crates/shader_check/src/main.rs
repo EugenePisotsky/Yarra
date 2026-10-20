@@ -19,6 +19,7 @@ fn main() -> ExitCode {
     let mut each_flag = false;
     let mut print = false;
     let mut shaders = Vec::new();
+
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--defs" => match args.next().map(|list| Def::parse_list(&list)) {
@@ -36,12 +37,14 @@ fn main() -> ExitCode {
 
     let checker = Shaders::get();
     let mut jobs: Vec<(String, Vec<Def>)> = Vec::new();
+
     if shaders.is_empty() {
         match yarra_shader_check::entries::load(checker) {
             Ok(entries) => jobs.extend(entries),
             Err(error) => return fail(&error),
         }
     }
+
     for shader in &shaders {
         jobs.push((shader.clone(), defs.clone()));
         if each_flag {
@@ -55,15 +58,18 @@ fn main() -> ExitCode {
                 let on = defs
                     .iter()
                     .any(|d| d.name() == flag && *d != Def::Flag(flag.clone(), false));
+
                 if !on {
                     variant.push(Def::Flag(flag, true));
                 }
+
                 jobs.push((shader.clone(), variant));
             }
         }
     }
 
     let mut failures = 0;
+
     for (index, (shader, defs)) in jobs.iter().enumerate() {
         match checker.check(shader, defs) {
             Ok(wgsl) => {
@@ -78,11 +84,13 @@ fn main() -> ExitCode {
             }
         }
     }
+
     eprintln!(
         "{} of {} variants composed and validated",
         jobs.len() - failures,
         jobs.len()
     );
+
     if failures == 0 {
         ExitCode::SUCCESS
     } else {
@@ -94,6 +102,7 @@ fn parse_all() -> ExitCode {
     let shaders = Shaders::get();
     let files = shaders.parse_all();
     let mut failures = 0;
+
     for (file, error) in &files {
         if let Some(error) = error {
             failures += 1;
@@ -104,7 +113,9 @@ fn parse_all() -> ExitCode {
             eprintln!("PARSE {shown}: {error}");
         }
     }
+
     eprintln!("{} of {} files parse", files.len() - failures, files.len());
+
     if failures == 0 {
         ExitCode::SUCCESS
     } else {

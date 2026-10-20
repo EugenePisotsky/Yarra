@@ -8,19 +8,23 @@ fn main() -> Result<()> {
         .next()
         .and_then(|argument| argument.into_string().ok())
         .unwrap_or_else(|| "cook".into());
+
     if command == "import-assets" {
         let source = PathBuf::from(arguments.next().context("expected CATALOG_RON")?);
         let project = arguments
             .next()
             .map(PathBuf::from)
             .unwrap_or_else(default_project_path);
+
         if arguments.next().is_some() {
             bail!("usage: yarra-world-cook import-assets CATALOG_RON [PROJECT_DB]");
         }
+
         let catalog: world_db::AssetImportCatalog =
             ron::from_str(&std::fs::read_to_string(&source)?)?;
         catalog.validate()?;
         let asset_root = repository_root().join("assets");
+
         for asset in &catalog.assets {
             for uri in
                 std::iter::once(&asset.source_uri).chain(asset.variants.iter().map(|v| &v.uri))
@@ -33,6 +37,7 @@ fn main() -> Result<()> {
                 }
             }
         }
+
         world_db::ProjectWriter::open(&project)?.import_assets(&catalog)?;
         println!(
             "Registered {} assets in {}. Reopen the editor to refresh its palette; cook after placing or scattering them.",
@@ -41,22 +46,27 @@ fn main() -> Result<()> {
         );
         return Ok(());
     }
+
     if command == "create-demo" || command == "create-road-demo" {
         let project = PathBuf::from(arguments.next().context("expected a new PROJECT_DB path")?);
+
         if arguments.next().is_some() {
             bail!("usage: yarra-world-cook {command} PROJECT_DB");
         }
+
         if command == "create-road-demo" {
             yarra_world_cook::create_road_demo_project(&project)?;
         } else {
             yarra_world_cook::create_demo_project(&project)?;
         }
+
         println!(
             "created layer-based authoring database: {}",
             project.display()
         );
         return Ok(());
     }
+
     if command == "import-roads" {
         let source = PathBuf::from(arguments.next().context("expected a roads RON")?);
         let options = CookOptions::parse(arguments)?;
@@ -73,6 +83,7 @@ fn main() -> Result<()> {
         );
         return Ok(());
     }
+
     if command == "import-grass" {
         let source = PathBuf::from(arguments.next().context("expected a grass pack RON")?);
         let options = CookOptions::parse(arguments)?;
@@ -86,6 +97,7 @@ fn main() -> Result<()> {
         );
         return Ok(());
     }
+
     let heightfield = if command == "import-heightfield" {
         Some(PathBuf::from(
             arguments
@@ -95,6 +107,7 @@ fn main() -> Result<()> {
     } else {
         None
     };
+
     if command != "cook" && heightfield.is_none() {
         bail!(
             "unknown command {command:?}; expected `cook`, `import-heightfield`, `create-demo`, `create-road-demo`, `import-grass`, `import-roads` or `import-assets`"
@@ -122,12 +135,14 @@ fn main() -> Result<()> {
             report.bounds[0],
             report.bounds[1]
         );
+
         if !report.unused_masks.is_empty() {
             println!(
                 "No layer reads the masks {}; give a layer one in the editor to use it",
                 report.unused_masks.join(", ")
             );
         }
+
         println!(
             "Start views: {}",
             project_path.with_extension("views").display()
@@ -140,6 +155,7 @@ fn main() -> Result<()> {
             project_path.display()
         );
     }
+
     let report = options.cook()?;
     let manifest = report.manifest;
     println!(
@@ -158,6 +174,7 @@ fn main() -> Result<()> {
         if stats.incremental { "changed " } else { "" },
         stats.coverage_only_cells
     );
+
     if stats.incremental {
         println!(
             "Terrain hierarchy: updated for {} cells with changed ground in {:.1} s",
@@ -169,6 +186,7 @@ fn main() -> Result<()> {
             stats.hierarchy_seconds
         );
     }
+
     println!(
         "Far objects: {} impostor-drawn objects in {} blocks",
         stats.far_objects, stats.far_object_blocks
@@ -190,9 +208,11 @@ fn main() -> Result<()> {
 fn repository_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
+
 fn default_project_path() -> PathBuf {
     repository_root().join(world::DEFAULT_PROJECT_DATABASE)
 }
+
 fn default_runtime_path() -> PathBuf {
     repository_root()
         .join("assets")
@@ -205,10 +225,12 @@ struct CookOptions {
     /// Recompile every cell instead of continuing the existing runtime.
     full: bool,
 }
+
 impl CookOptions {
     fn parse(arguments: impl IntoIterator<Item = std::ffi::OsString>) -> Result<Self> {
         let mut paths = Vec::new();
         let mut full = false;
+
         for argument in arguments {
             if argument == "--full" {
                 full = true;
@@ -218,9 +240,11 @@ impl CookOptions {
                 paths.push(PathBuf::from(argument));
             }
         }
+
         if paths.len() > 2 {
             bail!("expected [PROJECT_DB] [RUNTIME_DB] [--full]");
         }
+
         let mut paths = paths.into_iter();
         Ok(Self {
             project: paths.next().unwrap_or_else(default_project_path),
@@ -228,6 +252,7 @@ impl CookOptions {
             full,
         })
     }
+
     fn cook(&self) -> Result<yarra_world_cook::CookReport> {
         if self.full {
             yarra_world_cook::cook_project_fresh(&self.project, &self.runtime)
@@ -240,9 +265,11 @@ impl CookOptions {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     fn options(args: &[&str]) -> Result<CookOptions> {
         CookOptions::parse(args.iter().map(std::ffi::OsString::from))
     }
+
     #[test]
     fn cooks_take_default_or_explicit_paths_and_reject_unknown_options() {
         let default = options(&[]).unwrap();
@@ -253,6 +280,7 @@ mod tests {
         assert_eq!(custom.project, PathBuf::from("source.sqlite"));
         assert_eq!(custom.runtime, PathBuf::from("runtime.sqlite"));
         assert!(custom.full);
+
         for args in [
             vec!["--terrain-materials", "assets"],
             vec!["--geometry-only"],

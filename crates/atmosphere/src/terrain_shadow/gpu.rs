@@ -3,6 +3,7 @@
 //! texture beside the heights, then the horizon towards the map's light whenever it moves. Each
 //! runs a band of rows a frame, so no frame takes a whole search.
 use crate::environment::{EnvironmentAssets, EnvironmentParams};
+
 use bevy::{
     core_pipeline::schedule::camera_driver,
     prelude::*,
@@ -17,8 +18,10 @@ use bevy::{
 };
 
 const SHADER: &str = "shaders/lighting/terrain_horizon.wesl";
+
 /// Rows a frame. The sky's eight short searches cost about as much as the horizon's long one.
 const SKY_ROWS: u32 = 96;
+
 const HORIZON_ROWS: u32 = 160;
 
 #[derive(Resource)]
@@ -147,9 +150,11 @@ fn search(
         return;
     };
     let searches = &mut *searches;
+
     if params.terrain_shadow[2] <= 0.0 {
         return;
     }
+
     let (Some(buffer), Some(heights), Some(map), Some(sky), Some(horizon)) = (
         buffers.get(&assets.parameters),
         images.get(&assets.terrain_heights),
@@ -160,10 +165,12 @@ fn search(
         return;
     };
     let size = heights.texture_descriptor.size;
+
     // Between a new relief's two images.
     if map.texture_descriptor.size != size {
         return;
     }
+
     let device = ctx.render_device().clone();
     let band = |first: u32, rows: u32| {
         queue.write_buffer(
@@ -172,6 +179,7 @@ fn search(
             bytemuck::cast_slice(&[first, rows, 0, 0]),
         );
     };
+
     if searches.relief.as_ref().map(|r| r.heights) != Some(heights.texture_view.id()) {
         let texture = device.create_texture(&TextureDescriptor {
             label: Some("terrain relief and sky share"),
@@ -191,8 +199,10 @@ fn search(
         searches.horizon = None;
         searches.done = None;
     }
+
     let relief = searches.relief.as_mut().unwrap();
     let encoder = ctx.command_encoder();
+
     // The sky share first: the horizon search carries it into the map.
     if relief.next_row < size.height {
         let rows = SKY_ROWS.min(size.height - relief.next_row);
@@ -217,6 +227,7 @@ fn search(
         relief.next_row += rows;
         return;
     }
+
     let key = HorizonKey {
         map: map.texture_view.id(),
         heights: relief.heights,
@@ -226,9 +237,11 @@ fn search(
         ],
         spacing: params.terrain_shadow[2].to_bits(),
     };
+
     if searches.done == Some(key) {
         return;
     }
+
     // A light that moved again restarts the search from the first row.
     let first = match searches.horizon {
         Some((k, row)) if k == key => row,
@@ -254,6 +267,7 @@ fn search(
     pass.set_bind_group(0, &group, &[]);
     pass.dispatch_workgroups(size.width.div_ceil(8), rows.div_ceil(8), 1);
     drop(pass);
+
     if first + rows >= size.height {
         searches.horizon = None;
         searches.done = Some(key);

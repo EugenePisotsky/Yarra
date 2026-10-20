@@ -30,9 +30,11 @@ impl Def {
     /// `NAME`, `!NAME` or `NAME=VALUE`, as the game's pipeline log prints them.
     pub fn parse(text: &str) -> Result<Def, String> {
         let text = text.trim();
+
         if let Some(name) = text.strip_prefix('!') {
             return Ok(Def::Flag(name.into(), false));
         }
+
         match text.split_once('=') {
             Some((name, value)) => value
                 .trim()
@@ -89,15 +91,18 @@ impl Shaders {
             .arg(workspace.join("Cargo.toml"))
             .output()
             .map_err(|e| format!("cargo metadata: {e}"))?;
+
         if !output.status.success() {
             return Err(format!(
                 "cargo metadata failed: {}",
                 String::from_utf8_lossy(&output.stderr)
             ));
         }
+
         let metadata: serde_json::Value = serde_json::from_slice(&output.stdout)
             .map_err(|e| format!("cargo metadata output: {e}"))?;
         let mut packages = HashMap::new();
+
         for package in metadata["packages"].as_array().into_iter().flatten() {
             let (Some(name), Some(manifest)) =
                 (package["name"].as_str(), package["manifest_path"].as_str())
@@ -109,6 +114,7 @@ impl Shaders {
                 packages.insert(name.to_string(), source);
             }
         }
+
         Ok(Shaders {
             workspace,
             packages,
@@ -152,8 +158,10 @@ impl Shaders {
             visibility: false,
             ..Default::default()
         };
+
         // As Bevy does: integers enable a flag of their name and become `constants::NAME`.
         let mut constants = BTreeMap::new();
+
         for def in bevy_defs().iter().chain(defs) {
             match def {
                 Def::Flag(name, on) => {
@@ -165,6 +173,7 @@ impl Shaders {
                 }
             }
         }
+
         let constants: String = constants
             .iter()
             .map(|(name, value)| format!("const {name} = {value};\n"))
@@ -190,6 +199,7 @@ impl Shaders {
     pub fn parse_all(&self) -> Vec<(PathBuf, Option<String>)> {
         let mut files = Vec::new();
         let mut pending = vec![self.assets().join("shaders")];
+
         while let Some(dir) = pending.pop() {
             for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
                 let path = entry.path();
@@ -209,6 +219,7 @@ impl Shaders {
                 }
             }
         }
+
         files.sort();
         files
     }
@@ -232,17 +243,21 @@ impl Shaders {
         let mut flags = BTreeSet::new();
         let mut seen = BTreeSet::new();
         let mut pending = vec![self.assets().join(asset_path)];
+
         while let Some(file) = pending.pop() {
             if !seen.insert(file.clone()) {
                 continue;
             }
+
             let source =
                 std::fs::read_to_string(&file).map_err(|e| format!("{}: {e}", file.display()))?;
             flags.extend(condition_flags(&source));
+
             for import in project_imports(&source, &file, &self.assets()) {
                 pending.push(import);
             }
         }
+
         Ok(flags)
     }
 }
@@ -289,6 +304,7 @@ pub fn validate(wgsl: &str) -> Result<naga::Module, String> {
 /// Identifiers named in `@if(...)` and `@elif(...)` conditions.
 pub fn condition_flags(source: &str) -> BTreeSet<String> {
     let mut flags = BTreeSet::new();
+
     for (index, _) in source.match_indices('@') {
         let rest = &source[index + 1..];
         let Some(condition) = rest
@@ -317,12 +333,14 @@ pub fn condition_flags(source: &str) -> BTreeSet<String> {
                 .map(str::to_string),
         );
     }
+
     flags
 }
 
 /// Project shader files a source imports with `package::` or `super::` paths.
 fn project_imports(source: &str, file: &Path, assets: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
+
     for statement in source.split(';') {
         let Some(start) = statement.find("import ") else {
             continue;
@@ -335,9 +353,11 @@ fn project_imports(source: &str, file: &Path, assets: &Path) -> Vec<PathBuf> {
             Some(&"super") => {
                 let supers = segments.iter().take_while(|s| **s == "super").count();
                 let mut dir = file.parent().map(Path::to_path_buf);
+
                 for _ in 1..supers {
                     dir = dir.and_then(|d| d.parent().map(Path::to_path_buf));
                 }
+
                 dir.map(|d| (d, &segments[supers..]))
             }
             _ => None,
@@ -345,20 +365,26 @@ fn project_imports(source: &str, file: &Path, assets: &Path) -> Vec<PathBuf> {
         let Some((mut dir, rest)) = base else {
             continue;
         };
+
         // Walk down until a file exists; the remainder names items.
         for segment in rest {
             let segment = segment.trim_start_matches('{');
+
             if segment.is_empty() {
                 break;
             }
+
             let candidate = dir.join(format!("{segment}.wesl"));
+
             if candidate.is_file() {
                 files.push(candidate);
                 break;
             }
+
             dir = dir.join(segment);
         }
     }
+
     files
 }
 
@@ -378,14 +404,17 @@ impl wesl::Resolver for Resolver<'_> {
         // the last segment of such package names.
         let constants = matches!(&path.origin,
             PathOrigin::Package(package) if package.rsplit('/').next() == Some("constants"));
+
         if constants && path.components.is_empty() {
             return Ok(Cow::Borrowed(&self.constants));
         }
+
         if let Some((root, source)) = &self.root
             && root == path
         {
             return Ok(Cow::Borrowed(source));
         }
+
         let not_found = |why: String| wesl::error::ResolveError::ModuleNotFound(path.clone(), why);
         let file = self
             .shaders
@@ -441,9 +470,11 @@ pub mod entries {
             std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
         let file: File = ron::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
         let mut jobs = Vec::new();
+
         for entry in &file.entries {
             for variant in &entry.variants {
                 let mut defs = Vec::new();
+
                 for token in variant {
                     match token.strip_prefix('@') {
                         Some(base) => {
@@ -458,9 +489,11 @@ pub mod entries {
                         None => defs.push(Def::parse(token)?),
                     }
                 }
+
                 jobs.push((entry.shader.clone(), defs));
             }
         }
+
         Ok(jobs)
     }
 }

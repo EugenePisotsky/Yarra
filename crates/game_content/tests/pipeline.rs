@@ -6,19 +6,24 @@ use rusqlite::Connection;
 use save::{SaveDirectory, SaveSlot};
 use std::{fs, path::Path, process::Command};
 use yarra_game_content::*;
+
 mod support;
+
 use support::{Temp, read, sample, write};
+
 fn failure(root: &Path) -> String {
     match LoadedProject::load_directory(root) {
         Ok(_) => panic!("invalid project was accepted"),
         Err(error) => error.to_string(),
     }
 }
+
 fn player_health(project: &LoadedProject) -> i32 {
     let session = project.run_scenario().unwrap();
     let hero = session.state().party.controlled.unwrap();
     session.stat(hero, &Key::new("health").unwrap()).unwrap()
 }
+
 #[test]
 fn authored_source_and_sqlite_bundle_use_the_same_validated_content() {
     let temp = Temp::new();
@@ -74,6 +79,7 @@ fn authored_source_and_sqlite_bundle_use_the_same_validated_content() {
             .entries[0]
             .id
     };
+
     // Items are numbered by the inventory that made them, so the same start makes the same.
     assert_eq!(first_item(&first), first_item(&second));
     assert_eq!(
@@ -81,6 +87,7 @@ fn authored_source_and_sqlite_bundle_use_the_same_validated_content() {
         second.state().actors.keys().collect::<Vec<_>>()
     );
 }
+
 #[test]
 fn editing_data_changes_mechanics_without_changing_rust_or_old_bundles() {
     let temp = Temp::new();
@@ -111,9 +118,11 @@ fn editing_data_changes_mechanics_without_changing_rust_or_old_bundles() {
     let session = project.run_scenario().unwrap();
     let hero = session.state().party.controlled.unwrap();
     let stat = |name: &str| session.stat(hero, &Key::new(name).unwrap()).unwrap();
+
     // A template overrides its class's starting value, and derived stats follow.
     assert_eq!((stat("strength"), stat("attack")), (17, 17));
 }
+
 #[test]
 fn translation_updates_do_not_change_mechanical_save_compatibility() {
     let temp = Temp::new();
@@ -139,6 +148,7 @@ fn translation_updates_do_not_change_mechanical_save_compatibility() {
             .is_ok()
     );
 }
+
 #[test]
 fn category_mechanics_bindings_and_scenario_errors_are_rejected() {
     let temp = Temp::new();
@@ -181,6 +191,7 @@ fn category_mechanics_bindings_and_scenario_errors_are_rejected() {
     assert!(error.contains("scenario step 5 (Trade)"), "{error}");
     assert!(error.contains("gold needed, 0 available"), "{error}");
 }
+
 #[test]
 fn malformed_ron_unknown_fields_invalid_uuid_and_versions_have_diagnostics() {
     let temp = Temp::new();
@@ -206,6 +217,7 @@ fn malformed_ron_unknown_fields_invalid_uuid_and_versions_have_diagnostics() {
         Err(ContentError::SourceVersion(999))
     ));
 }
+
 #[test]
 fn missing_source_messages_broken_fluent_references_and_syntax_fail() {
     let temp = Temp::new();
@@ -217,6 +229,7 @@ fn missing_source_messages_broken_fluent_references_and_syntax_fail() {
         original.replace("category-keys = Keys", "different = Keys"),
     )
     .unwrap();
+
     // Content still names the old key, which the English text no longer has.
     let error = failure(&root);
     assert!(
@@ -234,6 +247,7 @@ fn missing_source_messages_broken_fluent_references_and_syntax_fail() {
         original.replace("category-keys = Keys", "category-keys = { $missing }"),
     )
     .unwrap();
+
     // The argument becomes part of the message, which a category's name cannot take.
     let error = failure(&root);
     assert!(error.contains("cannot require arguments"), "{error}");
@@ -241,6 +255,7 @@ fn missing_source_messages_broken_fluent_references_and_syntax_fail() {
     let error = failure(&root);
     assert!(error.contains("Fluent"));
 }
+
 #[test]
 fn partial_translations_report_fallback_and_starting_names_are_validated() {
     let temp = Temp::new();
@@ -262,6 +277,7 @@ fn partial_translations_report_fallback_and_starting_names_are_validated() {
     write(root.join("scenario.ron"), &scenario);
     assert!(failure(&root).contains("missing-actor-name"));
 }
+
 #[test]
 fn package_paths_and_read_budgets_are_bounded() {
     let temp = Temp::new();
@@ -279,6 +295,7 @@ fn package_paths_and_read_budgets_are_bounded() {
     .unwrap();
     assert!(failure(&root).contains("exceeds"));
 }
+
 #[cfg(unix)]
 #[test]
 fn resource_symlinks_cannot_escape_project() {
@@ -291,6 +308,7 @@ fn resource_symlinks_cannot_escape_project() {
     std::os::unix::fs::symlink(outside, path).unwrap();
     assert!(failure(&root).contains("symlink escapes"));
 }
+
 #[test]
 fn bundle_publication_does_not_clobber_and_failed_publication_cleans_staging() {
     let temp = Temp::new();
@@ -302,6 +320,7 @@ fn bundle_publication_does_not_clobber_and_failed_publication_cleans_staging() {
     assert_eq!(fs::read_dir(&temp.0).unwrap().count(), 1);
     assert!(project.build(temp.0.join("absent/content.sqlite")).is_err());
 }
+
 #[test]
 fn bundle_readers_reject_wrong_kind_schema_and_tampered_content() {
     let temp = Temp::new();
@@ -338,6 +357,7 @@ fn bundle_readers_reject_wrong_kind_schema_and_tampered_content() {
             .contains("checksum mismatch")
     );
 }
+
 #[test]
 fn cli_validates_builds_and_runs_from_bundle_with_locale_and_saves() {
     let temp = Temp::new();
