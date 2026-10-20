@@ -5,9 +5,11 @@
 //! every distance the same map holds back the sky light under the crowns
 //! ([`ForestSkyOcclusion`]). Callers supply the crowns; the engine rasterizes every far-object
 //! tree.
+use crate::published::{Published, clamped_linear, half_floats};
+
 use bevy::{
     asset::RenderAssetUsages,
-    image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor},
+    image::{ImageFilterMode, ImageSampler, ImageSamplerDescriptor},
     prelude::*,
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
 };
@@ -223,42 +225,19 @@ impl Default for ForestSkyOcclusion {
 }
 
 /// The published map. Disabled until the first rebuild, so shaders treat everything as unshaded.
-#[derive(Resource, Default)]
-pub struct ForestShadow {
-    map: Option<ForestShadowMap>,
-    revision: u64,
-}
+#[derive(Resource, Default, Deref, DerefMut)]
+pub struct ForestShadow(Published<ForestShadowMap>);
 
 impl ForestShadow {
-    pub fn publish(&mut self, map: ForestShadowMap) {
-        self.map = Some(map);
-        self.revision = self.revision.wrapping_add(1);
-    }
-
-    pub fn disable(&mut self) {
-        if self.map.take().is_some() {
-            self.revision = self.revision.wrapping_add(1);
-        }
-    }
-
-    pub fn revision(&self) -> u64 {
-        self.revision
-    }
-
     /// Centre of the covered square, if published.
     pub fn centre(&self) -> Option<Vec2> {
-        self.map
-            .as_ref()
+        self.map()
             .map(|map| map.origin + Vec2::splat(SIZE as f32 * METRES_PER_TEXEL * 0.5))
-    }
-
-    pub fn map(&self) -> Option<&ForestShadowMap> {
-        self.map.as_ref()
     }
 
     /// Shader parameters: origin XZ, metres per texel (0 when off), tallest crown top.
     pub fn parameters(&self) -> [f32; 4] {
-        match &self.map {
+        match self.map() {
             Some(map) if map.tallest > OPEN => {
                 [map.origin.x, map.origin.y, METRES_PER_TEXEL, map.tallest]
             }
@@ -291,12 +270,8 @@ impl ForestShadow {
         image.texture_descriptor.mip_level_count = 1 + SKY_LEVELS;
         image.data = Some(half_floats(&texels));
         image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
-            address_mode_u: ImageAddressMode::ClampToEdge,
-            address_mode_v: ImageAddressMode::ClampToEdge,
-            mag_filter: ImageFilterMode::Linear,
-            min_filter: ImageFilterMode::Linear,
             mipmap_filter: ImageFilterMode::Linear,
-            ..default()
+            ..clamped_linear()
         });
         image
     }
@@ -304,14 +279,13 @@ impl ForestShadow {
     /// The published map's sky levels as half floats, finest first. Bevy rewrites only level 0
     /// of a texture it already has, so these are uploaded separately (`environment::surface`).
     pub(crate) fn sky_level_bytes(&self) -> Vec<Vec<u8>> {
-        self.map
-            .as_ref()
+        self.map()
             .map(|map| map.levels.iter().map(|level| half_floats(level)).collect())
             .unwrap_or_default()
     }
 
     pub(crate) fn write(&self, image: &mut Image) {
-        if let Some(map) = &self.map {
+        if let Some(map) = self.map() {
             let texels: Vec<[f32; 4]> = map
                 .texels
                 .iter()
@@ -321,15 +295,6 @@ impl ForestShadow {
             image.data = Some(half_floats(&texels));
         }
     }
-}
-
-fn half_floats(texels: &[[f32; 4]]) -> Vec<u8> {
-    let bits: Vec<u16> = texels
-        .iter()
-        .flatten()
-        .map(|&v| half::f16::from_f32(v).to_bits())
-        .collect();
-    bytemuck::cast_slice(&bits).to_vec()
 }
 
 /// [`SKY_LEVELS`] mip levels of the map: per 2×2 texels the highest tops, lowest base and the

@@ -13,7 +13,9 @@ const OZONE: [f64; 3] = [0.650e-6, 1.881e-6, 0.085e-6];
 /// Falloff scales as shares of the atmosphere's height, as in the medium.
 const RAYLEIGH_SCALE: f64 = 8.0 / 60.0;
 
-const AEROSOL_SCALE: f64 = 1200.0 / 100_000.0;
+/// The near-ground aerosol's falloff: 1.2 km of the atmosphere's 100 km.
+pub(crate) const AEROSOL_SCALE: f64 = 1200.0 / 100_000.0;
+
 const STEPS: usize = 64;
 
 /// Bevy's exponential falloff at `altitude` metres (`Falloff::Exponential`).
@@ -54,7 +56,8 @@ pub(crate) fn sun_transmittance(
     // The upper half of a disc just at the horizon still passes over the ground.
     let mu = mu.max(horizon + 1e-6);
     let length = -r * mu + (r * r * (mu * mu - 1.0) + OUTER_RADIUS * OUTER_RADIUS).sqrt();
-    let aerosol = 3.912 / f64::from(visibility_metres.clamp(10.0, 100_000.0));
+    let aerosol = f64::from(world::weather::VISIBILITY_EXTINCTION)
+        / f64::from(visibility_metres.clamp(10.0, 100_000.0));
     let mut depth = [0.0_f64; 3];
 
     // Steps crowd towards the start, where the air is densest.

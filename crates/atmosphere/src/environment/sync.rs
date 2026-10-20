@@ -92,11 +92,10 @@ pub(super) fn sync(
         .filter(|v| v.is_finite() && v.length_squared() > 0.01)
         .map(Vec3::normalize)
         .unwrap_or(Vec3::from_array(value.direction_to_sun));
-    let visibility_override = views.iter().find_map(|(_, _, v, _)| v.visibility_override);
     let params = &mut *params;
     *params = EnvironmentParams {
         haze: Vec3::from_array(linear_rgb(state.profile.haze_srgb))
-            .extend(visibility_override.unwrap_or(state.profile.visibility_metres))
+            .extend(state.profile.visibility_metres)
             .to_array(),
         shelter: shelter.parameters(),
         forest_shadow: forest.parameters(),
@@ -142,8 +141,14 @@ pub(super) fn sync(
         .iter()
         .find_map(|(_, _, _, t)| t.map(|t| t.translation().y))
         .unwrap_or(0.);
-    let visibility = visibility_override.unwrap_or(profile.visibility_metres);
-    let near_sun = sunlight(params, profile, &value, sun, visibility, altitude);
+    let near_sun = sunlight(
+        params,
+        profile,
+        &value,
+        sun,
+        profile.visibility_metres,
+        altitude,
+    );
 
     if world {
         params.weather = [

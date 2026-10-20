@@ -1,5 +1,4 @@
-//! The environment's maps (rain shelter, forest shadow, valley mist, shore) are
-//! rebuilt on the
+//! The environment's maps (rain shelter, forest shadow, valley mist, shore) are rebuilt on the
 //! CPU and uploaded into their images only when a rebuild changed them.
 use super::EnvironmentAssets;
 
@@ -34,7 +33,7 @@ impl EnvironmentMap for RainShelter {
 
 impl EnvironmentMap for ForestShadow {
     fn revision(&self) -> u64 {
-        self.revision()
+        crate::published::Published::revision(self)
     }
 
     fn write(&self, image: &mut Image) {
@@ -48,7 +47,7 @@ impl EnvironmentMap for ForestShadow {
 
 impl EnvironmentMap for ValleyMist {
     fn revision(&self) -> u64 {
-        self.revision()
+        crate::published::Published::revision(self)
     }
 
     fn write(&self, image: &mut Image) {
@@ -62,7 +61,7 @@ impl EnvironmentMap for ValleyMist {
 
 impl EnvironmentMap for Shore {
     fn revision(&self) -> u64 {
-        self.revision()
+        crate::published::Published::revision(self)
     }
 
     fn write(&self, image: &mut Image) {

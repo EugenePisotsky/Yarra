@@ -464,7 +464,7 @@ mod tests {
         let mut app = App::new();
         let mut time = Time::<()>::default();
         time.advance_by(std::time::Duration::from_secs_f32(0.05));
-        let camera = app.world_mut().spawn(WorldEnvironmentView::default()).id();
+        let camera = app.world_mut().spawn(WorldEnvironmentView).id();
         app.insert_resource(time)
             .insert_resource(AtmosphereState::default())
             .insert_resource(presentation)

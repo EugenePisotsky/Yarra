@@ -6,12 +6,8 @@
 //! (mist stays over land and near shores, not out at sea). The amount
 //! and depth of mist come from the atmosphere profile (`world::atmosphere::FogSettings`); the
 //! sky composite integrates it along each view ray (`shaders/sky/fog.wesl`).
-use bevy::{
-    asset::RenderAssetUsages,
-    image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor},
-    prelude::*,
-    render::render_resource::{Extent3d, TextureDimension, TextureFormat},
-};
+use crate::published::{Published, fill, placeholder};
+use bevy::prelude::*;
 
 use std::sync::Arc;
 
@@ -119,10 +115,10 @@ impl MistMap {
 }
 
 /// The published map. Without one the sky composite draws no valley mist.
-#[derive(Resource, Default)]
+#[derive(Resource, Default, Deref, DerefMut)]
 pub struct ValleyMist {
-    map: Option<Arc<MistMap>>,
-    revision: u64,
+    #[deref]
+    published: Published<Arc<MistMap>>,
     sea_level: f32,
 }
 
@@ -136,29 +132,10 @@ impl ValleyMist {
         self.sea_level
     }
 
-    pub fn publish(&mut self, map: Arc<MistMap>) {
-        self.map = Some(map);
-        self.revision = self.revision.wrapping_add(1);
-    }
-
-    pub fn disable(&mut self) {
-        if self.map.take().is_some() {
-            self.revision = self.revision.wrapping_add(1);
-        }
-    }
-
-    pub fn map(&self) -> Option<&Arc<MistMap>> {
-        self.map.as_ref()
-    }
-
-    pub fn revision(&self) -> u64 {
-        self.revision
-    }
-
     /// Shader parameters for render coordinates whose origin lies at `render_origin` in the
     /// world: the map's first corner in render XZ, metres per texel (0 when off).
     pub fn parameters(&self, render_origin: [f64; 2]) -> [f32; 4] {
-        match &self.map {
+        match self.map() {
             Some(map) => [
                 (map.origin[0] - render_origin[0]) as f32,
                 (map.origin[1] - render_origin[1]) as f32,
@@ -170,49 +147,15 @@ impl ValleyMist {
     }
 
     pub(crate) fn image() -> Image {
-        let mut image = Image::new(
-            Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-            TextureDimension::D2,
-            half_floats(&[[0.0; 4]]),
-            TextureFormat::Rgba16Float,
-            RenderAssetUsages::RENDER_WORLD,
-        );
-        image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
-            address_mode_u: ImageAddressMode::ClampToEdge,
-            address_mode_v: ImageAddressMode::ClampToEdge,
-            mag_filter: ImageFilterMode::Linear,
-            min_filter: ImageFilterMode::Linear,
-            ..default()
-        });
-        image
+        placeholder([0.0; 4])
     }
 
-    /// Replaces the image with the published map. Its size changes with the world, so Bevy
-    /// makes a new texture.
+    /// Replaces the image with the published map.
     pub(crate) fn write(&self, image: &mut Image) {
-        let Some(map) = &self.map else {
-            return;
-        };
-        image.texture_descriptor.size = Extent3d {
-            width: map.size.x,
-            height: map.size.y,
-            depth_or_array_layers: 1,
-        };
-        image.data = Some(half_floats(&map.texels));
+        if let Some(map) = self.map() {
+            fill(image, map.size, &map.texels);
+        }
     }
-}
-
-fn half_floats(texels: &[[f32; 4]]) -> Vec<u8> {
-    let bits: Vec<u16> = texels
-        .iter()
-        .flatten()
-        .map(|&v| half::f16::from_f32(v).to_bits())
-        .collect();
-    bytemuck::cast_slice(&bits).to_vec()
 }
 
 fn smoothstep(t: f32) -> f32 {

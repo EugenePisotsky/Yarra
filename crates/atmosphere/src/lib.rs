@@ -8,6 +8,7 @@ pub mod forest_shadow;
 pub mod light_shafts;
 pub mod lightning;
 pub mod precipitation;
+pub mod published;
 pub mod shelter;
 pub mod shore;
 pub mod sky;
@@ -293,12 +294,10 @@ pub struct WorldSun;
 #[derive(Component)]
 pub(crate) struct WorldMoon;
 
+/// A camera that sees the world's atmosphere.
 #[derive(Component, Default)]
 #[require(sky::SkyCompositeView)]
-pub struct WorldEnvironmentView {
-    /// Explicit launch/bookmark override, displayed and clearable by the editor.
-    pub visibility_override: Option<f32>,
-}
+pub struct WorldEnvironmentView;
 
 #[derive(Bundle)]
 pub struct WorldEnvironmentCamera {
@@ -311,18 +310,6 @@ impl Default for WorldEnvironmentCamera {
         Self {
             exposure: Exposure { ev100: 13.0 },
             view: default(),
-        }
-    }
-}
-
-impl WorldEnvironmentCamera {
-    #[cfg(test)]
-    pub(crate) fn with_visibility(visibility: f32) -> Self {
-        Self {
-            view: WorldEnvironmentView {
-                visibility_override: Some(visibility),
-            },
-            ..default()
         }
     }
 }
@@ -384,39 +371,49 @@ fn rgb(c: [f32; 3]) -> Color {
     Color::linear_rgb(c[0], c[1], c[2])
 }
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+type Lights<'w, 's, A, B> = Query<
+    'w,
+    's,
+    (
+        &'static mut Transform,
+        &'static mut DirectionalLight,
+        &'static mut SunDisk,
+    ),
+    (With<A>, Without<B>),
+>;
+
+type EnvironmentViews<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Entity,
+        &'static Transform,
+        &'static mut Exposure,
+        Option<&'static AtmosphereSettings>,
+        Option<&'static mut Bloom>,
+        Option<&'static mut Camera3d>,
+        Option<&'static mut AutoExposure>,
+        Option<&'static mut ColorGrading>,
+    ),
+    (
+        With<WorldEnvironmentView>,
+        Without<WorldSun>,
+        Without<WorldMoon>,
+    ),
+>;
+
+#[allow(clippy::too_many_arguments)]
 fn apply(
     mut commands: Commands,
     state: Res<AtmosphereState>,
     presentation: Option<Res<AtmospherePresentation>>,
-    mut sun: Query<
-        (&mut Transform, &mut DirectionalLight, &mut SunDisk),
-        (With<WorldSun>, Without<WorldMoon>),
-    >,
-    mut moon: Query<
-        (&mut Transform, &mut DirectionalLight, &mut SunDisk),
-        (With<WorldMoon>, Without<WorldSun>),
-    >,
+    mut sun: Lights<WorldSun, WorldMoon>,
+    mut moon: Lights<WorldMoon, WorldSun>,
     mut ambient: ResMut<GlobalAmbientLight>,
-    mut views: Query<
-        (
-            Entity,
-            &Transform,
-            &WorldEnvironmentView,
-            &mut Exposure,
-            Option<&AtmosphereSettings>,
-            Option<&mut Bloom>,
-            Option<&mut Camera3d>,
-            Option<&mut AutoExposure>,
-            Option<&mut ColorGrading>,
-        ),
-        (Without<WorldSun>, Without<WorldMoon>),
-    >,
+    mut views: EnvironmentViews,
     adaptation: Option<Res<adaptation::Adaptation>>,
     mut planets: Query<(&Atmosphere, &mut GlobalTransform), With<WorldAtmosphere>>,
-    handle: Res<MediumHandle>,
-    mut media: ResMut<Assets<ScatteringMedium>>,
-    mut previous_medium: Local<Option<(f32, f32, [f32; 3])>>,
+    mut medium: Medium,
 ) {
     if state.isolated() {
         // Isolated workspaces own the shared sun and ambient resources. The world-only moon
@@ -436,12 +433,76 @@ fn apply(
     }
 
     let value = state.evaluate(profile);
+    let presentation = presentation.as_deref().copied().unwrap_or_default();
+    place_lights(&mut sun, &mut moon, &state, profile, &value, presentation);
+    light_ambient(
+        &mut ambient,
+        &value,
+        state.lightning.map_or(0.0, |l| l.flash),
+    );
+    present_views(
+        &mut commands,
+        &mut views,
+        &state,
+        profile,
+        &value,
+        presentation,
+        adaptation.as_deref(),
+    );
+
+    medium.follow(profile);
+
+    // A local tangent atmosphere follows horizontal origin shifts. Absolute Y is unchanged by
+    // the engine's XZ rebasing, preserving observer altitude and horizon.
+    if let Some((_, camera, ..)) = views.iter().last() {
+        for (planet, mut transform) in &mut planets {
+            *transform = GlobalTransform::from_translation(Vec3::new(
+                camera.translation.x,
+                -planet.inner_radius,
+                camera.translation.z,
+            ));
+        }
+    }
+}
+
+/// The scattering medium the atmosphere is drawn with, rebuilt when what it is made from
+/// changes.
+#[derive(bevy::ecs::system::SystemParam)]
+struct Medium<'w, 's> {
+    handle: Res<'w, MediumHandle>,
+    media: ResMut<'w, Assets<ScatteringMedium>>,
+    built_from: Local<'s, Option<(f32, f32, [f32; 3])>>,
+}
+
+impl Medium<'_, '_> {
+    fn follow(&mut self, profile: &AtmosphereProfile) {
+        let visibility = profile.visibility_metres.clamp(10.0, 100_000.0);
+        let signature = (profile.molecular_density, visibility, profile.haze_srgb);
+
+        if self.built_from.as_ref() != Some(&signature) {
+            if let Some(mut asset) = self.media.get_mut(&self.handle.0) {
+                *asset = scattering_medium(profile, visibility);
+            }
+            *self.built_from = Some(signature);
+        }
+    }
+}
+
+/// The sun and moon where the profile puts them, with their colour and light; each casts
+/// shadows only while above the horizon and lit.
+fn place_lights(
+    sun: &mut Lights<WorldSun, WorldMoon>,
+    moon: &mut Lights<WorldMoon, WorldSun>,
+    state: &AtmosphereState,
+    profile: &AtmosphereProfile,
+    value: &world::atmosphere::EvaluatedAtmosphere,
+    presentation: AtmospherePresentation,
+) {
     let direction = state
         .direction_override
         .filter(|v| v.is_finite() && v.length_squared() > 0.01)
         .map(Vec3::normalize)
         .unwrap_or(Vec3::from_array(value.direction_to_sun));
-    let presentation = presentation.as_deref().copied().unwrap_or_default();
 
     // Neither light is ever hidden: Bevy 0.19 loses a directional light's shadow casters once it
     // has been hidden and shown again, so a dark light only stops rendering shadow maps.
@@ -451,7 +512,7 @@ fn apply(
             && direction.y > -(0.5 * diameter_degrees).to_radians().sin()
     };
 
-    for (mut transform, mut light, mut disk) in &mut sun {
+    for (mut transform, mut light, mut disk) in sun {
         let up = if direction.y.abs() > 0.999 {
             Vec3::Z
         } else {
@@ -472,7 +533,7 @@ fn apply(
         }
     }
 
-    for (mut transform, mut light, mut disk) in &mut moon {
+    for (mut transform, mut light, mut disk) in moon {
         let direction = Vec3::from_array(value.direction_to_moon);
         transform.rotation = Transform::from_translation(direction)
             .looking_at(Vec3::ZERO, Vec3::Y)
@@ -489,13 +550,18 @@ fn apply(
         disk.angular_size = profile.night.diameter_degrees.to_radians();
         disk.intensity = 0.0;
     }
+}
 
-    light_ambient(
-        &mut ambient,
-        &value,
-        state.lightning.map_or(0.0, |l| l.flash),
-    );
-
+/// Each view's exposure, grading, bloom, eye adaptation and atmosphere components.
+fn present_views(
+    commands: &mut Commands,
+    views: &mut EnvironmentViews,
+    state: &AtmosphereState,
+    profile: &AtmosphereProfile,
+    value: &world::atmosphere::EvaluatedAtmosphere,
+    presentation: AtmospherePresentation,
+    adaptation: Option<&adaptation::Adaptation>,
+) {
     // Eye adaptation in the game only: authoring judges the exposure as set.
     let adapt =
         presentation.auto_exposure && state.owner == AtmosphereOwner::Game && profile.outdoor;
@@ -508,9 +574,7 @@ fn apply(
         (1.0, (0.0, 0.0))
     };
 
-    for (entity, camera, view, mut exposure, settings, bloom, camera_3d, mut auto, grading) in
-        &mut views
-    {
+    for (entity, _, mut exposure, settings, bloom, camera_3d, mut auto, grading) in views {
         let mut view_commands = commands.entity(entity);
         grade(&mut view_commands, grading, saturation, balance);
         exposure.ev100 = state
@@ -544,7 +608,7 @@ fn apply(
         // The atmosphere handles both sky and aerial perspective. No second DistanceFog pass.
         view_commands.remove::<DistanceFog>();
 
-        if let Some(adaptation) = &adaptation {
+        if let Some(adaptation) = adaptation {
             match auto.as_deref_mut() {
                 Some(auto)
                     if auto.compensation_curve != *adaptation.curve(adapt, value.adaptation) =>
@@ -557,30 +621,6 @@ fn apply(
                 }
                 None => {}
             }
-        }
-
-        let visibility = view
-            .visibility_override
-            .filter(|v| v.is_finite())
-            .unwrap_or(profile.visibility_metres)
-            .clamp(10.0, 100_000.0);
-        let signature = (profile.molecular_density, visibility, profile.haze_srgb);
-
-        if previous_medium.as_ref() != Some(&signature) {
-            if let Some(mut asset) = media.get_mut(&handle.0) {
-                *asset = scattering_medium(profile, visibility);
-            }
-            *previous_medium = Some(signature);
-        }
-
-        // A local tangent atmosphere follows horizontal origin shifts. Absolute Y is
-        // unchanged by the engine's XZ rebasing, preserving observer altitude and horizon.
-        for (planet, mut transform) in &mut planets {
-            *transform = GlobalTransform::from_translation(Vec3::new(
-                camera.translation.x,
-                -planet.inner_radius,
-                camera.translation.z,
-            ));
         }
     }
 }
@@ -656,12 +696,12 @@ fn present_bloom(view: &mut EntityCommands, bloom: Option<Mut<Bloom>>, intensity
 fn scattering_medium(profile: &AtmosphereProfile, visibility: f32) -> ScatteringMedium {
     let mut medium = ScatteringMedium::earth(256, 128);
     medium.terms[0].scattering *= profile.molecular_density;
-    let extinction = 3.912 / visibility;
+    let extinction = world::weather::VISIBILITY_EXTINCTION / visibility;
     let tint = Vec3::from_array(linear_rgb(profile.haze_srgb));
     medium.terms[1].scattering = tint * extinction * 0.95;
     medium.terms[1].absorption = Vec3::splat(extinction) - medium.terms[1].scattering;
     medium.terms[1].falloff = Falloff::Exponential {
-        scale: 1200.0 / 100_000.0,
+        scale: sunlight::AEROSOL_SCALE as f32,
     };
     medium
 }
@@ -825,7 +865,7 @@ mod tests {
             .world_mut()
             .spawn((
                 Transform::from_xyz(20.0, 3.0, 40.0),
-                WorldEnvironmentCamera::with_visibility(1200.0),
+                WorldEnvironmentCamera::default(),
             ))
             .id();
         app.update();

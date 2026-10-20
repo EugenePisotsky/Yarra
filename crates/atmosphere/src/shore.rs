@@ -4,12 +4,8 @@
 //! to lie along the shore, wrap into bays and close up as the water shallows and slows them, as
 //! swell does over a sloping seabed. The sky composite turns the map into breaking waves, their
 //! foam and the swash on the beach (`shaders/water/sea.wesl`).
-use bevy::{
-    asset::RenderAssetUsages,
-    image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor},
-    prelude::*,
-    render::render_resource::{Extent3d, TextureDimension, TextureFormat},
-};
+use crate::published::{Published, fill, placeholder};
+use bevy::prelude::*;
 
 use std::{cmp::Reverse, collections::BinaryHeap, sync::Arc};
 
@@ -184,37 +180,15 @@ fn travel_times(depth: &[f32], w: usize, h: usize, spacing: f32) -> Vec<f32> {
 }
 
 /// The published map. Without one the sea has no surf.
-#[derive(Resource, Default)]
-pub struct Shore {
-    map: Option<Arc<ShoreMap>>,
-    revision: u64,
-}
+#[derive(Resource, Default, Deref, DerefMut)]
+pub struct Shore(Published<Arc<ShoreMap>>);
 
 impl Shore {
-    pub fn publish(&mut self, map: Arc<ShoreMap>) {
-        self.map = Some(map);
-        self.revision = self.revision.wrapping_add(1);
-    }
-
-    pub fn disable(&mut self) {
-        if self.map.take().is_some() {
-            self.revision = self.revision.wrapping_add(1);
-        }
-    }
-
-    pub fn map(&self) -> Option<&Arc<ShoreMap>> {
-        self.map.as_ref()
-    }
-
-    pub fn revision(&self) -> u64 {
-        self.revision
-    }
-
     /// Shader parameters for render coordinates whose origin lies at `render_origin` in the
     /// world: the map's first corner in render XZ, metres per texel and the swell's period (all
     /// 0 without a map).
     pub fn parameters(&self, render_origin: [f64; 2]) -> [f32; 4] {
-        match &self.map {
+        match self.map() {
             Some(map) => [
                 (map.origin[0] - render_origin[0]) as f32,
                 (map.origin[1] - render_origin[1]) as f32,
@@ -226,50 +200,15 @@ impl Shore {
     }
 
     pub(crate) fn image() -> Image {
-        let mut image = Image::new(
-            Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-            TextureDimension::D2,
-            half_floats(&[[0.0; 4]]),
-            TextureFormat::Rgba16Float,
-            RenderAssetUsages::RENDER_WORLD,
-        );
-        image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
-            address_mode_u: ImageAddressMode::ClampToEdge,
-            address_mode_v: ImageAddressMode::ClampToEdge,
-            mag_filter: ImageFilterMode::Linear,
-            min_filter: ImageFilterMode::Linear,
-            ..default()
-        });
-        image
+        placeholder([0.0; 4])
     }
 
     /// Replaces the image with the published map.
     pub(crate) fn write(&self, image: &mut Image) {
-        let Some(map) = &self.map else {
-            return;
-        };
-        image.texture_descriptor.size = Extent3d {
-            width: map.size.x,
-            height: map.size.y,
-            depth_or_array_layers: 1,
-        };
-        image.data = Some(half_floats(&map.texels));
+        if let Some(map) = self.map() {
+            fill(image, map.size, &map.texels);
+        }
     }
-}
-
-/// Half floats hold travel times to 0.03 s within the surf zone and 0.06 s out to the map's
-/// longest.
-fn half_floats(texels: &[[f32; 4]]) -> Vec<u8> {
-    let bits: Vec<u16> = texels
-        .iter()
-        .flatten()
-        .map(|&v| half::f16::from_f32(v).to_bits())
-        .collect();
-    bytemuck::cast_slice(&bits).to_vec()
 }
 
 #[cfg(test)]

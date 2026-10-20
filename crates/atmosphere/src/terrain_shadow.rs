@@ -16,9 +16,10 @@
 //! interval.)
 use crate::{WorldMoon, WorldSun};
 
+use crate::published::{half_floats, placeholder};
+
 use bevy::{
     asset::RenderAssetUsages,
-    image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor},
     prelude::*,
     render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages},
 };
@@ -168,25 +169,8 @@ impl TerrainShadow {
 
     /// The map lit materials sample, written by the GPU searches.
     pub(crate) fn image() -> Image {
-        let mut image = Image::new(
-            Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-            TextureDimension::D2,
-            half_floats(&[OPEN]),
-            TextureFormat::Rgba16Float,
-            RenderAssetUsages::RENDER_WORLD,
-        );
+        let mut image = placeholder(OPEN);
         image.texture_descriptor.usage |= TextureUsages::STORAGE_BINDING;
-        image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
-            address_mode_u: ImageAddressMode::ClampToEdge,
-            address_mode_v: ImageAddressMode::ClampToEdge,
-            mag_filter: ImageFilterMode::Linear,
-            min_filter: ImageFilterMode::Linear,
-            ..default()
-        });
         image
     }
 
@@ -281,15 +265,6 @@ pub(crate) fn publish(
     }
 
     *published = Some(shadow.revision);
-}
-
-fn half_floats(texels: &[[f32; 4]]) -> Vec<u8> {
-    let bits: Vec<u16> = texels
-        .iter()
-        .flatten()
-        .map(|&v| half::f16::from_f32(v).to_bits())
-        .collect();
-    bytemuck::cast_slice(&bits).to_vec()
 }
 
 /// The searches on the CPU, as the shader runs them: the reference its GPU test checks.
