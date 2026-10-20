@@ -157,8 +157,11 @@ impl LaunchOptions {
 
         let repro = ReproOptions::parse(&args)?;
 
-        // Measurements and regressions must not change weather or time unless asked explicitly.
+        // Measurements and regressions keep the authored weather unless asked otherwise. Captures
+        // and untimed routes also hold the time so their images repeat; a timed profile measures
+        // the game as played, with the sun moving.
         let measured = mode != RunMode::Play || args.has("--metal-capture");
+        let held_time = measured && !args.has("--profile-seconds");
         Ok(Self {
             help: false,
             world_db: args.path("--world-db"),
@@ -183,7 +186,7 @@ impl LaunchOptions {
             time: time(&args)?,
             day_clock: args.choice(
                 "--day-clock",
-                if measured { "off" } else { "on" },
+                if held_time { "off" } else { "on" },
                 &[("on", true), ("off", false)],
             )?,
             diagnostics,

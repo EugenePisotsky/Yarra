@@ -128,7 +128,7 @@ const FLAGS: &[Flag] = &[
         "--day-clock",
         "on|off",
         Scene,
-        "Let the time of day pass; profiles, repros and captures default to off",
+        "Let the time of day pass; untimed repros and captures default to off",
     ),
     flag(
         "--weather",
@@ -276,21 +276,21 @@ const FLAGS: &[Flag] = &[
         "--profile-size",
         "game|WIDTHxHEIGHT",
         Profile,
-        "Internal pixels (default 2560x1440)",
+        "Internal pixels (default game: the window at the render scale)",
     )
     .needs(Needs::Profile),
     flag(
         "--profile-surface",
         "WIDTHxHEIGHT",
         Profile,
-        "Physical window pixels",
+        "Physical pixels of a windowed profile",
     )
     .needs(Needs::Profile),
     flag(
         "--profile-window",
         "fullscreen|windowed",
         Profile,
-        "Window mode (default windowed)",
+        "Window mode (default fullscreen, windowed with --profile-surface)",
     )
     .needs(Needs::Profile),
     flag(

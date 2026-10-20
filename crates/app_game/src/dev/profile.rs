@@ -68,10 +68,29 @@ impl ProfileSettings {
             );
         }
 
-        let size = match args.value("--profile-size")?.unwrap_or("2560x1440") {
+        // By default the game as played: fullscreen at the display's size, the world drawn at the
+        // game's render scale. An explicit surface is a window of exactly that many pixels.
+        let size = match args.value("--profile-size")?.unwrap_or("game") {
             "game" => None,
             size => Some(dimensions(size, "--profile-size")?),
         };
+        let surface = args
+            .value("--profile-surface")?
+            .map(|s| dimensions(s, "--profile-surface"))
+            .transpose()?;
+        let fullscreen = args.choice(
+            "--profile-window",
+            if surface.is_some() {
+                "windowed"
+            } else {
+                "fullscreen"
+            },
+            &[("fullscreen", true), ("windowed", false)],
+        )?;
+
+        if fullscreen && surface.is_some() {
+            return Err("--profile-surface sizes a windowed profile".into());
+        }
 
         if size.is_some() && scale.is_some() {
             return Err(
@@ -88,10 +107,7 @@ impl ProfileSettings {
             .ok_or("--profile-fps requires 0 (uncapped) or 15..240")?;
         Ok(Some(Self {
             size,
-            surface: args
-                .value("--profile-surface")?
-                .map(|s| dimensions(s, "--profile-surface"))
-                .transpose()?,
+            surface,
             scale: scale.unwrap_or(GameRenderSettings::default().resolution_scale),
             bloom: args.switch("--profile-bloom")?,
             auto_exposure: args.switch("--profile-auto-exposure")?,
@@ -110,12 +126,7 @@ impl ProfileSettings {
             fps,
             warmup: args.number("--profile-warmup", 15.0, 1.0..=600.0)?,
             seconds: args.number("--profile-seconds", 2.0, 2.0..=3600.0)?,
-            // Preserve old direct profiling commands; the runner explicitly selects its new default.
-            fullscreen: args.choice(
-                "--profile-window",
-                "windowed",
-                &[("fullscreen", true), ("windowed", false)],
-            )?,
+            fullscreen,
             diagnostic,
             native_pacing: args.has("--profile-native-pacing"),
         }))
@@ -396,9 +407,19 @@ mod tests {
         let p = parse("--profile-seconds 10 --profile-fps 120 --profile-grass off")
             .unwrap()
             .unwrap();
-        assert_eq!(p.size, Some(UVec2::new(2560, 1440)));
-        assert!(!p.fullscreen);
+
+        // The game as played: fullscreen, the world at the render scale.
+        assert_eq!(p.size, None);
+        assert!(p.fullscreen);
         assert!(!p.grass);
+        let p = parse("--profile-seconds 10 --profile-surface 3456x2168")
+            .unwrap()
+            .unwrap();
+        assert!(!p.fullscreen);
+        assert!(
+            parse("--profile-seconds 10 --profile-surface 3456x2168 --profile-window fullscreen")
+                .is_err()
+        );
         assert!(!p.native_pacing);
         let p = parse("--profile-seconds 10 --profile-native-pacing")
             .unwrap()

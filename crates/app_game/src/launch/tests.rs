@@ -214,9 +214,13 @@ fn time_passes_in_play_and_holds_in_measurements() {
     assert!(play.day_clock);
     assert_eq!(play.time, None);
     assert!(!parse(&["--render-repro", "grass-close"]).unwrap().day_clock);
-    assert!(!parse(&["--profile-seconds", "10"]).unwrap().day_clock);
+
+    // A timed profile measures the game as played; captures hold the time.
+    assert!(parse(&["--profile-seconds", "10"]).unwrap().day_clock);
+    let walk = ["--profile-seconds", "10", "--render-repro", "grass-close"];
+    assert!(parse(&walk).unwrap().day_clock);
     assert!(
-        parse(&["--profile-seconds", "10", "--day-clock", "on"])
+        !parse(&["--profile-seconds", "10", "--day-clock", "off"])
             .unwrap()
             .day_clock
     );
@@ -409,14 +413,11 @@ fn presentation_options_and_profile_scale() {
         .profile
         .unwrap();
     assert_eq!(scaled.resolution_scale(), 0.75);
-    let default = profile(&["--profile-size", "game"])
-        .unwrap()
-        .profile
-        .unwrap();
+    let default = profile(&[]).unwrap().profile.unwrap();
     assert_eq!(default.resolution_scale(), 0.5);
 
     // A fixed pixel size has no scale to honour.
-    assert!(profile(&["--resolution-scale", "0.75"]).is_err());
+    assert!(profile(&["--profile-size", "2560x1440", "--resolution-scale", "0.75"]).is_err());
     let switches = profile(&[
         "--profile-objects",
         "off",
