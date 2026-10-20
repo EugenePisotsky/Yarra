@@ -144,9 +144,9 @@ impl GameSession {
     /// Ordinary container access enforces durable lock/open/destruction state.
     pub fn container_contents(&self, object: ObjectId) -> Result<&inventory::Inventory> {
         let o = self.state.object(&self.content, object)?;
-        Rejection::Destroyed(object).unless(!o.destroyed)?;
-        Rejection::Locked(object).unless(!o.locked)?;
-        Rejection::Closed(object).unless(o.open)?;
+        Rejection::Destroyed(object).when(o.destroyed)?;
+        Rejection::Locked(object).when(o.locked)?;
+        Rejection::Closed(object).when(!o.open)?;
         let ObjectKind::Container { inventory, .. } = self.content.object(object)?.kind else {
             return Err(Invalid("object is not a container".into()).into());
         };

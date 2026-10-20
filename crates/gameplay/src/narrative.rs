@@ -112,14 +112,14 @@ impl GameContent {
         self.game
             .quests
             .get(&id)
-            .ok_or_else(|| Invalid("unknown quest".into()).into())
+            .ok_or_else(|| Invalid(format!("unknown quest {id}")).into())
     }
 
     pub fn profile(&self, id: InteractionProfileId) -> Result<&InteractionProfile> {
         self.game
             .profiles
             .get(&id)
-            .ok_or_else(|| Invalid("unknown interaction profile".into()).into())
+            .ok_or_else(|| Invalid(format!("unknown interaction profile {id}")).into())
     }
 
     /// The profile that says what `speaker` has to say to `participant`.

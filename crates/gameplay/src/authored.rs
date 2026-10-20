@@ -70,14 +70,13 @@ impl AuthoredContent {
 
         // A name or description is shown on its own, with nothing to fill in.
         for reference in self.names() {
-            require(
-                self.message(reference)?.arguments.is_empty(),
-                &format!(
+            require_with(self.message(reference)?.arguments.is_empty(), || {
+                format!(
                     "{}/{} is shown on its own and cannot require arguments",
                     reference.resource,
                     reference.key.as_str()
-                ),
-            )?;
+                )
+            })?;
         }
 
         Ok(())

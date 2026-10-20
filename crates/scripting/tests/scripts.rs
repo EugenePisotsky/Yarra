@@ -392,7 +392,7 @@ fn publication_rejects_broken_modules_and_missing_functions() {
             source: source.into(),
         }]
     };
-    let error = |source: &str| LuauScripts::new(&module(source)).err().unwrap();
+    let error = |source: &str| LuauScripts::new(&module(source)).err().unwrap().0;
     assert!(error("local gate = {").contains("script gate"));
     assert!(error("return 5").contains("table of functions"));
     assert!(error("return { ready = true }").contains("not a function"));

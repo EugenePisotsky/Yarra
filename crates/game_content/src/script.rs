@@ -463,34 +463,30 @@ impl Step {
             Self::StopActing { actor } => Command::Interrupt { actor: *actor },
             Self::ExpectStat { actor, stat, value } => {
                 let actual = session.stat(*actor, stat)?;
-                require(
-                    actual == *value,
-                    &format!("{} of {actor} is {actual}, not {value}", stat.as_str()),
-                )?;
+                require_with(actual == *value, || {
+                    format!("{} of {actor} is {actual}, not {value}", stat.as_str())
+                })?;
                 return Ok(());
             }
             Self::ExpectLevel { actor, level } => {
                 let actual = session.state().actor(*actor)?.level;
-                require(
-                    actual == *level,
-                    &format!("{actor} is level {actual}, not {level}"),
-                )?;
+                require_with(actual == *level, || {
+                    format!("{actor} is level {actual}, not {level}")
+                })?;
                 return Ok(());
             }
             Self::ExpectSkill { actor, skill, rank } => {
                 let actual = session.state().actor(*actor)?.skill(skill);
-                require(
-                    actual == *rank,
-                    &format!("{} of {actor} is rank {actual}, not {rank}", skill.as_str()),
-                )?;
+                require_with(actual == *rank, || {
+                    format!("{} of {actor} is rank {actual}, not {rank}", skill.as_str())
+                })?;
                 return Ok(());
             }
         };
         session.apply(command)?;
-        require(
+        Ok(require(
             !session.world_work_pending(),
             "triggers kept setting each other off; work was left for the next command",
-        )
-        .map_err(Into::into)
+        )?)
     }
 }

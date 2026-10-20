@@ -132,11 +132,10 @@ pub(crate) fn within(
 
 /// Each record is filed under its own identity.
 pub(crate) fn filed<V: Keyed>(map: &BTreeMap<V::Key, V>, what: &str) -> Result<()> {
-    require(
+    Ok(require_with(
         map.iter().all(|(key, value)| *key == value.key()),
-        &format!("{what} filed under another identity"),
-    )
-    .map_err(Into::into)
+        || format!("{what} filed under another identity"),
+    )?)
 }
 
 impl GameContent {
@@ -205,13 +204,12 @@ impl GameContent {
 
             for item in &actor.equipment {
                 let slot = self.items.item(*item)?.mechanics.slot.as_ref();
-                require(
-                    slot.is_some_and(|slot| slots.insert(slot)),
-                    &format!(
+                require_with(slot.is_some_and(|slot| slots.insert(slot)), || {
+                    format!(
                         "template {}: {item} is not equipment or its slot is taken",
                         actor.id
-                    ),
-                )?;
+                    )
+                })?;
             }
         }
 
@@ -312,9 +310,9 @@ impl GameContent {
         of: &Option<Participant>,
     ) -> Result<&VariableDefinition> {
         let definition = self.variable(id)?;
-        require(
+        require_with(
             (definition.scope == VariableScope::Actor) == of.is_some(),
-            &format!("variable {id} is per actor exactly when `of` names one"),
+            || format!("variable {id} is per actor exactly when `of` names one"),
         )?;
         Ok(definition)
     }

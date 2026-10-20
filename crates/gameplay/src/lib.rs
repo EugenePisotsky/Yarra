@@ -182,8 +182,9 @@ impl GameplayError {
 }
 
 impl Rejection {
-    pub(crate) fn unless(self, holds: bool) -> Result<()> {
-        if holds { Ok(()) } else { Err(self.into()) }
+    /// Refuses with this reason when `refused` holds.
+    pub(crate) fn when(self, refused: bool) -> Result<()> {
+        if refused { Err(self.into()) } else { Ok(()) }
     }
 }
 

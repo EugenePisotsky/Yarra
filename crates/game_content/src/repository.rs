@@ -6,7 +6,7 @@ use crate::{
     sqlite,
 };
 
-use game_types::{DialogueId, Invalid, TextContract, TextResourceId};
+use game_types::{DialogueId, TextContract, TextResourceId};
 use gameplay::dialogue::Dialogue;
 use gameplay::{ContentIdentity, ContentSource, GameContent, Graphs};
 use rusqlite::{Connection, OptionalExtension};
@@ -43,8 +43,7 @@ impl ContentRepository {
     pub fn read_core(&self) -> Result<GameContent> {
         let core: Core = row(&self.connection, "SELECT payload FROM core", [])?
             .ok_or_else(|| ContentError::NotInBundle("core".into()))?;
-        let scripts =
-            scripting::LuauScripts::install(core.game.scripts.values()).map_err(Invalid)?;
+        let scripts = scripting::LuauScripts::install(core.game.scripts.values())?;
         let content = GameContent {
             manifest: self.manifest.content.clone(),
             items: core.items,

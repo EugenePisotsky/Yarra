@@ -263,7 +263,7 @@ impl GameContent {
 
 pub(crate) fn run_action(
     content: &GameContent,
-    state: &mut Tx,
+    tx: &mut Tx,
     actor: ActorId,
     speaker: ActorId,
     // Everyone else taking part in the conversation the action belongs to.
@@ -276,7 +276,7 @@ pub(crate) fn run_action(
             name,
             &mut ActScope {
                 content,
-                tx: state,
+                tx,
                 player: actor,
                 speaker,
                 others,
@@ -284,13 +284,9 @@ pub(crate) fn run_action(
             },
         )?,
         Action::SetLocked { object, locked } => {
-            let o = state.object_mut(content, *object)?;
-            Rejection::Destroyed(*object).unless(!o.destroyed)?;
-            o.locked = *locked;
-
-            if *locked {
-                o.open = false;
-            }
+            let o = tx.object_mut(content, *object)?;
+            Rejection::Destroyed(*object).when(o.destroyed)?;
+            o.set_locked(*locked);
 
             events.push(GameEvent::World(WorldEvent::ObjectChanged(*object)));
         }
@@ -299,16 +295,16 @@ pub(crate) fn run_action(
             then,
             otherwise,
         } => {
-            let holds = content.evaluate_among(condition, state, actor, speaker, others)?;
+            let holds = content.evaluate_among(condition, tx, actor, speaker, others)?;
             for action in if holds { then } else { otherwise } {
-                run_action(content, state, actor, speaker, others, action, events)?;
+                run_action(content, tx, actor, speaker, others, action, events)?;
             }
         }
         Action::Quest { quest, transition } => {
-            change_quest(content, state, *quest, transition, events)?
+            change_quest(content, tx, *quest, transition, events)?
         }
         Action::Relationship { from, to, amount } => change_relationship(
-            state,
+            tx,
             actors::RelationshipKey {
                 from: from.resolve(actor, speaker),
                 to: to.resolve(actor, speaker),
@@ -320,18 +316,17 @@ pub(crate) fn run_action(
             definition,
             quantity,
         } => {
-            let id = character::carried(content, state, actor)?;
-            state
-                .inventory_mut(id)?
+            let id = character::carried(content, tx, actor)?;
+            tx.inventory_mut(id)?
                 .grant(&content.items, *definition, *quantity)?;
         }
         Action::ConsumeItem {
             definition,
             quantity,
         } => {
-            let id = character::carried(content, state, actor)?;
+            let id = character::carried(content, tx, actor)?;
             let mut remaining = *quantity;
-            let entries = state.inventory(id)?.entries.clone();
+            let entries = tx.inventory(id)?.entries.clone();
 
             for entry in entries.iter().filter(|e| e.definition == *definition) {
                 let amount = remaining.min(entry.quantity);
@@ -340,7 +335,7 @@ pub(crate) fn run_action(
                     break;
                 }
 
-                state.inventory_mut(id)?.remove(entry.id, amount)?;
+                tx.inventory_mut(id)?.remove(entry.id, amount)?;
                 remaining -= amount;
             }
 
@@ -348,21 +343,21 @@ pub(crate) fn run_action(
                 definition: *definition,
                 missing: remaining,
             }
-            .unless(remaining == 0)?;
-            sync_equipment(content, state, id, events)?;
+            .when(remaining > 0)?;
+            sync_equipment(content, tx, id, events)?;
         }
         Action::AwardExperience { amount } => {
-            character::award_experience(content, state, *amount, events)?
+            character::award_experience(content, tx, *amount, events)?
         }
-        Action::Teach { skill } => character::teach(content, state, actor, skill, events)?,
-        Action::Pay { amount } => character::pay(state, *amount, events)?,
+        Action::Teach { skill } => character::teach(content, tx, actor, skill, events)?,
+        Action::Pay { amount } => character::pay(tx, *amount, events)?,
         Action::ChangeResource {
             of,
             resource,
             amount,
         } => character::change_resource(
             content,
-            state,
+            tx,
             of.resolve(actor, speaker),
             resource,
             i64::from(*amount),
@@ -374,14 +369,14 @@ pub(crate) fn run_action(
             duration_ms,
         } => character::apply_effect(
             content,
-            state,
+            tx,
             of.resolve(actor, speaker),
             effect,
             *duration_ms,
             events,
         )?,
         Action::RemoveEffect { of, effect } => {
-            character::remove_effect(content, state, of.resolve(actor, speaker), effect, events)?
+            character::remove_effect(content, tx, of.resolve(actor, speaker), effect, events)?
         }
         Action::Move {
             actor: who,
@@ -389,7 +384,7 @@ pub(crate) fn run_action(
             timeout_ms,
         } => crate::world_runtime::request_move(
             content,
-            state,
+            tx,
             who.resolve(actor, speaker),
             *to,
             *timeout_ms,
@@ -402,8 +397,8 @@ pub(crate) fn run_action(
             content.dialogue_contract(*dialogue)?;
             let speaker = with.map_or(speaker, |p| p.resolve(actor, speaker));
             require(speaker != actor, "a conversation needs two actors")?;
-            state.actor(speaker)?;
-            state.pending_mut().push_back(Pending::Start {
+            tx.actor(speaker)?;
+            tx.pending_mut().push_back(Pending::Start {
                 dialogue: *dialogue,
                 participant: actor,
                 speaker,
@@ -425,8 +420,8 @@ pub(crate) fn run_action(
                 variable: *variable,
                 actor: of.map(|p| p.resolve(actor, speaker)),
             };
-            state.check_variable(content, key)?;
-            state.set_variable(key, value.clone());
+            tx.check_variable(content, key)?;
+            tx.set_variable(key, value.clone());
         }
         Action::Add {
             variable,
@@ -438,13 +433,13 @@ pub(crate) fn run_action(
                 variable: *variable,
                 actor: of.map(|p| p.resolve(actor, speaker)),
             };
-            let Value::Int(current) = state.variable(content, key)? else {
+            let Value::Int(current) = tx.variable(content, key)? else {
                 return Err(Invalid("only whole-number variables can be added to".into()).into());
             };
             let sum = current
                 .checked_add(*amount)
                 .ok_or_else(|| Invalid("variable overflow".into()))?;
-            state.set_variable(key, Value::Int(sum));
+            tx.set_variable(key, Value::Int(sum));
         }
         Action::Check {
             skill,
@@ -452,9 +447,9 @@ pub(crate) fn run_action(
             success,
             failure,
         } => {
-            let passed = character::check(content, state, actor, skill, *difficulty, events)?;
+            let passed = character::check(content, tx, actor, skill, *difficulty, events)?;
             for action in if passed { success } else { failure } {
-                run_action(content, state, actor, speaker, others, action, events)?;
+                run_action(content, tx, actor, speaker, others, action, events)?;
             }
         }
     }
@@ -463,13 +458,13 @@ pub(crate) fn run_action(
 
 pub(crate) fn change_quest(
     content: &GameContent,
-    state: &mut Tx,
+    tx: &mut Tx,
     id: QuestId,
     transition: &quests::Transition,
     events: &mut Vec<GameEvent>,
 ) -> Result<()> {
     let definition = content.quest(id)?;
-    let progress = state.quest_mut(id);
+    let progress = tx.quest_mut(id);
     progress.apply(definition, transition)?;
     events.push(GameEvent::QuestChanged {
         quest: id,
@@ -479,12 +474,12 @@ pub(crate) fn change_quest(
 }
 
 pub(crate) fn change_relationship(
-    state: &mut Tx,
+    tx: &mut Tx,
     key: actors::RelationshipKey,
     amount: i16,
     events: &mut Vec<GameEvent>,
 ) -> Result<()> {
-    let relationship = state.relationship_mut(key);
+    let relationship = tx.relationship_mut(key);
     relationship.adjust(amount)?;
     events.push(GameEvent::RelationshipChanged {
         key,

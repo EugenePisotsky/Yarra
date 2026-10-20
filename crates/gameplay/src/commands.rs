@@ -233,83 +233,75 @@ pub struct CommandOutcome {
 /// Carries out one command within its transaction.
 pub(crate) fn apply(
     content: &GameContent,
-    state: &mut Tx,
+    tx: &mut Tx,
     command: Command,
     events: &mut Vec<GameEvent>,
 ) -> Result<()> {
     match command {
-        Command::World(command) => world_runtime::apply(content, state, command, events)?,
+        Command::World(command) => world_runtime::apply(content, tx, command, events)?,
         Command::Talk {
             participant,
             speaker,
             topic,
             bindings,
-        } => talk(
-            content,
-            state,
-            participant,
-            speaker,
-            topic,
-            &bindings,
-            events,
-        )?,
+        } => talk(content, tx, participant, speaker, topic, &bindings, events)?,
         Command::Quest { quest, transition } => {
-            actions::change_quest(content, state, quest, &transition, events)?
+            actions::change_quest(content, tx, quest, &transition, events)?
         }
         Command::AdjustRelationship { key, amount } => {
-            state.actor(key.from)?;
-            state.actor(key.to)?;
-            actions::change_relationship(state, key, amount, events)?
+            tx.actor(key.from)?;
+            tx.actor(key.to)?;
+            actions::change_relationship(tx, key, amount, events)?
         }
         Command::Party { actor, member } => {
-            state.actor(actor)?;
+            tx.actor(actor)?;
             if member {
-                if !state.party.members.contains(&actor) {
-                    if state.party.members.len() >= content.game.rules.party_size {
+                if !tx.party.members.contains(&actor) {
+                    if tx.party.members.len() >= content.game.rules.party_size {
                         return Err(Rejection::PartyFull.into());
                     }
 
-                    state.party_mut().members.insert(actor);
-                    character::catch_up(content, state, actor, events)?;
+                    tx.party_mut().members.insert(actor);
+                    character::catch_up(content, tx, actor, events)?;
                 }
             } else {
-                Rejection::Controlled(actor).unless(state.party.controlled != Some(actor))?;
-                state.party_mut().members.remove(&actor);
+                Rejection::Controlled(actor).when(tx.party.controlled == Some(actor))?;
+                tx.party_mut().members.remove(&actor);
             }
         }
         Command::Control { actor } => {
-            if !state.party.members.contains(&actor) {
+            if !tx.party.members.contains(&actor) {
                 return Err(Rejection::NotInParty(actor).into());
             }
-            state.party_mut().controlled = Some(actor);
+            tx.party_mut().controlled = Some(actor);
         }
         Command::OpenInventory { actor } => {
-            character::carried(content, state, actor)?;
+            character::carried(content, tx, actor)?;
         }
         Command::SpendAttributePoint { actor, stat } => {
-            character::spend_attribute_point(content, state, actor, &stat, events)?
+            character::spend_attribute_point(content, tx, actor, &stat, events)?
         }
         Command::Intend {
             actor,
             intent,
             clear,
-        } => combat::intend(content, state, actor, intent, clear, events)?,
-        Command::Interrupt { actor } => combat::interrupt(state, actor, events)?,
+        } => combat::intend(content, tx, actor, intent, clear, events)?,
+        Command::Interrupt { actor } => combat::interrupt(tx, actor, events)?,
         Command::UseItem { actor, item } => {
-            character::require_alive(content, state.actor(actor)?)?;
-            character::carried(content, state, actor)?;
-            let bag = state.carried(actor)?;
+            character::require_alive(content, tx.actor(actor)?)?;
+            character::carried(content, tx, actor)?;
+            let bag = tx.carried(actor)?;
             let inventory = bag.id;
             let definition = content.items.item(bag.entry(item)?.definition)?;
-            Rejection::NotUsable.unless(!definition.mechanics.on_use.is_empty())?;
-            let worn = state.actor(actor)?.equipment.values().any(|id| *id == item);
-            Rejection::Equipped.unless(!worn)?;
+            Rejection::NotUsable.when(definition.mechanics.on_use.is_empty())?;
+            let worn = tx.actor(actor)?.equipment.values().any(|id| *id == item);
+            Rejection::Equipped.when(worn)?;
 
             for effect in &definition.mechanics.on_use {
                 match effect {
                     Use::Restore { resource, amount } => character::change_resource(
                         content,
-                        state,
+                        tx,
                         actor,
                         resource,
                         i64::from(*amount),
@@ -318,23 +310,16 @@ pub(crate) fn apply(
                     Use::Apply {
                         effect,
                         duration_ms,
-                    } => character::apply_effect(
-                        content,
-                        state,
-                        actor,
-                        effect,
-                        *duration_ms,
-                        events,
-                    )?,
+                    } => character::apply_effect(content, tx, actor, effect, *duration_ms, events)?,
                 }
             }
 
-            state.inventory_mut(inventory)?.remove(item, 1)?;
+            tx.inventory_mut(inventory)?.remove(item, 1)?;
             events.push(GameEvent::ItemUsed { actor, item });
         }
         Command::Equip { actor, item } => {
-            character::carried(content, state, actor)?;
-            let entry = state.carried(actor)?.entry(item)?;
+            character::carried(content, tx, actor)?;
+            let entry = tx.carried(actor)?.entry(item)?;
             let slot = content
                 .items
                 .item(entry.definition)?
@@ -342,14 +327,14 @@ pub(crate) fn apply(
                 .slot
                 .clone()
                 .ok_or(Rejection::NotEquippable)?;
-            state.actor_mut(actor)?.equipment.insert(slot, item);
-            character::refresh(content, state, actor)?;
+            tx.actor_mut(actor)?.equipment.insert(slot, item);
+            character::refresh(content, tx, actor)?;
             events.push(GameEvent::EquipmentChanged { actor });
         }
         Command::Unequip { actor, slot } => {
-            let removed = state.actor_mut(actor)?.equipment.remove(&slot);
-            Rejection::SlotEmpty(slot).unless(removed.is_some())?;
-            character::refresh(content, state, actor)?;
+            let removed = tx.actor_mut(actor)?.equipment.remove(&slot);
+            Rejection::SlotEmpty(slot).when(removed.is_none())?;
+            character::refresh(content, tx, actor)?;
             events.push(GameEvent::EquipmentChanged { actor });
         }
         Command::Transfer {
@@ -358,7 +343,7 @@ pub(crate) fn apply(
             item,
             quantity,
         } => {
-            let entries = state.inventory_pair_mut(source, destination, |from, to| {
+            let entries = tx.inventory_pair_mut(source, destination, |from, to| {
                 Ok(inventory::transfer(
                     &content.items,
                     from,
@@ -369,17 +354,17 @@ pub(crate) fn apply(
             })?;
 
             for id in [source, destination] {
-                character::sync_equipment(content, state, id, events)?;
+                character::sync_equipment(content, tx, id, events)?;
             }
 
             events.push(GameEvent::ItemsTransferred { entries });
         }
         Command::Trade(quote) => {
             let p = quote.participants();
-            let mut merchant_wallet = state.wallet(p.merchant_wallet)?.clone();
-            let mut customer_wallet = state.wallet(p.customer_wallet)?.clone();
+            let mut merchant_wallet = tx.wallet(p.merchant_wallet)?.clone();
+            let mut customer_wallet = tx.wallet(p.customer_wallet)?.clone();
             let (merchant, customer) = (p.merchant_inventory, p.customer_inventory);
-            state.inventory_pair_mut(merchant, customer, |merchant, customer| {
+            tx.inventory_pair_mut(merchant, customer, |merchant, customer| {
                 Ok(inventory::commit_trade(
                     &content.items,
                     merchant,
@@ -389,11 +374,11 @@ pub(crate) fn apply(
                     &quote,
                 )?)
             })?;
-            *state.wallet_mut(p.merchant_wallet)? = merchant_wallet;
-            *state.wallet_mut(p.customer_wallet)? = customer_wallet;
+            *tx.wallet_mut(p.merchant_wallet)? = merchant_wallet;
+            *tx.wallet_mut(p.customer_wallet)? = customer_wallet;
 
             for id in [p.merchant_inventory, p.customer_inventory] {
-                character::sync_equipment(content, state, id, events)?;
+                character::sync_equipment(content, tx, id, events)?;
             }
 
             events.push(GameEvent::TradeCompleted);
@@ -405,7 +390,7 @@ pub(crate) fn apply(
             bindings,
         } => conversation::start(
             content,
-            state,
+            tx,
             ConversationKey {
                 dialogue,
                 participant,
@@ -422,7 +407,7 @@ pub(crate) fn apply(
             expected,
         } => conversation::choose(
             content,
-            state,
+            tx,
             ConversationKey {
                 dialogue,
                 participant,
@@ -433,15 +418,15 @@ pub(crate) fn apply(
             events,
         )?,
         Command::AdvanceLine { key, expected } => {
-            conversation::present(content, state, key, expected, events)?
+            conversation::present(content, tx, key, expected, events)?
         }
         Command::InterruptDialogue { key, expected } => {
-            conversation::interrupt(content, state, key, expected, events)?
+            conversation::interrupt(content, tx, key, expected, events)?
         }
         // A conversation on screen holds the world still.
         Command::AdvanceTime { millis } => {
-            if state.floor.blocking.is_empty() {
-                character::advance_time(content, state, millis, events)?
+            if tx.floor.blocking.is_empty() {
+                character::advance_time(content, tx, millis, events)?
             }
         }
     }

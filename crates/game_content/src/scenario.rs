@@ -139,14 +139,13 @@ impl Scenario {
             actor.name_override = spawn.name.clone();
 
             for (resource, amount) in &spawn.resources {
-                require(
-                    actor.resources.contains_key(resource),
-                    &format!(
+                require_with(actor.resources.contains_key(resource), || {
+                    format!(
                         "actor {}: {} is not a resource",
                         spawn.id,
                         resource.as_str()
-                    ),
-                )?;
+                    )
+                })?;
                 actor.resources.insert(resource.clone(), *amount);
             }
         }

@@ -1,7 +1,9 @@
 //! Fluent read once: what a resource's messages take, and whether every branch of them fits.
 //! No sample-value validation.
-use crate::*;
+use crate::{LocalizationError, Result, resource_error};
 use fluent_syntax::ast::*;
+use game_types::{ArgumentType, MessageContract, TextContract, TextKey, TextResourceId};
+use std::collections::{BTreeMap, BTreeSet};
 
 pub(crate) type Patterns = BTreeMap<String, Pattern<String>>;
 

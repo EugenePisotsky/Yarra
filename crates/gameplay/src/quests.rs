@@ -61,7 +61,7 @@ impl Quest {
         self.objectives
             .iter()
             .find(|o| &o.id == id)
-            .ok_or_else(|| Invalid("unknown quest objective".into()))
+            .ok_or_else(|| Invalid(format!("unknown quest objective {}", id.as_str())))
     }
 }
 

@@ -196,7 +196,7 @@ impl LoadedProject {
                 directory.as_str(),
                 TextResourceId::try_from(name.to_owned()),
             )?;
-            require(packages.insert(text_id), &format!("package {name} twice"))?;
+            require_with(packages.insert(text_id), || format!("package {name} twice"))?;
             let mut wording: BTreeMap<String, String> = BTreeMap::new();
             let files = source.files(directory)?;
 
@@ -325,13 +325,12 @@ impl LoadedProject {
 
             // The source language says what messages the package has and what they take.
             let Some(source_text) = wording.get(&project.source_locale) else {
-                require(
-                    wording.is_empty(),
-                    &format!(
+                require_with(wording.is_empty(), || {
+                    format!(
                         "package {name} has translations but no {}.ftl",
                         project.source_locale
-                    ),
-                )?;
+                    )
+                })?;
                 continue;
             };
             let contract = contextual(
@@ -454,14 +453,13 @@ impl LoadedProject {
                 .text
                 .get(&reference.resource)
                 .and_then(|c| c.messages.get(&reference.key));
-            require(
-                message.is_some_and(|m| m.arguments.is_empty()),
-                &format!(
+            require_with(message.is_some_and(|m| m.arguments.is_empty()), || {
+                format!(
                     "starting name {}/{} is not a message that takes no arguments",
                     reference.resource,
                     reference.key.as_str()
-                ),
-            )?;
+                )
+            })?;
         }
 
         let contracts = authored.text.values().cloned().collect();
@@ -545,14 +543,13 @@ impl SourceReader {
     /// A path relative to the root that stays inside it.
     fn check_path(&self, path: &str) -> Result<()> {
         let relative = Path::new(path);
-        require(
+        Ok(require(
             !path.is_empty()
                 && relative
                     .components()
                     .all(|c| matches!(c, Component::Normal(_))),
             "source paths must be relative without . or ..",
-        )
-        .map_err(Into::into)
+        )?)
     }
 
     fn text(&mut self, path: &str, limit: usize) -> Result<String> {

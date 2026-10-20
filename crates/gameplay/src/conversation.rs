@@ -4,9 +4,11 @@ use crate::dialogue::{
     RunStatus, Token,
 };
 
-use crate::actions::run_action;
-use crate::tx::Tx;
-use crate::{Result, *};
+use crate::{
+    ConversationKey, GameContent, GameEvent, Rejection, Result, SessionState, actions::run_action,
+    dialogue, tx::Tx,
+};
+
 use game_types::*;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -38,7 +40,7 @@ impl GameContent {
         self.game
             .dialogue_contracts
             .get(&id)
-            .ok_or_else(|| Invalid("unknown dialogue contract".into()).into())
+            .ok_or_else(|| Invalid(format!("unknown dialogue contract {id}")).into())
     }
 
     fn bind_text(&self, state: &SessionState, c: &Conversation, node: &Node) -> Result<BoundText> {
@@ -116,13 +118,12 @@ fn history_key(content: &GameContent, key: ConversationKey) -> Result<dialogue::
 
 fn record(
     content: &GameContent,
-    state: &mut Tx,
+    tx: &mut Tx,
     key: ConversationKey,
     event: HistoryEvent,
 ) -> Result<()> {
-    let time = state.time;
-    state
-        .history_mut(history_key(content, key)?)
+    let time = tx.time;
+    tx.history_mut(history_key(content, key)?)
         .record(&event, time)?;
     Ok(())
 }
@@ -185,17 +186,17 @@ fn choices<'a>(
 /// player chooses, or the conversation is complete.
 fn proceed(
     content: &GameContent,
-    state: &mut Tx,
+    tx: &mut Tx,
     key: ConversationKey,
     after: Option<Key>,
 ) -> Result<()> {
     let graph = content.dialogue(key.dialogue)?;
-    let c = state.conversation(key)?;
+    let c = tx.conversation(key)?;
     let mut next = None;
 
     for id in graph.children(after.as_ref())? {
         let node = graph.node(id)?;
-        if eligible(content, state, c, node)? {
+        if eligible(content, tx, c, node)? {
             next = Some(match node.kind {
                 NodeKind::Line => Position::Line(node.id.clone()),
                 NodeKind::Choice => Position::Choices(after.clone()),
@@ -204,13 +205,13 @@ fn proceed(
         }
     }
 
-    let c = state.conversation_mut(key)?;
+    let c = tx.conversation_mut(key)?;
 
     match next {
         Some(position) => c.position = position,
         None => {
             c.status = RunStatus::Completed;
-            record(content, state, key, HistoryEvent::Completed)?;
+            record(content, tx, key, HistoryEvent::Completed)?;
         }
     }
 
@@ -220,48 +221,35 @@ fn proceed(
 /// Runs a node the player acknowledged or picked, then moves on from it.
 fn take(
     content: &GameContent,
-    state: &mut Tx,
+    tx: &mut Tx,
     key: ConversationKey,
     node: &Node,
     events: &mut Vec<GameEvent>,
 ) -> Result<()> {
-    let others: BTreeSet<ActorId> = state
-        .conversation(key)?
-        .bindings
-        .values()
-        .copied()
-        .collect();
+    let others: BTreeSet<ActorId> = tx.conversation(key)?.bindings.values().copied().collect();
 
     for action in &node.actions {
         let (participant, speaker) = (key.participant, key.speaker);
-        run_action(
-            content,
-            state,
-            participant,
-            speaker,
-            &others,
-            action,
-            events,
-        )?;
+        run_action(content, tx, participant, speaker, &others, action, events)?;
     }
 
-    let c = state.conversation_mut(key)?;
+    let c = tx.conversation_mut(key)?;
     c.bump()?;
     c.visited.insert(node.id.clone());
-    record(content, state, key, HistoryEvent::Node(node.id.clone()))?;
-    proceed(content, state, key, Some(node.id.clone()))
+    record(content, tx, key, HistoryEvent::Node(node.id.clone()))?;
+    proceed(content, tx, key, Some(node.id.clone()))
 }
 
 pub(crate) fn start(
     content: &GameContent,
-    state: &mut Tx,
+    tx: &mut Tx,
     key: ConversationKey,
     bindings: &BTreeMap<Key, ActorId>,
     events: &mut Vec<GameEvent>,
 ) -> Result<()> {
-    let run = match state.conversations.get(&key) {
+    let run = match tx.conversations.get(&key) {
         Some(previous) => {
-            Rejection::AlreadyTalking.unless(previous.status != RunStatus::Active)?;
+            Rejection::AlreadyTalking.when(previous.status == RunStatus::Active)?;
             previous
                 .token
                 .run
@@ -274,24 +262,24 @@ pub(crate) fn start(
     require(
         contract
             .repeat
-            .eligible(&state.history(history_key(content, key)?), state.time),
+            .eligible(&tx.history(history_key(content, key)?), tx.time),
         "dialogue repeat policy blocks start",
     )?;
     let next = content.dialogue(key.dialogue)?.start(
         key.participant,
         key.speaker,
         bindings,
-        &state.party.members,
+        &tx.party.members,
         run,
     )?;
 
     for id in next.bindings.values() {
-        state.actor(*id)?;
+        tx.actor(*id)?;
     }
 
-    record(content, state, key, HistoryEvent::Started)?;
-    state.put_conversation(next);
-    proceed(content, state, key, None)?;
+    record(content, tx, key, HistoryEvent::Started)?;
+    tx.put_conversation(next);
+    proceed(content, tx, key, None)?;
     events.push(GameEvent::DialogueStarted {
         key,
         mode: contract.mode,
@@ -301,12 +289,12 @@ pub(crate) fn start(
 
 pub(crate) fn present(
     content: &GameContent,
-    state: &mut Tx,
+    tx: &mut Tx,
     key: ConversationKey,
     expected: Token,
     events: &mut Vec<GameEvent>,
 ) -> Result<()> {
-    let c = state.conversation(key)?;
+    let c = tx.conversation(key)?;
     c.check(expected)
         .map_err(|_| Rejection::ConversationMoved)?;
     let Position::Line(id) = &c.position else {
@@ -314,7 +302,7 @@ pub(crate) fn present(
     };
     let graph = content.dialogue(key.dialogue)?;
     let node = graph.node(id)?;
-    take(content, state, key, node, events)?;
+    take(content, tx, key, node, events)?;
     events.push(GameEvent::LinePresented {
         key,
         line: node.id.clone(),
@@ -324,24 +312,24 @@ pub(crate) fn present(
 
 pub(crate) fn choose(
     content: &GameContent,
-    state: &mut Tx,
+    tx: &mut Tx,
     key: ConversationKey,
     choice: &Key,
     expected: Token,
     events: &mut Vec<GameEvent>,
 ) -> Result<()> {
-    let c = state.conversation(key)?;
+    let c = tx.conversation(key)?;
     c.check(expected)
         .map_err(|_| Rejection::ConversationMoved)?;
     let Position::Choices(after) = &c.position else {
         return Err(Invalid("dialogue lines must be acknowledged before choosing".into()).into());
     };
     let graph = content.dialogue(key.dialogue)?;
-    let node = choices(content, state, c, &graph, after.as_ref())?
+    let node = choices(content, tx, c, &graph, after.as_ref())?
         .into_iter()
         .find(|n| &n.id == choice)
         .ok_or_else(|| Rejection::ChoiceUnavailable(choice.clone()))?;
-    take(content, state, key, node, events)?;
+    take(content, tx, key, node, events)?;
     events.push(GameEvent::ChoiceAccepted {
         choice: choice.clone(),
     });
@@ -350,17 +338,17 @@ pub(crate) fn choose(
 
 pub(crate) fn interrupt(
     content: &GameContent,
-    state: &mut Tx,
+    tx: &mut Tx,
     key: ConversationKey,
     expected: Token,
     events: &mut Vec<GameEvent>,
 ) -> Result<()> {
-    let c = state.conversation_mut(key)?;
+    let c = tx.conversation_mut(key)?;
     c.check(expected)
         .map_err(|_| Rejection::ConversationMoved)?;
     c.bump()?;
     c.status = RunStatus::Interrupted;
-    record(content, state, key, HistoryEvent::Interrupted)?;
+    record(content, tx, key, HistoryEvent::Interrupted)?;
     events.push(GameEvent::DialogueInterrupted { key });
     Ok(())
 }

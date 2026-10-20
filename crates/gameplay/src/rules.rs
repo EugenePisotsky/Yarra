@@ -2,7 +2,7 @@
 //! built from a class and levels. The formulas themselves are two functions in the rules
 //! script the content names, so a game changes its numbers without changing this crate.
 use crate::ScriptName;
-use game_types::{GameTime, Invalid, Key, Result, TextRef, require};
+use game_types::{GameTime, Invalid, Key, Result, TextRef, require, require_with};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -226,10 +226,9 @@ fn unique<'a>(ids: impl Iterator<Item = &'a Key>, what: &str) -> Result<()> {
     let mut seen = BTreeSet::new();
 
     for id in ids {
-        require(
-            seen.insert(id),
-            &format!("duplicate {what} {}", id.as_str()),
-        )?;
+        require_with(seen.insert(id), || {
+            format!("duplicate {what} {}", id.as_str())
+        })?;
     }
 
     Ok(())
@@ -521,10 +520,9 @@ impl Rules {
                     stat.id.as_str()
                 ))
             })?;
-            require(
-                raw.is_finite() && raw.abs() < 1e12,
-                &format!("{} returned a bad {}", self.derive, stat.id.as_str()),
-            )?;
+            require_with(raw.is_finite() && raw.abs() < 1e12, || {
+                format!("{} returned a bad {}", self.derive, stat.id.as_str())
+            })?;
             let operations = modifiers
                 .clone()
                 .filter(|m| m.stat == stat.id)
@@ -536,13 +534,12 @@ impl Rules {
             );
         }
 
-        require(
-            derived.len() == expected,
-            &format!(
+        require_with(derived.len() == expected, || {
+            format!(
                 "{} returned something that is not a derived stat",
                 self.derive
-            ),
-        )
+            )
+        })
     }
 }
 

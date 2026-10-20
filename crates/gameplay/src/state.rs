@@ -206,19 +206,19 @@ impl SessionState {
     pub fn actor(&self, id: ActorId) -> Result<&Actor> {
         self.actors
             .get(&id)
-            .ok_or_else(|| Invalid("unknown actor".into()).into())
+            .ok_or_else(|| Invalid(format!("unknown actor {id}")).into())
     }
 
     pub fn inventory(&self, id: InventoryId) -> Result<&Inventory> {
         self.inventories
             .get(&id)
-            .ok_or_else(|| Invalid("unknown inventory".into()).into())
+            .ok_or_else(|| Invalid(format!("unknown inventory {id}")).into())
     }
 
     pub fn wallet(&self, id: WalletId) -> Result<&Wallet> {
         self.wallets
             .get(&id)
-            .ok_or_else(|| Invalid("unknown wallet".into()).into())
+            .ok_or_else(|| Invalid(format!("unknown wallet {id}")).into())
     }
 
     pub fn carried(&self, actor: ActorId) -> Result<&Inventory> {
@@ -296,13 +296,12 @@ impl SessionState {
             self.actor(actor)?;
         }
 
-        require(
+        Ok(require(
             self.variables
                 .get(&key)
                 .is_none_or(|value| value.same_type(&definition.initial)),
             "saved variable has the wrong type",
-        )
-        .map_err(Into::into)
+        )?)
     }
 
     pub fn trigger(&self, id: TriggerId) -> TriggerState {
@@ -576,33 +575,30 @@ impl SessionState {
 
     pub(crate) fn check_wallet(&self, content: &GameContent, wallet: &Wallet) -> Result<()> {
         wallet.validate()?;
-        require(
+        Ok(require(
             self.valid_owner(content, &wallet.owner),
             "invalid wallet identity/owner",
-        )
-        .map_err(Into::into)
+        )?)
     }
 
     pub(crate) fn check_history(&self, content: &GameContent, h: &History) -> Result<()> {
         h.validate(content.dialogue_contract(h.key.dialogue)?, self.time)?;
-        require(
+        Ok(require(
             h.key
                 .scope
                 .actors()
                 .iter()
                 .all(|id| self.actors.contains_key(id)),
             "invalid history actor",
-        )
-        .map_err(Into::into)
+        )?)
     }
 
     pub(crate) fn check_relationship(&self, r: &Relationship) -> Result<()> {
         r.validate()?;
-        require(
+        Ok(require(
             self.actors.contains_key(&r.key.from) && self.actors.contains_key(&r.key.to),
             "invalid relationship actors/identity",
-        )
-        .map_err(Into::into)
+        )?)
     }
 
     pub(crate) fn check_interaction(&self, content: &GameContent, i: &Interaction) -> Result<()> {
@@ -647,24 +643,22 @@ impl SessionState {
             None => c.validate_contract(content.dialogue_contract(c.dialogue)?)?,
         }
 
-        require(
+        Ok(require(
             c.bindings.values().all(|id| self.actors.contains_key(id)),
             "unknown bound actor",
-        )
-        .map_err(Into::into)
+        )?)
     }
 
     /// A conversation waiting for its turn is under way, in the queue of its kind.
     pub(crate) fn check_floor(&self, content: &GameContent, key: ConversationKey) -> Result<()> {
         let mode = content.dialogue_contract(key.dialogue)?.mode;
-        require(
+        Ok(require(
             self.conversations
                 .get(&key)
                 .is_some_and(|c| c.status == RunStatus::Active)
                 && self.floor.queue(mode).contains(&key),
             "conversation waits for a turn it does not have",
-        )
-        .map_err(Into::into)
+        )?)
     }
 
     pub(crate) fn check_object(&self, content: &GameContent, o: &ObjectState) -> Result<()> {
@@ -679,11 +673,10 @@ impl SessionState {
             )?;
         }
 
-        require(
+        Ok(require(
             !(o.open && (o.locked || o.destroyed)),
             "invalid object state",
-        )
-        .map_err(Into::into)
+        )?)
     }
 
     pub(crate) fn check_location(&self, content: &GameContent, l: &LocationState) -> Result<()> {
@@ -698,12 +691,11 @@ impl SessionState {
 
     pub(crate) fn check_trigger(&self, content: &GameContent, t: &TriggerState) -> Result<()> {
         content.trigger(t.id)?;
-        require(
+        Ok(require(
             (t.fired == 0) == t.last_fired.is_none()
                 && t.last_fired.is_none_or(|time| time <= self.time),
             "invalid trigger progress",
-        )
-        .map_err(Into::into)
+        )?)
     }
 
     pub(crate) fn check_movement(&self, content: &GameContent, m: &crate::Movement) -> Result<()> {

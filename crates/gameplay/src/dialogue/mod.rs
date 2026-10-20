@@ -216,7 +216,7 @@ impl Dialogue {
         self.nodes
             .iter()
             .find(|n| &n.id == id)
-            .ok_or_else(|| Invalid("unknown dialogue node".into()))
+            .ok_or_else(|| Invalid(format!("unknown dialogue node {}", id.as_str())))
     }
 
     /// The nodes that can follow `after`, or the entry nodes.

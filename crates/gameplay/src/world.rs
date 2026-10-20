@@ -163,6 +163,15 @@ pub struct ObjectState {
 }
 
 impl ObjectState {
+    /// A locked object is closed too.
+    pub fn set_locked(&mut self, locked: bool) {
+        self.locked = locked;
+
+        if locked {
+            self.open = false;
+        }
+    }
+
     pub fn initial(d: &ObjectDefinition) -> Self {
         Self {
             id: d.id,
@@ -323,16 +332,14 @@ impl GameContent {
             .world
             .objects
             .get(&id)
-            .ok_or_else(|| Invalid("unknown object".into()).into())
+            .ok_or_else(|| Invalid(format!("unknown object {id}")).into())
     }
 
     /// Checks that the content declares the area.
     pub fn area(&self, id: AreaId) -> Result<()> {
-        require(
-            self.game.world.areas.contains(&id),
-            &format!("unknown area {id}"),
-        )
-        .map_err(Into::into)
+        Ok(require_with(self.game.world.areas.contains(&id), || {
+            format!("unknown area {id}")
+        })?)
     }
 
     pub fn trigger(&self, id: TriggerId) -> Result<&TriggerDefinition> {
@@ -340,7 +347,7 @@ impl GameContent {
             .world
             .triggers
             .get(&id)
-            .ok_or_else(|| Invalid("unknown trigger".into()).into())
+            .ok_or_else(|| Invalid(format!("unknown trigger {id}")).into())
     }
 
     pub(crate) fn validate_world(&self) -> Result<()> {

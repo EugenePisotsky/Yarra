@@ -186,23 +186,18 @@ impl Evaluation<'_> {
         let (content, state, player, speaker) =
             (self.content, self.state, self.player, self.speaker);
 
+        // What a script reads, and who counts as present, as conditions see it.
+        let scope = ReadScope {
+            content,
+            state,
+            player,
+            speaker,
+            others: self.others,
+        };
+
         Ok(match condition {
-            Condition::Script(name) => content.scripts.engine(name)?.condition(
-                name,
-                &ReadScope {
-                    content,
-                    state,
-                    player,
-                    speaker,
-                    others: self.others,
-                },
-            )?,
-            Condition::Present(actor) => {
-                *actor == player
-                    || *actor == speaker
-                    || self.others.contains(actor)
-                    || state.party.members.contains(actor)
-            }
+            Condition::Script(name) => content.scripts.engine(name)?.condition(name, &scope)?,
+            Condition::Present(actor) => scope.present(*actor),
             Condition::InsideArea { area } => state.areas(player).contains(area),
             Condition::History {
                 dialogue,
@@ -279,7 +274,7 @@ impl GameContent {
             .predicates
             .get(&id)
             .map(|p| &p.condition)
-            .ok_or_else(|| Invalid("unknown named predicate".into()).into())
+            .ok_or_else(|| Invalid(format!("unknown named predicate {id}")).into())
     }
 
     pub fn validate_condition(&self, condition: &Condition) -> Result<()> {

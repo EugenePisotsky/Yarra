@@ -174,9 +174,8 @@ pub(crate) fn proceed(
             // What it does takes effect as a whole or not at all, and a script that fails
             // costs its user the action, not the rest of the queue, and does not stop time
             // for everyone.
-            let savepoint = tx.savepoint();
-            let mark = events.len();
-            let outcome = content.scripts.engine(&ability.resolve).and_then(|engine| {
+            let outcome = tx.attempt(events, |tx, events| {
+                let engine = content.scripts.engine(&ability.resolve)?;
                 engine.action(
                     &ability.resolve,
                     &mut ActScope {
@@ -191,16 +190,12 @@ pub(crate) fn proceed(
             });
 
             if let Err(error) = outcome {
-                tx.rollback_to(savepoint);
-                events.truncate(mark);
                 events.push(GameEvent::AbilityFailed {
                     actor,
                     ability: intent.ability.clone(),
                     reason: error.to_string(),
                 });
             } else {
-                tx.release(savepoint);
-
                 if ability.cooldown_ms > 0 {
                     let ready = now.advance(ability.cooldown_ms)?;
                     tx.actor_mut(actor)?

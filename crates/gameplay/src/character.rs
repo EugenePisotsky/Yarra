@@ -474,27 +474,26 @@ pub(crate) fn check(
 /// After items leave a carried inventory, drop equipment that is no longer owned.
 pub(crate) fn sync_equipment(
     content: &GameContent,
-    state: &mut Tx,
+    tx: &mut Tx,
     inventory: InventoryId,
     events: &mut Vec<GameEvent>,
 ) -> Result<()> {
-    let bag = state.inventory(inventory)?;
+    let bag = tx.inventory(inventory)?;
     let Some(actor) = bag.carried_by() else {
         return Ok(());
     };
     let owned: BTreeSet<_> = bag.entries.iter().map(|e| e.id).collect();
 
-    if state
+    if tx
         .actor(actor)?
         .equipment
         .values()
         .any(|id| !owned.contains(id))
     {
-        state
-            .actor_mut(actor)?
+        tx.actor_mut(actor)?
             .equipment
             .retain(|_, id| owned.contains(id));
-        refresh(content, state, actor)?;
+        refresh(content, tx, actor)?;
         events.push(GameEvent::EquipmentChanged { actor });
     }
 
