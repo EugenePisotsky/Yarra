@@ -40,9 +40,6 @@ pub struct FarObjectsPage {
 pub struct FarObjectForm {
     /// The asset's impostor descriptor (its last LOD).
     pub uri: String,
-    /// Object height (the largest LOD bounds) over its last mesh LOD's minimum screen
-    /// height, at unit scale: times scale and pixels per metre, the hand-off distance.
-    pub switch: f32,
     /// Object height at unit scale (the largest LOD bounds).
     pub height: f32,
     /// The mesh LODs before the impostor, nearest first.
@@ -76,12 +73,8 @@ impl FarObjectsPage {
             return Err("far-object page has no or too many forms or instances".into());
         }
 
-        if self
-            .forms
-            .iter()
-            .any(|f| !is_impostor_uri(&f.uri) || !f.switch.is_finite() || f.switch <= 0.0)
-        {
-            return Err("far-object form is not an impostor with a hand-off".into());
+        if self.forms.iter().any(|f| !is_impostor_uri(&f.uri)) {
+            return Err("far-object form is not an impostor".into());
         }
 
         // Mesh LODs nearest first with descending thresholds, the last one handing off.

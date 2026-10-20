@@ -54,7 +54,7 @@ pub const MAX_DECODED_PAGE_BYTES: u64 = 64 * 1024 * 1024;
 /// ([`codec`]): any change to a stored type bumps one.
 pub const PROJECT_SCHEMA_VERSION: i64 = 33;
 
-pub const RUNTIME_SCHEMA_VERSION: i64 = 33;
+pub const RUNTIME_SCHEMA_VERSION: i64 = 34;
 
 #[cfg(test)]
 mod tests;

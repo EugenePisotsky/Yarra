@@ -60,7 +60,6 @@ fn far_objects_page_round_trips_and_rejects_dangling_forms() {
     let mut page = FarObjectsPage {
         forms: vec![FarObjectForm {
             uri: "packs/tree.impostor.json".into(),
-            switch: 0.1,
             height: 20.0,
             meshes: vec![FarObjectMesh {
                 uri: "packs/tree_lod0.gltf".into(),

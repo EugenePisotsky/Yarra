@@ -185,7 +185,6 @@ fn impostor_forms(
                     asset,
                     FarObjectForm {
                         uri: impostor.clone(),
-                        switch: height / threshold,
                         height,
                         meshes: meshes
                             .iter()
@@ -359,7 +358,6 @@ mod tests {
             west.forms,
             [FarObjectForm {
                 uri: "tree.impostor.json".into(),
-                switch: 20.0 / 200.0,
                 height: 20.0,
                 meshes: vec![
                     FarObjectMesh {

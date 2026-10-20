@@ -1,8 +1,9 @@
 //! How worn a terrain page's ground is, finer than its weights. The cook draws roads, junctions
 //! and (later) painted wear into one field per page; the page's weights hold the natural ground,
 //! and the ground wears down where the field says, each surface to what its world names
-//! (`environment::EnvironmentDefinition::worn`). Near terrain detail and the distant bake lay
-//! worn ground the same way (`shaders/terrain_near.wesl` mirrors [`TerrainWear::lay`]).
+//! (`environment::EnvironmentDefinition::worn`). The control tiles lay worn ground with
+//! [`TerrainWear::lay`] (`terrain_control::leaf_control`), and near the camera the ground shader
+//! sharpens bare ground from the same field (`shaders/terrain/wear.wesl`).
 use serde::{Deserialize, Serialize};
 
 /// Texels per side of a page's wear field: 12.5 cm on 32 m cells.

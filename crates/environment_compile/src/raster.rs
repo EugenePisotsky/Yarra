@@ -538,7 +538,7 @@ fn quantize(weights: &[f64]) -> Vec<u8> {
     result
 }
 
-/// Each surface's share of the ground that shows. Near detail draws a surface only where its
+/// Each surface's share of the ground that shows. The ground draws a surface only where its
 /// weight comes close to the largest (within the height blend's margin), so a faint blend, such
 /// as coastal grass fading out over dune sand, shows as sand and grows no grass there; even
 /// blends keep their shares.
