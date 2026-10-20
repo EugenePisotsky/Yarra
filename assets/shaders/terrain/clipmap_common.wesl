@@ -12,6 +12,8 @@ struct ClipmapSettings {
     macro_scales: vec4<f32>,
     // Macro contrast, whether macro variation is on, control texels per side.
     ground: vec4<f32>,
+    // Range of the first detail level on soft ground (0: none).
+    detail: vec4<f32>,
 }
 @group(constants::MATERIAL_BIND_GROUP) @binding(0) var<uniform> settings: ClipmapSettings;
 @group(constants::MATERIAL_BIND_GROUP) @binding(1) var heights: texture_2d_array<f32>;
@@ -27,6 +29,8 @@ const RESIDENCY_TEXELS: i32 = 8;
 const STATE_WEAR: i32 = 74;
 // gpu.rs WEAR_WINDOW: cells per side of the road wear window around the camera.
 const WEAR_WINDOW: i32 = 5;
+// select.rs DETAIL_LEVELS: levels below the leaves, on soft ground near the camera.
+const DETAIL_LEVELS: i32 = 3;
 
 fn side() -> i32 { return i32(settings.grid.x); }
 fn levels() -> u32 { return u32(settings.grid.y); }
@@ -116,6 +120,20 @@ fn wear_slot(cell: vec2<i32>) -> i32 {
         return -1;
     }
     return slot;
+}
+
+// The leaves' drawn ground at a leaf sample plus a fraction (0..1) of one: their triangles, split
+// from each quad's (x, z) to (x + 1, z + 1) as patch_mesh splits them, so detail levels lie on
+// the ground the leaves draw.
+fn leaf_surface_height(leaf: vec2<i32>, f: vec2<f32>) -> f32 {
+    let a = textureLoad(heights, texel(leaf), 0, 0).r;
+    let b = textureLoad(heights, texel(leaf + vec2(0, 1)), 0, 0).r;
+    let c = textureLoad(heights, texel(leaf + vec2(1, 1)), 0, 0).r;
+    let d = textureLoad(heights, texel(leaf + vec2(1, 0)), 0, 0).r;
+    if f.x >= f.y {
+        return a + f.x * (d - a) + f.y * (c - d);
+    }
+    return a + f.y * (b - a) + f.x * (c - b);
 }
 
 // Leaf-level ground height at a leaf sample plus a fraction of one (which may exceed one),

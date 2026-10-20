@@ -254,7 +254,9 @@ SQLite. The renderers (Bevy) have no SQLite: `engine` is the only library joinin
   the material reads on surfaces with a `soft_depth`.
 - Invariants: selection uses distance to a node's box, so turning the camera changes only
   culling. A node splits only when all four children are resident and vertices morph to the
-  coarser grid, so levels meet without cracks. The print windows hold nothing the log does not:
+  coarser grid, so levels meet without cracks. Soft leaves near the camera split into detail
+  levels (`DETAIL_LEVELS` = 3: 0.5, 0.25 and 0.125 m within 48, 24 and 12 m) whose vertices lie
+  on the leaves' triangles. The print windows hold nothing the log does not:
   ground a window moves onto starts undisturbed and takes every logged press reaching it.
 - Must not depend on `world_db` or `engine`.
 

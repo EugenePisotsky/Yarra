@@ -78,6 +78,12 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
   bounce (the shared ground light assumes grass albedo and left them near black). Cost about
   0.25 ms with snow filling the screen at the play setup. Real displaced geometry (no tessellation
   in wgpu) waits for deep snow.
+- **Detail levels below the leaves for deep snow, not tessellation.** *Kept* (October 20). wgpu has
+  no tessellation; shipped deep snow (Rise of the Tomb Raider, God of War Ragnarök, Ghost of Yōtei)
+  displaces real geometry near the camera and keeps parallax for far or fallback snow (Batman:
+  Arkham Origins: parallax "will never be as thick"). CDLOD splits soft leaves further near the
+  camera, on the leaves' triangles: +260k triangles on the pass basin with no measurable cost, and
+  4M triangles in the main pass measured within noise, so geometry is not the limit.
 - **Terrain shadows and sky occlusion from a GPU horizon map.** *Kept* (`3a151a2`). The CPU search
   on every core each 0.5° of sun dropped a frame every ~2 s, only with the day clock on (214
   drops → 8).

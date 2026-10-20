@@ -4,10 +4,12 @@
 // morphs towards the next coarser level (CDLOD, Strugar 2009): odd samples slide onto their
 // lower even neighbour, so at the range the patch is the coarser grid and meets coarser
 // neighbours without cracks. Distances are from the main camera (the state texture's eye), so
-// shadow cascades draw the same surface.
+// shadow cascades draw the same surface. Detail patches, parts of a leaf on soft ground, place
+// their vertices on the leaves' triangles and morph the same way.
 import bevy_pbr::render::{mesh_functions, view_transformations::position_world_to_clip};
 import package::shaders::terrain::clipmap_common::{
-    eye, heights, intervals, levels, normals, render_xz, settings, texel, unpack_normal,
+    DETAIL_LEVELS, eye, heights, intervals, leaf_spacing, leaf_surface_height, level_normal, levels,
+    normals, render_xz, settings, texel, unpack_normal,
 };
 @if(PREPASS_PIPELINE) import bevy_pbr::prepass::io::VertexOutput;
 @else import bevy_pbr::render::forward_io::VertexOutput;
@@ -18,7 +20,8 @@ struct Vertex {
     @location(0) position: vec3<f32>,
 }
 
-// Mesh tag: level in bits 28-31, node x and z as 14-bit signed values in bits 14-27 and 0-13
+// Mesh tag: level counted from the finest detail level in bits 28-31, the patch's x and z among
+// patches of its size as 14-bit signed values in bits 14-27 and 0-13
 // (crates/terrain_render/src/clipmap/gpu.rs `patch_tag`).
 fn tag_level(tag: u32) -> u32 { return tag >> 28u; }
 fn tag_node(tag: u32) -> vec2<i32> {
@@ -32,30 +35,61 @@ fn sample_normal(sample: vec2<i32>, level: u32) -> vec3<f32> {
     return unpack_normal(textureLoad(normals, texel(sample), level, 0).xy);
 }
 
+// Morphing towards the next coarser grid at `position` for a level drawn out to `range`.
+fn morph(position: vec3<f32>, range: f32) -> f32 {
+    let start = range * settings.ranges.y;
+    let end = range * settings.ranges.z;
+    return clamp((distance(eye(), position) - start) / (end - start), 0.0, 1.0);
+}
+
+// A detail level's sample: a leaf sample plus a fraction of 2^-detail steps, on the leaves'
+// triangles.
+fn detail_point(sample: vec2<i32>, detail: u32) -> vec3<f32> {
+    let leaf = sample >> vec2(detail);
+    let fraction = vec2<f32>(sample - (leaf << vec2(detail))) / f32(1u << detail);
+    let xz = render_xz(leaf) + fraction * leaf_spacing();
+    return vec3(xz.x, leaf_surface_height(leaf, fraction), xz.y);
+}
+
+fn detail_normal(sample: vec2<i32>, detail: u32) -> vec3<f32> {
+    let leaf = sample >> vec2(detail);
+    return level_normal(0u, leaf, vec2<f32>(sample - (leaf << vec2(detail))) / f32(1u << detail));
+}
+
 @vertex
 fn vertex(vertex: Vertex) -> VertexOutput {
     var out: VertexOutput;
     let tag = mesh_functions::get_tag(vertex.instance_index);
-    let level = tag_level(tag);
     let sample = tag_node(tag) * intervals() + vec2<i32>(vertex.position.xz);
-    let height = sample_height(sample, level);
-    let xz = render_xz(sample << vec2(level));
-    // The top level has nothing coarser to morph to.
-    var k = 0.0;
-    if level + 1u < levels() {
-        let range = settings.ranges.x * f32(1u << level);
-        let start = range * settings.ranges.y;
-        let end = range * settings.ranges.z;
-        k = clamp((distance(eye(), vec3(xz.x, height, xz.y)) - start) / (end - start), 0.0, 1.0);
-    }
     let even = sample & vec2(-2);
-    var position = vec3(xz.x, height, xz.y);
-    var normal = sample_normal(sample, level);
-    if k > 0.0 && any(even != sample) {
-        let coarse_xz = render_xz(even << vec2(level));
-        let coarse = vec3(coarse_xz.x, sample_height(even, level), coarse_xz.y);
-        position = select(mix(position, coarse, k), coarse, k >= 1.0);
-        normal = normalize(mix(normal, sample_normal(even, level), k));
+    var position: vec3<f32>;
+    var normal: vec3<f32>;
+    var k = 0.0;
+    if i32(tag_level(tag)) < DETAIL_LEVELS {
+        let detail = u32(DETAIL_LEVELS - i32(tag_level(tag)));
+        position = detail_point(sample, detail);
+        normal = detail_normal(sample, detail);
+        k = morph(position, settings.detail.x / f32(1u << (detail - 1u)));
+        if k > 0.0 && any(even != sample) {
+            let coarse = detail_point(even, detail);
+            position = select(mix(position, coarse, k), coarse, k >= 1.0);
+            normal = normalize(mix(normal, detail_normal(even, detail), k));
+        }
+    } else {
+        let level = tag_level(tag) - u32(DETAIL_LEVELS);
+        let xz = render_xz(sample << vec2(level));
+        position = vec3(xz.x, sample_height(sample, level), xz.y);
+        normal = sample_normal(sample, level);
+        // The top level has nothing coarser to morph to.
+        if level + 1u < levels() {
+            k = morph(position, settings.ranges.x * f32(1u << level));
+        }
+        if k > 0.0 && any(even != sample) {
+            let coarse_xz = render_xz(even << vec2(level));
+            let coarse = vec3(coarse_xz.x, sample_height(even, level), coarse_xz.y);
+            position = select(mix(position, coarse, k), coarse, k >= 1.0);
+            normal = normalize(mix(normal, sample_normal(even, level), k));
+        }
     }
     out.world_position = vec4(position, 1.0);
     out.position = position_world_to_clip(position);

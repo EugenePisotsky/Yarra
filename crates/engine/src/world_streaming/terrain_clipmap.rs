@@ -37,7 +37,7 @@ use std::{
 
 use terrain_render::clipmap::{
     self, ClipmapFrame, ClipmapLayout, ClipmapTerrainMaterial, ClipmapTextures, ClipmapUploads,
-    LodRanges, NodeBlock, NodeWindow, Residency,
+    LodRanges, NodeBlock, NodeWindow, PatchKey, Residency,
 };
 
 use world::{
@@ -56,6 +56,10 @@ const TOP: u8 = 5;
 /// 1 m leaf spacing a triangle is 6–13 px across at 1440p wherever it is drawn. The window
 /// must hold a level's patches past its parent's range: (31 − 1) / 2 − HYSTERESIS nodes.
 const LEAF_RANGE: f64 = if cfg!(target_os = "ios") { 96.0 } else { 192.0 };
+
+/// Soft ground draws detail levels within this share of the leaf range: half-metre spacing out
+/// to 48 m, a quarter to 24 m, an eighth to 12 m, where snow is displaced.
+const DETAIL_RANGE: f64 = LEAF_RANGE / 4.0;
 
 /// Nodes are read ahead out to this multiple of the range that draws them, so the next finer
 /// level's normals are resident where the fragment shader asks for them.
@@ -81,11 +85,17 @@ struct Resident {
     bounds: HashMap<TerrainNodeKey, [f32; 2]>,
     /// Level-0 samples for grounding actors on the drawn surface.
     leaves: HashMap<TerrainNodeKey, TerrainHeightfield>,
+    /// Leaves whose cells hold a soft surface, among the streamed pages.
+    soft: HashSet<TerrainNodeKey>,
 }
 
 impl clipmap::NodeSource for Resident {
     fn resident(&self, key: TerrainNodeKey) -> Option<[f32; 2]> {
         self.bounds.get(&key).copied()
+    }
+
+    fn soft(&self, leaf: TerrainNodeKey) -> bool {
+        self.soft.contains(&leaf)
     }
 }
 
@@ -152,7 +162,7 @@ pub struct ClipmapTerrain {
 struct Patches {
     mesh: Option<Handle<Mesh>>,
     /// Each drawn patch and the height bounds its box was made from.
-    drawn: HashMap<TerrainNodeKey, (Entity, [f32; 2])>,
+    drawn: HashMap<PatchKey, (Entity, [f32; 2])>,
     /// The render origin cell the patches are placed for.
     placed: Option<world::CellCoord>,
 }
@@ -243,7 +253,10 @@ impl ClipmapTerrain {
         self.space = roots.first().map(|r| r.key.space);
         self.residency = Residency::new(layout.levels);
         self.layout = Some(layout);
-        self.ranges = Some(LodRanges { leaf: LEAF_RANGE });
+        self.ranges = Some(LodRanges {
+            leaf: LEAF_RANGE,
+            detail: DETAIL_RANGE,
+        });
     }
 
     fn request(&mut self, worker: &WorldDatabaseWorker, query: TerrainQuery) -> bool {
@@ -357,7 +370,7 @@ impl ClipmapTerrain {
 
             for &(key, bounds) in &level_nodes {
                 let bounds = self.resident.bounds.get(&key).copied().unwrap_or(bounds);
-                let d = clipmap::distance(layout, key, bounds, eye);
+                let d = clipmap::distance(layout, PatchKey::node(key), bounds, eye);
                 out.push((d / layout.node_metres(key.level), key));
 
                 if key.level == 0 || d >= PREFETCH * ranges.range(key.level - 1) {
@@ -722,6 +735,7 @@ pub(super) fn update(
     );
     terrain.move_windows(&layout, [eye.x, eye.z]);
     terrain.take_decoded(&layout, &mut uploads);
+    terrain.follow_soft_ground(space, &sources);
     terrain.request_nodes(&worker, &layout, &ranges, eye);
     terrain.draw_patches(&mut commands, &layout, &ranges, eye, origin.cell(), offset);
     terrain.stats.uploads = uploads.uploaded_blocks;
@@ -768,6 +782,29 @@ pub(super) fn update(
 }
 
 impl ClipmapTerrain {
+    /// The leaves whose streamed pages hold a soft surface, where detail levels may be drawn.
+    fn follow_soft_ground(
+        &mut self,
+        space: WorldSpaceId,
+        sources: &Query<(Entity, Ref<super::StreamedTerrainWear>)>,
+    ) {
+        let Some(textures) = self.gpu.as_ref() else {
+            return;
+        };
+        self.resident.soft = sources
+            .iter()
+            .filter(|(_, page)| {
+                page.key.space == space && page.layers.iter().any(|&l| textures.soft_layer(l))
+            })
+            .map(|(_, page)| TerrainNodeKey {
+                space,
+                level: 0,
+                x: page.key.cell.x,
+                z: page.key.cell.z,
+            })
+            .collect();
+    }
+
     /// Another space or cell size, a new layout or a failure some seconds old start over; a
     /// new publication of the same space is read again in place.
     fn follow_publication(
@@ -1071,7 +1108,10 @@ mod tests {
         };
         let textures = ClipmapTextures::new(
             layout,
-            LodRanges { leaf: LEAF_RANGE },
+            LodRanges {
+                leaf: LEAF_RANGE,
+                detail: DETAIL_RANGE,
+            },
             ground,
             &mut Assets::default(),
             &mut Assets::default(),

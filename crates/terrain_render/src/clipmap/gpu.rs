@@ -8,7 +8,7 @@
 //! state is a texture rather than material data so the material, and every patch drawing it,
 //! stays unchanged from frame to frame. Uploads move to the render world during extraction, so
 //! the state a frame draws with is the one its patches were selected with.
-use super::{ClipmapLayout, LodRanges, MORPH_SHARE, NodeWindow};
+use super::{ClipmapLayout, DETAIL_LEVELS, LodRanges, MORPH_SHARE, NodeWindow, PatchKey};
 use crate::{TerrainSurfaceLayer, storage_bytes};
 
 use bevy::{
@@ -65,6 +65,8 @@ pub struct ClipmapSettings {
     macro_scales: Vec4,
     /// Macro contrast, whether macro variation is on, control texels per side.
     ground: Vec4,
+    /// Range of the first detail level on soft ground (0: none).
+    detail: Vec4,
 }
 
 /// One of the world's ground surfaces, by texture array layer.
@@ -330,6 +332,7 @@ impl ClipmapTextures {
                     ground.macro_albedo_strength,
                 ),
                 ground: Vec4::new(ground.macro_contrast, 1.0, control_side as f32, 0.0),
+                detail: Vec4::new(ranges.detail as f32, 0.0, 0.0, 0.0),
             },
             heights: Some(heights.clone()),
             normals: Some(normals.clone()),
@@ -367,6 +370,13 @@ fn control_layout(layout: &ClipmapLayout) -> ClipmapLayout {
 }
 
 impl ClipmapTextures {
+    /// Whether feet press into the surface at texture layer `layer`.
+    pub fn soft_layer(&self, layer: u16) -> bool {
+        self.surface_table
+            .get(usize::from(layer))
+            .is_some_and(|s| s.soft.x > 0.0)
+    }
+
     /// Marks the surfaces roads wear ground bare to (the layers of their pages' worn slots), which
     /// near the camera follow the fine wear field (`terrain/clipmap.wesl`). True when one was new.
     pub fn mark_bare_ground(
@@ -823,21 +833,25 @@ fn write_block(
     }
 }
 
-/// Mesh tag of a patch: its level and node, as `terrain/clipmap_vertex.wesl` unpacks them.
-pub fn patch_tag(key: TerrainNodeKey) -> u32 {
-    debug_assert!((-8192..8192).contains(&key.x) && (-8192..8192).contains(&key.z));
-    (u32::from(key.level) << 28) | ((key.x as u32 & 0x3fff) << 14) | (key.z as u32 & 0x3fff)
+/// Mesh tag of a patch, as `terrain/clipmap_vertex.wesl` unpacks it: its level counted from the
+/// finest detail level, and its place among patches of its size.
+pub fn patch_tag(key: PatchKey) -> u32 {
+    let level = u32::from(key.node.level) + u32::from(DETAIL_LEVELS) - u32::from(key.detail);
+    let [x, z] = key.grid();
+    debug_assert!(level < 16 && (-8192..8192).contains(&x) && (-8192..8192).contains(&z));
+    (level << 28) | ((x as u32 & 0x3fff) << 14) | (z as u32 & 0x3fff)
 }
 
-/// Where a node's patch stands for a render origin at `origin` metres: its mesh's sample
-/// indices scaled to the level's spacing.
-pub fn patch_transform(layout: &ClipmapLayout, key: TerrainNodeKey, origin: [f64; 2]) -> Transform {
-    let size = layout.node_metres(key.level);
-    let spacing = layout.spacing(key.level) as f32;
+/// Where a patch stands for a render origin at `origin` metres: its mesh's sample indices
+/// scaled to its spacing.
+pub fn patch_transform(layout: &ClipmapLayout, key: PatchKey, origin: [f64; 2]) -> Transform {
+    let size = layout.patch_metres(key);
+    let spacing = layout.patch_spacing(key) as f32;
+    let [x, z] = key.grid();
     Transform::from_xyz(
-        (f64::from(key.x) * size - origin[0]) as f32,
+        (f64::from(x) * size - origin[0]) as f32,
         0.0,
-        (f64::from(key.z) * size - origin[1]) as f32,
+        (f64::from(z) * size - origin[1]) as f32,
     )
     .with_scale(Vec3::new(spacing, 1.0, spacing))
 }
@@ -892,17 +906,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn patch_tags_carry_negative_nodes() {
-        let key = TerrainNodeKey {
+    fn patch_tags_carry_negative_nodes_and_detail_parts() {
+        let node = |level, x, z| TerrainNodeKey {
             space: world::WorldSpaceId(1),
-            level: 5,
-            x: -5,
-            z: 4,
+            level,
+            x,
+            z,
         };
-        let tag = patch_tag(key);
-        assert_eq!(tag >> 28, 5);
+        let tag = patch_tag(PatchKey::node(node(5, -5, 4)));
+        assert_eq!(tag >> 28, 5 + u32::from(DETAIL_LEVELS));
         assert_eq!(((tag << 4) as i32) >> 18, -5);
         assert_eq!(((tag << 18) as i32) >> 18, 4);
+        let part = PatchKey {
+            node: node(0, -1, 2),
+            detail: 2,
+            part: [3, 1],
+        };
+        let tag = patch_tag(part);
+        assert_eq!(tag >> 28, u32::from(DETAIL_LEVELS) - 2);
+        assert_eq!(((tag << 4) as i32) >> 18, -4 + 3);
+        assert_eq!(((tag << 18) as i32) >> 18, 8 + 1);
     }
 
     /// The shaders keep their own copies of the state texture's layout.
@@ -929,6 +952,7 @@ mod tests {
         assert_eq!(value("RESIDENCY_TEXELS"), i64::from(RESIDENCY_TEXELS));
         assert_eq!(value("STATE_WEAR"), i64::from(STATE_WEAR));
         assert_eq!(value("WEAR_WINDOW"), i64::from(WEAR_WINDOW));
+        assert_eq!(value("DETAIL_LEVELS"), i64::from(DETAIL_LEVELS));
     }
 
     #[test]

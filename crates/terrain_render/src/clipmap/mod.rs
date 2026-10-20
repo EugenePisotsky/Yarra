@@ -15,5 +15,6 @@ pub use gpu::{
 pub use patch::{ClipmapPatch, PatchAssets};
 
 pub use select::{
-    ClipmapLayout, LodRanges, MORPH_SHARE, NodeSource, NodeWindow, Patch, distance, select,
+    ClipmapLayout, DETAIL_LEVELS, LodRanges, MORPH_SHARE, NodeSource, NodeWindow, Patch, PatchKey,
+    distance, select,
 };

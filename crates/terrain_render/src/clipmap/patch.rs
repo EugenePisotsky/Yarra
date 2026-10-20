@@ -3,7 +3,7 @@
 //! and wear exactly as the game does.
 use super::{
     ClipmapGround, ClipmapLayout, ClipmapTerrainMaterial, ClipmapTextures, ClipmapUploads,
-    LodRanges, NodeBlock, NodeWindow, Residency, WEAR_SLOTS, patch_mesh, patch_tag,
+    LodRanges, NodeBlock, NodeWindow, PatchKey, Residency, WEAR_SLOTS, patch_mesh, patch_tag,
     patch_transform, wear_slot,
 };
 
@@ -20,7 +20,10 @@ use world::{CellCoord, TerrainNode, TerrainNodeKey, TerrainWear};
 const SIDE: u32 = 64;
 
 /// The cell is the only level, so it never morphs.
-const RANGES: LodRanges = LodRanges { leaf: 1.0e9 };
+const RANGES: LodRanges = LodRanges {
+    leaf: 1.0e9,
+    detail: 0.0,
+};
 
 pub struct ClipmapPatch {
     textures: ClipmapTextures,
@@ -110,8 +113,8 @@ impl ClipmapPatch {
         (
             Mesh3d(meshes.add(patch_mesh(layout))),
             MeshMaterial3d(self.textures.material.clone()),
-            MeshTag::new(patch_tag(self.key)),
-            patch_transform(layout, self.key, [0.0; 2]),
+            MeshTag::new(patch_tag(PatchKey::node(self.key))),
+            patch_transform(layout, PatchKey::node(self.key), [0.0; 2]),
             Aabb::from_min_max(
                 Vec3::new(0.0, self.bounds[0], 0.0),
                 Vec3::new(n, self.bounds[1], n),
