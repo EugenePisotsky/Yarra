@@ -145,7 +145,7 @@ pub(super) struct GpuCamera {
 }
 
 /// The instance records, pool, origins and transforms the instanced tree and impostor
-/// pipelines read (group 4: `shaders/tree_wind.wesl`, `shaders/tree_impostor.wesl`).
+/// pipelines read (group 4: `shaders/tree/material.wesl`, `shaders/tree/impostor.wesl`).
 pub(super) fn instance_layout() -> BindGroupLayoutDescriptor {
     use bevy::render::render_resource::binding_types::storage_buffer_read_only_sized;
     BindGroupLayoutDescriptor::new(

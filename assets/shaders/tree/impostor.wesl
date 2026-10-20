@@ -7,7 +7,7 @@
 // shading where the baked depth puts the crown's surface, not on the quad. Near the camera
 // the quad bends in the wind as its mesh LODs' trunk does.
 import bevy_pbr::{render::mesh_functions, render::mesh_view_bindings::view, render::view_transformations::position_world_to_clip};
-// Impostors draw in the main pass only: no prepass (tree_impostor.rs `enable_prepass`) and
+// Impostors draw in the main pass only: no prepass (trees/impostor.rs `enable_prepass`) and
 // no shadows.
 import bevy_pbr::{render::pbr_types, render::pbr_functions::{calculate_view, main_pass_post_lighting_processing}, render::mesh_types::MESH_FLAGS_SHADOW_RECEIVER_BIT};
 import package::shaders::lighting::pbr_lighting::apply_pbr_lighting;
@@ -29,7 +29,7 @@ struct ImpostorParams {
     crop: vec4<f32>,
     // Views per side, pixels per metre of the LOD projection, orthographic flag, unused.
     settings: vec4<f32>,
-    // The far mesh LOD's wind profile (tree_wind.wesl tree_profile); its stem height in
+    // The far mesh LOD's wind profile (tree/material.wesl tree_profile); its stem height in
     // object metres (x), the views' texels per metre (y) and the LOD projection's output
     // pixels per pixel (z): z over y is the hand-off at unit scale (trees/impostor.rs).
     wind_profile: vec4<f32>,
@@ -42,7 +42,7 @@ const MINIMUM_PIXELS: f32 = 1.0;
 @group(constants::MATERIAL_BIND_GROUP) @binding(132) var impostor_sampler: sampler;
 @group(constants::MATERIAL_BIND_GROUP) @binding(133) var normal_texture: texture_2d<f32>;
 
-// The GPU trees' records, instances and origins (trees/gpu.rs; tree_wind.wesl has the same).
+// The GPU trees' records, instances and origins (trees/gpu.rs; tree/material.wesl has the same).
 struct TreeInstance {
     position_yaw: vec4<f32>,
     scale: f32,
@@ -54,7 +54,7 @@ struct TreeInstance {
 @group(4) @binding(1) var<storage, read> tree_instances: array<TreeInstance>;
 @group(4) @binding(2) var<storage, read> tree_origins: array<vec4<f32>>;
 
-// The wind every tree shares (tree_wind.rs WindBuffer).
+// The wind every tree shares (trees/wind.rs WindBuffer).
 @group(constants::MATERIAL_BIND_GROUP) @binding(135) var<storage, read> wind: WindFrames;
 // Impostors sway as fully as their mesh LODs where they take over from them, so the
 // dissolve matches, then less with distance: not at all by WIND_SPAN times that distance,

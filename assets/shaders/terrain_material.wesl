@@ -3,10 +3,10 @@
 import package::shaders::lighting::pbr_lighting::apply_pbr_lighting;
 import package::shaders::weather::ground_wetness::apply_rain_puddles;
 
-import package::shaders::terrain_stochastic::{
+import package::shaders::terrain::stochastic::{
     quarter_turn, stochastic_vertex_turn, stochastic_vertex_offset,
 };
-import package::shaders::terrain_blend::height_blend;
+import package::shaders::terrain::blend::height_blend;
 
 import bevy_pbr::{
     decal::clustered::apply_decals,

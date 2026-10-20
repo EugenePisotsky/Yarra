@@ -1,4 +1,4 @@
-// Tree wind materials' vertex shader (crates/engine/src/tree_wind/material.rs) for every pass:
+// Tree wind materials' vertex shader (crates/engine/src/trees/material.rs) for every pass:
 // Bevy 0.20's mesh vertex path (bevy_pbr render/mesh.wesl, prepass/prepass.wesl) with the
 // wind and branch cards applied. Tree meshes are neither skinned, morphed nor compressed
 // (VERTEX_*_COMPRESSED), so only Bevy's plain attributes are read.
@@ -113,7 +113,7 @@ struct VertexOutput {
 }
 
 // Bevy's vertex inputs for this pass, plus the branch card attributes
-// (crates/engine/src/tree_wind/cards.rs) at locations 10-13 and the wind hierarchy's at 14-15.
+// (crates/engine/src/trees/cards.rs) at locations 10-13 and the wind hierarchy's at 14-15.
 @if(PREPASS_PIPELINE)
 struct Vertex {
     @builtin(instance_index) instance_index: u32,
@@ -175,7 +175,7 @@ var<storage, read> wind: WindFrames;
 @if(TREE_HIERARCHY)
 @group(constants::MATERIAL_BIND_GROUP) @binding(105) var<uniform> tree_profile: vec4<f32>;
 
-// The tree's wind profile (tree_wind.rs); meshes without a wind hierarchy have none.
+// The tree's wind profile (trees/wind.rs); meshes without a wind hierarchy have none.
 fn profile() -> vec4<f32> {
 @if(TREE_HIERARCHY)
     return tree_profile;

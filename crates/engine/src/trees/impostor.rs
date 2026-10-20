@@ -32,7 +32,7 @@ use bevy::{
 use serde::Deserialize;
 use std::{collections::HashMap, sync::Arc};
 
-const SHADER: &str = "shaders/tree_impostor.wesl";
+const SHADER: &str = "shaders/tree/impostor.wesl";
 
 pub(crate) struct TreeImpostorPlugin;
 
@@ -511,7 +511,7 @@ const QUAD_VERTICES: usize = 6;
 const WIND_REACH: f32 = 0.4;
 
 /// One instance's quad for the GPU trees: the corner index as each vertex's x, the rest from
-/// the instance (`shaders/tree_impostor.wesl`).
+/// the instance (`shaders/tree/impostor.wesl`).
 pub(crate) fn instanced_quad() -> Mesh {
     let positions: Vec<[f32; 3]> = (0..QUAD_VERTICES).map(|i| [i as f32, 0.0, 0.0]).collect();
     let mut mesh = Mesh::new(

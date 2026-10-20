@@ -1,4 +1,4 @@
-// Tree wind materials' prepass fragment (crates/engine/src/tree_wind/material.rs): Bevy 0.20's
+// Tree wind materials' prepass fragment (crates/engine/src/trees/material.rs): Bevy 0.20's
 // pbr_prepass.wesl, except that depth-only passes (the shadow cascades) also dither by the
 // LOD fade, so a tree's shadow dissolves with the tree instead of switching, and that
 // instanced trees (TREE_INSTANCED) have no mesh uniform to read their winding from.

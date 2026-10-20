@@ -1,4 +1,4 @@
-// Upper bark layer of two-layer tree bark (crates/engine/src/tree_wind/bark.rs).
+// Upper bark layer of two-layer tree bark (crates/engine/src/trees/bark.rs).
 import bevy_pbr::render::pbr_types::PbrInput;
 import bevy_pbr::render::pbr_bindings;
 

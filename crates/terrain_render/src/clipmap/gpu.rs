@@ -22,8 +22,8 @@ use bevy::{
 
 use world::TerrainNodeKey;
 
-pub(crate) const CLIPMAP_VERTEX_SHADER: &str = "shaders/terrain_clipmap_vertex.wesl";
-pub(crate) const CLIPMAP_SHADER: &str = "shaders/terrain_clipmap.wesl";
+pub(crate) const CLIPMAP_VERTEX_SHADER: &str = "shaders/terrain/clipmap_vertex.wesl";
+pub(crate) const CLIPMAP_SHADER: &str = "shaders/terrain/clipmap.wesl";
 
 /// Levels the textures hold at most.
 pub const MAX_LEVELS: u8 = 8;
@@ -41,7 +41,7 @@ const STATE_WEAR: u32 = STATE_RESIDENCY + MAX_LEVELS as u32 * RESIDENCY_TEXELS;
 const STATE_WIDTH: u32 = STATE_WEAR + WEAR_SLOTS as u32;
 
 /// Road wear near the camera: the cells of a `WEAR_WINDOW`² window, one atlas layer per toroidal
-/// slot (`terrain_clipmap.wesl`).
+/// slot (`terrain/clipmap.wesl`).
 pub const WEAR_WINDOW: i32 = 5;
 
 pub const WEAR_SLOTS: usize = (WEAR_WINDOW * WEAR_WINDOW) as usize;
@@ -355,7 +355,7 @@ fn control_layout(layout: &ClipmapLayout) -> ClipmapLayout {
 
 impl ClipmapTextures {
     /// Marks the surfaces roads wear ground bare to (the layers of their pages' worn slots), which
-    /// near the camera follow the fine wear field (`terrain_clipmap.wesl`). True when one was new.
+    /// near the camera follow the fine wear field (`terrain/clipmap.wesl`). True when one was new.
     pub fn mark_bare_ground(
         &mut self,
         layers: impl IntoIterator<Item = u16>,
@@ -755,7 +755,7 @@ fn write_block(
     }
 }
 
-/// Mesh tag of a patch: its level and node, as `terrain_clipmap_vertex.wesl` unpacks them.
+/// Mesh tag of a patch: its level and node, as `terrain/clipmap_vertex.wesl` unpacks them.
 pub fn patch_tag(key: TerrainNodeKey) -> u32 {
     debug_assert!((-8192..8192).contains(&key.x) && (-8192..8192).contains(&key.z));
     (u32::from(key.level) << 28) | ((key.x as u32 & 0x3fff) << 14) | (key.z as u32 & 0x3fff)
@@ -775,7 +775,7 @@ pub fn patch_transform(layout: &ClipmapLayout, key: TerrainNodeKey, origin: [f64
 }
 
 /// The wear atlas slot of a cell in the window around the camera, as
-/// `terrain_clipmap_common.wesl` finds it.
+/// `terrain/clipmap_common.wesl` finds it.
 pub fn wear_slot(cell: world::CellCoord) -> usize {
     let n = WEAR_WINDOW;
     (cell.x.rem_euclid(n) + n * cell.z.rem_euclid(n)) as usize
@@ -842,7 +842,7 @@ mod tests {
     fn shader_constants_match_the_state_layout() {
         let source = include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../assets/shaders/terrain_clipmap_common.wesl"
+            "/../../assets/shaders/terrain/clipmap_common.wesl"
         ));
         let value = |name: &str| -> i64 {
             let line = source

@@ -6,7 +6,7 @@
 // neighbours without cracks. Distances are from the main camera (the state texture's eye), so
 // shadow cascades draw the same surface.
 import bevy_pbr::render::{mesh_functions, view_transformations::position_world_to_clip};
-import package::shaders::terrain_clipmap_common::{
+import package::shaders::terrain::clipmap_common::{
     eye, heights, intervals, levels, normals, render_xz, settings, texel, unpack_normal,
 };
 @if(PREPASS_PIPELINE) import bevy_pbr::prepass::io::VertexOutput;

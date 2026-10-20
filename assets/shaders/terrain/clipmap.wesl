@@ -1,17 +1,17 @@
 // Terrain v2's surface (crates/terrain_render/src/clipmap): one material function at every
 // distance. Per pixel, the control clipmap names the ground's three heaviest surfaces (dithered
 // between two levels by the pixel's footprint, world::terrain_control); they blend by their
-// heights (terrain_blend.wesl). Ground grass mostly covers takes one plain colour sample
+// heights (terrain/blend.wesl). Ground grass mostly covers takes one plain colour sample
 // under its field's colour; other surfaces sample the pack's textures, with anti-tiling and their
 // normal maps near the camera and one sample each further out. The normal under them comes per pixel
 // from the height clipmap at the pixel's footprint.
 import package::shaders::lighting::pbr_lighting::apply_pbr_lighting;
-import package::shaders::terrain_clipmap_common::{clipmap_normal, intervals, leaf_height, leaf_spacing, levels, node_of, origin_samples, resident_level, settings, wear_slot};
-import package::shaders::terrain_wear::{WEAR_TEXEL, bare_share, rut_at, rut_parallax, wear_at, wear_patch, wheel_grooves};
+import package::shaders::terrain::clipmap_common::{clipmap_normal, intervals, leaf_height, leaf_spacing, levels, node_of, origin_samples, resident_level, settings, wear_slot};
+import package::shaders::terrain::wear::{WEAR_TEXEL, bare_share, rut_at, rut_parallax, wear_at, wear_patch, wheel_grooves};
 import package::shaders::weather::ground_wetness::apply_rain_puddles;
 import package::shaders::lighting::surface::surface_weather;
-import package::shaders::terrain_stochastic::{quarter_turn, stochastic_vertex_turn, stochastic_vertex_offset};
-import package::shaders::terrain_blend::{BLEND_DEPTH, BLEND_HEIGHT, height_blend};
+import package::shaders::terrain::stochastic::{quarter_turn, stochastic_vertex_turn, stochastic_vertex_offset};
+import package::shaders::terrain::blend::{BLEND_DEPTH, BLEND_HEIGHT, height_blend};
 import bevy_pbr::render::mesh_view_bindings::{globals, view};
 import bevy_pbr::{
     render::forward_io::{FragmentOutput, VertexOutput},
@@ -28,7 +28,7 @@ struct ClipmapSurface { texture: vec4<f32>, material: vec4<f32>, grass: vec4<f32
 @group(constants::MATERIAL_BIND_GROUP) @binding(8) var repeat_sampler: sampler;
 @group(constants::MATERIAL_BIND_GROUP) @binding(9) var normal_material: texture_2d_array<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(10) var macro_variation: texture_2d<f32>;
-// Road wear of the cells around the camera, one layer per toroidal slot (terrain_wear.wesl).
+// Road wear of the cells around the camera, one layer per toroidal slot (terrain/wear.wesl).
 @group(constants::MATERIAL_BIND_GROUP) @binding(11) var wear_pages: texture_2d_array<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(12) var wear_sampler: sampler;
 

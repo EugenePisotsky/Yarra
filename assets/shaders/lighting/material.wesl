@@ -28,7 +28,7 @@ import bevy_pbr::render::pbr_functions::visibility_range_dither;
 @if(VISIBILITY_RANGE_DITHER && !PREPASS_PIPELINE && CROSSFADE_SAMPLE_MASK)
 import package::shaders::crossfade::crossfade_sample_mask;
 
-@if(TREE_BARK_BLEND) import package::shaders::tree_bark::blend_upper_bark;
+@if(TREE_BARK_BLEND) import package::shaders::tree::bark::blend_upper_bark;
 
 @if(MESHLET_MESH_MATERIAL_PASS)
 import bevy_pbr::meshlet::visibility_buffer_resolve::resolve_vertex_output;
@@ -108,7 +108,7 @@ fn fragment(
 
 @if(TREE_CROWN_SHADING && VERTEX_COLORS) {
     // Crown-shaded tree foliage stores crown occlusion in vertex colour
-    // (crates/engine/src/tree_wind/material.rs). Apply it to indirect lighting;
+    // (crates/engine/src/trees/material.rs). Apply it to indirect lighting;
     // pbr_lighting handles the separate crown self-shadow / cascade handoff.
     // Remove Bevy's vertex tint so occlusion never changes leaf albedo itself.
     // MSAA evaluates edge pixels at the pixel centre, which can lie outside a small distant
@@ -135,7 +135,7 @@ fn fragment(
     pbr_input.diffuse_occlusion *= bark_sky;
 }
 
-    // Two-layer tree bark (crates/engine/src/tree_wind/bark.rs): vertex colour alpha
+    // Two-layer tree bark (crates/engine/src/trees/bark.rs): vertex colour alpha
     // blends the lower bark built above towards the upper bark.
     // Clamped for the same reason as crown occlusion: MSAA extrapolates vertex colour on
     // thin branches.

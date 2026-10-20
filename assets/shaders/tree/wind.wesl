@@ -1,9 +1,9 @@
-// The wind every tree shares (crates/engine/src/tree_wind.rs) and how it moves tree meshes
-// (tree_wind.wesl) and impostors (tree_impostor.wesl). Bindings stay with those shaders: here
+// The wind every tree shares (crates/engine/src/trees/wind.rs) and how it moves tree meshes
+// (tree/material.wesl) and impostors (tree/impostor.wesl). Bindings stay with those shaders: here
 // the pose, the tree's profile and the viewer come in as arguments, so tests run these exact
-// functions (crates/engine/src/tree_wind/gpu_tests.rs).
+// functions (crates/engine/src/trees/wind/gpu_tests.rs).
 
-// tree_wind.rs WindBuffer: this frame's pose and the previous one, for temporal motion.
+// trees/wind.rs WindBuffer: this frame's pose and the previous one, for temporal motion.
 struct WindPose {
     field: vec4<f32>,
     phases: vec4<f32>,
@@ -17,7 +17,7 @@ struct WindFrames {
     previous: WindPose,
 }
 
-// The attributes of a tree vertex the wind reads: tree_wind.wesl's Vertex without Bevy's IO.
+// The attributes of a tree vertex the wind reads: tree/material.wesl's Vertex without Bevy's IO.
 struct TreeVertex {
     position: vec3<f32>,
     @if(TREE_HIERARCHY)

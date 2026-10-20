@@ -127,19 +127,19 @@ impl MaterialExtension for TreeWindExtension {
     }
 
     fn prepass_fragment_shader() -> ShaderRef {
-        "shaders/tree_wind_prepass.wesl".into()
+        "shaders/tree/wind_prepass.wesl".into()
     }
 
     fn vertex_shader() -> ShaderRef {
-        "shaders/tree_wind.wesl".into()
+        "shaders/tree/material.wesl".into()
     }
 
     fn prepass_vertex_shader() -> ShaderRef {
-        "shaders/tree_wind.wesl".into()
+        "shaders/tree/material.wesl".into()
     }
 
     fn deferred_vertex_shader() -> ShaderRef {
-        "shaders/tree_wind.wesl".into()
+        "shaders/tree/material.wesl".into()
     }
 }
 
