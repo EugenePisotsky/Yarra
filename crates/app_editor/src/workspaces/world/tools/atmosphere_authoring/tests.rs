@@ -116,7 +116,7 @@ fn recovery_and_conflict_keep_the_local_profile() {
     assert!(!set.complete(Ok(world_db::AtmosphereWriteResult::Conflict {
         space: id,
         revision: 2,
-        actual: AtmosphereProfile::default()
+        actual: Box::default()
     })));
     assert_eq!(set.entries[&id].current, changed);
     set.resolve_conflict(true);

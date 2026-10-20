@@ -13,10 +13,11 @@ pub struct AtmosphereWrite {
 #[derive(Debug, Clone)]
 pub enum AtmosphereWriteResult {
     Committed(Vec<(WorldSpaceId, i64, AtmosphereProfile)>),
+    /// The profile someone else saved; boxed, as it is rare and large.
     Conflict {
         space: WorldSpaceId,
         revision: i64,
-        actual: AtmosphereProfile,
+        actual: Box<AtmosphereProfile>,
     },
 }
 
@@ -88,7 +89,7 @@ impl ProjectWriter {
                 return Ok(AtmosphereWriteResult::Conflict {
                     space: w.space,
                     revision,
-                    actual: decode(&bytes)?,
+                    actual: Box::new(decode(&bytes)?),
                 });
             }
         }

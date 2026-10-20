@@ -158,7 +158,7 @@ impl WorkingSet {
                 revision,
                 actual,
             }) => {
-                self.conflict = Some((space, revision, actual));
+                self.conflict = Some((space, revision, *actual));
                 self.error = Some(
                     "Atmosphere changed in the project database. Resolve the conflict below."
                         .into(),
