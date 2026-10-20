@@ -424,6 +424,20 @@ impl ClipmapTerrain {
     /// The drawn leaf surface's height under a render-space position, once its node is
     /// resident: the same triangles the patch draws within the leaf range.
     pub fn ground_height(&self, render: Vec3, origin: &WorldOrigin) -> Option<f32> {
+        let (key, local) = self.leaf_under(render, origin)?;
+        let field = self.resident.leaves.get(&key)?;
+        Some(field.sample_height(local, self.cell_size))
+    }
+
+    /// Whether the leaf under a render-space position is resident, so that within the leaf
+    /// range the ground there is drawn from its full-detail samples.
+    pub fn leaf_resident(&self, render: Vec3, origin: &WorldOrigin) -> bool {
+        self.leaf_under(render, origin)
+            .is_some_and(|(key, _)| self.resident.leaves.contains_key(&key))
+    }
+
+    /// The leaf node under a render-space position and the position within it.
+    fn leaf_under(&self, render: Vec3, origin: &WorldOrigin) -> Option<(TerrainNodeKey, [f32; 2])> {
         let space = self.space?;
         let cell = f64::from(self.cell_size);
         let [ox, oz] = origin.cell().origin(self.cell_size);
@@ -434,12 +448,11 @@ impl ClipmapTerrain {
             x: (x / cell).floor() as i32,
             z: (z / cell).floor() as i32,
         };
-        let field = self.resident.leaves.get(&key)?;
         let local = [
             (x - f64::from(key.x) * cell) as f32,
             (z - f64::from(key.z) * cell) as f32,
         ];
-        Some(field.sample_height(local, self.cell_size))
+        Some((key, local))
     }
 }
 

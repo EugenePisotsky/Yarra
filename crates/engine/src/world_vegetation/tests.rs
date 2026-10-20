@@ -246,3 +246,34 @@ fn characters_press_grass_along_their_motion_nearest_first() {
     );
     assert!((benders[0].velocity - Vec2::new(0.0, 1.5)).length() < 1e-5);
 }
+
+#[test]
+fn grass_waits_for_its_leaf_and_for_any_ground() {
+    let mut app = app();
+    for x in [0, 1] {
+        let terrain = surface(1, x, 1.);
+        app.world_mut().spawn(fields(&terrain));
+        app.world_mut().spawn(terrain);
+    }
+    app.insert_resource(ClipmapTerrain::test_flat(
+        WorldSpaceId(1),
+        CellCoord::ZERO,
+        16.,
+        1.,
+    ));
+    app.update();
+    let scene = app.world().resource::<VegetationSceneState>().scene();
+    assert_eq!(scene.pages.len(), 2);
+    let waiting = scene
+        .pages
+        .iter()
+        .find(|page| page.origin_xz == [16., 0.])
+        .map(VegetationTerrainGate::page_id)
+        .unwrap();
+    let gate = app.world().resource::<VegetationTerrainGate>();
+    assert!(!gate.block_all);
+    assert_eq!(gate.blocked_pages, [waiting].into());
+    app.insert_resource(ClipmapTerrain::default());
+    app.update();
+    assert!(app.world().resource::<VegetationTerrainGate>().block_all);
+}

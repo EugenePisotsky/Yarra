@@ -9,13 +9,13 @@ use vegetation::{
 };
 use vegetation_render::{
     GrassBender, GrassBenders, MAX_GRASS_BENDERS, VegetationLodFocus, VegetationRenderPlugin,
-    VegetationSceneState,
+    VegetationSceneState, VegetationTerrainGate,
 };
 use world::{CellCoord, PageKey, WorldSpaceId};
 
 use crate::{
-    StreamedTerrainSurface, StreamedVegetationFieldPage, WorldCatalog, WorldOrigin,
-    WorldStreamingSystems, WorldViewpoint,
+    ClipmapTerrain, StreamedTerrainSurface, StreamedVegetationFieldPage, WorldCatalog,
+    WorldOrigin, WorldStreamingSystems, WorldViewpoint,
 };
 
 /// Installs the renderer, joins published resident sources and updates grass focus. Requires
@@ -50,7 +50,8 @@ impl Plugin for WorldVegetationPlugin {
         .init_resource::<GrassLooks>()
         .add_systems(
             Update,
-            sync_scene
+            (sync_scene, gate_grass_on_ground)
+                .chain()
                 .in_set(WorldVegetationSystems)
                 .after(WorldStreamingSystems),
         )
@@ -237,6 +238,39 @@ fn sync_scene(
     previous.keys = keys;
     previous.pairs = pairs;
     previous.frame = Some(frame);
+}
+
+/// Grass stands on its page's full-detail heights. Where the clipmap still draws a coarser
+/// level because the cell's leaf is not resident yet (at start, after a teleport, on a fast
+/// move), blades would float or sink, so the page waits for its leaf; all grass waits while
+/// no ground is resident.
+fn gate_grass_on_ground(
+    terrain: Option<Res<ClipmapTerrain>>,
+    origin: Res<WorldOrigin>,
+    scene: Res<VegetationSceneState>,
+    mut gate: ResMut<VegetationTerrainGate>,
+) {
+    let Some(terrain) = terrain else {
+        return;
+    };
+    let mut next = VegetationTerrainGate {
+        block_all: !terrain.has_ground(),
+        ..default()
+    };
+    if !next.block_all {
+        next.blocked_pages = scene
+            .scene()
+            .pages
+            .iter()
+            .filter(|page| {
+                let half = page.size * 0.5;
+                let centre = Vec3::new(page.origin_xz[0] + half, 0., page.origin_xz[1] + half);
+                !terrain.leaf_resident(centre, &origin)
+            })
+            .map(VegetationTerrainGate::page_id)
+            .collect();
+    }
+    gate.set_if_neq(next);
 }
 
 fn update_lod_focus(
