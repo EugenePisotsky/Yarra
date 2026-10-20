@@ -9,12 +9,14 @@ Restore local assets according to [pack contracts](../assets/README.md). License
 ```sh
 uv run --with numpy --with pillow python tools/import_terrain_surfaces.py
 uv run python tools/compile_terrain_textures.py
-cargo run -p yarra-world-cook -- init
+cargo build --release -p yarra-world-cook
+content/reteya/scripts/build_world.sh tmp/reteya
+content/reteya/scripts/install_world.sh tmp/reteya
 cargo run -p yarra-app-editor
 cargo run --release -p yarra-app-game
 ```
 
-`init` creates source only if absent, then cooks it: the procedural Phase 0 island (8 km of sea and island, a few minutes to cook), with start views in `content/world.project.views/` (`spawn`, `beach`, `summit`, `hills`), e.g. `cargo run --release -p yarra-app-game -- --start-view content/world.project.views/beach.ron`. The local default world is currently imported from Houdini instead (see [Terrain from Houdini](#terrain-from-houdini)). To start over, delete the project and runtime databases and run `init` again. `cook` continues the existing runtime: it recompiles only cells whose sources changed, updates the terrain hierarchy above them and rebuilds the control tiles. `cook --full` rebuilds the runtime from scratch. `cook` requires existing source and never creates a demo. The editor defaults to `content/world.project.sqlite`; the game reads `assets/generated/world.runtime.sqlite`. A fresh public clone needs the local pack inputs before cooking succeeds.
+The world is Reteya, the only one: `build_world.sh` builds it from its kept inputs (Houdini export, masks, forest plan, route; [Reteya](../content/reteya/README.md)) in about 6 minutes, and `install_world.sh` makes it the default one, with start views in `content/world.project.views/` (`start`, `journey`, `landing`, `*-far`, …), e.g. `cargo run --release -p yarra-app-game -- --start-view content/world.project.views/journey.ron`. To start over, build and install again with `--replace`. `cook` continues the existing runtime: it recompiles only cells whose sources changed, updates the terrain hierarchy above them and rebuilds the control tiles. `cook --full` rebuilds the runtime from scratch. `cook` requires existing source and never creates a world. The editor defaults to `content/world.project.sqlite`; the game reads `assets/generated/world.runtime.sqlite`. A fresh public clone needs the local pack inputs before cooking succeeds.
 
 **Save** writes source edits. **Save & Publish** also cooks and atomically replaces the runtime. To publish from a terminal:
 
@@ -22,7 +24,7 @@ cargo run --release -p yarra-app-game
 cargo run -p yarra-world-cook -- cook
 ```
 
-Explicit paths: `init PROJECT_DB RUNTIME_DB`, `cook PROJECT_DB RUNTIME_DB`, editor `--project-db PROJECT_DB --world-db RUNTIME_DB`, game `--world-db RUNTIME_DB`. The editor validates the source/runtime pair before opening its window. Recook outdated runtime data; source incompatibility requires an explicit replacement decision, not an automatic reset.
+Explicit paths: `cook PROJECT_DB RUNTIME_DB`, editor `--project-db PROJECT_DB --world-db RUNTIME_DB`, game `--world-db RUNTIME_DB`. The editor validates the source/runtime pair before opening its window. Recook outdated runtime data; source incompatibility requires an explicit replacement decision, not an automatic reset.
 
 ### Terrain from Houdini
 
@@ -30,11 +32,12 @@ A heightfield from a terrain tool defines the world: its footprint sets the cell
 
 ```sh
 /Applications/Houdini/Current/Frameworks/Houdini.framework/Versions/Current/Resources/bin/hython \
-  tools/houdini_export_heightfield.py ~/Dev/world_next.hipnc /tmp/island --start 2500 4330 \
-  --mask sand=beach_mask --mask rock=cliff_faces
-cargo run --release -p yarra-world-cook -- import-heightfield /tmp/island/heightfield.json
-cargo run --release -p yarra-app-game
+  tools/houdini_export_heightfield.py assets/local/terrain/reteya-detail-v13/reteya_detail_v13.hiplc \
+  tmp/export --node /obj/ISLAND/OUT_LAYERS --start 2910 3150 --mask sand --mask rock --mask scree
+cargo run --release -p yarra-world-cook -- import-heightfield tmp/export/heightfield.json tmp/world.project.sqlite tmp/world.runtime.sqlite
 ```
+
+Reteya's own export goes on through 1 m resampling, the mountain detail patches and the forest floors before its import; [its README](../content/reteya/README.md#how-the-inputs-were-made) lists the steps and `build_world.sh` the import.
 
 The script exports the display node's `height` volume (or `--node SOP`; `--height VOLUME` names another volume, such as the `mask` a Copernicus network outputs) with Houdini's axes unchanged: in the top view +X is right and +Z is down. Each `--mask NAME[=VOLUME]` exports a volume of the same heightfield as `NAME.u8`, 0–1 as 0–255; remap masks to 0–1 in Houdini, since the script clamps (and warns about) values outside. Mask names are lowercase letters, digits and underscores. Slope, height and their derivatives need no export: the cook computes them. Whole-metre spacing from a whole-metre origin lets the import use samples as they are; the script notes other grids.
 
@@ -60,11 +63,10 @@ Without an exported mask of the same name, `land` and `green` come from height a
 The island's Houdini export has `sand`, `rock` and `scree`; `tools/island_masks.py` derives the rest and writes a manifest that adds them, referring to the export's own files by absolute path:
 
 ```sh
-manifest=~/Dev/Assets/reteya_island/outputs/game_1m/current/heightfield.json
-uv run --with numpy --with scipy --with pillow python tools/forest_plan.py $manifest tmp/island/forest
-uv run --with numpy --with scipy python tools/island_masks.py $manifest tmp/island/masks \
-  --forest tmp/island/forest/forest.json
-cargo run --release -p yarra-world-cook -- import-heightfield tmp/island/masks/heightfield.json
+manifest=tmp/export/heightfield.json
+uv run --with numpy --with scipy --with pillow python tools/forest_plan.py $manifest tmp/export/forest
+uv run --with numpy --with scipy python tools/island_masks.py $manifest tmp/export/masks \
+  --forest tmp/export/forest/forest.json
 ```
 
 Sand splits by height into `beach` (below about 2.5 m, and the whole seabed) and `dune`; `coast` fades inland over about 40 m from the sand; the forest floors are the planned trees of each kind (forms by name: pines, spruces, and birches/oaks/maples/dead trees as broadleaf), blurred so a single tree or a small grove gets litter too. Re-run both after replanting, then `forest_plan.py --apply` plants the same seed.
@@ -89,7 +91,7 @@ The import resamples each scan to 1024² in linear light with wrapped borders, s
 `tools/render_world_map.py` draws a hand-coloured engraved map, in the style of an 18th-century chart, from the same heightfield export the import reads. `uv run` installs its NumPy, SciPy and Pillow:
 
 ```sh
-uv run tools/render_world_map.py ~/Dev/Assets/reteya_island/outputs/game_1m/current/heightfield.json \
+uv run tools/render_world_map.py assets/local/worlds/reteya-v13/heightfield.json \
   content/maps/reteya.map.json assets/generated/maps/reteya.png
 ```
 
@@ -421,7 +423,7 @@ For grass streaming/history regression, run `cargo test -p yarra-vegetation-rend
 
 **Roads:** activate Roads, choose a style, then New cart road and place two points. Edit control points, tangents and widths; extend/split with the tool controls. Road styles define wheel/center/shoulder wear, retained grass, ground mixtures and rut/relief variation. Explicit junctions connect 2–4 arms of any styles (Branch from point, Connect to point); the junction's worn patch takes the style of the road joined to. A style with One track (footpath) has no wheel spacing: one worn track down the middle. Save checkpoints roads and painter changes together; publication derives ground, grass and relief from the same source.
 
-Tools can lay roads out instead: `cargo run --release -p yarra-world-cook -- import-roads content/roads/island.ron [PROJECT RUNTIME]` reads cart-track styles (`CartTrackProfile` parameters plus the terrain surfaces their Ground preset lays down) and routes (world XZ points the road curves through, with smooth cubic handles; `from: ("Road name", point)` starts a branch at a point of a road listed before it, joined by a junction in that road's style), writes them into the project by name (importing again replaces them) and cooks. The island's routes were found as least-cost paths over its slopes. `tools/forest_plan.py ... --roads content/roads/island.ron` keeps trunks 1.5 m beyond a road's edge (shrubs half that); crowns may overhang. Styles take `track_wander` and `track_wander_length` beside the editor's parameters; style changes need a recook, and new style fields a rebuilt world (the island: rebuild with the island build steps and import the roads again). The cook draws roads into each page's wear field, and near terrain wears the ground per pixel from it; `cargo test -p yarra-terrain-render near_terrain_wears -- --ignored` (native GPU) checks the shader's laying against the cook's after changing either.
+Tools can lay roads out instead: `cargo run --release -p yarra-world-cook -- import-roads content/reteya/roads.ron [PROJECT RUNTIME]` reads cart-track styles (`CartTrackProfile` parameters plus the terrain surfaces their Ground preset lays down) and routes (world XZ points the road curves through, with smooth cubic handles; `from: ("Road name", point)` starts a branch at a point of a road listed before it, joined by a junction in that road's style), writes them into the project by name (importing again replaces them) and cooks. The island's routes were found as least-cost paths over its slopes. `tools/forest_plan.py ... --roads content/roads/island.ron` keeps trunks 1.5 m beyond a road's edge (shrubs half that); crowns may overhang. Styles take `track_wander` and `track_wander_length` beside the editor's parameters; style changes need a recook, and new style fields a rebuilt world (the island: rebuild with the island build steps and import the roads again). The cook draws roads into each page's wear field, and near terrain wears the ground per pixel from it; `cargo test -p yarra-terrain-render near_terrain_wears -- --ignored` (native GPU) checks the shader's laying against the cook's after changing either.
 
 **Atmosphere:** open World → Atmosphere for the active space's profile and preview time/weather. **Weather** edits each preset (clouds, visibility, fog and skylight grey, exposure, wind, rain) and the random sequence (change and hold durations, next-state weights); the preview row shows any preset with a chosen wetness, without saving. Apply authored profile edits through normal undo/save/publication. Preview transport and temporary quality controls do not rewrite startup time/weather merely by being adjusted. **Game start** holds the phase the game starts at, with clouds running, as the game would first show the world; turn it off to edit. Clouds Off removes rendering/shadows, not the weather's ambient response.
 
@@ -709,19 +711,15 @@ correctness coverage, not a dense-forest performance measurement.
 
 ## Explicit fixtures and catalog tools
 
-Use fresh paths for disposable worlds:
+Reteya is the only world. Unit tests build two small fixtures in code, which the cook can also write to a fresh path for a test by hand:
 
 ```sh
 cargo run -p yarra-world-cook -- create-road-demo tmp/roads.project.sqlite
 cargo run -p yarra-world-cook -- cook tmp/roads.project.sqlite tmp/roads.runtime.sqlite
 cargo run -p yarra-app-editor -- --project-db tmp/roads.project.sqlite --world-db tmp/roads.runtime.sqlite
-python3 tools/hill_landscape.py prepare
-python3 tools/hill_landscape.py game --view summit
-python3 tools/hill_landscape.py editor --view valley
-python3 tools/hill_landscape.py descent
 ```
 
-`create-demo` provides the historical 32 m grass fixture; `create-mountain-fixture` and `create-hill-fixture` provide terrain fixtures. `create-island-fixture` writes the default island (and its views) to another path without cooking. The hill helper uses `tmp/hill-landscape`, preserves existing source, and supports `--recook`. It is separate from normal game content. Pure compiler fixtures remain available as `layered_meadow` and `cart_track` examples in `yarra-environment-compile`.
+`create-demo` is the 32 m grass fixture, `create-road-demo` the 8 m road fixture. Pure compiler fixtures remain available as `layered_meadow` and `cart_track` examples in `yarra-environment-compile`.
 
 `import-grass PACK_RON [PROJECT_DB RUNTIME_DB]` replaces the grass catalog from a grass pack and publishes; it is not a read-only preview.
 

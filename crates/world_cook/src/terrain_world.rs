@@ -1,9 +1,9 @@
-//! Island worlds built from a height function: the procedural Phase 0 island and imported
-//! heightfields share their catalog, cells, paint and start views.
+//! Worlds imported from a heightfield export: their catalog, cells, generated paint and start
+//! views.
 use super::*;
 use environment::CoverageTile;
 use world::WorldViewBookmark;
-use world_db::{ImportedTerrainCell, SourceEnvironmentCellRecord};
+use world_db::ImportedTerrainCell;
 
 /// 1 m geometry and paint; ground weights are still compiled at 0.5 m.
 pub(crate) const HEIGHT_SIDE: usize = 33;
@@ -206,38 +206,6 @@ pub(crate) fn base_document(name: &str, bounds: [f32; 2], sea_level: f32) -> Pro
     project
 }
 
-/// Adds imported cells to a whole document, as the import writer stores them.
-pub(crate) fn push_cell(project: &mut ProjectDocument, imported: ImportedTerrainCell) {
-    let space = project.default_world_space;
-    let definition = &project.environments[0];
-    project.cells.push(SourceCellRecord {
-        space,
-        cell: imported.cell,
-        height: imported.height,
-        source_revision: 1,
-    });
-    if let Some(heights) = imported.heights {
-        project
-            .terrain_cell_heightfields
-            .push(SourceTerrainCellHeightfieldRecord {
-                space,
-                cell: imported.cell,
-                resolution: imported.resolution,
-                heights,
-                source_revision: 1,
-            });
-    }
-    if !imported.tiles.is_empty() {
-        project.environment_cells.push(SourceEnvironmentCellRecord {
-            space,
-            cell: imported.cell,
-            source_revision: 1,
-            definition_revision: definition.revision,
-            tiles: imported.tiles,
-        });
-    }
-}
-
 /// The generated masks in `GENERATED_MASKS` order: dry meadow on land, green meadow in the
 /// lowlands, bare ground on the shore, steep slopes and summits, sand along the shore (also
 /// under water), scree and rock on steep slopes. Coast, dune and forest floors come only from
@@ -352,24 +320,6 @@ pub(crate) fn highest(height: &HeightFn, centre: Vec2, radius: f32) -> Vec2 {
         }
         spacing = (spacing / 20.).max(2.);
     }
-}
-
-/// The heading from `p` whose terrain rises least above eye level within 1.5 km: the most
-/// open view.
-pub(crate) fn open_heading(height: &HeightFn, p: Vec2) -> Vec2 {
-    let eye = height(p) + 2.;
-    (0..72)
-        .map(|i| Vec2::from_angle((i as f32 * 5.).to_radians()))
-        .min_by(|a, b| {
-            let rise = |direction: Vec2| {
-                (1..=75)
-                    .map(|step| step as f32 * 20.)
-                    .map(|d| (height(p + direction * d) - eye) / d)
-                    .fold(f32::NEG_INFINITY, f32::max)
-            };
-            rise(*a).total_cmp(&rise(*b))
-        })
-        .unwrap()
 }
 
 /// A start view standing at `p` and looking along `look`. Low pitches keep the horizon in

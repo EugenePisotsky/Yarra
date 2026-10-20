@@ -1,10 +1,5 @@
-//! Explicit geometry acceptance fixture; never used by normal initialization.
+//! A mountain of nodes for the cook's hierarchy tests.
 use super::*;
-
-pub fn create_mountain_fixture(path: &Path) -> Result<()> {
-    write_project_database(path, &mountain_project(32))
-        .with_context(|| format!("failed to create mountain fixture at {}", path.display()))
-}
 
 pub(crate) fn mountain_project(half_cells: i32) -> ProjectDocument {
     let mut project = demo_project_document();

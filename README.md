@@ -16,23 +16,25 @@ These are the five maintained project documents. Update them instead of adding i
 
 ## Run
 
-Restore the ignored local assets described in [asset setup](assets/README.md), then prepare and initialize the world from the repository root:
+Restore the ignored local assets described in [asset setup](assets/README.md), then prepare the terrain textures and build the world, Reteya ([how](content/reteya/README.md)), from the repository root:
 
 ```sh
 uv run --with numpy --with pillow python tools/import_terrain_surfaces.py
 uv run python tools/compile_terrain_textures.py
-cargo run -p yarra-world-cook -- init
+cargo build --release -p yarra-world-cook
+content/reteya/scripts/build_world.sh tmp/reteya
+content/reteya/scripts/install_world.sh tmp/reteya
 cargo run -p yarra-app-editor
 ```
 
-**Save** updates source; **Save & Publish** also updates the game's runtime. `init` creates missing source without resetting existing edits. To publish and play:
+**Save** updates source; **Save & Publish** also updates the game's runtime. To publish and play:
 
 ```sh
 cargo run -p yarra-world-cook -- cook
 cargo run --release -p yarra-app-game
 ```
 
-Default files are `content/world.project.sqlite` and `assets/generated/world.runtime.sqlite`, both ignored. `init` builds a procedural Phase 0 test island in an 8 km sea; the local default world is currently imported from Houdini instead (see [workflows](docs/WORKFLOWS.md#terrain-from-houdini)). Start views live in `content/world.project.views/`. The small 8 m authoring world is `create-road-demo`. See workflows for explicit paths, recovery and disposable fixtures.
+Default files are `content/world.project.sqlite` and `assets/generated/world.runtime.sqlite`, both ignored: Reteya, the one world, whose Houdini source and route are kept as described in [its README](content/reteya/README.md). Start views live in `content/world.project.views/`. Unit tests use two small fixtures built in code. See workflows for explicit paths and recovery.
 
 Move with WASD/gamepad or a ground click/tap; orbit with right-drag/two-finger horizontal scrolling/right stick. **F1** opens the unified Performance panel. Normal presentation uses 50% physical world resolution, 4× MSAA and native-resolution UI; Auto selects MetalFX Spatial where supported, otherwise Linear. Temporal remains an explicit prototype. **F1 → FPS limit** selects Follow display / 30 / 60 / 120; `--fps 60` chooses a launch cap. Optional grass counters default off. `--diagnostics panel` keeps F1 without timing probes; `--diagnostics off` omits F1 and instrumentation. Full diagnostics remain the default. Run with `--help` for validated launch options.
 

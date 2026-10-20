@@ -1,8 +1,8 @@
-// Roads of reteya_starter_v06, generated from its route guides (design.json: journey,
+// Roads of Reteya, generated from its route guides (design.json: journey,
 // village_loop, east_loop, hamlet_spur) by guides_to_roads.py. Corners are rounded within
 // 30 m and resampled every 40 m so the smooth spans stay on the graded guides.
 // The journey stops at both pads of the planned 52 m gorge bridge (no bridge mesh yet).
-// Styles are copied from content/roads/island.ron.
+// Styles are kept from the previous roads.ron.
 (
     styles: [
         // A two-track cart road: wheel paths sunk into ruts within a broad corridor, grass down

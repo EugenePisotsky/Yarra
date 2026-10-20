@@ -1,18 +1,20 @@
 # Authored content
 
-`world.project.sqlite` is the current editable world: the island imported from Houdini
-(see [Terrain from Houdini](../docs/WORKFLOWS.md#terrain-from-houdini)) with its painted
-ground and grass layers, shared presets and placed trees, on 32 m cells. The editor
-opens it by default. The game reads only its published `assets/generated/world.runtime.sqlite`.
+`world.project.sqlite` is the editable world, and the only one: Reteya ([reteya](reteya/README.md)),
+built from its Houdini source and route, with its ground and grass layers, presets and planted
+forest on 32 m cells. The editor opens it by default; the game reads only its published
+`assets/generated/world.runtime.sqlite`. Start views are in `world.project.views/` (a copy of
+`reteya/views/`).
 
-For a fresh checkout without a project, `init` creates and cooks the procedural island:
+A checkout without the world builds it from the local inputs (see the Reteya README):
 
 ```bash
-cargo run -p yarra-world-cook -- init
-cargo run -p yarra-app-editor
+cargo build --release -p yarra-world-cook
+content/reteya/scripts/build_world.sh tmp/reteya
+content/reteya/scripts/install_world.sh tmp/reteya
 ```
 
-`init` creates a world only when the project is absent. Normal **Save** writes source
+Normal **Save** writes source
 changes; **Save & Publish** cooks and atomically replaces the runtime. The command-line
 equivalent is:
 
@@ -20,8 +22,8 @@ equivalent is:
 cargo run -p yarra-world-cook -- cook
 ```
 
-Test fixtures use the explicit `create-demo` / `create-road-demo` commands and separate
-paths. Grass comes from the grass pack (`assets/packs/grass/`); `import-grass` puts an
+Unit tests build two small fixtures in code (`create-demo`, `create-road-demo` on the
+command line write them to a path of your choice); they are not worlds to author. Grass comes from the grass pack (`assets/packs/grass/`); `import-grass` puts an
 edited pack into the world.
 
 Source and generated databases remain local and ignored by Git. Models live in

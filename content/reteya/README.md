@@ -1,8 +1,10 @@
-# Reteya, the island to keep
+# Reteya, the world
 
-The user's chosen version of Reteya (October 19, 2026): the island's shape and the route across the
-first island are what must survive engine rewrites. Everything else — formats, cooks, renderers — may
-change; rebuild the world from these inputs.
+The project's one world: the user's chosen version of Reteya (October 19, 2026). The game and the
+editor open it by default, and tools, tests on real terrain and future adjustments use it and its
+Houdini source. The island's shape and the route across the first island are what must survive engine
+rewrites. Everything else — formats, cooks, renderers — may change; rebuild the world from these
+inputs.
 
 ## What it is
 
@@ -22,33 +24,41 @@ change; rebuild the world from these inputs.
 | Build and helper scripts | `content/reteya/scripts/` | Git |
 | Final terrain inputs: 1 m heights, 16 masks, forest floors | `assets/local/worlds/reteya-v13/heightfield.json` + `terrain/` | Local only |
 | Forest plan and its extra input masks | `assets/local/worlds/reteya-v13/forest.json`, `planning/` | Local only |
-| Houdini source | `assets/local/terrain/reteya-detail-v13/reteya_detail_v13.hiplc`: `/obj/ISLAND` (v09 = v08 geometry + ground stage) and `/obj/DETAIL` (1 m mountain patches) | Local only |
+| Houdini source, the only one | `assets/local/terrain/reteya-detail-v13/reteya_detail_v13.hiplc`: `/obj/ISLAND` (v09 = v08 geometry + ground stage) and `/obj/DETAIL` (1 m mountain patches); its `scripts/` and `data/` beside it, `design.json` with the route guides | Local only |
+| The default world it builds | `content/world.project.sqlite` + `content/world.project.views/`, `assets/generated/world.runtime.sqlite` | Local only |
 
 The local files are not in Git (licensed textures and large binaries live under `assets/local/`).
 Back that folder up.
 
-## Rebuild a world
+## Rebuild the world
 
 ```sh
 cargo build --release -p yarra-world-cook
-content/reteya/scripts/build_world.sh tmp/reteya      # about 9 minutes
-cargo run --release -p yarra-app-game -- --world-db tmp/reteya/world.runtime.sqlite \
-  --start-view tmp/reteya/world.project.views/start.ron
+content/reteya/scripts/build_world.sh tmp/reteya      # about 6 minutes
+content/reteya/scripts/install_world.sh tmp/reteya --replace
+cargo run --release -p yarra-app-game
 ```
+
+`install_world.sh` moves the build into the default paths; without `--replace` it will not overwrite
+an existing default world. Edits made in the editor live only in the installed project, so a rebuild
+from the inputs drops them.
 
 `build_world.sh` imports the terrain into a new project, the 13 vegetation packs, the roads, plants
 the forest (`tools/forest_plan.py`, keeping channels, wet ground, rock and snow open) and cooks. A fresh
-build on October 19 matched the iterated test world (`tmp/reteya-v13`) view for view.
+build on October 19 matched the iterated test world view for view; the October 20 build (schema 32)
+took 6 minutes.
 
 ## How the inputs were made
 
 1. Houdini: `/obj/ISLAND/OUT_LAYERS` exported at 4.88 m (`tools/houdini_export_heightfield.py`) and
-   resampled to 1 m (`~/Dev/Assets/reteya_island/scripts/export_game.py`); the ground stage's masks
-   resampled to 1 m the same way.
+   resampled to 1 m (`scripts/export_game.py`); the ground stage's masks resampled to 1 m the same
+   way. The island was first designed in `~/Dev/Assets/reteya_island.hiplc`; its geometry has lived
+   in the v13 file since v09, so that design project is history, not an input.
 2. `/obj/DETAIL` rebuilds the mountain patches at 1 m (`scripts/rebuild_detail.py` in the Houdini
    folder) into `exports/detail/patches.json`; `scripts/merge_patches.py` lays them over the 1 m
    export.
 3. `tools/forest_plan.py` plans the forest from the merged terrain; `tools/island_masks.py` derives the
    forest floors from the plan.
-4. `scripts/guides_to_roads.py` turns the design's route guides into `roads.ron` (`import-roads` joins
-   a road only at its start; junction arms must diverge by 30° or more).
+4. `scripts/guides_to_roads.py` turns the design's route guides into `roads.ron`
+   (`guides_to_roads.py assets/local/terrain/reteya-detail-v13/design.json content/reteya/roads.ron
+   OUT`; `import-roads` joins a road only at its start; junction arms must diverge by 30° or more).

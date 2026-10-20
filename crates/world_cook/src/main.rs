@@ -41,23 +41,12 @@ fn main() -> Result<()> {
         );
         return Ok(());
     }
-    if command == "create-demo"
-        || command == "create-road-demo"
-        || command == "create-mountain-fixture"
-        || command == "create-hill-fixture"
-        || command == "create-island-fixture"
-    {
+    if command == "create-demo" || command == "create-road-demo" {
         let project = PathBuf::from(arguments.next().context("expected a new PROJECT_DB path")?);
         if arguments.next().is_some() {
             bail!("usage: yarra-world-cook {command} PROJECT_DB");
         }
-        if command == "create-island-fixture" {
-            yarra_world_cook::create_world_project(&project)?;
-        } else if command == "create-hill-fixture" {
-            yarra_world_cook::create_hill_fixture(&project)?;
-        } else if command == "create-mountain-fixture" {
-            yarra_world_cook::create_mountain_fixture(&project)?;
-        } else if command == "create-road-demo" {
+        if command == "create-road-demo" {
             yarra_world_cook::create_road_demo_project(&project)?;
         } else {
             yarra_world_cook::create_demo_project(&project)?;
@@ -106,9 +95,9 @@ fn main() -> Result<()> {
     } else {
         None
     };
-    if command != "cook" && command != "init" && heightfield.is_none() {
+    if command != "cook" && heightfield.is_none() {
         bail!(
-            "unknown command {command:?}; expected `init`, `cook`, `import-heightfield`, `create-demo`, `create-road-demo`, `create-mountain-fixture`, `create-hill-fixture`, `create-island-fixture`, `import-grass`, `import-roads` or `import-assets`"
+            "unknown command {command:?}; expected `cook`, `import-heightfield`, `create-demo`, `create-road-demo`, `import-grass`, `import-roads` or `import-assets`"
         );
     }
 
@@ -145,14 +134,9 @@ fn main() -> Result<()> {
         );
     }
 
-    if command == "init" && !project_path.exists() {
-        yarra_world_cook::create_world_project(project_path)
-            .with_context(|| format!("could not initialize {}", project_path.display()))?;
-        println!("created authoring database: {}", project_path.display());
-    }
     if !project_path.exists() {
         bail!(
-            "project {} does not exist; initialize a new world with `cargo run -p yarra-world-cook -- init` or supply an existing PROJECT_DB",
+            "project {} does not exist; build Reteya with `content/reteya/scripts/build_world.sh` (see content/reteya/README.md) or supply an existing PROJECT_DB",
             project_path.display()
         );
     }

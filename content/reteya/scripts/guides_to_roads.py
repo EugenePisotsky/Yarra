@@ -1,4 +1,8 @@
-"""Turn reteya_starter_v06 route guides into an `import-roads` RON file.
+"""Turn Reteya's route guides into an `import-roads` RON file.
+
+Usage: guides_to_roads.py DESIGN_JSON STYLES_RON OUT_RON. The guides are the Houdini source's
+(assets/local/terrain/reteya-detail-v13/design.json); the styles block is copied from STYLES_RON,
+usually the current roads.ron.
 
 The guides are graded polylines. Corners are rounded within a small radius and the result is
 resampled, so the import's smooth spans stay on the guide. The journey stops at both bridge pads
@@ -160,11 +164,11 @@ roads += village_back + village + woodland + hamlet + hamlet_back
 
 styles = re.search(r"\n    styles: \[\n.*?\n    \],\n", styles_source, re.S).group(0)
 lines = [
-    "// Roads of reteya_starter_v06, generated from its route guides (design.json: journey,",
+    "// Roads of Reteya, generated from its route guides (design.json: journey,",
     "// village_loop, east_loop, hamlet_spur) by guides_to_roads.py. Corners are rounded within",
     f"// {CORNER:g} m and resampled every {SPACING:g} m so the smooth spans stay on the graded guides.",
     "// The journey stops at both pads of the planned 52 m gorge bridge (no bridge mesh yet).",
-    "// Styles are copied from content/roads/island.ron.",
+    "// Styles are kept from the previous roads.ron.",
     "(" + styles.rstrip("\n"),
     "    roads: [",
 ]

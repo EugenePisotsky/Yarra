@@ -73,17 +73,16 @@ ASSET_DESTINATION="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/assets"
 /bin/mkdir -p \
     "$ASSET_DESTINATION/generated" \
     "$ASSET_DESTINATION/shaders" \
-    "$ASSET_DESTINATION/packs/terrain" \
     "$ASSET_DESTINATION/local/characters/female_main" \
-    "$ASSET_DESTINATION/local/terrain/temperate_meadow/runtime"
+    "$ASSET_DESTINATION/local/terrain/baltic/runtime/astc"
 /usr/bin/install -m 644 "$RUNTIME_DATABASE" "$ASSET_DESTINATION/generated/world.runtime.sqlite"
 /usr/bin/ditto "$REPOSITORY_ROOT/assets/shaders" "$ASSET_DESTINATION/shaders"
-/usr/bin/install -m 644 "$REPOSITORY_ROOT/assets/packs/terrain/prepared.terrain-prepared" "$ASSET_DESTINATION/packs/terrain/prepared.terrain-prepared"
 /usr/bin/install -m 644 \
     "$REPOSITORY_ROOT/assets/local/characters/female_main/female_main_locomotion.glb" \
     "$ASSET_DESTINATION/local/characters/female_main/female_main_locomotion.glb"
 # Vegetation packs (trees, shrubs, ground cover) are not bundled yet: about 580 MB for the
 # island, better delivered as downloadable content than inside the app.
+# The world's terrain pack, its ASTC arrays only.
 /usr/bin/ditto \
-    "$REPOSITORY_ROOT/assets/local/terrain/temperate_meadow/runtime" \
-    "$ASSET_DESTINATION/local/terrain/temperate_meadow/runtime"
+    "$REPOSITORY_ROOT/assets/local/terrain/baltic/runtime/astc" \
+    "$ASSET_DESTINATION/local/terrain/baltic/runtime/astc"

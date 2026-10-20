@@ -10,18 +10,15 @@ mod terrain_preview;
 pub use terrain_preview::{
     MAX_PREVIEW_LEAVES, preview_terrain, published_terrain_control, published_terrain_leaf,
 };
+#[cfg(test)]
 mod terrain_fixture;
 use environment_cook::{
     CookedEnvironment, TerrainSlot, TerrainWeights, compile_environment, demo_environment,
 };
 pub use streaming_cook::{CookReport, CookStats, cook_project_fresh, cook_project_with_report};
-pub use terrain_fixture::create_mountain_fixture;
 mod heightfield_import;
-mod hill_fixture;
-mod island_fixture;
 mod terrain_world;
 pub use heightfield_import::{HeightfieldImportReport, import_heightfield};
-pub use hill_fixture::create_hill_fixture;
 use runtime_build::build_compiled_runtime;
 
 use std::{
@@ -67,13 +64,6 @@ mod road_import;
 mod terrain_pack;
 pub use road_demo::create_road_demo_project;
 use terrain_pack::TerrainPack;
-
-/// Initialize the default world: for now the Phase 0 island, with start views in a sibling
-/// `.views` directory. The small 8 m authoring world remains `create-road-demo`.
-/// Existing projects are never replaced by initialization or cooking.
-pub fn create_world_project(path: &Path) -> Result<()> {
-    island_fixture::create_island_world(path)
-}
 
 /// The catalog of grass pack `text` for the terrain pack worlds are created with.
 pub use road_import::{RoadImportReport, import_roads};
