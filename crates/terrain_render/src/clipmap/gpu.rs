@@ -520,12 +520,31 @@ struct RenderUploads {
 
 pub(crate) fn install(app: &mut App) {
     app.init_resource::<ClipmapUploads>()
-        .add_plugins(MaterialPlugin::<ClipmapTerrainMaterial>::default());
+        .add_plugins(MaterialPlugin::<ClipmapTerrainMaterial>::default())
+        .add_systems(Update, apply_macro_variation);
     if let Some(render) = app.get_sub_app_mut(RenderApp) {
         render
             .init_resource::<RenderUploads>()
             .add_systems(ExtractSchedule, extract)
             .add_systems(Render, upload.in_set(RenderSystems::PrepareResources));
+    }
+}
+
+/// The macro-variation switch reaches materials made before and after it changed.
+fn apply_macro_variation(
+    variation: Res<crate::TerrainMacroVariation>,
+    mut materials: ResMut<Assets<ClipmapTerrainMaterial>>,
+) {
+    let enabled = variation.shader_enabled();
+    let stale: Vec<_> = materials
+        .iter()
+        .filter(|(_, material)| material.settings.ground.y != enabled)
+        .map(|(id, _)| id)
+        .collect();
+    for id in stale {
+        if let Some(mut material) = materials.get_mut(id) {
+            material.settings.ground.y = enabled;
+        }
     }
 }
 
