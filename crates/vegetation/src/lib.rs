@@ -735,6 +735,22 @@ pub struct VegetationSurfaceSample {
     pub validity: f32,
 }
 
+/// The corner samples (as indices, 00, 10, 01, 11) of the rendered triangle at `local`, a share
+/// of the page along X and Z clamped to it, and their weights.
+pub fn surface_triangle(local: [f32; 2], resolution: usize) -> ([usize; 4], [f32; 4]) {
+    let grid = local.map(|v| v.clamp(0.0, 1.0) * (resolution - 1) as f32);
+    let [x0, z0] = grid.map(|v| v.floor() as usize);
+    let (x1, z1) = ((x0 + 1).min(resolution - 1), (z0 + 1).min(resolution - 1));
+    let indices = [
+        z0 * resolution + x0,
+        z0 * resolution + x1,
+        z1 * resolution + x0,
+        z1 * resolution + x1,
+    ];
+    let weights = surface_triangle_weights(grid[0] - x0 as f32, grid[1] - z0 as f32);
+    (indices, weights)
+}
+
 /// Weights for corners (00, 10, 01, 11), matching the terrain renderer's 00--11 diagonal.
 /// Keep the GPU `sample_surface` implementation in agreement with this CPU reference.
 pub fn surface_triangle_weights(x: f32, z: f32) -> [f32; 4] {
@@ -770,23 +786,11 @@ impl VegetationSurfaceField {
         debug_assert_eq!(self.heights.len(), resolution * resolution);
         debug_assert_eq!(self.normals_oct.len(), resolution * resolution);
         debug_assert_eq!(self.validity.len(), resolution * resolution);
-        let local_x = ((world_xz[0] - page_origin_xz[0]) / page_size).clamp(0.0, 1.0);
-        let local_z = ((world_xz[1] - page_origin_xz[1]) / page_size).clamp(0.0, 1.0);
-        let grid_x = local_x * (resolution - 1) as f32;
-        let grid_z = local_z * (resolution - 1) as f32;
-        let x0 = grid_x.floor() as usize;
-        let z0 = grid_z.floor() as usize;
-        let x1 = (x0 + 1).min(resolution - 1);
-        let z1 = (z0 + 1).min(resolution - 1);
-        let tx = grid_x - x0 as f32;
-        let tz = grid_z - z0 as f32;
-        let indices = [
-            z0 * resolution + x0,
-            z0 * resolution + x1,
-            z1 * resolution + x0,
-            z1 * resolution + x1,
+        let local = [
+            (world_xz[0] - page_origin_xz[0]) / page_size,
+            (world_xz[1] - page_origin_xz[1]) / page_size,
         ];
-        let weights = surface_triangle_weights(tx, tz);
+        let (indices, weights) = surface_triangle(local, resolution);
         let mut height = 0.0;
         let mut normal = [0.0; 3];
         let mut validity = 0.0;
@@ -819,6 +823,14 @@ impl VegetationSurfaceField {
 }
 
 pub fn encode_octahedral_normal(normal: [f32; 3]) -> [i16; 2] {
+    encode_octahedral_normal_bits(normal, 16)
+}
+
+/// [`encode_octahedral_normal`] keeping `bits` of each axis; the stored `i16`'s low bits are
+/// zero.
+pub fn encode_octahedral_normal_bits(normal: [f32; 3], bits: u32) -> [i16; 2] {
+    let unit = ((1_i32 << (bits - 1)) - 1) as f32;
+    let shift = 16 - bits;
     let normal = normalize3_or(normal, [0.0, 1.0, 0.0]);
     let inverse_l1 = (normal[0].abs() + normal[1].abs() + normal[2].abs()).recip();
     let mut encoded = [normal[0] * inverse_l1, normal[2] * inverse_l1];
@@ -831,8 +843,8 @@ pub fn encode_octahedral_normal(normal: [f32; 3]) -> [i16; 2] {
     }
 
     [
-        (encoded[0].clamp(-1.0, 1.0) * f32::from(i16::MAX)).round() as i16,
-        (encoded[1].clamp(-1.0, 1.0) * f32::from(i16::MAX)).round() as i16,
+        ((encoded[0].clamp(-1.0, 1.0) * unit).round() as i16) << shift,
+        ((encoded[1].clamp(-1.0, 1.0) * unit).round() as i16) << shift,
     ]
 }
 
@@ -903,7 +915,7 @@ fn pages_overlap(first: &VegetationFieldPage, second: &VegetationFieldPage) -> b
         && first.origin_xz[1] + first.size > second.origin_xz[1]
 }
 
-fn normalize3_or(value: [f32; 3], fallback: [f32; 3]) -> [f32; 3] {
+pub fn normalize3_or(value: [f32; 3], fallback: [f32; 3]) -> [f32; 3] {
     let length_squared = value[0] * value[0] + value[1] * value[1] + value[2] * value[2];
 
     if length_squared <= 1e-10 {
