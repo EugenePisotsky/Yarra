@@ -150,10 +150,6 @@ impl ScreenSpaceLod {
         self.projected_height
     }
 
-    pub(crate) fn variants(&self) -> &[ScreenSpaceLodVariant] {
-        &self.variants
-    }
-
     pub(crate) fn thresholds(&self) -> impl Iterator<Item = f32> + '_ {
         self.variants.iter().map(|v| v.minimum_screen_height)
     }

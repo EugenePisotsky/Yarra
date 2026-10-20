@@ -94,7 +94,7 @@ pub(super) fn attach_page(
                         cell_size,
                         data,
                     },
-                    StreamedPageEntity(key),
+                    StreamedPageEntity,
                     Name::new(format!("Vegetation fields {}, {}", key.cell.x, key.cell.z)),
                 ))
                 .id();
@@ -105,7 +105,6 @@ pub(super) fn attach_page(
             &mut attachment,
             commands,
             key.cell.offset_from(origin_cell, cell_size),
-            key,
             objects,
             &prepared.definitions,
         )?,
@@ -207,7 +206,7 @@ fn attach_static_objects(
                 half_extent: Vec2::new(bounds[0], bounds[2]) * 0.5,
                 height: bounds_height,
             },
-            StreamedPageEntity(key),
+            StreamedPageEntity,
             Name::new(format!("Streamed object {:?}", instance.id)),
         ));
 
@@ -254,7 +253,6 @@ fn attach_gameplay_objects(
     attachment: &mut PageAttachment,
     commands: &mut Commands,
     cell_origin: [f64; 2],
-    key: PageKey,
     objects: world::GameplayObjectsPage,
     definitions: &[RuntimeObjectDefinition],
 ) -> Result<(), String> {
@@ -295,7 +293,7 @@ fn attach_gameplay_objects(
                     id: instance.id,
                     definition: instance.definition,
                 },
-                StreamedPageEntity(key),
+                StreamedPageEntity,
                 Name::new(definition.display_name.clone()),
             ))
             .id();
@@ -348,7 +346,7 @@ pub(super) fn attach_terrain_source(
                 cell_size,
                 heightfield,
             },
-            StreamedPageEntity(key),
+            StreamedPageEntity,
             Name::new(format!("Terrain source {}, {}", key.cell.x, key.cell.z)),
         ))
         .id();

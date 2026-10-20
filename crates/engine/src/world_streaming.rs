@@ -26,7 +26,6 @@ pub use residency::StreamingStats;
 use residency::{PageState, attachment::PageAttachment};
 
 mod rebase;
-mod smoke;
 mod source_demand;
 mod surface;
 
@@ -43,7 +42,6 @@ pub use crate::object_lod::{
 };
 
 pub use rebase::WorldRenderRoot;
-pub use smoke::StreamingSmokePlugin;
 pub use world_space::ActiveWorldSpace;
 pub(crate) use world_space::sync_world_atmosphere;
 
@@ -124,14 +122,12 @@ impl Plugin for WorldStreamingPlugin {
             .init_resource::<WorldDetailDemand>()
             .init_resource::<source_demand::SourceView>()
             .init_resource::<StreamingStats>()
-            .init_resource::<WorldDebugControls>()
             .add_plugins(crate::object_lod::ObjectLodPlugin)
             .add_systems(
                 Update,
                 (
                     replies::receive_database_results,
                     generation::request_reload,
-                    world_space::request_world_space_from_keyboard,
                     generation::advance_reload,
                     world_space::apply_world_space_transition,
                     origin::sync_stream_focus_to_viewpoint,
@@ -163,12 +159,6 @@ impl Plugin for WorldStreamingPlugin {
     }
 }
 
-/// Explicit application-owned development controls; inactive in normal launches.
-#[derive(Resource, Clone, Copy, Default)]
-pub struct WorldDebugControls {
-    pub world_switch: bool,
-}
-
 /// Source attachment and coordinate changes finish before consumers rebuild render data.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct WorldStreamingSystems;
@@ -180,21 +170,18 @@ pub const FLOATING_ORIGIN_THRESHOLD_CELLS: u32 = 8;
 #[derive(Resource, Clone, Copy, Debug)]
 pub struct WorldStreamingConfig {
     gameplay_pages: bool,
-    keyboard_world_space_cycle: bool,
 }
 
 impl WorldStreamingConfig {
     pub const fn game() -> Self {
         Self {
             gameplay_pages: true,
-            keyboard_world_space_cycle: true,
         }
     }
 
     pub const fn editor() -> Self {
         Self {
             gameplay_pages: false,
-            keyboard_world_space_cycle: false,
         }
     }
 }
@@ -262,8 +249,9 @@ pub struct GameplayObject {
     pub definition: ObjectDefinitionId,
 }
 
+/// An entity a resident page spawned, placed with the page's cell.
 #[derive(Component)]
-struct StreamedPageEntity(PageKey);
+struct StreamedPageEntity;
 
 #[cfg(test)]
 pub(crate) fn test_world_resources(

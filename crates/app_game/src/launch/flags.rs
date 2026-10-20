@@ -13,13 +13,11 @@ pub(crate) enum Group {
     Profile,
     Look,
     LodLab,
-    GrassReference,
     Reference,
-    Input,
 }
 
 impl Group {
-    const ALL: [Self; 11] = [
+    const ALL: [Self; 9] = [
         Self::Help,
         Self::Scene,
         Self::Diagnostics,
@@ -28,9 +26,7 @@ impl Group {
         Self::Profile,
         Self::Look,
         Self::LodLab,
-        Self::GrassReference,
         Self::Reference,
-        Self::Input,
     ];
 
     fn title(self) -> &'static str {
@@ -43,9 +39,7 @@ impl Group {
             Self::Profile => "Timed profile",
             Self::Look => "Look captures",
             Self::LodLab => "LOD lab",
-            Self::GrassReference => "Grass references",
-            Self::Reference => "Output and pacing references",
-            Self::Input => "Input and demo controls",
+            Self::Reference => "Output and pacing fallbacks",
         }
     }
 }
@@ -100,10 +94,7 @@ const FULL: Needs = Needs::Diagnostics(DiagnosticsMode::Full);
 const LAB: Needs = Needs::Flag("--lod-lab");
 const LOOK: Needs = Needs::Flag("--look-capture");
 
-use Group::{
-    Captures, Diagnostics, GrassReference, Help, Input, LodLab, Look, Profile, Reference, Repro,
-    Scene,
-};
+use Group::{Captures, Diagnostics, Help, LodLab, Look, Profile, Reference, Repro, Scene};
 
 const FLAGS: &[Flag] = &[
     flag("--help", "", Help, "Show launch options without starting the renderer"),
@@ -267,12 +258,6 @@ const FLAGS: &[Flag] = &[
         "PATH.gputrace",
         Captures,
         "One native Apple GPU capture",
-    ),
-    flag(
-        "--streaming-smoke",
-        "",
-        Captures,
-        "Run the demo-world traversal/residency regression and exit",
     ),
     flag(
         "--profile-seconds",
@@ -465,18 +450,6 @@ const FLAGS: &[Flag] = &[
     )
     .needs(LAB),
     flag(
-        "--grass-candidate-reference",
-        "",
-        GrassReference,
-        "Disable the source acceptance cache",
-    ),
-    flag(
-        "--msaa-store-reference",
-        "",
-        Reference,
-        "Preserve multisample color for comparison",
-    ),
-    flag(
         "--temporal-standard-output",
         "",
         Reference,
@@ -487,19 +460,6 @@ const FLAGS: &[Flag] = &[
         "",
         Reference,
         "Compare timer pacing with native display pacing",
-    ),
-    flag(
-        "--trace-camera-input",
-        "",
-        Input,
-        "macOS: bounded native input trace",
-    )
-    .needs(PANEL),
-    flag(
-        "--debug-world-switch",
-        "",
-        Input,
-        "Enable the demo Tab world-space switch",
     ),
 ];
 

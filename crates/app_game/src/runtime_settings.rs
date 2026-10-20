@@ -14,25 +14,9 @@ use vegetation_render::{VegetationProfileMode, VegetationSettings, VegetationWin
 /// reads them. Settings F1 also changes (counters) are written by
 /// [`apply_settings`] alone.
 pub(crate) fn apply_launch_options(app: &mut App) -> Result<(), String> {
-    let options = app.world().resource::<LaunchOptions>().clone();
-    app.world_mut()
-        .resource_mut::<VegetationSettings>()
-        .candidate_cache_enabled &= !options.candidate_reference;
-    app.insert_resource(options.clouds);
-
-    if options.msaa_store_reference {
-        app.add_systems(PostStartup, preserve_msaa_color);
-    }
-
+    let clouds = app.world().resource::<LaunchOptions>().clouds;
+    app.insert_resource(clouds);
     Ok(())
-}
-
-fn preserve_msaa_color(mut commands: Commands, cameras: Query<Entity, With<WorldViewCamera>>) {
-    for camera in &cameras {
-        commands
-            .entity(camera)
-            .insert(engine::MsaaColorStorePolicy::Preserve);
-    }
 }
 
 pub(crate) struct RuntimeSettingsPlugin;

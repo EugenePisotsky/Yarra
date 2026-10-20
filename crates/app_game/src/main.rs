@@ -10,9 +10,6 @@ use bevy::{
 
 use engine::{MinimalGamePlugin, WorldVegetationPlugin};
 
-#[cfg(target_os = "macos")]
-mod camera_input_trace;
-
 mod frame_pacing;
 mod game_render;
 mod grass_pack;
@@ -53,9 +50,6 @@ fn run() -> Result<(), String> {
     let mut app = App::new();
     app.insert_resource(options.clone())
         .insert_resource(start_view)
-        .insert_resource(engine::WorldDebugControls {
-            world_switch: options.debug_world_switch,
-        })
         .insert_resource(engine::TreeInstancing {
             shadow_lod: options.tree_shadow_lod,
             ..default()
@@ -85,17 +79,11 @@ fn run() -> Result<(), String> {
         .add_plugins(MinimalGamePlugin::new(runtime_database))
         .add_plugins(game_render::GameRenderPlugin);
 
-    if options.mode == launch::RunMode::Smoke {
-        app.add_plugins(engine::StreamingSmokePlugin);
-    }
-
     frame_pacing::install(
         &mut app,
         frame_pacing::FrameRate::new(options.fps),
         options.timer_pacing,
     );
-    #[cfg(target_os = "macos")]
-    camera_input_trace::install(&mut app);
 
     // Variety between sessions; the seed is logged when weather starts.
     let weather_seed = std::time::SystemTime::now()

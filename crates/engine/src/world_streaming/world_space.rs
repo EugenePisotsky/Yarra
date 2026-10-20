@@ -33,40 +33,6 @@ pub(super) struct WorldSpaceTransition {
     pub(super) local_position: [f32; 3],
 }
 
-pub(super) fn request_world_space_from_keyboard(
-    debug: Res<WorldDebugControls>,
-    keys: Res<ButtonInput<KeyCode>>,
-    config: Res<WorldStreamingConfig>,
-    stream: Res<WorldStream>,
-    mut active_space: ResMut<ActiveWorldSpace>,
-) {
-    if !config.keyboard_world_space_cycle || !debug.world_switch || !keys.just_pressed(KeyCode::Tab)
-    {
-        return;
-    }
-
-    let Some(manifest) = stream.manifest.as_ref() else {
-        return;
-    };
-    let Some(current) = active_space.current else {
-        return;
-    };
-    let Some(current_index) = manifest
-        .world_spaces
-        .iter()
-        .position(|space| space.id == current)
-    else {
-        return;
-    };
-
-    if manifest.world_spaces.len() < 2 {
-        return;
-    }
-
-    let next = &manifest.world_spaces[(current_index + 1) % manifest.world_spaces.len()];
-    active_space.request(next.id, [0.0, 0.0, 0.0]);
-}
-
 #[allow(clippy::too_many_arguments)]
 pub(super) fn apply_world_space_transition(
     mut commands: Commands,

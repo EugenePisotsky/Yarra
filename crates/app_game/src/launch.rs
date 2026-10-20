@@ -8,7 +8,6 @@ use std::{ffi::OsString, path::PathBuf};
 #[derive(Resource, Clone, Default)]
 pub(crate) struct LaunchOptions {
     pub help: bool,
-    pub mode: RunMode,
     pub world_db: Option<PathBuf>,
     pub start_view: Option<PathBuf>,
     pub story: Option<PathBuf>,
@@ -30,14 +29,9 @@ pub(crate) struct LaunchOptions {
     pub gpu_off: bool,
     pub metalfx_timing: bool,
     pub counters: bool,
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-    pub input_trace: bool,
-    pub debug_world_switch: bool,
     /// How many LODs coarser than the drawn one instanced trees cast shadows from.
     pub tree_shadow_lod: usize,
     pub timer_pacing: bool,
-    pub candidate_reference: bool,
-    pub msaa_store_reference: bool,
     pub temporal_standard_output: bool,
     pub metal_capture: Option<PathBuf>,
     pub profile: Option<crate::profile::ProfileSettings>,
@@ -80,8 +74,6 @@ pub(crate) enum RunMode {
     Profile,
     LodLab,
     LookCapture,
-    /// The demo-world streaming regression.
-    Smoke,
 }
 
 /// Startup composition; Full preserves the existing instrumentation by default.
@@ -134,10 +126,6 @@ impl LaunchOptions {
             return Err("GPU timing off conflicts with detailed GPU timing".into());
         }
 
-        if args.has("--trace-camera-input") && !cfg!(target_os = "macos") {
-            return Err("Camera input tracing requires macOS".into());
-        }
-
         let resolution_scale = resolution_scale(&args)?;
         let upscaler = args.choice(
             "--upscaler",
@@ -173,7 +161,6 @@ impl LaunchOptions {
         let measured = mode != RunMode::Play || args.has("--metal-capture");
         Ok(Self {
             help: false,
-            mode,
             world_db: args.path("--world-db"),
             start_view: args.path("--start-view"),
             story: args.path("--story"),
@@ -208,12 +195,8 @@ impl LaunchOptions {
             gpu_off: args.has("--gpu-timing-off"),
             metalfx_timing: args.has("--metalfx-timing-log"),
             counters: args.has("--grass-counters"),
-            input_trace: args.has("--trace-camera-input"),
-            debug_world_switch: args.has("--debug-world-switch"),
             tree_shadow_lod: args.number("--tree-shadow-lod", 0, 0..=2)?,
             timer_pacing: args.has("--frame-pacing-timer"),
-            candidate_reference: args.has("--grass-candidate-reference"),
-            msaa_store_reference: args.has("--msaa-store-reference"),
             temporal_standard_output: args.has("--temporal-standard-output"),
             metal_capture: metal_capture(&args)?,
             profile,
@@ -237,7 +220,6 @@ impl RunMode {
             ("--render-repro", Self::Repro),
             ("--lod-lab", Self::LodLab),
             ("--look-capture", Self::LookCapture),
-            ("--streaming-smoke", Self::Smoke),
         ]
         .into_iter()
         .filter(|(flag, _)| args.has(flag))
