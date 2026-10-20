@@ -175,9 +175,7 @@ fn run_trigger(content: &GameContent, tx: &mut Tx, id: TriggerId, events: &mut V
         }
 
         if let Some(condition) = &d.condition
-            && !content
-                .evaluate(condition, tx, d.player, d.speaker())?
-                .matched
+            && !content.evaluate(condition, tx, d.player, d.speaker())?
         {
             return Ok(false);
         }

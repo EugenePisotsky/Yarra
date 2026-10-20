@@ -271,7 +271,7 @@ fn conditions_are_read_only_strict_and_bounded() {
 
         match result {
             // The first case is a plain false: effect functions do not exist for conditions.
-            Ok(evaluation) => assert!(!evaluation.matched && body.contains("~= nil"), "{body}"),
+            Ok(holds) => assert!(!holds && body.contains("~= nil"), "{body}"),
             Err(error) => {
                 let error = error.to_string();
                 assert!(error.contains(expected), "{body}: {error}");
@@ -324,7 +324,6 @@ fn nothing_a_script_keeps_survives_to_the_next_call() {
             content
                 .evaluate(&condition, &state, HERO, MERCHANT)
                 .unwrap()
-                .matched
         );
     }
 
@@ -336,7 +335,6 @@ fn nothing_a_script_keeps_survives_to_the_next_call() {
             .content()
             .evaluate(&condition, session.state(), HERO, MERCHANT)
             .unwrap()
-            .matched
     );
 }
 

@@ -1022,7 +1022,7 @@ pub(crate) fn run_action(
             otherwise,
         } => {
             let holds = content.evaluate_among(condition, state, actor, speaker, others)?;
-            for action in if holds.matched { then } else { otherwise } {
+            for action in if holds { then } else { otherwise } {
                 run_action(content, state, actor, speaker, others, action, events)?;
             }
         }

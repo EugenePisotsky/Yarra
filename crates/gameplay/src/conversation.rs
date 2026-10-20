@@ -177,9 +177,7 @@ fn eligible(
         return Ok(true);
     };
     let others: BTreeSet<ActorId> = c.bindings.values().copied().collect();
-    Ok(content
-        .evaluate_among(condition, state, c.participant, c.speaker, &others)?
-        .matched)
+    content.evaluate_among(condition, state, c.participant, c.speaker, &others)
 }
 
 /// The eligible choices under `after`, in authored order.

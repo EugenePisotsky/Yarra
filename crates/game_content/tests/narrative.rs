@@ -138,21 +138,7 @@ fn preview_reports_quest_priority_and_independent_topics_without_writing_or_roll
         .iter()
         .find(|r| r.rule == key("reward"))
         .unwrap();
-    assert!(!reward.evaluation.matched);
-    assert!(
-        reward
-            .evaluation
-            .checks
-            .iter()
-            .any(|c| c.observed == gameplay::Observed::Quest(Status::NotStarted))
-    );
-    assert!(
-        reward
-            .evaluation
-            .checks
-            .iter()
-            .any(|c| c.observed == gameplay::Observed::Quantity(1) && c.matched)
-    );
+    assert!(!reward.matched);
     assert_eq!(session.state().clone(), before);
     session
         .apply(Command::AdjustRelationship {

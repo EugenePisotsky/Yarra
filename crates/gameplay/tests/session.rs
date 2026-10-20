@@ -886,7 +886,6 @@ mod variables {
             .content()
             .evaluate(&condition, session.state(), HERO, MERCHANT)
             .unwrap()
-            .matched
     }
 
     #[test]

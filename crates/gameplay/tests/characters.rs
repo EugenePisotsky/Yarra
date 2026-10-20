@@ -400,7 +400,6 @@ fn a_trainer_teaches_what_the_class_allows_for_learning_points() {
                 MERCHANT,
             )
             .unwrap()
-            .matched
     };
     let mut session = session();
     assert!(!can_learn(&session, "persuasion"));
@@ -475,7 +474,6 @@ fn gold_is_paid_from_the_party_purse() {
                 MERCHANT,
             )
             .unwrap()
-            .matched
     };
     assert!(gold(&session, 100) && !gold(&session, 101));
     run(&mut session, vec![Action::Pay { amount: 30 }]).unwrap();
