@@ -41,6 +41,21 @@ impl Plugin for RoadAuthoringPlugin {
     }
 }
 
+/// What the next clicks in the view do, besides selecting and dragging.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum RoadMode {
+    #[default]
+    Select,
+    /// Placing a new road: one click for its first point, one for its end.
+    Create,
+    /// Adding a span at the selected end of a road.
+    Extend,
+    /// Starting a road from the selected point.
+    Branch,
+    /// Joining the selected point to another.
+    Connect,
+}
+
 #[derive(Resource, Default)]
 pub(crate) struct RoadToolState {
     space: Option<WorldSpaceId>,
@@ -49,11 +64,9 @@ pub(crate) struct RoadToolState {
     pub(super) span: Option<RoadSpanId>,
     style: Option<RoadProfileId>,
     pub(crate) style_request: Option<(WorldSpaceId, Option<RoadProfileId>)>,
-    pub(super) creating: bool,
+    pub(super) mode: RoadMode,
+    /// The first point of a road being created.
     pub(super) first: Option<RoadPoint>,
-    pub(super) extending: bool,
-    pub(super) branching: bool,
-    pub(super) connecting: bool,
     pub(super) hover: Option<RoadPoint>,
     drag: Option<viewport::Drag>,
     pub(super) status: Option<String>,
@@ -190,18 +203,12 @@ pub(crate) fn inspector(
                 )
                 .clicked()
             {
-                state.branching = false;
-                state.connecting = false;
-                state.creating = true;
-                state.extending = false;
+                state.mode = RoadMode::Create;
                 state.first = None;
                 state.status = Some("Click the start and end on the ground".into());
             }
-            if (state.creating || state.extending || state.branching || state.connecting) && ui.button("Cancel").clicked() {
-                state.creating = false;
-                state.extending = false;
-                state.branching = false;
-                state.connecting = false;
+            if state.mode != RoadMode::Select && ui.button("Cancel").clicked() {
+                state.mode = RoadMode::Select;
                 state.first = None;
                 state.status = None;
             }
@@ -311,11 +318,8 @@ pub(crate) fn inspector(
             ui.label("Selected point — drag the orange width handle to adjust shoulders.");
 
             if ui.button("Extend from this endpoint").clicked() {
-                state.branching = false;
-                state.connecting = false;
-                state.extending = true;
+                state.mode = RoadMode::Extend;
                 state.first = None;
-                state.creating = false;
                 state.status = Some("Click the next endpoint on the ground".into());
             }
 

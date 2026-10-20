@@ -237,19 +237,13 @@ pub(super) fn inspector(
 ) {
     ui.horizontal(|ui| {
         if ui.button("Branch from point").clicked() {
-            state.branching = true;
-            state.connecting = false;
-            state.creating = false;
-            state.extending = false;
+            state.mode = RoadMode::Branch;
             state.first = None;
             state.status =
                 Some("Click the new branch endpoint. The branch shares this road's style.".into());
         }
         if ui.button("Connect to point…").clicked() {
-            state.connecting = true;
-            state.branching = false;
-            state.creating = false;
-            state.extending = false;
+            state.mode = RoadMode::Connect;
             state.first = None;
             state.status =
                 Some("Click a point on another road. Split its curve first if needed.".into());

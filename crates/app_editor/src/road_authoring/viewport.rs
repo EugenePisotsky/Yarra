@@ -66,10 +66,7 @@ pub(super) fn input(
 
     if input.ground.keys.just_pressed(KeyCode::Escape) {
         finish(&mut state, &mut dense, &mut history, true);
-        state.creating = false;
-        state.extending = false;
-        state.branching = false;
-        state.connecting = false;
+        state.mode = RoadMode::Select;
         state.first = None;
         state.status = None;
         return;
@@ -83,10 +80,7 @@ pub(super) fn input(
 
     if !enabled {
         state.hover = None;
-        state.creating = false;
-        state.extending = false;
-        state.branching = false;
-        state.connecting = false;
+        state.mode = RoadMode::Select;
         state.first = None;
         return;
     }
@@ -108,10 +102,7 @@ pub(super) fn input(
         state.road = None;
         state.knot = None;
         state.span = None;
-        state.creating = false;
-        state.extending = false;
-        state.branching = false;
-        state.connecting = false;
+        state.mode = RoadMode::Select;
         state.first = None;
         state.hover = None;
     }
@@ -179,7 +170,7 @@ pub(super) fn input(
         return;
     }
 
-    if state.creating {
+    if state.mode == RoadMode::Create {
         if !state.can_create_at(space, point.cell) {
             state.status = Some("Wait for nearby road controls to load".into());
             return;
@@ -200,7 +191,7 @@ pub(super) fn input(
                         state.road = Some(road);
                         state.knot = Some(knot);
                         state.span = span;
-                        state.creating = false;
+                        state.mode = RoadMode::Select;
                         state.first = None;
                     }
                 }
@@ -214,7 +205,7 @@ pub(super) fn input(
         return;
     }
 
-    if state.branching {
+    if state.mode == RoadMode::Branch {
         if let Some(knot) = state.knot {
             match junctions::branch(&dense.roads, knot, size, point) {
                 Ok((road, end, changes)) => {
@@ -226,7 +217,7 @@ pub(super) fn input(
                         state.road = Some(road);
                         state.knot = Some(end);
                         state.span = span;
-                        state.branching = false;
+                        state.mode = RoadMode::Select;
                     }
                 }
                 Err(e) => state.status = Some(e),
@@ -235,7 +226,7 @@ pub(super) fn input(
         return;
     }
 
-    if state.extending {
+    if state.mode == RoadMode::Extend {
         if let Some(knot) = state.knot {
             match commands::extend(&dense.roads, knot, size, point) {
                 Ok((id, changes)) => {
@@ -249,7 +240,7 @@ pub(super) fn input(
                     if state.commit(&mut dense, &mut history, Ok(changes)) {
                         state.knot = Some(id);
                         state.span = span;
-                        state.extending = false;
+                        state.mode = RoadMode::Select;
                     }
                 }
                 Err(e) => state.status = Some(e),
@@ -274,7 +265,7 @@ pub(super) fn input(
 
         for (handle, p) in handles(
             &k.knot,
-            !state.connecting && state.knot == Some(k.knot.id),
+            state.mode != RoadMode::Connect && state.knot == Some(k.knot.id),
             size,
         ) {
             let Some(p) = project_point(&input, p, size) else {
@@ -299,11 +290,11 @@ pub(super) fn input(
     picks.sort_by(|a, b| a.0.total_cmp(&b.0));
 
     if let Some((_, k, handle)) = picks.into_iter().next() {
-        if state.connecting {
+        if state.mode == RoadMode::Connect {
             if let Some(source) = state.knot {
                 let changes = junctions::join(&dense.roads, source, k.knot.id, size);
                 if state.commit(&mut dense, &mut history, changes) {
-                    state.connecting = false;
+                    state.mode = RoadMode::Select;
                 }
             }
             return;
@@ -339,7 +330,7 @@ pub(super) fn input(
         return;
     }
 
-    if state.connecting {
+    if state.mode == RoadMode::Connect {
         state.status =
             Some("Click a road point; split a curve first to create a connection point".into());
         return;
@@ -697,7 +688,7 @@ pub(super) fn draw(
     }
 
     let first = state.first.or_else(|| {
-        if state.branching || state.extending {
+        if matches!(state.mode, RoadMode::Branch | RoadMode::Extend) {
             state
                 .knot
                 .and_then(|id| match dense.roads.get(RoadRecordKey::Knot(id)) {
