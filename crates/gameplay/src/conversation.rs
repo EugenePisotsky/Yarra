@@ -41,25 +41,6 @@ impl GameContent {
             .ok_or_else(|| Invalid("unknown dialogue contract".into()).into())
     }
 
-    pub(crate) fn validate_dialogue_text(&self, graph: &Dialogue) -> Result<()> {
-        graph.validate_messages(&|m| {
-            self.text
-                .get(&m.resource)
-                .and_then(|c| c.messages.get(&m.key))
-                .ok_or_else(|| Invalid("unknown dialogue message contract".into()))
-        })?;
-
-        for (_, args) in graph.messages() {
-            for source in args.values() {
-                if let ArgumentSource::Stat { stat, .. } = source {
-                    self.game.rules.stat(stat)?;
-                }
-            }
-        }
-
-        Ok(())
-    }
-
     fn bind_text(&self, state: &SessionState, c: &Conversation, node: &Node) -> Result<BoundText> {
         let mut arguments = BTreeMap::new();
 

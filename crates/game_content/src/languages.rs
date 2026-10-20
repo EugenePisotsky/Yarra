@@ -1,19 +1,19 @@
-//! Independently published wording. A mechanical save identity never includes these databases.
-use crate::*;
+//! Wording published on its own, a pack per locale. A save's identity never includes it, so a
+//! translation can ship or change without touching the mechanics.
+use crate::{ContentError, ContentRepository, LoadedProject, Result, sqlite};
 use game_types::{ContentId, TextContract, TextResourceId, require};
 use localization::{LanguageResource, LocalizationError, ResourceSource};
-use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
-
-use std::{
-    collections::BTreeMap,
-    fs::{self, OpenOptions},
-    path::{Path, PathBuf},
-};
+use std::{collections::BTreeMap, path::Path};
 
 const APPLICATION_ID: i64 = 0x59474c50;
-const VERSION: i64 = 2;
-const MAX_PACK_BYTES: u64 = 256 * 1024 * 1024;
+const VERSION: i64 = 3;
+
+const SCHEMA: &str = "
+CREATE TABLE manifest (singleton INTEGER PRIMARY KEY CHECK(singleton=1), payload BLOB NOT NULL) STRICT;
+CREATE TABLE resources (id TEXT PRIMARY KEY, payload BLOB NOT NULL) STRICT, WITHOUT ROWID;
+";
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -23,47 +23,22 @@ struct Manifest {
     source_locale: String,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct LanguageStats {
-    pub payload_queries: usize,
-    pub decoded_resources: usize,
-    pub payload_bytes: usize,
-}
-
 pub struct LanguageRepository {
     connection: Connection,
     manifest: Manifest,
-    stats: LanguageStats,
 }
 
 impl LanguageRepository {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
-        require(
-            fs::metadata(&path)?.len() <= MAX_PACK_BYTES,
-            "language pack exceeds 256 MiB",
-        )?;
-        let connection = Connection::open_with_flags(
-            path,
-            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-        )?;
-        connection.execute_batch(
-            "PRAGMA query_only=ON; PRAGMA cache_size=-512; PRAGMA mmap_size=0; BEGIN;",
-        )?;
-        let application: i64 =
-            connection.pragma_query_value(None, "application_id", |r| r.get(0))?;
-        let version: i64 = connection.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        require(
-            application == APPLICATION_ID && version == VERSION,
-            "unsupported language pack database",
-        )?;
-        let bytes: Vec<u8> = connection.query_row("SELECT CASE WHEN length(payload)<=65536 THEN payload END FROM manifest WHERE singleton=1", [], |r| r.get(0))?;
-        let manifest: Manifest = serde_json::from_slice(&bytes)?;
-        asset::validate_locale(&manifest.locale)?;
-        asset::validate_locale(&manifest.source_locale)?;
+        let (connection, version) = sqlite::open(path.as_ref(), APPLICATION_ID)?;
+        require(version == VERSION, "unsupported language pack version")?;
+        let payload: Vec<u8> =
+            connection.query_row("SELECT payload FROM manifest", [], |row| row.get(0))?;
+        let manifest: Manifest = serde_json::from_slice(&payload)?;
+        localization::validate_locale(&manifest.locale)?;
         Ok(Self {
             connection,
             manifest,
-            stats: LanguageStats::default(),
         })
     }
 
@@ -71,50 +46,29 @@ impl LanguageRepository {
         &self.manifest.locale
     }
 
-    pub fn stats(&self) -> &LanguageStats {
-        &self.stats
-    }
-
-    pub fn load(&mut self, id: TextResourceId) -> Result<Option<LanguageResource>> {
-        self.stats.payload_queries += 1;
-        let row: Option<(Vec<u8>,Vec<u8>)> = self.connection.query_row(
-            "SELECT CASE WHEN length(payload)<=2097152 THEN payload END, hash FROM resources WHERE id=?1", [id.raw()], |r| Ok((r.get(0)?,r.get(1)?))).optional()?;
-        let Some((payload, hash)) = row else {
+    /// One resource's wording, read when it is first needed.
+    pub fn load(&self, id: TextResourceId) -> Result<Option<LanguageResource>> {
+        let payload: Option<Vec<u8>> = self
+            .connection
+            .query_row(
+                "SELECT payload FROM resources WHERE id=?1",
+                [id.raw()],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(payload) = payload else {
             return Ok(None);
         };
-        require(
-            blake3::hash(&payload).as_bytes().as_slice() == hash.as_slice(),
-            "language resource checksum mismatch",
-        )?;
         let resource: LanguageResource = serde_json::from_slice(&payload)?;
         require(
             resource.id == id && resource.locale == self.manifest.locale,
             "language resource identity mismatch",
         )?;
-        self.stats.decoded_resources += 1;
-        self.stats.payload_bytes += payload.len();
         Ok(Some(resource))
-    }
-
-    fn all_for_tools(&mut self) -> Result<Vec<LanguageResource>> {
-        let ids: Vec<String> = self
-            .connection
-            .prepare("SELECT id FROM resources ORDER BY id")?
-            .query_map([], |r| r.get(0))?
-            .collect::<std::result::Result<_, _>>()?;
-        let mut result = Vec::new();
-
-        for id in ids {
-            let resource = self
-                .load(TextResourceId::try_from(id)?)?
-                .ok_or_else(|| game_types::Invalid("missing language resource".into()))?;
-            result.push(resource);
-        }
-
-        Ok(result)
     }
 }
 
+/// A bundle's text contracts with the wording of its language packs, for presentation.
 pub struct LanguageSource {
     content: ContentRepository,
     languages: BTreeMap<String, LanguageRepository>,
@@ -151,11 +105,7 @@ fn presentation_error(error: ContentError) -> LocalizationError {
 
 impl ResourceSource for LanguageSource {
     fn contract(&mut self, id: TextResourceId) -> localization::Result<TextContract> {
-        match self.content.read(&AssetId::Text(id)) {
-            Ok(Asset::Text(contract)) => Ok(contract),
-            Ok(_) => Err(LocalizationError::Resource("missing text contract".into())),
-            Err(error) => Err(presentation_error(error)),
-        }
+        self.content.read_text(id).map_err(presentation_error)
     }
 
     fn resource(
@@ -164,100 +114,40 @@ impl ResourceSource for LanguageSource {
         locale: &str,
     ) -> localization::Result<Option<LanguageResource>> {
         self.languages
-            .get_mut(locale)
+            .get(locale)
             .map_or(Ok(None), |pack| pack.load(id).map_err(presentation_error))
     }
 }
 
 impl LoadedProject {
-    /// Publish one locale independently. A wording/review edit does not rebuild mechanics.
+    /// Publishes one locale on its own: a change of wording does not rebuild the mechanics.
     pub fn build_language_pack(&self, locale: &str, output: impl AsRef<Path>) -> Result<()> {
-        asset::validate_locale(locale)?;
         let resources: Vec<_> = self
             .translations
             .iter()
             .filter(|r| r.locale == locale)
             .collect();
         require(!resources.is_empty(), "locale has no resources")?;
-        let output = output.as_ref();
-        let parent = output
-            .parent()
-            .filter(|p| !p.as_os_str().is_empty())
-            .unwrap_or_else(|| Path::new("."));
-        let stage = parent.join(format!(".language-{}.building", ContentId::random()));
-        OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&stage)?;
-        let result: Result<()> = (|| {
-            let mut connection =
-                Connection::open_with_flags(&stage, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
-            connection.execute_batch("PRAGMA synchronous=FULL;")?;
-            let tx = connection.transaction()?;
-            tx.execute_batch("CREATE TABLE manifest(singleton INTEGER PRIMARY KEY CHECK(singleton=1), payload BLOB NOT NULL CHECK(length(payload)<=65536)) STRICT;
-                CREATE TABLE resources(id TEXT PRIMARY KEY, payload BLOB NOT NULL CHECK(length(payload)<=2097152), hash BLOB NOT NULL CHECK(length(hash)=32)) STRICT, WITHOUT ROWID;")?;
-            let manifest = Manifest {
-                content: self.content.manifest.id,
-                locale: locale.into(),
-                source_locale: self.source_locale.clone(),
-            };
+        let manifest = Manifest {
+            content: self.content().manifest.id,
+            locale: locale.into(),
+            source_locale: self.source_locale.clone(),
+        };
+
+        sqlite::publish(output.as_ref(), APPLICATION_ID, VERSION, SCHEMA, |tx| {
             tx.execute(
-                "INSERT INTO manifest VALUES(1,?1)",
+                "INSERT INTO manifest VALUES (1, ?1)",
                 [serde_json::to_vec(&manifest)?],
             )?;
 
             for resource in resources {
-                let payload = serde_json::to_vec(resource)?;
-                require(
-                    payload.len() <= MAX_ASSET_BYTES,
-                    "language resource exceeds 2 MiB publication limit",
-                )?;
                 tx.execute(
-                    "INSERT INTO resources VALUES(?1,?2,?3)",
-                    params![
-                        resource.id.raw(),
-                        &payload,
-                        blake3::hash(&payload).as_bytes()
-                    ],
+                    "INSERT INTO resources VALUES (?1, ?2)",
+                    params![resource.id.raw(), serde_json::to_vec(resource)?],
                 )?;
             }
 
-            tx.pragma_update(None, "application_id", APPLICATION_ID)?;
-            tx.pragma_update(None, "user_version", VERSION)?;
-            tx.commit()?;
-            connection.close().map_err(|(_, e)| e)?;
-            fs::File::open(&stage)?.sync_all()?;
-            fs::hard_link(&stage, output)?;
             Ok(())
-        })();
-        let cleanup = fs::remove_file(&stage);
-        result?;
-        cleanup?;
-        Ok(())
-    }
-
-    pub fn materialize_with_languages_for_tools(
-        path: impl AsRef<Path>,
-        languages: &[PathBuf],
-    ) -> Result<Self> {
-        let content = Self::materialize_bundle_for_tools(path)?;
-        let mut translations = Vec::new();
-
-        for path in languages {
-            let mut language = LanguageRepository::open(path)?;
-            require(
-                language.manifest.content == content.content.manifest.id
-                    && language.manifest.source_locale == content.source_locale,
-                "incompatible language pack",
-            )?;
-            translations.extend(language.all_for_tools()?);
-        }
-
-        Self::from_parts(
-            content.content,
-            content.scenario,
-            content.source_locale,
-            translations,
-        )
+        })
     }
 }

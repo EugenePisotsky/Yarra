@@ -253,7 +253,7 @@ impl GameSession {
         let identity = source.identity();
         let mut content = source.core()?;
         require(
-            content.manifest == identity.manifest && content.game.dialogues.is_empty(),
+            content.manifest == identity.manifest,
             "session content identity mismatch",
         )?;
         content.graphs = Graphs::reading(move |id| source.dialogue(id));

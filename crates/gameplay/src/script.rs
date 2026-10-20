@@ -78,8 +78,7 @@ pub trait ScriptEngine {
     ) -> Result<bool>;
 }
 
-/// The engine running a content set's scripts. It is not part of the content's value:
-/// two contents are equal when their definitions, including script sources, are equal.
+/// The engine running a content set's scripts; clones share it.
 #[derive(Clone, Default)]
 pub struct Scripts(Option<Rc<dyn ScriptEngine>>);
 
@@ -93,18 +92,15 @@ impl Scripts {
             .0
             .as_deref()
             .ok_or_else(|| Invalid(format!("no script engine is installed for {name}")))?;
-        require(engine.exports(name), &format!("unknown script {name}"))?;
+
+        // Every script call passes through here: the message is made only when it is needed.
+        if !engine.exports(name) {
+            return Err(Invalid(format!("unknown script {name}")).into());
+        }
+
         Ok(engine)
     }
 }
-
-impl PartialEq for Scripts {
-    fn eq(&self, _: &Self) -> bool {
-        true
-    }
-}
-
-impl Eq for Scripts {}
 
 impl std::fmt::Debug for Scripts {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

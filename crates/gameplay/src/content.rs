@@ -275,8 +275,6 @@ pub struct GameDefinitions {
     #[serde(default, with = "crate::keyed::list")]
     pub characters: BTreeMap<ActorId, crate::actors::CharacterDefinition>,
     #[serde(with = "crate::keyed::list")]
-    pub dialogues: BTreeMap<DialogueId, Dialogue>,
-    #[serde(with = "crate::keyed::list")]
     pub variables: BTreeMap<VariableId, VariableDefinition>,
     #[serde(default, with = "crate::keyed::list")]
     pub scripts: BTreeMap<Key, ScriptModule>,
@@ -284,19 +282,16 @@ pub struct GameDefinitions {
     pub loot: BTreeMap<LootId, crate::inventory::LootTable>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+/// What a playthrough reads up front: everything but dialogue graphs, which load when a
+/// conversation needs them, and the wording, which only presentation reads.
+#[derive(Debug, Clone)]
 pub struct GameContent {
-    #[serde(with = "crate::keyed::list")]
-    pub text: BTreeMap<TextResourceId, TextContract>,
     pub manifest: ContentManifest,
     pub items: ItemCatalog,
     pub game: GameDefinitions,
     /// The engine running `game.scripts`, installed by whoever loaded the content.
-    #[serde(skip)]
     pub scripts: Scripts,
-    /// Where dialogue graphs not in `game.dialogues` are read from; see `dialogue`.
-    #[serde(skip)]
+    /// Where dialogue graphs are read from, and those read lately; see `dialogue`.
     pub graphs: crate::Graphs,
 }
 
@@ -346,12 +341,6 @@ impl GameContent {
                 && self.manifest.world_generation.len() <= 256,
             "invalid content manifest",
         )?;
-        filed(&self.text, "text resources")?;
-
-        for contract in self.text.values() {
-            contract.validate()?;
-        }
-
         filed(&self.game.variables, "variables")?;
 
         for variable in self.game.variables.values() {
@@ -402,6 +391,10 @@ impl GameContent {
                 self.loot(loot)?;
             }
 
+            if let Some(profile) = actor.interaction {
+                self.profile(profile)?;
+            }
+
             let mut slots = BTreeSet::new();
 
             for item in &actor.equipment {
@@ -441,35 +434,6 @@ impl GameContent {
             })?;
         }
 
-        filed(&self.game.dialogues, "dialogues")?;
-
-        for graph in self.game.dialogues.values() {
-            within(format!("dialogue {}", graph.id), || {
-                graph.validate()?;
-                require(
-                    self.dialogue_contract(graph.id)? == &graph.contract(),
-                    "dialogue contract mismatch",
-                )?;
-                self.validate_dialogue_text(graph)?;
-
-                for node in &graph.nodes {
-                    within(format!("node {}", node.id), || {
-                        if let Some(condition) = &node.condition {
-                            self.validate_condition(condition)?;
-                        }
-
-                        for action in &node.actions {
-                            self.validate_action(action, 0)?;
-                        }
-
-                        Ok(())
-                    })?;
-                }
-
-                Ok(())
-            })?;
-        }
-
         filed(&self.game.quests, "quests")?;
         filed(&self.game.predicates, "named predicates")?;
         filed(&self.game.profiles, "interaction profiles")?;
@@ -490,6 +454,10 @@ impl GameContent {
 
                 for rule in &profile.rules {
                     self.validate_condition(&rule.condition)?;
+
+                    for variant in &rule.variants {
+                        self.dialogue_contract(variant.dialogue)?;
+                    }
                 }
 
                 Ok(())
@@ -630,44 +598,30 @@ impl GameContent {
         Ok(())
     }
 
-    /// A dialogue graph. Content assembled by a tool holds them all; a session's content
-    /// reads one from its source the first time it is needed and keeps the most recently
-    /// used. A graph that cannot be read, or that does not match its contract, is an error
-    /// for whatever needed it.
+    /// A dialogue graph, read from the content's source the first time it is needed; the
+    /// most recently used are kept. A graph that cannot be read, or that does not match its
+    /// contract, is an error for whatever needed it.
     pub fn dialogue(&self, id: DialogueId) -> Result<Rc<Dialogue>> {
         if let Some(graph) = self.graphs.cached(id) {
             return Ok(graph);
         }
 
-        let graph = match self.authored(id) {
-            Some(graph) => graph.clone(),
-            None => {
-                let contract = self.dialogue_contract(id)?;
-                let graph = self
-                    .graphs
-                    .read(id)
-                    .ok_or_else(|| Invalid(format!("unknown dialogue {id}")))??;
-                graph.validate()?;
-                require(
-                    graph.id == id && &graph.contract() == contract,
-                    "dialogue contract mismatch",
-                )?;
-                graph
-            }
-        };
+        let contract = self.dialogue_contract(id)?;
+        let graph = self
+            .graphs
+            .read(id)
+            .ok_or_else(|| Invalid(format!("unknown dialogue {id}")))??;
+        graph.validate()?;
+        require(
+            graph.id == id && &graph.contract() == contract,
+            "dialogue contract mismatch",
+        )?;
         Ok(self.graphs.keep(graph))
     }
 
     /// The graph if it is in memory already; nothing is read.
     pub fn loaded_dialogue(&self, id: DialogueId) -> Option<Rc<Dialogue>> {
-        self.graphs
-            .cached(id)
-            .or_else(|| Some(self.graphs.keep(self.authored(id)?.clone())))
-    }
-
-    /// A graph the content was assembled with.
-    pub(crate) fn authored(&self, id: DialogueId) -> Option<&Dialogue> {
-        self.game.dialogues.get(&id)
+        self.graphs.cached(id)
     }
 
     pub fn variable(&self, id: VariableId) -> Result<&VariableDefinition> {
@@ -727,65 +681,5 @@ impl GameContent {
     pub fn template(&self, id: ActorTemplateId) -> Result<&ActorTemplate> {
         let template = self.game.actors.get(&id);
         template.ok_or_else(|| Invalid(format!("unknown actor template {id}")).into())
-    }
-
-    /// Stable fingerprint of definitions, rules and world binding; excludes .ftl resources.
-    pub fn fingerprint(&self) -> Result<[u8; 32]> {
-        self.validate()?;
-        self.validate_selection_links()?;
-
-        // Every definition is in a map, so it serializes in order of identity whatever order
-        // it was added in. Identities as bytes: a name shows only once something has parsed
-        // it, and the fingerprint must not depend on that.
-        let bytes = names::raw(|| serde_json::to_vec(self)).map_err(|e| Invalid(e.to_string()))?;
-        Ok(*blake3::hash(&bytes).as_bytes())
-    }
-
-    pub fn text_keys(&self) -> Vec<&MessageRef> {
-        let categories = self.items.categories.values();
-        let mut refs: Vec<&TextRef> = categories.map(|c| &c.name).collect();
-
-        for item in self.items.items.values() {
-            refs.extend([&item.name, &item.description]);
-        }
-
-        refs.extend(self.game.world.objects.values().map(|o| &o.name));
-        refs.extend(self.game.actors.values().map(|a| &a.name));
-        refs.extend(
-            self.game
-                .characters
-                .values()
-                .filter_map(|c| c.name.as_ref()),
-        );
-        refs.extend(self.game.rules.names());
-
-        for quest in self.game.quests.values() {
-            refs.push(&quest.title);
-            refs.extend(quest.objectives.iter().map(|o| &o.title));
-        }
-
-        for profile in self.game.profiles.values() {
-            refs.extend(profile.rules.iter().filter_map(|r| r.topic.as_ref()));
-        }
-
-        for graph in self.game.dialogues.values() {
-            for (text, arguments) in graph.messages() {
-                refs.push(text);
-                refs.extend(arguments.values().filter_map(|a| match a {
-                    dialogue::ArgumentSource::Text(t) => Some(t),
-                    _ => None,
-                }));
-            }
-        }
-
-        refs.into_iter()
-            .filter_map(|r| {
-                if let TextRef::Message(k) = r {
-                    Some(k)
-                } else {
-                    None
-                }
-            })
-            .collect()
     }
 }

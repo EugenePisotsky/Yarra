@@ -18,6 +18,7 @@ fn resolved_depth_is_checked_before_a_valid_local_tree_reaches_runtime() {
 
         let id = PredicateId([i; 16]);
         content
+            .core
             .game
             .predicates
             .add(NamedPredicate { id, condition });
@@ -26,6 +27,7 @@ fn resolved_depth_is_checked_before_a_valid_local_tree_reaches_runtime() {
 
     assert!(
         content
+            .core
             .validate_condition(&condition)
             .unwrap_err()
             .to_string()
@@ -46,11 +48,16 @@ fn a_group_stops_at_the_child_that_decides_it_and_changes_nothing() {
 
     // A child after the deciding one is not evaluated: here it would be an error.
     let unknown = Condition::Named(PredicateId([9; 16]));
-    let evaluate = |condition: &Condition| content.evaluate(condition, &state, HERO, MERCHANT);
+    let evaluate = |condition: &Condition| content.core.evaluate(condition, &state, HERO, MERCHANT);
     assert!(evaluate(&Condition::Any(vec![holds.clone(), unknown.clone()])).unwrap());
     let fails = Condition::Not(Box::new(holds.clone()));
     assert!(!evaluate(&Condition::All(vec![fails, unknown.clone()])).unwrap());
     assert!(evaluate(&Condition::All(vec![holds, unknown])).is_err());
     assert_eq!(state, before);
-    assert!(content.validate_condition(&Condition::Any(vec![])).is_err());
+    assert!(
+        content
+            .core
+            .validate_condition(&Condition::Any(vec![]))
+            .is_err()
+    );
 }

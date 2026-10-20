@@ -470,25 +470,4 @@ impl GameContent {
             candidates,
         })
     }
-
-    /// Links used for selection are validated at publication, but are deliberately not eager
-    /// runtime dependencies: inspecting an NPC must not load every potential conversation.
-    pub fn validate_selection_links(&self) -> Result<()> {
-        for actor in self.game.actors.values() {
-            if let Some(id) = actor.interaction {
-                self.profile(id)?;
-            }
-        }
-
-        for profile in self.game.profiles.values() {
-            for rule in &profile.rules {
-                for variant in &rule.variants {
-                    self.authored(variant.dialogue)
-                        .ok_or_else(|| Invalid(format!("unknown dialogue {}", variant.dialogue)))?;
-                }
-            }
-        }
-
-        Ok(())
-    }
 }

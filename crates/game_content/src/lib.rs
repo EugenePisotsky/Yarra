@@ -6,24 +6,18 @@ mod analysis;
 
 pub use analysis::{ANALYZER_VARIABLE, ScriptAnalysis};
 
-mod asset;
 mod bundle;
 mod languages;
-mod materialize;
-
-pub use languages::{LanguageRepository, LanguageSource, LanguageStats};
-
 mod project;
 mod repository;
-mod runtime;
 mod scenario;
 mod script;
+mod sqlite;
 
-pub use asset::{Asset, AssetHeader, AssetId, AssetKind, MAX_ASSET_BYTES};
 pub use bundle::{BUNDLE_APPLICATION_ID, BUNDLE_SCHEMA_VERSION, BundleManifest};
+pub use languages::{LanguageRepository, LanguageSource};
 pub use project::{LoadedProject, PackageFile, ProjectFile, SOURCE_FORMAT_VERSION};
 pub use repository::ContentRepository;
-pub use runtime::ContentLibrary;
 pub use scenario::{ActorSpawn, InventorySeed, ItemAmount, Scenario, WalletSeed};
 pub use script::Step;
 use std::path::PathBuf;
@@ -55,12 +49,10 @@ pub enum ContentError {
     SourceVersion(u32),
     #[error("unsupported content bundle schema {0}")]
     BundleVersion(i64),
-    #[error("file is not a Yarra gameplay content bundle")]
+    #[error("file is not the kind of Yarra content database expected")]
     WrongDatabase,
-    #[error("asset not found: {0:?}")]
-    MissingAsset(AssetId),
-    #[error("corrupt asset {id:?}: {message}")]
-    CorruptAsset { id: AssetId, message: String },
+    #[error("not in the bundle: {0}")]
+    NotInBundle(String),
 }
 
 pub type Result<T> = std::result::Result<T, ContentError>;

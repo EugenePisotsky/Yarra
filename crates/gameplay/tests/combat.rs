@@ -307,7 +307,7 @@ fn a_fight_carries_on_from_a_save_exactly_as_it_would_have() {
     assert!(fight(Some(43)) == straight && fight(Some(15)) == straight);
 
     // Somebody lost: twelve seconds of trading blows is more than fifty health.
-    let rules = &content().game.rules;
+    let rules = &content().core.game.rules;
     assert!(!straight.actors[&HERO].alive(rules) || !straight.actors[&MERCHANT].alive(rules));
 }
 
@@ -324,7 +324,7 @@ fn a_skirmish_costs_what_happens_in_it_not_the_size_of_the_world() {
     };
 
     for n in 0..FIGHTERS + BYSTANDERS {
-        state.spawn(&content, TRAVELLER, id(n)).unwrap();
+        state.spawn(&content.core, TRAVELLER, id(n)).unwrap();
     }
 
     let mut session = GameSession::new(ToolContent::new(content).unwrap(), state).unwrap();

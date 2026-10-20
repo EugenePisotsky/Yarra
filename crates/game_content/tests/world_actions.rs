@@ -141,7 +141,7 @@ fn rewarded(session: &gameplay::GameSession) -> bool {
 fn the_escort_runs_headlessly_from_entering_the_approach_to_an_open_gate() {
     let temp = Temp::new();
     let (project, session) = load(&temp, &temp.source());
-    let mut driver = Driver::new(session, 50, 64).unwrap();
+    let mut driver = Driver::new(session, 50).unwrap();
     driver
         .submit(Command::Quest {
             quest: QUEST,
@@ -222,8 +222,7 @@ fn a_pending_walk_resumes_from_every_kind_of_slot() {
     let temp = Temp::new();
     let (_, mut session) = load(&temp, &temp.source());
     let saves = SaveDirectory::new(temp.0.join("saves"), 2).unwrap();
-    let library = ContentLibrary::new(temp.0.join("retained")).unwrap();
-    library.retain(temp.0.join("content.sqlite")).unwrap();
+    let bundle = temp.0.join("content.sqlite");
     activate(&mut session);
     saves
         .save(SaveSlot::Manual(1), &session, "before entering")
@@ -235,7 +234,9 @@ fn a_pending_walk_resumes_from_every_kind_of_slot() {
     std::fs::remove_dir_all(temp.0.join("source")).unwrap();
 
     for slot in [SaveSlot::Manual(1), SaveSlot::Quick, auto.slot] {
-        let mut restored = library.load(&saves, slot).unwrap();
+        let mut restored = saves
+            .load(slot, ContentRepository::open(&bundle).unwrap())
+            .unwrap();
         locked(&mut restored);
         let entered = observe(&mut restored, HERO, &[APPROACH]);
 
@@ -773,11 +774,8 @@ fn a_conversation_that_cannot_start_is_refused_and_the_queue_moves_on() {
     drop(session);
     let bundle = temp.0.join("content.sqlite");
     let db = rusqlite::Connection::open(&bundle).unwrap();
-    db.execute(
-        "UPDATE assets SET hash=zeroblob(32) WHERE kind=?1 AND id=?2",
-        rusqlite::params![AssetKind::Dialogue as i64, BANTER.raw()],
-    )
-    .unwrap();
+    db.execute("DELETE FROM dialogues WHERE id=?1", [BANTER.raw()])
+        .unwrap();
     let mut session = GameSession::new(
         ContentRepository::open(&bundle).unwrap(),
         project.start().unwrap().into_state(),
@@ -789,7 +787,7 @@ fn a_conversation_that_cannot_start_is_refused_and_the_queue_moves_on() {
     let events = report(&mut session, HERO, &[APPROACH]);
     let refused = events.iter().any(|e| {
         matches!(e, GameEvent::World(WorldEvent::DialogueRefused { dialogue, reason })
-            if *dialogue == BANTER && reason.contains("checksum"))
+            if *dialogue == BANTER && reason.contains("not in the bundle"))
     });
     assert!(refused, "{events:?}");
     assert!(session.state().conversations.is_empty());

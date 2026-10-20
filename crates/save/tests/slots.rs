@@ -151,7 +151,7 @@ fn other_content_loads_while_foreign_files_and_state_that_does_not_fit_are_error
 
     // Another publication of the content loads; the slot tells the game it changed.
     let mut other = content();
-    other.manifest.revision += 1;
+    other.core.manifest.revision += 1;
     let restored = saves
         .load(SaveSlot::Quick, ToolContent::new(other).unwrap())
         .unwrap();
@@ -252,7 +252,7 @@ fn a_save_is_brought_in_line_with_rules_that_changed_since() {
 
     // Level 2 now takes no experience at all.
     let mut changed = content();
-    changed.game.rules.levels[0] = 0;
+    changed.core.game.rules.levels[0] = 0;
     let restored = saves
         .load(SaveSlot::Quick, ToolContent::new(changed).unwrap())
         .unwrap();

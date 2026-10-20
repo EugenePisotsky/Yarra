@@ -18,10 +18,28 @@ fn failure(root: &Path) -> String {
     }
 }
 
-fn player_health(project: &LoadedProject) -> i32 {
-    let session = project.run_scenario().unwrap();
+fn health(session: &gameplay::GameSession) -> i32 {
     let hero = session.state().party.controlled.unwrap();
     session.stat(hero, &Key::new("health").unwrap()).unwrap()
+}
+
+fn player_health(project: &LoadedProject) -> i32 {
+    health(&project.run_scenario().unwrap())
+}
+
+/// The project's scenario played against a published bundle instead of its sources.
+fn played_from(project: &LoadedProject, bundle: &Path) -> gameplay::GameSession {
+    let mut session = gameplay::GameSession::new(
+        ContentRepository::open(bundle).unwrap(),
+        project.start().unwrap().into_state(),
+    )
+    .unwrap();
+
+    for step in &project.scenario().steps {
+        step.apply(&mut session).unwrap();
+    }
+
+    session
 }
 
 #[test]
@@ -30,41 +48,43 @@ fn authored_source_and_sqlite_bundle_use_the_same_validated_content() {
     let project = LoadedProject::load_directory(sample()).unwrap();
     assert!(project.warnings().is_empty());
     assert_eq!(player_health(&project), 75);
-    let source_id = project.content().fingerprint().unwrap();
     let file = temp.0.join("content.sqlite");
     project.build(&file).unwrap();
     let en = temp.0.join("en.sqlite");
     let uk = temp.0.join("uk.sqlite");
     project.build_language_pack("en", &en).unwrap();
     project.build_language_pack("uk", &uk).unwrap();
-    let bundle = LoadedProject::materialize_with_languages_for_tools(&file, &[en, uk]).unwrap();
-    assert_eq!(bundle.content(), project.content());
-    assert_eq!(bundle.scenario(), project.scenario());
-    assert_eq!(bundle.content().fingerprint().unwrap(), source_id);
-    assert_eq!(player_health(&bundle), 75);
-    let name = &bundle
+    let bundle = ContentRepository::open(&file).unwrap();
+    assert_eq!(bundle.manifest().fingerprint, project.fingerprint());
+    let (core, dialogues) = bundle.check().unwrap();
+    assert_eq!(core.game, project.content().game);
+    assert_eq!(dialogues, project.authored().dialogues.len());
+    let session = played_from(&project, &file);
+    assert_eq!(health(&session), 75);
+    let name = &project
         .content()
         .items
         .item(game_types::ItemDefinitionId::named("healing_potion"))
         .unwrap()
         .name;
+    let packs = vec![
+        LanguageRepository::open(&en).unwrap(),
+        LanguageRepository::open(&uk).unwrap(),
+    ];
+    let source = LanguageSource::new(ContentRepository::open(&file).unwrap(), packs).unwrap();
+    let published = localization::Localization::with_source("en", Box::new(source)).unwrap();
     assert_eq!(
-        bundle
-            .localization()
+        published
             .format("uk", name, &Arguments::new())
             .unwrap()
             .value,
         "Лікувальне зілля"
     );
-    let session = bundle.run_scenario().unwrap();
     let saves = SaveDirectory::new(temp.0.join("saves"), 2).unwrap();
     saves.quicksave(&session).unwrap();
     assert_eq!(
         saves
-            .load(
-                SaveSlot::Quick,
-                gameplay::ToolContent::new(project.content().clone()).unwrap()
-            )
+            .load(SaveSlot::Quick, project.tool_content().clone())
             .unwrap()
             .state(),
         session.state()
@@ -103,14 +123,8 @@ fn editing_data_changes_mechanics_without_changing_rust_or_old_bundles() {
     write(root.join("packages/core/items.ron"), &items);
     let changed = LoadedProject::load_directory(&root).unwrap();
     assert_eq!(player_health(&changed), 90);
-    assert_ne!(
-        changed.content().fingerprint().unwrap(),
-        original.content().fingerprint().unwrap()
-    );
-    assert_eq!(
-        player_health(&LoadedProject::materialize_bundle_for_tools(path).unwrap()),
-        75
-    );
+    assert_ne!(changed.fingerprint(), original.fingerprint());
+    assert_eq!(health(&played_from(&original, &path)), 75);
     let mut templates: Vec<actors::ActorTemplate> = read(root.join("packages/core/actors.ron"));
     templates[0].base.insert(Key::new("strength").unwrap(), 17);
     write(root.join("packages/core/actors.ron"), &templates);
@@ -132,19 +146,13 @@ fn translation_updates_do_not_change_mechanical_save_compatibility() {
     let text = fs::read_to_string(&path).unwrap();
     fs::write(&path, text.replace("Лікувальне зілля", "Цілюще зілля")).unwrap();
     let after = LoadedProject::load_directory(&root).unwrap();
-    assert_eq!(
-        before.content().fingerprint().unwrap(),
-        after.content().fingerprint().unwrap()
-    );
+    assert_eq!(before.fingerprint(), after.fingerprint());
     let saves = SaveDirectory::new(temp.0.join("saves"), 1).unwrap();
     let session = before.run_scenario().unwrap();
     saves.quicksave(&session).unwrap();
     assert!(
         saves
-            .load(
-                SaveSlot::Quick,
-                gameplay::ToolContent::new(after.content().clone()).unwrap()
-            )
+            .load(SaveSlot::Quick, after.tool_content().clone())
             .is_ok()
     );
 }
@@ -322,7 +330,7 @@ fn bundle_publication_does_not_clobber_and_failed_publication_cleans_staging() {
 }
 
 #[test]
-fn bundle_readers_reject_wrong_kind_schema_and_tampered_content() {
+fn bundle_readers_reject_wrong_kind_and_schema() {
     let temp = Temp::new();
     let project = LoadedProject::load_directory(sample()).unwrap();
     let output = temp.0.join("game.sqlite");
@@ -332,7 +340,7 @@ fn bundle_readers_reject_wrong_kind_schema_and_tampered_content() {
         .pragma_update(None, "application_id", 123)
         .unwrap();
     assert!(matches!(
-        LoadedProject::materialize_bundle_for_tools(&output),
+        ContentRepository::open(&output),
         Err(ContentError::WrongDatabase)
     ));
     connection
@@ -340,26 +348,13 @@ fn bundle_readers_reject_wrong_kind_schema_and_tampered_content() {
         .unwrap();
     connection.pragma_update(None, "user_version", 99).unwrap();
     assert!(matches!(
-        LoadedProject::materialize_bundle_for_tools(&output),
+        ContentRepository::open(&output),
         Err(ContentError::BundleVersion(99))
     ));
-    connection
-        .pragma_update(None, "user_version", BUNDLE_SCHEMA_VERSION)
-        .unwrap();
-    connection
-        .execute("UPDATE assets SET hash=zeroblob(32) WHERE kind=2", [])
-        .unwrap();
-    assert!(
-        LoadedProject::materialize_bundle_for_tools(&output)
-            .err()
-            .unwrap()
-            .to_string()
-            .contains("checksum mismatch")
-    );
 }
 
 #[test]
-fn cli_validates_builds_and_runs_from_bundle_with_locale_and_saves() {
+fn cli_validates_builds_and_runs_with_locale_and_saves() {
     let temp = Temp::new();
     let executable = env!("CARGO_BIN_EXE_yarra-game-content");
     let root = sample();
@@ -377,7 +372,7 @@ fn cli_validates_builds_and_runs_from_bundle_with_locale_and_saves() {
     );
     let output = Command::new(executable)
         .arg("validate")
-        .arg(&bundle)
+        .arg(&root)
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -387,14 +382,26 @@ fn cli_validates_builds_and_runs_from_bundle_with_locale_and_saves() {
     let project = LoadedProject::load_directory(&root).unwrap();
     project.build_language_pack("en", &en).unwrap();
     project.build_language_pack("uk", &uk).unwrap();
-    let saves = temp.0.join("saves");
     let output = Command::new(executable)
-        .arg("demo")
+        .arg("validate")
         .arg(&bundle)
         .arg("--language")
         .arg(&en)
         .arg("--language")
         .arg(&uk)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(text.contains("8 dialogues") && text.contains("Language packs checked: 2"));
+    let saves = temp.0.join("saves");
+    let output = Command::new(executable)
+        .arg("demo")
+        .arg(&root)
         .args(["--locale", "uk", "--save-dir"])
         .arg(&saves)
         .output()

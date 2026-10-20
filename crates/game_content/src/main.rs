@@ -1,5 +1,5 @@
 use game_types::{Invalid, PlaythroughId, require};
-use localization::Arguments;
+use localization::{Arguments, Localization};
 use save::{SaveDirectory, SaveSlot};
 
 use std::{
@@ -9,22 +9,25 @@ use std::{
 };
 
 use yarra_game_content::{
-    ANALYZER_VARIABLE, Asset, AssetId, ContentRepository, LoadedProject, Result, ScriptAnalysis,
+    ANALYZER_VARIABLE, ContentRepository, LanguageRepository, LanguageSource, LoadedProject,
+    Result, ScriptAnalysis,
 };
 
 const USAGE: &str = "Usage:
-  yarra-game-content validate SOURCE_DIR|BUNDLE.sqlite [--language PACK.sqlite]...
+  yarra-game-content validate SOURCE_DIR
+  yarra-game-content validate BUNDLE.sqlite [--language PACK.sqlite]...
   yarra-game-content scenario SOURCE_DIR SCENARIO.ron
   yarra-game-content build SOURCE_DIR NEW_BUNDLE.sqlite
   yarra-game-content build-language SOURCE_DIR LOCALE NEW_PACK.sqlite
   yarra-game-content inspect BUNDLE.sqlite [--item NAME]... [--dialogue NAME]...
   yarra-game-content script-api
-  yarra-game-content demo SOURCE_DIR|BUNDLE.sqlite [--language PACK.sqlite]... [--locale LOCALE] [--save-dir NEW_DIR]
+  yarra-game-content demo SOURCE_DIR [--locale LOCALE] [--save-dir NEW_DIR]
 
 A source directory lists package directories; their files are found by name, and each
 package has one Fluent file per locale.
-Validation and builds run the scenario in isolation. Demo writes fresh save slots.
-Inspect reads only the requested assets; it never runs a scenario or loads translations.
+Validating a source runs its scenario; validating a bundle reads all of it and checks its
+language packs against it. Demo publishes the project and plays its scenario against the
+bundle, writing fresh save slots. Inspect reads only what it is asked for.
 Existing bundle paths and demo save directories are never overwritten.";
 
 fn main() -> ExitCode {
@@ -37,16 +40,33 @@ fn main() -> ExitCode {
     }
 }
 
-fn load(path: &Path, languages: &[PathBuf]) -> Result<LoadedProject> {
-    if path.is_dir() {
-        require(
-            languages.is_empty(),
-            "source projects declare their own language resources",
-        )?;
-        LoadedProject::load_directory(path)
-    } else {
-        LoadedProject::materialize_with_languages_for_tools(path, languages)
+/// Reads all of a bundle as a session could, and checks each language pack's wording
+/// against its text contracts.
+fn validate_bundle(path: &Path, languages: Vec<PathBuf>) -> Result<()> {
+    let (content, dialogues) = ContentRepository::open(path)?.check()?;
+    println!(
+        "Validated bundle: {} items, {} actor templates, {} characters, {dialogues} dialogues.",
+        content.items.items.len(),
+        content.game.actors.len(),
+        content.game.characters.len(),
+    );
+    let repository = ContentRepository::open(path)?;
+    let texts = repository.read_texts()?;
+    let source_locale = repository.manifest().source_locale.clone();
+    let packs = languages
+        .iter()
+        .map(LanguageRepository::open)
+        .collect::<Result<Vec<_>>>()?;
+    let locales = packs.iter().map(|p| p.locale().to_owned()).collect();
+    let source = LanguageSource::new(repository, packs)?;
+    let localization = Localization::with_source(&source_locale, Box::new(source))?;
+
+    for warning in localization.check(&texts, &locales)? {
+        eprintln!("warning: {warning}");
     }
+
+    println!("Language packs checked: {}", languages.len());
+    Ok(())
 }
 
 fn report(project: &LoadedProject) -> Result<()> {
@@ -56,12 +76,11 @@ fn report(project: &LoadedProject) -> Result<()> {
         project.content().items.items.len(),
         project.content().game.actors.len(),
         project.content().game.characters.len(),
-        project.content().game.dialogues.len(),
+        project.authored().dialogues.len(),
         project.scenario().steps.len()
     );
     let fingerprint: String = project
-        .content()
-        .fingerprint()?
+        .fingerprint()
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect();
@@ -117,37 +136,36 @@ fn run() -> Result<()> {
             Ok(())
         }
         Some("inspect") => {
-            let mut roots = Vec::new();
-
-            while let Some(flag) = args.next() {
-                require(roots.len() < 128, "inspect accepts at most 128 roots")?;
-                let value = args
-                    .next()
-                    .and_then(|v| v.into_string().ok())
-                    .ok_or_else(|| Invalid("inspect option needs an asset UUID".into()))?;
-                roots.push(match flag.to_str() {
-                    Some("--item") => AssetId::Item(game_types::ItemDefinitionId::try_from(value)?),
-                    Some("--dialogue") => {
-                        AssetId::Dialogue(game_types::DialogueId::try_from(value)?)
-                    }
-                    _ => return Err(Invalid(format!("unknown inspect option {flag:?}")).into()),
-                });
-            }
-
             let repository = ContentRepository::open(input)?;
             println!(
                 "Publication: {} revision {}",
                 repository.manifest().content.id,
                 repository.manifest().content.revision
             );
+            let mut core = None;
 
-            for id in &roots {
-                match repository.read(id)? {
-                    Asset::Item(item) => println!("Item {}: {} g", item.id, item.weight_grams),
-                    Asset::Dialogue(graph) => {
-                        println!("Dialogue {}: {} nodes", graph.id, graph.nodes.len())
+            while let Some(flag) = args.next() {
+                let value = args
+                    .next()
+                    .and_then(|v| v.into_string().ok())
+                    .ok_or_else(|| Invalid("inspect option needs a name".into()))?;
+
+                match flag.to_str() {
+                    Some("--item") => {
+                        let content = match &mut core {
+                            Some(content) => content,
+                            None => core.insert(repository.read_core()?),
+                        };
+                        let id = game_types::ItemDefinitionId::try_from(value)?;
+                        let item = content.items.item(id)?;
+                        println!("Item {}: {} g", item.id, item.weight_grams);
                     }
-                    _ => println!("Resolved {id:?}"),
+                    Some("--dialogue") => {
+                        let id = game_types::DialogueId::try_from(value)?;
+                        let graph = repository.read_dialogue(id)?;
+                        println!("Dialogue {}: {} nodes", graph.id, graph.nodes.len());
+                    }
+                    _ => return Err(Invalid(format!("unknown inspect option {flag:?}")).into()),
                 }
             }
 
@@ -163,7 +181,15 @@ fn run() -> Result<()> {
                 ));
             }
 
-            report(&load(&input, &languages)?)
+            if input.is_dir() {
+                require(
+                    languages.is_empty(),
+                    "a source project has its own language resources",
+                )?;
+                report(&LoadedProject::load_directory(&input)?)
+            } else {
+                validate_bundle(&input, languages)
+            }
         }
         Some("build-language") => {
             let locale = args
@@ -187,15 +213,11 @@ fn run() -> Result<()> {
             Ok(())
         }
         Some("demo") => {
-            let mut languages = Vec::new();
             let mut locale = None;
             let mut directory = None;
 
             while let Some(flag) = args.next() {
                 match flag.to_str() {
-                    Some("--language") => languages.push(PathBuf::from(
-                        args.next().ok_or_else(|| Invalid(USAGE.into()))?,
-                    )),
                     Some("--locale") if locale.is_none() => {
                         locale = Some(
                             args.next()
@@ -217,7 +239,7 @@ fn run() -> Result<()> {
                 }
             }
 
-            let project = load(&input, &languages)?;
+            let project = LoadedProject::load_directory(&input)?;
             report(&project)?;
             demo(
                 &project,
@@ -233,15 +255,7 @@ fn demo(project: &LoadedProject, locale: &str, directory: Option<PathBuf>) -> Re
     let args = Arguments::new();
 
     // Validate presentation before creating the requested output directory.
-    for key in project.content().text_keys() {
-        if project
-            .content()
-            .text
-            .get(&key.resource)
-            .is_some_and(|c| !c.messages[&key.key].arguments.is_empty())
-        {
-            continue;
-        }
+    for key in project.authored().names() {
         project
             .localization()
             .format(locale, &game_types::TextRef::Message(key.clone()), &args)?;
@@ -251,15 +265,12 @@ fn demo(project: &LoadedProject, locale: &str, directory: Option<PathBuf>) -> Re
         env::temp_dir().join(format!("yarra-gameplay-{}", PlaythroughId::random()))
     });
     std::fs::create_dir(&directory)?;
-    let publication = directory.join("published.sqlite");
-    project.build(&publication)?;
-    let library = yarra_game_content::ContentLibrary::new(directory.join("content"))?;
-    let identity = library.retain(&publication)?;
-    std::fs::remove_file(publication)?;
+    let bundle = directory.join("content.sqlite");
+    project.build(&bundle)?;
 
     // Play the scenario against the published bundle, not the authored sources.
     let seed = project.start()?.into_state();
-    let mut session = gameplay::GameSession::new(library.open(&identity)?, seed)?;
+    let mut session = gameplay::GameSession::new(ContentRepository::open(&bundle)?, seed)?;
 
     for step in &project.scenario().steps {
         step.apply(&mut session)?;
@@ -313,7 +324,7 @@ fn demo(project: &LoadedProject, locale: &str, directory: Option<PathBuf>) -> Re
     saves.save(SaveSlot::Manual(1), &session, "Authored scenario")?;
     saves.quicksave(&session)?;
     saves.autosave(&session)?;
-    let loaded = library.load(&saves, SaveSlot::Manual(1))?;
+    let loaded = saves.load(SaveSlot::Manual(1), ContentRepository::open(&bundle)?)?;
     require(
         loaded.state() == state,
         "save roundtrip differs from authored scenario result",
@@ -321,7 +332,7 @@ fn demo(project: &LoadedProject, locale: &str, directory: Option<PathBuf>) -> Re
     println!(
         "Dialogue graphs loaded: {} of {}",
         session.content().graphs.loaded(),
-        project.content().game.dialogues.len()
+        project.authored().dialogues.len()
     );
 
     for line in summary {

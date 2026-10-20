@@ -1,42 +1,27 @@
 //! Moves a session through time for the game and for headless runs alike: game time passes
-//! in fixed steps, and a bounded trace keeps what the last commands did.
+//! in fixed steps.
 use crate::*;
 use game_types::require;
-use std::collections::VecDeque;
 use std::time::Duration;
 
 /// Real time turned into game time at once at most: a long hitch does not fast-forward the
 /// world.
 const MAX_ELAPSED: Duration = Duration::from_secs(1);
 
-#[derive(Debug, Clone)]
-pub struct TraceEntry {
-    pub generation: u64,
-    pub events: Vec<GameEvent>,
-}
-
 pub struct Driver {
     session: GameSession,
     step_ms: u64,
     /// Real time not yet turned into game time.
     unspent: Duration,
-    trace: VecDeque<TraceEntry>,
-    trace_capacity: usize,
 }
 
 impl Driver {
-    /// A trace capacity of zero keeps no trace.
-    pub fn new(session: GameSession, step_ms: u64, trace_capacity: usize) -> Result<Self> {
-        require(
-            (1..=60_000).contains(&step_ms) && trace_capacity <= 1024,
-            "invalid driver step or trace capacity",
-        )?;
+    pub fn new(session: GameSession, step_ms: u64) -> Result<Self> {
+        require((1..=60_000).contains(&step_ms), "invalid driver step")?;
         Ok(Self {
             session,
             step_ms,
             unspent: Duration::ZERO,
-            trace: VecDeque::new(),
-            trace_capacity,
         })
     }
 
@@ -48,24 +33,8 @@ impl Driver {
         self.session.state()
     }
 
-    pub fn trace(&self) -> &VecDeque<TraceEntry> {
-        &self.trace
-    }
-
     pub fn submit(&mut self, command: Command) -> Result<CommandOutcome> {
-        let outcome = self.session.apply(command)?;
-
-        if self.trace_capacity > 0 {
-            if self.trace.len() == self.trace_capacity {
-                self.trace.pop_front();
-            }
-            self.trace.push_back(TraceEntry {
-                generation: outcome.header.generation,
-                events: outcome.events.clone(),
-            });
-        }
-
-        Ok(outcome)
+        self.session.apply(command)
     }
 
     pub fn container_contents(
@@ -121,10 +90,9 @@ impl Driver {
     }
 
     /// Carries on with another playthrough, e.g. one just loaded. Real time not yet spent
-    /// and the trace go with the old one.
+    /// goes with the old one.
     pub fn replace(&mut self, session: GameSession) {
         self.session = session;
         self.unspent = Duration::ZERO;
-        self.trace.clear();
     }
 }

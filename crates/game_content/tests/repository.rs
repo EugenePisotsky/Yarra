@@ -1,4 +1,4 @@
-use game_types::{ItemDefinitionId, TextResourceId};
+use game_types::{DialogueId, ItemDefinitionId, TextResourceId};
 use gameplay::inventory::ItemCatalog;
 use gameplay::{ContentSource, GameSession};
 use rusqlite::{Connection, params};
@@ -22,77 +22,67 @@ fn open(path: &Path) -> ContentRepository {
     ContentRepository::open(path).unwrap()
 }
 
-fn item_ids(path: &Path) -> Vec<AssetId> {
-    open(path)
-        .headers(AssetKind::Item)
+fn dialogue_ids(path: &Path) -> Vec<String> {
+    Connection::open(path)
         .unwrap()
-        .into_iter()
-        .map(|h| h.id)
-        .collect()
+        .prepare("SELECT id FROM dialogues ORDER BY id")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .collect::<std::result::Result<_, _>>()
+        .unwrap()
 }
 
 #[test]
 fn opening_reads_the_manifest_only_and_damage_is_reported_by_the_read_that_meets_it() {
     let temp = Temp::new();
     let path = build(&temp);
-    let ids = item_ids(&path);
+    let ids = dialogue_ids(&path);
     let db = Connection::open(&path).unwrap();
-    db.execute("UPDATE tool_scenario SET payload=x'00'", [])
-        .unwrap();
+    db.execute("UPDATE core SET payload=x'00'", []).unwrap();
     db.execute(
-        "UPDATE assets SET hash=zeroblob(32) WHERE kind=?1 AND id=?2",
-        params![ids[1].kind() as i64, ids[1].key()],
+        "UPDATE dialogues SET payload=x'00' WHERE id=?1",
+        params![ids[1]],
     )
     .unwrap();
 
-    // The runtime never reads the tool scenario, and opening decodes no asset.
+    // Opening decodes nothing but the manifest; each read meets its own damage.
     let mut repo = open(&path);
-    assert!(matches!(repo.read(&ids[0]).unwrap(), Asset::Item(_)));
+    let first = DialogueId::try_from(ids[0].clone()).unwrap();
+    assert_eq!(repo.read_dialogue(first).unwrap().id, first);
+    assert!(
+        repo.read_dialogue(DialogueId::try_from(ids[1].clone()).unwrap())
+            .is_err()
+    );
     assert!(matches!(
-        repo.read(&ids[1]),
-        Err(ContentError::CorruptAsset { .. })
-    ));
-    assert!(matches!(
-        repo.read(&AssetId::Item(ItemDefinitionId::random())),
-        Err(ContentError::MissingAsset(_))
+        repo.read_dialogue(DialogueId::random()),
+        Err(ContentError::NotInBundle(_))
     ));
 
-    // Items are always-loaded definitions, so a session refuses the damaged bundle.
+    // The core is what a session reads up front, so a session refuses the damaged bundle.
     assert!(repo.core().is_err());
-    assert!(LoadedProject::materialize_bundle_for_tools(path).is_err());
 }
 
 #[test]
-fn a_record_under_the_wrong_identity_is_rejected_even_with_a_valid_checksum() {
+fn a_graph_under_another_identity_is_refused_when_it_is_read() {
     let temp = Temp::new();
     let path = build(&temp);
-    let ids = item_ids(&path);
+    let ids = dialogue_ids(&path);
     let db = Connection::open(&path).unwrap();
     let payload: Vec<u8> = db
         .query_row(
-            "SELECT payload FROM assets WHERE kind=2 AND id=?1",
-            [ids[1].key()],
+            "SELECT payload FROM dialogues WHERE id=?1",
+            [&ids[1]],
             |r| r.get(0),
         )
         .unwrap();
     db.execute(
-        "UPDATE assets SET payload=?1,byte_len=?2,hash=?3 WHERE kind=2 AND id=?4",
-        params![
-            payload,
-            payload.len() as i64,
-            blake3::hash(&payload).as_bytes(),
-            ids[0].key()
-        ],
+        "UPDATE dialogues SET payload=?1 WHERE id=?2",
+        params![payload, ids[0]],
     )
     .unwrap();
-    assert!(
-        open(&path)
-            .read(&ids[0])
-            .err()
-            .unwrap()
-            .to_string()
-            .contains("identity mismatch")
-    );
+    let error = open(&path).check().err().unwrap().to_string();
+    assert!(error.contains("dialogue contract mismatch"), "{error}");
 }
 
 #[test]
@@ -124,7 +114,7 @@ fn a_session_over_a_large_catalog_loads_definitions_once_and_graphs_on_demand() 
     }
 
     assert_eq!(session.content().graphs.loaded(), 1);
-    assert!(project.content().game.dialogues.len() > 1);
+    assert!(project.authored().dialogues.len() > 1);
 }
 
 #[test]
@@ -155,21 +145,13 @@ fn text_contracts_have_stable_ids_and_are_read_explicitly() {
         .unwrap()
         .build(&renamed)
         .unwrap();
-    assert_eq!(
-        open(&original).manifest().publication_hash,
-        open(&renamed).manifest().publication_hash
-    );
-    let mut repo = open(&original);
-    assert!(
-        matches!(repo.read(&AssetId::Text(resource)).unwrap(), Asset::Text(t) if t.id == resource)
-    );
+    assert_eq!(open(&original).manifest(), open(&renamed).manifest());
+    let repo = open(&original);
+    assert_eq!(repo.read_text(resource).unwrap().id, resource);
     assert!(matches!(
-        repo.read(&AssetId::Text(TextResourceId::random())),
-        Err(ContentError::MissingAsset(_))
+        repo.read_text(TextResourceId::random()),
+        Err(ContentError::NotInBundle(_))
     ));
-
-    // Sessions never load text contracts; formatting asks for them separately.
-    assert!(repo.core().unwrap().text.is_empty());
 }
 
 #[test]
@@ -192,10 +174,10 @@ fn separate_publications_are_read_independently() {
         .build(&second)
         .unwrap();
     let (a, b) = (open(&first), open(&second));
-    assert_ne!(a.manifest().publication_hash, b.manifest().publication_hash);
-    let weight = |repo: &ContentRepository| match repo.read(&AssetId::Item(id)).unwrap() {
-        Asset::Item(item) => item.weight_grams,
-        _ => unreachable!(),
+    assert_ne!(a.manifest().fingerprint, b.manifest().fingerprint);
+    let weight = |repo: &ContentRepository| {
+        let core = repo.read_core().unwrap();
+        core.items.item(id).unwrap().weight_grams
     };
     assert_eq!(weight(&a), original_weight);
     assert_eq!(weight(&b), original_weight + 10);
@@ -206,7 +188,8 @@ fn cli_inspect_reads_a_requested_item() {
     let temp = Temp::new();
     let path = build(&temp);
     let executable = env!("CARGO_BIN_EXE_yarra-game-content");
-    let id = item_ids(&path)[0].key();
+    let project = LoadedProject::load_directory(sample()).unwrap();
+    let id = project.content().items.items.keys().next().unwrap().raw();
     let output = std::process::Command::new(executable)
         .arg("inspect")
         .arg(&path)
@@ -270,30 +253,15 @@ fn a_package_needs_its_source_text_and_each_message_once() {
 }
 
 #[test]
-fn failure_mid_publication_cleans_staging_and_preserves_previous_generation() {
+fn a_failed_publication_leaves_nothing_behind_and_the_previous_one_as_it_was() {
     let temp = Temp::new();
     let previous = build(&temp);
-    let previous_hash = open(&previous).manifest().publication_hash;
-    let source = temp.source();
+    let manifest = open(&previous).manifest().clone();
+    let project = LoadedProject::load_directory(sample()).unwrap();
 
-    // Source FTL fits its 2 MiB authoring limit; its encoded record exceeds the publication limit.
-    let path = source.join("packages/core/en.ftl");
-    let mut text = fs::read_to_string(&path).unwrap();
-    text.push_str("\n# ");
-    text.push_str(&"x".repeat(MAX_ASSET_BYTES - text.len()));
-    fs::write(path, text).unwrap();
-    let project = LoadedProject::load_directory(source).unwrap();
-    let failed = temp.0.join("failed.sqlite");
-    assert!(
-        project
-            .build_language_pack("en", &failed)
-            .err()
-            .unwrap()
-            .to_string()
-            .contains("publication limit")
-    );
-    assert!(!failed.exists());
-    assert_eq!(open(&previous).manifest().publication_hash, previous_hash);
+    // The pack is written in full, then refused where a file already is.
+    assert!(project.build_language_pack("en", &previous).is_err());
+    assert_eq!(open(&previous).manifest(), &manifest);
     assert!(fs::read_dir(&temp.0).unwrap().all(|entry| {
         !entry
             .unwrap()

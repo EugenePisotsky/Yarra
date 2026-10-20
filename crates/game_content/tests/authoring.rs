@@ -56,7 +56,7 @@ fn conversations_reuse_text_keys_and_node_names_without_sharing_logic() {
     manifest.packages.push(folder.into());
     write(root.join("project.ron"), &manifest);
     let project = LoadedProject::load_directory(&root).unwrap();
-    assert_eq!(project.content().game.dialogues.len(), 9);
+    assert_eq!(project.authored().dialogues.len(), 9);
     let mut session = project.start().unwrap();
 
     for dialogue in [GATE_DIALOGUE, second_id] {
@@ -139,17 +139,14 @@ fn moving_conversation_and_reordering_packages_preserves_publication_identity() 
     let after = LoadedProject::load_directory(root).unwrap();
     let second = temp.0.join("second.sqlite");
     after.build(&second).unwrap();
-    assert_eq!(
-        before.content().fingerprint().unwrap(),
-        after.content().fingerprint().unwrap()
-    );
+    assert_eq!(before.fingerprint(), after.fingerprint());
     let a = ContentRepository::open(first).unwrap();
     let b = ContentRepository::open(second).unwrap();
-    assert_eq!(a.manifest().publication_hash, b.manifest().publication_hash);
+    assert_eq!(a.manifest(), b.manifest());
 }
 
 #[test]
-fn independent_language_updates_work_with_retained_content_and_saved_state() {
+fn independent_language_updates_work_with_published_content_and_saved_state() {
     let temp = Temp::new();
     let root = temp.source();
     let project = LoadedProject::load_directory(&root).unwrap();
@@ -159,8 +156,10 @@ fn independent_language_updates_work_with_retained_content_and_saved_state() {
     project.build_language_pack("en", &en).unwrap();
     let uk1 = temp.0.join("uk1.sqlite");
     project.build_language_pack("uk", &uk1).unwrap();
-    let library = ContentLibrary::new(temp.0.join("library")).unwrap();
-    let identity = library.retain(&content).unwrap();
+    let fingerprint = ContentRepository::open(&content)
+        .unwrap()
+        .manifest()
+        .fingerprint;
     let saves = save::SaveDirectory::new(temp.0.join("saves"), 1).unwrap();
     saves.quicksave(&project.run_scenario().unwrap()).unwrap();
     let path = root.join("packages/core/uk.ftl");
@@ -174,10 +173,7 @@ fn independent_language_updates_work_with_retained_content_and_saved_state() {
     let updated = LoadedProject::load_directory(&root).unwrap();
     let uk2 = temp.0.join("uk2.sqlite");
     updated.build_language_pack("uk", &uk2).unwrap();
-    assert_eq!(
-        updated.content().fingerprint().unwrap(),
-        identity.fingerprint
-    );
+    assert_eq!(updated.fingerprint(), fingerprint);
     let name = project
         .content()
         .items
@@ -186,13 +182,12 @@ fn independent_language_updates_work_with_retained_content_and_saved_state() {
         .name
         .clone();
     fs::remove_dir_all(root).unwrap();
-    fs::remove_file(content).unwrap();
     let render = |pack| {
         Localization::with_source(
             "en",
             Box::new(
                 LanguageSource::new(
-                    library.open(&identity).unwrap(),
+                    ContentRepository::open(&content).unwrap(),
                     vec![
                         LanguageRepository::open(&en).unwrap(),
                         LanguageRepository::open(pack).unwrap(),
@@ -213,7 +208,8 @@ fn independent_language_updates_work_with_retained_content_and_saved_state() {
         old.format("uk", &name, &Arguments::new()).unwrap().value,
         "Лікувальне зілля"
     );
-    library.load(&saves, save::SaveSlot::Quick).unwrap();
+    let repository = ContentRepository::open(&content).unwrap();
+    saves.load(save::SaveSlot::Quick, repository).unwrap();
 }
 
 #[test]
@@ -233,10 +229,7 @@ fn new_wording_changes_no_identity_and_missing_translations_fall_back() {
     let ukrainian = root.join("packages/old_gate/uk.ftl");
     fs::write(&ukrainian, "return-key = Ось ключ.\n").unwrap();
     let after = LoadedProject::load_directory(&root).unwrap();
-    assert_eq!(
-        before.content().fingerprint().unwrap(),
-        after.content().fingerprint().unwrap()
-    );
+    assert_eq!(before.fingerprint(), after.fingerprint());
     assert_eq!(after.warnings().len(), 1);
     assert!(after.warnings()[0].contains("uk: old_gate/greeting falls back to en"));
 }
@@ -303,7 +296,7 @@ fn content_names_only_declared_characters() {
 }
 
 #[test]
-fn language_packs_are_indexed_lazy_and_reject_requested_corruption() {
+fn language_packs_are_indexed_and_never_overwritten() {
     let temp = Temp::new();
     let project = LoadedProject::load_directory(temp.source()).unwrap();
     let path = temp.0.join("uk.sqlite");
@@ -317,14 +310,9 @@ fn language_packs_are_indexed_lazy_and_reject_requested_corruption() {
         )
         .unwrap();
     assert!(plan.contains("PRIMARY KEY"));
-    db.execute(
-        "UPDATE resources SET hash=zeroblob(32) WHERE id=?1",
-        [TextResourceId::named("old_gate").raw()],
-    )
-    .unwrap();
     drop(db);
-    let mut pack = LanguageRepository::open(&path).unwrap();
-    assert_eq!(pack.stats(), &LanguageStats::default());
+    let pack = LanguageRepository::open(&path).unwrap();
+    assert_eq!(pack.locale(), "uk");
     assert!(
         pack.load(TextResourceId::named("core"))
             .unwrap()
@@ -332,13 +320,7 @@ fn language_packs_are_indexed_lazy_and_reject_requested_corruption() {
             .source
             .contains("Лікувальне зілля")
     );
-    assert_eq!(pack.stats().decoded_resources, 1);
-    assert!(
-        pack.load(TextResourceId::named("old_gate"))
-            .unwrap_err()
-            .to_string()
-            .contains("checksum")
-    );
+    assert!(pack.load(TextResourceId::random()).unwrap().is_none());
     let before = fs::read(&path).unwrap();
     assert!(project.build_language_pack("uk", &path).is_err());
     assert_eq!(fs::read(&path).unwrap(), before);
@@ -358,8 +340,5 @@ fn argument_contract_changes_change_mechanical_identity() {
     );
     fs::write(&path, text).unwrap();
     let after = LoadedProject::load_directory(root).unwrap();
-    assert_ne!(
-        before.content().fingerprint().unwrap(),
-        after.content().fingerprint().unwrap()
-    );
+    assert_ne!(before.fingerprint(), after.fingerprint());
 }

@@ -106,10 +106,9 @@ fn guard_scenario_rewards_and_new_state_survive_checkpoint_restore() {
     assert_eq!(session.state().clone(), before);
     let saves = SaveDirectory::new(temp.0.join("slots"), 2).unwrap();
     saves.quicksave(&session).unwrap();
-    let library = ContentLibrary::new(temp.0.join("retained")).unwrap();
-    library.retain(temp.0.join("content.sqlite")).unwrap();
     std::fs::remove_dir_all(temp.0.join("source")).unwrap();
-    let loaded = library.load(&saves, SaveSlot::Quick).unwrap();
+    let repository = ContentRepository::open(temp.0.join("content.sqlite")).unwrap();
+    let loaded = saves.load(SaveSlot::Quick, repository).unwrap();
 
     // Restoring reads no dialogue graph: the saved conversation had finished.
     assert!(loaded.content().graphs.loaded() == 0);
@@ -292,8 +291,8 @@ fn only_the_selected_dialogue_graph_is_read() {
     // Damage to a candidate graph cannot affect opening, inspection or another selection.
     let db = Connection::open(&bundle).unwrap();
     db.execute(
-        "UPDATE assets SET hash=zeroblob(32) WHERE kind=?1 AND id=?2",
-        params![AssetKind::Dialogue as i64, REWARD.raw()],
+        "UPDATE dialogues SET payload=x'00' WHERE id=?1",
+        params![REWARD.raw()],
     )
     .unwrap();
     let open = || {
@@ -407,19 +406,20 @@ fn opening_checks_references_between_always_loaded_definitions() {
         panic!("expected composite guard predicate");
     }
 
-    // A well-formed record with a valid checksum that refers to something that is not there.
-    let payload = serde_json::to_vec(&Asset::Predicate(predicate)).unwrap();
+    // A well-formed core whose predicate refers to something that is not there.
     let bundle = temp.0.join("content.sqlite");
     let db = Connection::open(&bundle).unwrap();
+    let core: Vec<u8> = db
+        .query_row("SELECT payload FROM core", [], |r| r.get(0))
+        .unwrap();
+    let mut core: serde_json::Value = serde_json::from_slice(&core).unwrap();
+    let id = serde_json::to_value(READY).unwrap();
+    let predicates = core["game"]["predicates"].as_array_mut().unwrap();
+    *predicates.iter_mut().find(|p| p["id"] == id).unwrap() =
+        serde_json::to_value(&predicate).unwrap();
     db.execute(
-        "UPDATE assets SET payload=?1,byte_len=?2,hash=?3 WHERE kind=?4 AND id=?5",
-        params![
-            payload,
-            payload.len() as i64,
-            blake3::hash(&payload).as_bytes().as_slice(),
-            AssetKind::Predicate as i64,
-            READY.raw()
-        ],
+        "UPDATE core SET payload=?1",
+        [serde_json::to_vec(&core).unwrap()],
     )
     .unwrap();
     let error = GameSession::new(

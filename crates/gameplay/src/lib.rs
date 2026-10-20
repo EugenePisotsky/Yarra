@@ -31,12 +31,12 @@ mod script;
 
 pub use script::*;
 
+mod authored;
 mod session;
 mod state;
-mod tool_content;
 mod tx;
 
-pub use tool_content::ToolContent;
+pub use authored::{AuthoredContent, ToolContent};
 
 mod driver;
 mod graphs;
