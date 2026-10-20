@@ -109,7 +109,6 @@ impl Inventory {
         catalog: &ItemCatalog,
         filter: ItemFilter<'_>,
     ) -> Result<Vec<&'a ItemEntry>> {
-        self.validate(catalog)?;
         let mut result = Vec::new();
 
         for entry in &self.entries {
@@ -125,7 +124,6 @@ impl Inventory {
     }
 
     pub fn total_weight_grams(&self, catalog: &ItemCatalog) -> Result<u64> {
-        self.validate(catalog)?;
         self.entries.iter().try_fold(0_u64, |total, entry| {
             let weight =
                 u64::from(catalog.item(entry.definition)?.weight_grams) * u64::from(entry.quantity);
@@ -140,33 +138,28 @@ impl Inventory {
         definition: ItemDefinitionId,
         quantity: u32,
     ) -> Result<Vec<ItemId>> {
-        self.validate(catalog)?;
-
         if quantity == 0 {
             return Err(InventoryError::InvalidQuantity);
         }
 
-        catalog.item(definition)?;
-        let mut next = self.clone();
+        room(catalog, self, definition, quantity)?;
+        let revision = next_revision(self.revision)?;
         let entry = ItemEntry {
-            id: next.mint(),
+            id: self.mint(),
             definition,
             quantity,
         };
-        let ids = deposit(catalog, &mut next, entry)?;
-        next.revision = next_revision(self.revision)?;
-        *self = next;
+        let ids = deposit(catalog, self, entry)?;
+        self.revision = revision;
         Ok(ids)
     }
 
     /// Authoritative consumption/destruction. Gameplay must authorize the reason.
     /// Use discard for user-requested destruction, which respects discardable.
-    pub fn remove(&mut self, catalog: &ItemCatalog, entry: ItemId, quantity: u32) -> Result<()> {
-        self.validate(catalog)?;
-        let mut next = self.clone();
-        withdraw(&mut next, entry, quantity)?;
-        next.revision = next_revision(self.revision)?;
-        *self = next;
+    pub fn remove(&mut self, entry: ItemId, quantity: u32) -> Result<()> {
+        let revision = next_revision(self.revision)?;
+        withdraw(self, entry, quantity)?;
+        self.revision = revision;
         Ok(())
     }
 
@@ -178,18 +171,11 @@ impl Inventory {
         {
             return Err(InventoryError::Restricted);
         }
-        self.remove(catalog, entry, quantity)
+        self.remove(entry, quantity)
     }
 
     /// Splitting gives the new stack a new ID; the remaining stack keeps its ID.
-    pub fn split_stack(
-        &mut self,
-        catalog: &ItemCatalog,
-        entry: ItemId,
-        quantity: u32,
-    ) -> Result<ItemId> {
-        self.validate(catalog)?;
-
+    pub fn split_stack(&mut self, entry: ItemId, quantity: u32) -> Result<ItemId> {
         if quantity == 0 || quantity >= self.entry(entry)?.quantity {
             return Err(InventoryError::InvalidQuantity);
         }
@@ -198,12 +184,11 @@ impl Inventory {
             return Err(InventoryError::Capacity);
         }
 
-        let mut next = self.clone();
-        let split = withdraw(&mut next, entry, quantity)?;
+        let revision = next_revision(self.revision)?;
+        let split = withdraw(self, entry, quantity)?;
         let id = split.id;
-        next.entries.push(split);
-        next.revision = next_revision(self.revision)?;
-        *self = next;
+        self.entries.push(split);
+        self.revision = revision;
         Ok(id)
     }
 
@@ -214,8 +199,6 @@ impl Inventory {
         source: ItemId,
         destination: ItemId,
     ) -> Result<()> {
-        self.validate(catalog)?;
-
         if source == destination {
             return Err(InventoryError::SameParticipant);
         }
@@ -249,9 +232,9 @@ impl Inventory {
     }
 }
 
-/// Atomic in memory. Persistence must write both inventories in one transaction.
-/// Compatible stacks merge automatically; returned IDs identify destination entries.
-/// An unmerged full entry keeps its ID (including every non-stackable item).
+/// Moves items from one inventory to another, both changed or neither. Compatible stacks
+/// merge; the returned IDs identify the destination's entries. A whole entry that does not
+/// merge keeps its ID, as every non-stackable item does.
 pub fn transfer(
     catalog: &ItemCatalog,
     source: &mut Inventory,
@@ -259,34 +242,35 @@ pub fn transfer(
     entry: ItemId,
     quantity: u32,
 ) -> Result<Vec<ItemId>> {
-    validate_pair(catalog, source, destination)?;
+    validate_pair(source, destination)?;
+    let held = source.entry(entry)?;
+    let definition = held.definition;
 
-    if !catalog
-        .item(source.entry(entry)?.definition)?
-        .permissions
-        .transferable
-    {
+    if !catalog.item(definition)?.permissions.transferable {
         return Err(InventoryError::Restricted);
     }
 
-    let mut from = source.clone();
-    let mut to = destination.clone();
-    let moved = withdraw(&mut from, entry, quantity)?;
-    let ids = deposit(catalog, &mut to, moved)?;
-    from.revision = next_revision(source.revision)?;
-    to.revision = next_revision(destination.revision)?;
-    *source = from;
-    *destination = to;
+    if quantity == 0 || quantity > held.quantity {
+        return Err(InventoryError::InvalidQuantity);
+    }
+
+    room(catalog, destination, definition, quantity)?;
+    let revisions = (
+        next_revision(source.revision)?,
+        next_revision(destination.revision)?,
+    );
+    let moved = withdraw(source, entry, quantity)?;
+    let ids = deposit(catalog, destination, moved)?;
+    (source.revision, destination.revision) = revisions;
     Ok(ids)
 }
 
-pub(crate) fn validate_pair(catalog: &ItemCatalog, a: &Inventory, b: &Inventory) -> Result<()> {
+/// Two inventories items pass between: distinct, and no item in both.
+pub(crate) fn validate_pair(a: &Inventory, b: &Inventory) -> Result<()> {
     if a.id == b.id {
         return Err(InventoryError::SameParticipant);
     }
 
-    a.validate(catalog)?;
-    b.validate(catalog)?;
     let ids: BTreeSet<_> = a.entries.iter().map(|e| e.id).collect();
 
     if b.entries.iter().any(|e| ids.contains(&e.id)) {
@@ -321,6 +305,35 @@ pub(crate) fn withdraw(inventory: &mut Inventory, id: ItemId, quantity: u32) -> 
     })
 }
 
+/// Whether `quantity` of an item fits: topping up stacks that have room, then in new entries.
+pub(crate) fn room(
+    catalog: &ItemCatalog,
+    inventory: &Inventory,
+    definition: ItemDefinitionId,
+    quantity: u32,
+) -> Result<()> {
+    let limit = catalog.item(definition)?.stack_limit;
+    let mut rest = u64::from(quantity);
+
+    if limit > 1 {
+        for existing in &inventory.entries {
+            if existing.definition == definition {
+                rest -= rest.min(u64::from(limit - existing.quantity));
+            }
+        }
+    }
+
+    let needed = rest.div_ceil(u64::from(limit));
+
+    if needed > (MAX_INVENTORY_ENTRIES - inventory.entries.len()) as u64 {
+        return Err(InventoryError::Capacity);
+    }
+
+    Ok(())
+}
+
+/// Adds an entry, merging into stacks with room first. Checks that it fits before changing
+/// anything.
 pub(crate) fn deposit(
     catalog: &ItemCatalog,
     inventory: &mut Inventory,
@@ -332,6 +345,7 @@ pub(crate) fn deposit(
         return Err(InventoryError::Duplicate);
     }
 
+    room(catalog, inventory, incoming.definition, incoming.quantity)?;
     let mut ids = Vec::new();
 
     if limit > 1 {
@@ -349,12 +363,6 @@ pub(crate) fn deposit(
                 return Ok(ids);
             }
         }
-    }
-
-    let needed = u64::from(incoming.quantity).div_ceil(u64::from(limit));
-
-    if needed > (MAX_INVENTORY_ENTRIES - inventory.entries.len()) as u64 {
-        return Err(InventoryError::Capacity);
     }
 
     while incoming.quantity > 0 {
@@ -418,16 +426,15 @@ impl Wallet {
     }
 }
 
+/// Moves money between wallets, both changed or neither.
 pub fn transfer_money(source: &mut Wallet, destination: &mut Wallet, amount: Money) -> Result<()> {
     if source.id == destination.id {
         return Err(InventoryError::SameParticipant);
     }
 
-    let mut from = source.clone();
-    let mut to = destination.clone();
-    from.debit(amount)?;
-    to.credit(amount)?;
-    *source = from;
-    *destination = to;
-    Ok(())
+    // Both sides are checked before either changes.
+    source.balance.checked_sub(amount)?;
+    destination.balance.checked_add(amount)?;
+    source.debit(amount)?;
+    destination.credit(amount)
 }

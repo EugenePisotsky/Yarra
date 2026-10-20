@@ -329,9 +329,7 @@ pub(crate) fn apply(
                 }
             }
 
-            state
-                .inventory_mut(inventory)?
-                .remove(&content.items, item, 1)?;
+            state.inventory_mut(inventory)?.remove(item, 1)?;
             events.push(GameEvent::ItemUsed { actor, item });
         }
         Command::Equip { actor, item } => {
@@ -360,11 +358,15 @@ pub(crate) fn apply(
             item,
             quantity,
         } => {
-            let mut from = state.inventory(source)?.clone();
-            let mut to = state.inventory(destination)?.clone();
-            let entries = inventory::transfer(&content.items, &mut from, &mut to, item, quantity)?;
-            *state.inventory_mut(source)? = from;
-            *state.inventory_mut(destination)? = to;
+            let entries = state.inventory_pair_mut(source, destination, |from, to| {
+                Ok(inventory::transfer(
+                    &content.items,
+                    from,
+                    to,
+                    item,
+                    quantity,
+                )?)
+            })?;
 
             for id in [source, destination] {
                 character::sync_equipment(content, state, id, events)?;
@@ -374,20 +376,19 @@ pub(crate) fn apply(
         }
         Command::Trade(quote) => {
             let p = quote.participants();
-            let mut merchant = state.inventory(p.merchant_inventory)?.clone();
-            let mut customer = state.inventory(p.customer_inventory)?.clone();
             let mut merchant_wallet = state.wallet(p.merchant_wallet)?.clone();
             let mut customer_wallet = state.wallet(p.customer_wallet)?.clone();
-            inventory::commit_trade(
-                &content.items,
-                &mut merchant,
-                &mut customer,
-                &mut merchant_wallet,
-                &mut customer_wallet,
-                &quote,
-            )?;
-            *state.inventory_mut(p.merchant_inventory)? = merchant;
-            *state.inventory_mut(p.customer_inventory)? = customer;
+            let (merchant, customer) = (p.merchant_inventory, p.customer_inventory);
+            state.inventory_pair_mut(merchant, customer, |merchant, customer| {
+                Ok(inventory::commit_trade(
+                    &content.items,
+                    merchant,
+                    customer,
+                    &mut merchant_wallet,
+                    &mut customer_wallet,
+                    &quote,
+                )?)
+            })?;
             *state.wallet_mut(p.merchant_wallet)? = merchant_wallet;
             *state.wallet_mut(p.customer_wallet)? = customer_wallet;
 

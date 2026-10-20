@@ -81,8 +81,6 @@ pub enum InventoryError {
     UnknownDefinition(ItemDefinitionId),
     #[error("category not found: {0}")]
     UnknownCategory(CategoryId),
-    #[error("category is still used by item definitions: {0}")]
-    CategoryInUse(CategoryId),
     #[error("item entry not found: {0}")]
     UnknownItem(ItemId),
     #[error("quantity must be positive and available")]

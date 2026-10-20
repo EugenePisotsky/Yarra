@@ -204,6 +204,30 @@ impl<'a> Tx<'a> {
             .expect("checked inventory"))
     }
 
+    /// Two inventories changed together, as a transfer between them changes both.
+    pub fn inventory_pair_mut<T>(
+        &mut self,
+        first: InventoryId,
+        second: InventoryId,
+        work: impl FnOnce(&mut Inventory, &mut Inventory) -> Result<T>,
+    ) -> Result<T> {
+        if first == second {
+            return Err(crate::inventory::InventoryError::SameParticipant.into());
+        }
+
+        self.inventory_mut(first)?;
+        self.inventory_mut(second)?;
+
+        // The second is set aside for the borrow; it goes back whatever `work` does.
+        let mut other = self.state.inventories.remove(&second).expect("checked");
+        let result = work(
+            self.state.inventories.get_mut(&first).expect("checked"),
+            &mut other,
+        );
+        self.state.inventories.insert(second, other);
+        result
+    }
+
     /// Adds an inventory that did not exist: one opened for the first time.
     pub fn put_inventory(&mut self, inventory: Inventory) {
         let id = inventory.id;

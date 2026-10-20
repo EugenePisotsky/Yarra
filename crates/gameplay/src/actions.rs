@@ -340,9 +340,7 @@ pub(crate) fn run_action(
                     break;
                 }
 
-                state
-                    .inventory_mut(id)?
-                    .remove(&content.items, entry.id, amount)?;
+                state.inventory_mut(id)?.remove(entry.id, amount)?;
                 remaining -= amount;
             }
 
