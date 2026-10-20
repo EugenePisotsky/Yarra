@@ -21,6 +21,7 @@ members = [
     "crates/world",
     "crates/world_cook",
     "crates/world_db",
+    "tools/rust_tidy",
 ]
 resolver = "3"
 exclude = ["third_party/wgpu-hal"]
