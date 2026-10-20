@@ -27,11 +27,12 @@ use crate::{
     saving::EditorSaveCoordinator,
 };
 
+/// Where a source entry's last save stands; a conflict holds what the project has now.
 #[derive(Debug, Clone)]
-enum DenseSaveState {
+enum SaveState<T> {
     Idle,
     Saving(u64),
-    Conflict(Option<SourceEnvironmentCellRecord>),
+    Conflict(Option<T>),
     Failed(String),
 }
 
@@ -40,7 +41,7 @@ struct DenseEditEntry {
     base: Option<SourceEnvironmentCellRecord>,
     current: SourceEnvironmentCellRecord,
     runtime: Option<SourceEnvironmentCellRecord>,
-    save_state: DenseSaveState,
+    save_state: SaveState<SourceEnvironmentCellRecord>,
 }
 
 impl DenseEditEntry {
@@ -49,9 +50,7 @@ impl DenseEditEntry {
     }
 
     fn pinned(&self) -> bool {
-        self.dirty()
-            || self.runtime_diverged()
-            || matches!(self.save_state, DenseSaveState::Saving(_))
+        self.dirty() || self.runtime_diverged() || matches!(self.save_state, SaveState::Saving(_))
     }
 
     fn runtime_diverged(&self) -> bool {
@@ -97,7 +96,7 @@ impl SourceWorkingSets {
                     base: base.clone(),
                     current,
                     runtime: base,
-                    save_state: DenseSaveState::Idle,
+                    save_state: SaveState::Idle,
                 },
             );
         }
@@ -144,7 +143,7 @@ impl SourceWorkingSets {
             if !same_dense_shape(&entry.current, &record)
                 || matches!(
                     entry.save_state,
-                    DenseSaveState::Saving(_) | DenseSaveState::Conflict(_)
+                    SaveState::Saving(_) | SaveState::Conflict(_)
                 )
             {
                 return Err("Resolve the pending save or changed layer definition first".into());
@@ -190,7 +189,7 @@ impl SourceWorkingSets {
             let entry = self.entries.get_mut(&key).unwrap();
             if !same_dense_content(Some(&entry.current), &next) {
                 entry.current = next;
-                entry.save_state = DenseSaveState::Idle;
+                entry.save_state = SaveState::Idle;
                 changed = true;
             }
         }
@@ -249,7 +248,7 @@ impl SourceWorkingSets {
                 base: snapshot.base,
                 current: snapshot.current,
                 runtime: snapshot.runtime,
-                save_state: DenseSaveState::Idle,
+                save_state: SaveState::Idle,
             },
         );
         self.bump_revision();
@@ -276,7 +275,7 @@ impl SourceWorkingSets {
             || self
                 .entries
                 .values()
-                .any(|entry| matches!(entry.save_state, DenseSaveState::Saving(_)))
+                .any(|entry| matches!(entry.save_state, SaveState::Saving(_)))
     }
 
     pub(crate) fn has_any_conflict(&self) -> bool {
@@ -287,7 +286,7 @@ impl SourceWorkingSets {
             || self
                 .entries
                 .values()
-                .any(|entry| matches!(entry.save_state, DenseSaveState::Conflict(_)))
+                .any(|entry| matches!(entry.save_state, SaveState::Conflict(_)))
     }
 
     pub(crate) fn conflict_count(&self) -> usize {
@@ -298,7 +297,7 @@ impl SourceWorkingSets {
             + self
                 .entries
                 .values()
-                .filter(|entry| matches!(entry.save_state, DenseSaveState::Conflict(_)))
+                .filter(|entry| matches!(entry.save_state, SaveState::Conflict(_)))
                 .count()
     }
 
@@ -307,7 +306,7 @@ impl SourceWorkingSets {
             || self.entries.values().any(|entry| {
                 matches!(
                     &entry.save_state,
-                    DenseSaveState::Conflict(Some(actual))
+                    SaveState::Conflict(Some(actual))
                         if same_dense_shape(actual, &entry.current)
                 )
             })
@@ -316,8 +315,8 @@ impl SourceWorkingSets {
     pub(crate) fn can_keep_local_conflicts(&self) -> bool {
         self.can_keep_definition_conflicts()
             || self.entries.values().any(|entry| match &entry.save_state {
-                DenseSaveState::Conflict(None) => true,
-                DenseSaveState::Conflict(Some(actual)) => same_dense_shape(actual, &entry.current),
+                SaveState::Conflict(None) => true,
+                SaveState::Conflict(Some(actual)) => same_dense_shape(actual, &entry.current),
                 _ => false,
             })
     }
@@ -328,7 +327,7 @@ impl SourceWorkingSets {
         let mut resolved = self.resolve_definition_conflicts(true);
 
         for entry in self.entries.values_mut() {
-            let DenseSaveState::Conflict(actual) = &entry.save_state else {
+            let SaveState::Conflict(actual) = &entry.save_state else {
                 continue;
             };
             let actual = actual.clone();
@@ -343,7 +342,7 @@ impl SourceWorkingSets {
             }
 
             entry.base = actual;
-            entry.save_state = DenseSaveState::Idle;
+            entry.save_state = SaveState::Idle;
             resolved += 1;
         }
 
@@ -360,7 +359,7 @@ impl SourceWorkingSets {
         let mut resolved = self.resolve_definition_conflicts(false);
 
         for entry in self.entries.values_mut() {
-            let DenseSaveState::Conflict(Some(actual)) = &entry.save_state else {
+            let SaveState::Conflict(Some(actual)) = &entry.save_state else {
                 continue;
             };
 
@@ -370,7 +369,7 @@ impl SourceWorkingSets {
 
             entry.base = Some(actual.clone());
             entry.current = actual.clone();
-            entry.save_state = DenseSaveState::Idle;
+            entry.save_state = SaveState::Idle;
             resolved += 1;
         }
 
@@ -459,7 +458,7 @@ impl SourceWorkingSets {
         if self
             .entries
             .values()
-            .any(|entry| matches!(entry.save_state, DenseSaveState::Saving(_)))
+            .any(|entry| matches!(entry.save_state, SaveState::Saving(_)))
         {
             return false;
         }
@@ -500,7 +499,7 @@ impl SourceWorkingSets {
             self.entries
                 .get_mut(&key)
                 .expect("selected dense write remains in the working set")
-                .save_state = DenseSaveState::Saving(request_id);
+                .save_state = SaveState::Saving(request_id);
         }
 
         true
@@ -518,16 +517,14 @@ impl SourceWorkingSets {
         self.entries
             .values()
             .find_map(|entry| match &entry.save_state {
-                DenseSaveState::Idle => None,
-                DenseSaveState::Saving(request) => {
-                    Some(format!("saving dense transaction {request}"))
-                }
-                DenseSaveState::Conflict(actual) => Some(if actual.is_some() {
+                SaveState::Idle => None,
+                SaveState::Saving(request) => Some(format!("saving dense transaction {request}")),
+                SaveState::Conflict(actual) => Some(if actual.is_some() {
                     "dense source conflict; local patch retained".into()
                 } else {
                     "dense source record disappeared; local patch retained".into()
                 }),
-                DenseSaveState::Failed(error) => Some(format!("dense save failed: {error}")),
+                SaveState::Failed(error) => Some(format!("dense save failed: {error}")),
             })
     }
 
@@ -556,7 +553,7 @@ impl SourceWorkingSets {
             if self
                 .definitions
                 .get(&key.space)
-                .is_some_and(|e| matches!(e.state, definitions::DefinitionSaveState::Conflict(_)))
+                .is_some_and(|e| matches!(e.state, SaveState::Conflict(_)))
             {
                 continue;
             }
@@ -566,7 +563,7 @@ impl SourceWorkingSets {
                     entry.base = (record.source_revision > 0).then(|| record.clone());
                     entry.current = record.clone();
                     entry.runtime = (record.source_revision > 0).then_some(record);
-                    entry.save_state = DenseSaveState::Idle;
+                    entry.save_state = SaveState::Idle;
                 }
                 Some(_) => {}
                 None => {
@@ -576,7 +573,7 @@ impl SourceWorkingSets {
                             base: (record.source_revision > 0).then(|| record.clone()),
                             current: record.clone(),
                             runtime: (record.source_revision > 0).then_some(record),
-                            save_state: DenseSaveState::Idle,
+                            save_state: SaveState::Idle,
                         },
                     );
                 }
@@ -589,7 +586,7 @@ impl SourceWorkingSets {
             .entries
             .iter()
             .filter_map(|(key, entry)| {
-                matches!(entry.save_state, DenseSaveState::Saving(id) if id == request_id)
+                matches!(entry.save_state, SaveState::Saving(id) if id == request_id)
                     .then_some(*key)
             })
             .collect::<Vec<_>>();
@@ -600,14 +597,14 @@ impl SourceWorkingSets {
             DenseSaveOutcome::Committed(commits) => {
                 for key in &matching_keys {
                     if let Some(entry) = self.entries.get_mut(key) {
-                        entry.save_state = DenseSaveState::Idle;
+                        entry.save_state = SaveState::Idle;
                     }
                 }
                 for commit in commits.coverage {
                     if let Some(entry) = self.entries.get_mut(&commit.key()) {
                         entry.base = Some(commit.clone());
                         entry.current = commit;
-                        entry.save_state = DenseSaveState::Idle;
+                        entry.save_state = SaveState::Idle;
                     }
                 }
             }
@@ -615,16 +612,16 @@ impl SourceWorkingSets {
             | DenseSaveOutcome::DefinitionConflict { .. }
             | DenseSaveOutcome::LibraryConflict { .. } => {
                 for key in matching_keys {
-                    self.entries.get_mut(&key).unwrap().save_state = DenseSaveState::Idle;
+                    self.entries.get_mut(&key).unwrap().save_state = SaveState::Idle;
                 }
             }
             DenseSaveOutcome::Conflict { key, actual } => {
                 for matching in matching_keys {
                     if let Some(entry) = self.entries.get_mut(&matching) {
                         entry.save_state = if matching == key {
-                            DenseSaveState::Conflict(actual.clone())
+                            SaveState::Conflict(actual.clone())
                         } else {
-                            DenseSaveState::Idle
+                            SaveState::Idle
                         };
                     }
                 }
@@ -632,7 +629,7 @@ impl SourceWorkingSets {
             DenseSaveOutcome::Failed(error) => {
                 for key in matching_keys {
                     if let Some(entry) = self.entries.get_mut(&key) {
-                        entry.save_state = DenseSaveState::Failed(error.clone());
+                        entry.save_state = SaveState::Failed(error.clone());
                     }
                 }
             }
@@ -744,7 +741,7 @@ mod tests {
             .unwrap();
         history.record_environment_stroke(vec![before.clone()], vec![after.clone()]);
         let key = before.key();
-        dense.entries.get_mut(&key).unwrap().save_state = DenseSaveState::Saving(1);
+        dense.entries.get_mut(&key).unwrap().save_state = SaveState::Saving(1);
         after.source_revision = 2;
         dense.finish_save(
             1,

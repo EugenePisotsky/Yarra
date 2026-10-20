@@ -7,7 +7,7 @@
 use bevy::prelude::*;
 
 use crate::{
-    domain_editing::SourceWorkingSets, editing::EditorObjectWorkingSet,
+    activity::SourceActivity, domain_editing::SourceWorkingSets, editing::EditorObjectWorkingSet,
     project_store::ProjectEditorStore, publication::RuntimePublicationState,
 };
 
@@ -110,22 +110,16 @@ pub(crate) fn drive_editor_save(
         return;
     }
 
-    if dense.atmospheres.gesture.is_some()
-        || dense.gesture_active
-        || project.save_in_flight()
-        || objects.saving()
-        || dense.saving()
-    {
+    let activity = SourceActivity::of(&project, &coordinator, &publication, &objects, &dense)
+        .with_drafts(presets.dirty() || paint.has_unapplied_changes());
+
+    // This drain is itself the save that SourceActivity counts as writing: wait only for
+    // a gesture and for the batch in flight.
+    if activity.gesture || project.save_in_flight() || objects.saving() || dense.saving() {
         return;
     }
 
-    if presets.dirty()
-        || paint.has_unapplied_changes()
-        || project.write_error().is_some()
-        || objects.has_any_conflict()
-        || dense.has_any_conflict()
-        || publication.active()
-    {
+    if activity.drafts || activity.write_failed || activity.conflict || publication.active() {
         coordinator.finish();
         return;
     }

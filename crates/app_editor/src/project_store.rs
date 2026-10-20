@@ -220,8 +220,10 @@ pub(crate) struct ProjectEditorStore {
 }
 
 type AtmosphereAnswer = Result<world_db::AtmosphereWriteResult, String>;
+
 /// The revision the areas were read at, and the areas to write.
 type AreaSave = (i64, Arc<[world::GameplayArea]>);
+
 type AreaAnswer = Result<world_db::GameplayAreasWriteResult, String>;
 
 impl ProjectEditorStore {
