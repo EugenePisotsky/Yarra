@@ -39,7 +39,7 @@ pub(super) fn draw_context_inspector(
     environment_preview: &crate::environment_paint::EnvironmentPreview,
     space: Option<world::WorldSpaceId>,
     plants: Option<&vegetation::VegetationCatalog>,
-    busy: bool,
+    editable: bool,
 ) {
     let Some(active_tool) = tools.active(EditorWorkspace::World) else {
         ui.weak("No active World tool.");
@@ -75,7 +75,7 @@ pub(super) fn draw_context_inspector(
             history,
             space,
             environment_preview,
-            busy,
+            editable,
         );
         return;
     }
@@ -101,7 +101,7 @@ pub(super) fn draw_context_inspector(
             history,
             dense_domains,
             plants,
-            busy,
+            editable,
         );
         return;
     }

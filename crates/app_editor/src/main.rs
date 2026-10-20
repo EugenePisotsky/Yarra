@@ -1,8 +1,8 @@
 //! Yarra editor executable composition root.
 
+mod activity;
 mod area_authoring;
 mod atmosphere_authoring;
-
 mod domain_editing;
 mod editing;
 mod environment_paint;

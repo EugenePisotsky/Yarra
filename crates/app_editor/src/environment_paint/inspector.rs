@@ -95,7 +95,7 @@ pub(crate) fn inspector(
     history: &mut EditorHistory,
     dense: &mut SourceWorkingSets,
     _plants: Option<&vegetation::VegetationCatalog>,
-    busy: bool,
+    editable: bool,
 ) {
     ui.heading("Environment");
     let (Some(definition), Some(library)) = (
@@ -134,7 +134,7 @@ pub(crate) fn inspector(
     }
 
     let unapplied = paint.has_unapplied_changes();
-    let idle = !busy && !dense.gesture_active && !dense.saving() && !dense.has_any_conflict();
+    let idle = editable;
     let mut immediate = None;
     ui.horizontal(|ui| {
         ui.selectable_value(&mut browser.all, false, "Nearby");

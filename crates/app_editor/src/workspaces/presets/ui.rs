@@ -1,6 +1,7 @@
 use super::*;
 
 use crate::{
+    activity::{SourceActions, SourceActivity},
     editing::{EditorHistory, EditorObjectWorkingSet, merge_preset_changes},
     environment_paint::{EnvironmentPaintState, preset_controls as controls},
     publication::RuntimePublicationState,
@@ -27,6 +28,51 @@ pub(super) struct Resources<'w> {
     next: ResMut<'w, NextState<EditorWorkspace>>,
 }
 
+/// What the drafts, saving and publication are doing, under the toolbar.
+#[allow(clippy::too_many_arguments)]
+fn status(
+    ui: &mut egui::Ui,
+    state: &PresetAuthoringState,
+    dense: &SourceWorkingSets,
+    objects: &EditorObjectWorkingSet,
+    save: &EditorSaveCoordinator,
+    publication: &RuntimePublicationState,
+    project: &ProjectEditorStore,
+    paint: &EnvironmentPaintState,
+    drafts: bool,
+) {
+    if drafts {
+        ui.colored_label(
+            egui::Color32::YELLOW,
+            "Previewing an unapplied draft. Apply updates every use of these shared presets. \
+             Drafts stay here when you change workspaces; apply both Environment and Road \
+             styles drafts before saving.",
+        );
+    }
+
+    if let Some(message) = &state.message {
+        ui.label(message);
+    }
+
+    ui.weak(save.status(dense.dirty_count() + objects.dirty_count()));
+    ui.weak(publication.status());
+
+    if let Some(error) = project.write_error() {
+        ui.colored_label(egui::Color32::LIGHT_RED, error);
+    }
+
+    if let Some(status) = dense.status() {
+        ui.colored_label(egui::Color32::YELLOW, status);
+    }
+
+    if paint.has_unapplied_changes() {
+        ui.colored_label(
+            egui::Color32::YELLOW,
+            "Apply or discard the layer settings in World before saving.",
+        );
+    }
+}
+
 pub(super) fn draw(mut frame: ResMut<EditorUiFrame>, resources: Resources) -> Result {
     let Resources {
         mut listings,
@@ -51,15 +97,10 @@ pub(super) fn draw(mut frame: ResMut<EditorUiFrame>, resources: Resources) -> Re
         return Ok(());
     };
     let before = draft.library.clone();
-    let idle = !save.active()
-        && !project.save_in_flight()
-        && !dense.saving()
-        && !dense.gesture_active
-        && !dense.has_any_conflict()
-        && !objects.saving()
-        && !objects.has_any_conflict()
-        && !publication.active()
-        && project.write_error().is_none();
+    let activity = SourceActivity::of(&project, &save, &publication, &objects, &dense);
+
+    // Applying a draft needs what saving needs, the drafts themselves aside.
+    let idle = activity.can_save();
     let road_mode = state.mode == Mode::Roads;
     let active_dirty = if road_mode {
         state.styles.dirty()
@@ -69,29 +110,56 @@ pub(super) fn draw(mut frame: ResMut<EditorUiFrame>, resources: Resources) -> Re
     let all_dirty = draft.dirty() || state.styles.dirty();
     let mut apply = false;
     let mut discard = false;
-    egui::Panel::top("preset_toolbar").show(root,|ui| {
+    egui::Panel::top("preset_toolbar").show(root, |ui| {
         ui.horizontal_wrapped(|ui| {
-            if ui.button("Back to World").clicked(){next.set(EditorWorkspace::World);}
-            let old_mode=state.mode;
-            ui.selectable_value(&mut state.mode,Mode::Environment,"Environment");
-            ui.selectable_value(&mut state.mode,Mode::Roads,"Road styles");
-            if state.mode!=old_mode { state.bump(); }
-            apply=ui.add_enabled(idle && active_dirty && (!road_mode || (roads.ready && preview.matches(&state) && !draft.dirty())),egui::Button::new(if road_mode {"Apply road style"} else {"Apply preset changes"})).clicked();
-            discard=ui.add_enabled(active_dirty,egui::Button::new("Discard draft")).clicked();
-            let committed=idle && !all_dirty && !paint.has_unapplied_changes();
-            if ui.add_enabled(committed && history.undo_len()>0,egui::Button::new("Undo")).clicked(){history.undo(&mut objects,&mut dense);}
-            if ui.add_enabled(committed && history.redo_len()>0,egui::Button::new("Redo")).clicked(){history.redo(&mut objects,&mut dense);}
-            let dirty=dense.dirty_count()+objects.dirty_count()>0;
-            if ui.add_enabled(committed && dirty,egui::Button::new("Save")).clicked(){save.request_save();}
-            if ui.add_enabled(committed,egui::Button::new(if dirty {"Save & Publish"} else {"Publish"})).clicked(){save.request_publish();}
+            if ui.button("Back to World").clicked() {
+                next.set(EditorWorkspace::World);
+            }
+
+            let old_mode = state.mode;
+            ui.selectable_value(&mut state.mode, Mode::Environment, "Environment");
+            ui.selectable_value(&mut state.mode, Mode::Roads, "Road styles");
+
+            if state.mode != old_mode {
+                state.bump();
+            }
+
+            let road_ready = roads.ready && preview.matches(&state) && !draft.dirty();
+            let label = if road_mode {
+                "Apply road style"
+            } else {
+                "Apply preset changes"
+            };
+            apply = ui
+                .add_enabled(
+                    idle && active_dirty && (!road_mode || road_ready),
+                    egui::Button::new(label),
+                )
+                .clicked();
+            discard = ui
+                .add_enabled(active_dirty, egui::Button::new("Discard draft"))
+                .clicked();
+            SourceActions {
+                activity: activity.with_drafts(all_dirty || paint.has_unapplied_changes()),
+                saved_before: project.source_epoch() > 0,
+                history: &mut history,
+                objects: &mut objects,
+                dense: &mut dense,
+                save: &mut save,
+            }
+            .buttons(ui);
         });
-        if all_dirty{ui.colored_label(egui::Color32::YELLOW,"Previewing an unapplied draft. Apply updates every use of these shared presets. Drafts stay here when you change workspaces; apply both Environment and Road styles drafts before saving.");}
-        if let Some(message)=&state.message {ui.label(message);}
-        ui.weak(save.status(dense.dirty_count()+objects.dirty_count()));
-        ui.weak(publication.status());
-        if let Some(error)=project.write_error() {ui.colored_label(egui::Color32::LIGHT_RED,error);}
-        if let Some(status)=dense.status() {ui.colored_label(egui::Color32::YELLOW,status);}
-        if paint.has_unapplied_changes() {ui.colored_label(egui::Color32::YELLOW,"Apply or discard the layer settings in World before saving.");}
+        status(
+            ui,
+            &state,
+            &dense,
+            &objects,
+            &save,
+            &publication,
+            &project,
+            &paint,
+            all_dirty,
+        );
     });
 
     // A mode change renders on the next frame. Do not copy preview controls from the

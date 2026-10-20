@@ -5,8 +5,9 @@ mod tests;
 pub(crate) mod working;
 
 use crate::{
+    activity::SourceActivity,
     domain_editing::SourceWorkingSets,
-    editing::EditorHistory,
+    editing::{EditorHistory, EditorObjectWorkingSet},
     project_store::{ProjectEditorStore, ProjectStoreUpdate},
     publication::RuntimePublicationState,
     saving::EditorSaveCoordinator,
@@ -243,14 +244,20 @@ fn draw(
     mut dense: ResMut<SourceWorkingSets>,
     mut preview: ResMut<Preview>,
     mut history: ResMut<EditorHistory>,
-    publication: Res<RuntimePublicationState>,
-    save: Res<EditorSaveCoordinator>,
-    project: Res<ProjectEditorStore>,
+    (publication, save, project, objects): (
+        Res<RuntimePublicationState>,
+        Res<EditorSaveCoordinator>,
+        Res<ProjectEditorStore>,
+        Res<EditorObjectWorkingSet>,
+    ),
     mut cloud_quality: ResMut<engine::CloudQuality>,
 ) {
     let Some(root) = frame.0.as_mut() else {
         return;
     };
+
+    // The window's own sliders are gestures, so it may edit while one is under way.
+    let editable = SourceActivity::of(&project, &save, &publication, &objects, &dense).can_edit();
 
     if root.ctx().input(|i| i.key_pressed(egui::Key::Escape)) {
         dense.atmospheres.cancel_gesture();
@@ -379,12 +386,7 @@ fn draw(
 
             ui.separator();
             ui.strong("World settings · saved");
-            let can_edit = !controls.published
-                && !publication.active()
-                && !save.active()
-                && !project.save_in_flight()
-                && !dense.saving()
-                && !dense.has_any_conflict();
+            let can_edit = !controls.published && editable;
             ui.add_enabled_ui(can_edit, |ui| {
                 ui.checkbox(&mut edited.outdoor, "Outdoor sky and celestial lighting");
                 egui::CollapsingHeader::new("Clouds").default_open(true).show(ui, |ui| {

@@ -1,6 +1,7 @@
 //! World toolbar and floating-window composition. Visibility does not activate authoring tools.
 //! Each window is its own system, drawn after the toolbar while it is open.
 use crate::{
+    activity::SourceActivity,
     domain_editing::SourceWorkingSets,
     editing::{EditorHistory, EditorObjectWorkingSet, EditorSelection, TransformInspectorDraft},
     environment_paint::{EnvironmentLayerBrowser, EnvironmentPaintState, EnvironmentPreview},
@@ -214,6 +215,11 @@ pub(crate) fn inspector_window(
         mut paint,
         mut layer_browser,
     } = resources;
+
+    // Panels apply edits as history steps do, presets' draft included.
+    let editable = SourceActivity::of(&project, &save, &publication, &objects, &dense_domains)
+        .with_drafts(presets.dirty())
+        .can_step();
     let layout = Layout {
         position: |area| [area.right() - 332.0 - MARGIN, area.top() + MARGIN],
         size: [332.0, 560.0],
@@ -244,10 +250,7 @@ pub(crate) fn inspector_window(
                 &environment_preview,
                 origin.space(),
                 grass.catalog(),
-                save.active()
-                    || publication.active()
-                    || project.save_in_flight()
-                    || presets.dirty(),
+                editable,
             );
         },
     );

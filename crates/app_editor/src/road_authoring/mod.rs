@@ -114,7 +114,7 @@ pub(crate) fn inspector(
     history: &mut EditorHistory,
     space: Option<WorldSpaceId>,
     preview: &crate::environment_paint::EnvironmentPreview,
-    busy: bool,
+    editable: bool,
 ) {
     ui.heading("Roads");
     ui.weak("Click a curve or point to select it. Drag points and cyan handles to shape the road. Esc cancels a drag.");
@@ -154,7 +154,7 @@ pub(crate) fn inspector(
         return;
     };
     ui.add(egui::Label::new(egui::RichText::new(state.discovery_status(space)).weak()).truncate());
-    let disabled = busy || dense.saving() || dense.gesture_active || dense.has_any_conflict();
+    let disabled = !editable;
     ui.collapsing("History and recovery", |ui| {
         if ui
             .add_enabled(!disabled, egui::Button::new("Clear undo history"))

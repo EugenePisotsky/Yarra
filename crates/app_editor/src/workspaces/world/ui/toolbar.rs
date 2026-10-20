@@ -1,6 +1,7 @@
 //! The World toolbar: save, publish, undo and redo, the gizmo mode, and what is unsaved,
 //! saving or in conflict.
 use crate::{
+    activity::{SourceActions, SourceActivity},
     domain_editing::SourceWorkingSets,
     editing::{EditorHistory, EditorObjectWorkingSet, EditorSelection, TransformInspectorDraft},
     environment_paint::EnvironmentPaintState,
@@ -38,92 +39,30 @@ pub(crate) fn world_toolbar(
     let Some(viewport_ui) = frame.0.as_mut() else {
         return;
     };
+    let activity = SourceActivity::of(&project, &save, &publication, &objects, &dense_domains)
+        .with_drafts(paint.has_unapplied_changes() || presets.dirty());
     egui::Panel::top("editor_world_toolbar").show(viewport_ui, |ui| {
-        if presets.dirty() {ui.colored_label(egui::Color32::YELLOW,"An unapplied preset draft is waiting in Presets. Apply or discard it before saving.");}
+        if presets.dirty() {
+            ui.colored_label(
+                egui::Color32::YELLOW,
+                "An unapplied preset draft is waiting in Presets. \
+                 Apply or discard it before saving.",
+            );
+        }
+
         ui.horizontal(|ui| {
             let remaining_changes = objects.dirty_count() + dense_domains.dirty_count();
-            let has_dirty_source = remaining_changes > 0;
-            let source_action_available = !paint.has_unapplied_changes() && !presets.dirty() && !save.active()
-                && !project.save_in_flight()
-                && !objects.saving()
-                && !dense_domains.saving()
-                && !dense_domains.gesture_active
-                && dense_domains.atmospheres.gesture.is_none()
-                && !objects.has_any_conflict()
-                && !dense_domains.has_any_conflict()
-                && !publication.active()
-                && project.write_error().is_none();
-            let can_save = has_dirty_source && source_action_available;
-
-            if ui
-                .add_enabled(can_save, egui::Button::new("Save"))
-                .on_hover_text("Save all local source changes (Cmd+S)")
-                .clicked()
-            {
-                save.request_save();
+            let stepped = SourceActions {
+                activity,
+                saved_before: project.source_epoch() > 0,
+                history: &mut history,
+                objects: &mut objects,
+                dense: &mut dense_domains,
+                save: &mut save,
             }
+            .buttons(ui);
 
-            let can_publish = (project.source_epoch() > 0 || has_dirty_source)
-                && source_action_available;
-            let publish_label = if has_dirty_source {
-                "Save & Publish"
-            } else {
-                "Publish"
-            };
-
-            if ui
-                .add_enabled(can_publish, egui::Button::new(publish_label))
-                .on_hover_text(if has_dirty_source {
-                    "Save every local source change, then cook, validate, publish, and adopt it"
-                } else {
-                    "Cook, validate, atomically publish, and adopt a new immutable runtime generation"
-                })
-                .clicked()
-            {
-                save.request_publish();
-            }
-
-            if ui
-                .add_enabled(
-                    history.undo_len() > 0
-                        && !paint.has_unapplied_changes()
-                        && !presets.dirty()
-                        && !publication.active()
-                        && !save.active()
-                        && !objects.saving()
-                        && !dense_domains.saving()
-                        && !dense_domains.gesture_active
-                        && dense_domains.atmospheres.gesture.is_none()
-                                && !objects.has_any_conflict()
-                        && !dense_domains.has_any_conflict(),
-                    egui::Button::new("Undo"),
-                )
-                .on_hover_text("Undo the last command (Cmd+Z)")
-                .clicked()
-            {
-                history.undo(&mut objects, &mut dense_domains);
-                transform_draft.sync(&selection, &objects);
-            }
-
-            if ui
-                .add_enabled(
-                    history.redo_len() > 0
-                        && !paint.has_unapplied_changes()
-                        && !presets.dirty()
-                        && !publication.active()
-                        && !save.active()
-                        && !objects.saving()
-                        && !dense_domains.saving()
-                        && !dense_domains.gesture_active
-                        && dense_domains.atmospheres.gesture.is_none()
-                                && !objects.has_any_conflict()
-                        && !dense_domains.has_any_conflict(),
-                    egui::Button::new("Redo"),
-                )
-                .on_hover_text("Redo the last command (Cmd+Shift+Z)")
-                .clicked()
-            {
-                history.redo(&mut objects, &mut dense_domains);
+            if stepped {
                 transform_draft.sync(&selection, &objects);
             }
 
@@ -178,7 +117,10 @@ pub(crate) fn world_toolbar(
                 ui.separator();
                 ui.colored_label(
                     egui::Color32::YELLOW,
-                    format!("{} environment change(s) unsaved", dense_domains.dirty_count()),
+                    format!(
+                        "{} environment change(s) unsaved",
+                        dense_domains.dirty_count()
+                    ),
                 );
             }
 

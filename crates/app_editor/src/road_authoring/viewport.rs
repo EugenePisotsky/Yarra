@@ -75,11 +75,7 @@ pub(super) fn input(
         return;
     }
 
-    let blocked = input.ground.paused()
-        || input.project.save_in_flight()
-        || dense.saving()
-        || dense.has_any_conflict()
-        || input.presets.dirty();
+    let blocked = !input.ground.can_edit(&input.project, &dense) || input.presets.dirty();
 
     if !enabled || blocked {
         finish(&mut state, &mut dense, &mut history, false);
