@@ -128,12 +128,11 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
   over 16 and 4 cm), rims lump, crumbs lie thrown beside trenches and floors are trodden rough,
   all in the passes that press and resolve the touched tiles, so drawing costs nothing more and a
   trail a window takes again comes back the same.
-- **Snow glints from sparse facets, specular alone.** *Kept* (October 21). A share of the cells of a
-  world grid a few pixels across holds a crystal facet tilted at random up to 63° with roughness
-  0.15; the sun's light loop adds its specular (`TERRAIN_SURFACE`, the facet in the clearcoat fields
-  the terrain does not otherwise use), shadowed like the sun. Tilting the shading normal itself
-  checkered the snow light and dark; tilts within 27° found no sun to catch beside the mirror
-  direction. Walking measured within noise.
+- **Snow glints.** *Rejected* (user, October 21: "rather distractive and don't look very
+  natural", little value). Crystal facets in a share of the cells of a world grid a few pixels
+  across, tilted at random up to 63° with roughness 0.15, caught the sun and the moon as a
+  specular lobe of their own; they scattered as single bright dots over moonlit snow. Tilting the
+  shading normal itself had checkered the snow light and dark.
 - **Detail levels below the leaves for deep snow, not tessellation.** *Kept* (October 20). wgpu has
   no tessellation; shipped deep snow (Rise of the Tomb Raider, God of War Ragnarök, Ghost of Yōtei)
   displaces real geometry near the camera and keeps parallax for far or fallback snow (Batman:

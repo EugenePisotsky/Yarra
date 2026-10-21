@@ -221,8 +221,8 @@ impl Material for ClipmapTerrainMaterial {
         false
     }
 
-    // The lighting knows the terrain (`shaders/lighting/pbr_lighting.wesl` TERRAIN_SURFACE): snow's
-    // crystals glint in the sun, and the ground around a point is as sunlit as the point.
+    // The lighting knows the terrain (`shaders/lighting/pbr_lighting.wesl` TERRAIN_SURFACE): the
+    // ground around a sunlit point of it is sunlit too.
     fn specialize(
         _pipeline: &MaterialPipeline,
         descriptor: &mut RenderPipelineDescriptor,

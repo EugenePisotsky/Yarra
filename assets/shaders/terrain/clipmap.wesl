@@ -64,16 +64,6 @@ const STREAK_FOOTPRINT: vec2<f32> = vec2(0.008, 0.025);
 // each hold this share, and once the neighbourhood is worn this much (from the first).
 const REFINE_ROOM: f32 = 0.1;
 const REFINE_WORN: vec2<f32> = vec2(0.005, 0.03);
-// Ice crystals in snow glint in the sun (lighting/pbr_lighting.wesl TERRAIN_SURFACE): in this share
-// of the cells of a world grid, each as wide as this many pixels (no finer than the first size,
-// metres), a facet tilted at random up to this far (tangent) and smooth as this roughness, fading
-// out over this range (metres).
-const GLINT_CELL: f32 = 0.004;
-const GLINT_PIXELS: f32 = 2.5;
-const GLINT_SHARE: f32 = 0.6;
-const GLINT_TILT: f32 = 2.0;
-const GLINT_ROUGHNESS: f32 = 0.15;
-const GLINT_RANGE: vec2<f32> = vec2(25.0, 50.0);
 
 // Where rain stands on the ground: how far it lies below two rings around it.
 fn terrain_hollow(leaf: vec2<i32>, fraction: vec2<f32>) -> f32 {
@@ -108,23 +98,6 @@ fn wall_streaks(p: vec2<f32>, slope: vec2<f32>) -> vec3<f32> {
     let b = streak(u * 2.6 + 17.0);
     let rise = (a.y + 1.3 * b.y) / 1.5 * STREAKS_PER_METRE * STREAK_DEPTH;
     return vec3((a.x + 0.5 * b.x) / 1.5, along * rise);
-}
-
-// The crystal at world xz `p` for a pixel `footprint` metres across: its facet's tilt of the
-// ground's normal along x and z, and how much of one lies there (0..1). Cells grow with the footprint
-// by whole octaves, so a crystal spans a few pixels at any distance.
-fn snow_glint(p: vec2<f32>, footprint: f32) -> vec3<f32> {
-    let level = ceil(log2(max(footprint * GLINT_PIXELS / GLINT_CELL, 1.0)));
-    let q = p / (GLINT_CELL * exp2(level));
-    let cell = vec2<i32>(floor(q));
-    let seed = 0x3c1u + u32(level);
-    if wear_hash(cell.x, cell.y, seed) > GLINT_SHARE {
-        return vec3(0.0);
-    }
-    let tilt = vec2(wear_hash(cell.x, cell.y, seed ^ 0x9e3u), wear_hash(cell.x, cell.y, seed ^ 0x7f1u));
-    // A grain, round within its cell.
-    let grain = 1.0 - smoothstep(0.25, 0.45, length(fract(q) - 0.5));
-    return vec3((tilt * 2.0 - 1.0) * GLINT_TILT, grain);
 }
 
 // A layer's share of a sample.
@@ -557,14 +530,6 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     pbr.specular_occlusion = ao;
     pbr.N = normal;
     pbr.clearcoat_N = normal;
-    // A crystal's facet, its glint's normal, roughness and cover in the clearcoat fields.
-    let glinting = soft * (1.0 - smoothstep(GLINT_RANGE.x, GLINT_RANGE.y, distance_to_camera));
-    if glinting > 0.0 {
-        let glint = snow_glint(p, footprint);
-        pbr.material.clearcoat = glint.z * glinting;
-        pbr.material.clearcoat_perceptual_roughness = GLINT_ROUGHNESS;
-        pbr.clearcoat_N = normalize(normal - vec3(glint.x, 0.0, glint.y));
-    }
     pbr = apply_rain_puddles(pbr, hollow);
     let lit = apply_pbr_lighting(pbr);
     out.color = main_pass_post_lighting_processing(pbr, lit);
