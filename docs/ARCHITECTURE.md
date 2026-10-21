@@ -96,7 +96,8 @@ SQLite. The renderers (Bevy) have no SQLite: `engine` is the only library joinin
 - Terrain contracts: `TerrainHeightfieldPage` (heights, surfaces, `TerrainWear`), the hierarchy
   (`TerrainNodeKey`, `TerrainNode`), control tiles (`TerrainControlTile`, `CONTROL_SAMPLES` = 65,
   `CONTROL_TOP_LEVEL` = 5), the soft layer (`SoftGround`, `SoftLayer`: snow's depth over the
-  firm ground from the control tiles, smoothed across cells), editor previews
+  firm ground from the control tiles, smoothed across cells and ending where the ground's
+  surfaces show its edge), editor previews
   (`TerrainPreviewProducts`).
 - Renderer-free atmosphere and weather (`AtmosphereProfile`, `evaluate_at`,
   `weather::WeatherRuntime`), `GameplayArea`, `WorldViewBookmark`, `road_noise`.

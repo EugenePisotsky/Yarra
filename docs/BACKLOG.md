@@ -35,7 +35,9 @@ decision when one is made.
   exposure and hollows; prints filling in while it snows (the caps rising); snowfall above a snow
   line, its fog and blizzards; snow cover building up. The ground light under every material
   assumes grass albedo, so characters and trees on snowfields lack the snow's bounce. Sand and
-  mud could take prints with a small `soft_depth`.
+  mud could take prints with a small `soft_depth`. Surfaces still meet in half-metre steps of
+  colour where the control samples change (packed road snow against snow); snow lacks its
+  glints and grain; steep snow could take the snow-cliff scan.
 
 ## Performance
 

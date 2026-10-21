@@ -43,6 +43,9 @@ pub struct TerrainSurface {
     /// How deep the surface's soft ground (snow) lies over the firm ground the heights hold, in
     /// metres: the ground is drawn that much higher and feet sink through it; 0 for firm ground.
     pub soft_depth: f32,
+    /// How much of the world's large-scale albedo variation (`TerrainProfile`'s macro variation)
+    /// the surface takes, 0..1: a snowfield's whiteness hardly varies, its light does.
+    pub macro_strength: f32,
 }
 
 #[derive(Debug, Clone, PartialEq)]

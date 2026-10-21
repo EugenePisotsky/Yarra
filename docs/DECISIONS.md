@@ -114,7 +114,16 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
   shared borders agree exactly) and raises each leaf to the layer's top, its normals tilted with
   it; parents decimate it like any relief, so snow stands at every distance. Leaves keep the
   depth in height steps, so the firm ground comes back exactly. The run-time lift and slope are
-  gone; a screen of snow measured within noise of the run-time layer.
+  gone; a screen of snow measured within noise of the run-time layer. Smoothing the depth itself
+  spread it into grass among the snow, which then took trenches (the user's report): the layer
+  now ends where half the ground is soft once soft ground is drawn back 1.5 m from its edge, and
+  thickens over about 3 m into the snow, so patches of firm ground hold none.
+- **Clean snow: one surface's own whiteness, shaded by its shape.** *Kept* (October 21). The
+  carved windswept scan's dark crevices, tiled every 2 m, and the profile's macro albedo
+  variation (×0.76–1.31) read as dirt on every snowfield; prints were tinted blue and darkened
+  with depth. Snow takes a gently wind-shaped scan and a fifth of the macro variation
+  (`TerrainSurface::macro_strength`), roads a trampled-snow scan, and prints only their slope,
+  as in Red Dead Redemption 2 and The Last of Us Part II.
 - **Terrain shadows and sky occlusion from a GPU horizon map.** *Kept* (`3a151a2`). The CPU search
   on every core each 0.5° of sun dropped a frame every ~2 s, only with the day clock on (214
   drops → 8).

@@ -81,7 +81,8 @@ CREATE TABLE terrain_surfaces (
     normal_strength REAL NOT NULL CHECK(normal_strength BETWEEN 0.0 AND 1.0),
     roughness_min REAL NOT NULL CHECK(roughness_min BETWEEN 0.0 AND 1.0),
     roughness_max REAL NOT NULL CHECK(roughness_max BETWEEN roughness_min AND 1.0),
-    soft_depth REAL NOT NULL CHECK(soft_depth BETWEEN 0.0 AND 2.0)
+    soft_depth REAL NOT NULL CHECK(soft_depth BETWEEN 0.0 AND 2.0),
+    macro_strength REAL NOT NULL CHECK(macro_strength BETWEEN 0.0 AND 1.0)
 ) STRICT;
 
 CREATE TABLE terrain_texture_sets (
@@ -382,7 +383,8 @@ CREATE TABLE terrain_surfaces (
     normal_strength REAL NOT NULL CHECK(normal_strength BETWEEN 0.0 AND 1.0),
     roughness_min REAL NOT NULL CHECK(roughness_min BETWEEN 0.0 AND 1.0),
     roughness_max REAL NOT NULL CHECK(roughness_max BETWEEN roughness_min AND 1.0),
-    soft_depth REAL NOT NULL CHECK(soft_depth BETWEEN 0.0 AND 2.0)
+    soft_depth REAL NOT NULL CHECK(soft_depth BETWEEN 0.0 AND 2.0),
+    macro_strength REAL NOT NULL CHECK(macro_strength BETWEEN 0.0 AND 1.0)
 ) STRICT;
 
 CREATE TABLE terrain_texture_sets (

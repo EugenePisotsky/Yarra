@@ -237,7 +237,7 @@ impl RuntimeReader {
         let mut statement = self.connection.prepare_cached(
             "SELECT s.surface_id, s.surface_key, s.display_name, s.tile_size, s.anti_tiling, \
                     s.normal_y_sign, s.normal_strength, s.roughness_min, s.roughness_max, \
-                    s.soft_depth, l.layer \
+                    s.soft_depth, s.macro_strength, l.layer \
              FROM page_terrain_surfaces p \
              JOIN terrain_surfaces s ON s.surface_id = p.surface_id \
              JOIN terrain_texture_set_layers l \
@@ -256,7 +256,7 @@ impl RuntimeReader {
                 |row| {
                     Ok(RuntimeTerrainSurface {
                         surface: terrain_surface_from_row(row)?,
-                        layer: row.get::<_, i64>(10)? as u16,
+                        layer: row.get::<_, i64>(11)? as u16,
                     })
                 },
             )?

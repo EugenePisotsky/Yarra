@@ -34,6 +34,13 @@ struct Surface {
     /// How deep its soft ground lies over the firm ground, in metres; most ground is firm.
     #[serde(default)]
     soft_depth: f32,
+    /// How much of the macro albedo variation it takes; most ground takes it all.
+    #[serde(default = "full")]
+    macro_strength: f32,
+}
+
+fn full() -> f32 {
+    1.0
 }
 
 pub(crate) struct TerrainPack {
@@ -83,6 +90,7 @@ impl TerrainPack {
                 roughness_min: s.roughness[0],
                 roughness_max: s.roughness[1],
                 soft_depth: s.soft_depth,
+                macro_strength: s.macro_strength,
             })
             .collect();
         let layers = surfaces

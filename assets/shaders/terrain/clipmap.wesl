@@ -24,7 +24,7 @@ import bevy_pbr::{
 };
 
 // crates/terrain_render/src/clipmap/gpu.rs ClipmapSurface, by texture array layer.
-struct ClipmapSurface { texture: vec4<f32>, material: vec4<f32>, grass: vec4<f32>, }
+struct ClipmapSurface { texture: vec4<f32>, material: vec4<f32>, grass: vec4<f32>, shade: vec4<f32>, }
 @group(constants::MATERIAL_BIND_GROUP) @binding(6) var<storage, read> surfaces: array<ClipmapSurface>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(7) var base_color: texture_2d_array<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(8) var repeat_sampler: sampler;
@@ -56,10 +56,8 @@ const HOLLOW_RADIUS: f32 = 1.5;
 const HOLLOW_DEPTH: f32 = 0.15;
 // weather/ground_wetness.wesl PUDDLE_DISTANCE.
 const PUDDLE_DISTANCE: f32 = 80.0;
-// Prints: drawn within this range; how deep a print packs the ground fully, and what packing does
-// to it.
+// Prints are drawn within this range.
 const PRINT_DISTANCE: f32 = 100.0;
-const PRINT_PACKED: f32 = 0.06;
 // Steepest a print's wall tilts the ground (tan 56°): snow scatters light into its own shade, so
 // walls drawn as steep as the relief went near black facing away from the sun.
 const PRINT_STEEPEST: f32 = 1.5;
@@ -68,9 +66,6 @@ const PRINT_STEEPEST: f32 = 1.5;
 const STREAKS_PER_METRE: f32 = 24.0;
 const STREAK_DEPTH: f32 = 0.006;
 const STREAK_FOOTPRINT: vec2<f32> = vec2(0.008, 0.025);
-const PACKED_TINT: vec3<f32> = vec3(0.8, 0.86, 0.95);
-const PACKED_SMOOTHING: f32 = 0.7;
-const PACKED_FLATTENING: f32 = 0.3;
 
 // Where rain stands on the ground: how far it lies below two rings around it.
 fn terrain_hollow(leaf: vec2<i32>, fraction: vec2<f32>) -> f32 {
@@ -280,8 +275,8 @@ fn surface(layer: u32, p: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, far: bool, un
 fn rotate_medium(p: vec2<f32>) -> vec2<f32> { return vec2(p.x * 0.819 - p.y * 0.574, p.x * 0.574 + p.y * 0.819); }
 fn rotate_large(p: vec2<f32>) -> vec2<f32> { return vec2(p.x * -0.342 - p.y * 0.940, p.x * 0.940 + p.y * -0.342); }
 
-// Large-scale brightness variation over three scales.
-fn macro_response(p: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>) -> f32 {
+// Large-scale brightness variation over three scales, `strength` of it.
+fn macro_response(p: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, strength: f32) -> f32 {
     if settings.ground.y < 0.5 {
         return 1.0;
     }
@@ -290,7 +285,7 @@ fn macro_response(p: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>) -> f32 {
     let b = textureSampleGrad(macro_variation, repeat_sampler, rotate_medium(p) / s.y + vec2(0.37, 0.61), rotate_medium(dx) / s.y, rotate_medium(dy) / s.y).r;
     let c = textureSampleGrad(macro_variation, repeat_sampler, rotate_large(p) / s.z + vec2(0.83, 0.19), rotate_large(dx) / s.z, rotate_large(dy) / s.z).r;
     let signal = dot(vec3(a, b, c) * 2.0 - 1.0, vec3(0.28, 0.36, 0.36));
-    return exp2(clamp(signal * settings.ground.x, -1.0, 1.0) * s.w);
+    return exp2(clamp(signal * settings.ground.x, -1.0, 1.0) * s.w * strength);
 }
 
 @fragment
@@ -386,16 +381,13 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
 
     // The soft layer as feet left it (terrain/prints.wesl), where a sole went below its top: the
     // prints' and trenches' slope tilts the ground the clipmap's normal gives, the untouched
-    // layer's; their snow is packed, darker in their depths and lit by the snow around them.
+    // layer's. Their snow is the snow around them, lit by it; only their shape shades them.
     var slope = vec2(0.0);
-    var pressed = 0.0;
     if distance_to_camera < PRINT_DISTANCE {
         let xz = in.world_position.xz;
         let windows = print_view(xz);
         if dot(windows.shares, vec2(1.0)) > 0.0 {
-            let relief = print_relief_at(windows, xz, world_dx, world_dy);
-            pressed = max(-relief.x, 0.0);
-            slope = relief.yz;
+            slope = print_relief_at(windows, xz, world_dx, world_dy).yz;
         }
     }
     slope *= min(1.0, PRINT_STEEPEST / max(length(slope), 1e-6));
@@ -403,15 +395,13 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     // The share of the ground's view its tilt turns from the sky to the snow around it.
     let turned = 0.5 - 0.5 * dot(tilted, ground_normal);
     ground_normal = tilted;
-    let packed = smoothstep(0.0, PRINT_PACKED, pressed);
-    occlusion *= 1.0 - 0.3 * smoothstep(0.02, 0.3, pressed);
     let wall = smoothstep(0.5, 1.2, length(slope))
         * (1.0 - smoothstep(STREAK_FOOTPRINT.x, STREAK_FOOTPRINT.y, footprint));
     if wall > 0.0 {
         let local = (vec2<f32>(leaf & vec2(4095)) + fraction) * leaf_spacing();
         let streaks = wall_streaks(local, slope);
         ground_normal = normalize(ground_normal - vec3(streaks.y, 0.0, streaks.z) * wall);
-        occlusion *= 1.0 - 0.2 * wall * (1.0 - streaks.x);
+        occlusion *= 1.0 - 0.12 * wall * (1.0 - streaks.x);
     }
 
     let side = side_share(n);
@@ -449,17 +439,18 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let w = height_blend(top.weights, heights);
     // Worn soil is darker and browner than loose soil of the same kind.
     let worn = mix(vec3(1.0), vec3(0.76, 0.7, 0.64), compacted) * (1.0 - 0.12 * rim);
-    // Packed snow is smoother, its grains pressed flat, and its depths take the sky's blue.
-    let color = (a.color.rgb * w.x + b.color.rgb * w.y + c.color.rgb * w.z) * worn * mix(vec3(1.0), PACKED_TINT, packed);
-    let local_normal = normalize(mix(a.normal * w.x + b.normal * w.y + c.normal * w.z, vec3(0.0, 0.0, 1.0), PACKED_FLATTENING * packed));
+    let color = (a.color.rgb * w.x + b.color.rgb * w.y + c.color.rgb * w.z) * worn;
+    let local_normal = normalize(a.normal * w.x + b.normal * w.y + c.normal * w.z);
     // World-X tangent with the heightfield's +Z bitangent.
     let t = normalize(vec3(ground_normal.y, -ground_normal.x, 0.0));
     let bt = normalize(cross(t, ground_normal));
     let normal = normalize(t * local_normal.x + bt * local_normal.y + ground_normal * local_normal.z);
 
     var pbr = pbr_input_from_vertex_output(in, is_front, false);
-    pbr.material.base_color = vec4(clamp(color * macro_response(p, world_dx, world_dy), vec3(0.0), vec3(1.0)), 1.0);
-    pbr.material.perceptual_roughness = clamp((a.roughness * w.x + b.roughness * w.y + c.roughness * w.z) * mix(1.0, PACKED_SMOOTHING, packed), 0.08, 1.0);
+    let shade = vec3(surfaces[top.layers.x].shade.x, surfaces[top.layers.y].shade.x, surfaces[top.layers.z].shade.x);
+    let response = macro_response(p, world_dx, world_dy, dot(w, shade));
+    pbr.material.base_color = vec4(clamp(color * response, vec3(0.0), vec3(1.0)), 1.0);
+    pbr.material.perceptual_roughness = clamp(a.roughness * w.x + b.roughness * w.y + c.roughness * w.z, 0.08, 1.0);
     pbr.material.metallic = 0.0;
     pbr.material.reflectance = vec3(0.25);
     pbr.material.flags = pbr_types::STANDARD_MATERIAL_FLAGS_FOG_ENABLED_BIT;

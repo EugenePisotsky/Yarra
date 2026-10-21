@@ -178,7 +178,7 @@ impl RuntimeReader {
         let mut statement = self.connection.prepare(
             "SELECT s.surface_id, s.surface_key, s.display_name, s.tile_size, s.anti_tiling, \
                     s.normal_y_sign, s.normal_strength, s.roughness_min, s.roughness_max, \
-                    s.soft_depth, l.layer \
+                    s.soft_depth, s.macro_strength, l.layer \
              FROM terrain_texture_set_layers l \
              JOIN terrain_surfaces s ON s.surface_id = l.surface_id \
              WHERE l.texture_set_id = ?1 ORDER BY l.layer",
@@ -187,7 +187,7 @@ impl RuntimeReader {
             .query_map([profile.texture_set.0.as_slice()], |row| {
                 Ok(crate::RuntimeTerrainSurface {
                     surface: crate::catalog::terrain_surface_from_row(row)?,
-                    layer: row.get::<_, i64>(10)? as u16,
+                    layer: row.get::<_, i64>(11)? as u16,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;

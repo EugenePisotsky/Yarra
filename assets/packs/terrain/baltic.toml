@@ -22,6 +22,7 @@
 # - `whole_road`: roads wear it across their whole width, not only where traffic wears the
 #   ground (snow: any road packs it).
 # - `soft_depth`: metres its soft ground (snow) lies over the firm ground; feet sink through it.
+# - `macro_strength`: how much of the profile's large-scale albedo variation it takes (default 1).
 pack_key = "baltic"
 storage = "local-ignored"
 sources = "~/Dev/Assets/terrain/sources"
@@ -308,12 +309,15 @@ anti_tiling = true
 [[surfaces]]
 key = "snow"
 name = "Settled snow"
-source = "fresh_windswept_snow_uhpjdeyn_8k"
+# Gently wind-shaped fresh snow: the carved windswept scan's crevices read as dirt once tiled.
+source = "fresh_windswept_snow_uekmbi2dy_8k"
 tile_size = 2.0
-normal_strength = 0.4
-roughness = [0.65, 0.95]
+normal_strength = 0.5
+roughness = [0.6, 0.9]
 blend_height = 0.3
 anti_tiling = true
+# A snowfield's whiteness hardly varies; its light does.
+macro_strength = 0.2
 # Settled snow lies 40 cm over the ground: feet sink through it to the ground.
 soft_depth = 0.4
 worn = [["packed-snow", 1.0]]
@@ -323,13 +327,13 @@ whole_road = true
 [[surfaces]]
 key = "packed-snow"
 name = "Packed snow"
-source = "fresh_windswept_snow_uhpjdeyn_8k"
-# Snow trodden and driven flat on roads and paths: greyer, smoother, flatter and shallow, so roads
-# through snow run lower than the snow beside them and take shallow prints.
-color_match = [0.66, 0.68, 0.72]
-tile_size = 2.0
-normal_strength = 0.15
-roughness = [0.4, 0.75]
+# Snow trodden and driven flat on roads and paths, shallow, so roads through snow run lower than
+# the snow beside them and take shallow prints.
+source = "trampled_snow_vcqnfdk_8k"
+tile_size = 4.0
+normal_strength = 0.4
+roughness = [0.45, 0.85]
 blend_height = 0.2
 anti_tiling = true
+macro_strength = 0.4
 soft_depth = 0.06
