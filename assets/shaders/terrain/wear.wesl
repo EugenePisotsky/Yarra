@@ -6,11 +6,13 @@
 
 // Wear fields come in a texture array (terrain v2's wear atlas), one page a layer: wear,
 // rut depth (of RUT_DEPTH_SCALE), and the traffic direction as a doubled angle (cosine and sine
-// mapped to 0..1), at texel centres over the page, sampled clamped.
+// mapped to 0..1), at texel centres over the page. The terrain material reads them across pages
+// (terrain/clipmap.wesl wear_texel).
 
-// world terrain_wear.rs RUT_DEPTH_SCALE, and one texel of WEAR_RESOLUTION as a share of a page.
+// world terrain_wear.rs RUT_DEPTH_SCALE, and WEAR_RESOLUTION: texels a side of a page, 2^8.
 const RUT_DEPTH_SCALE: f32 = 0.25;
-const WEAR_TEXEL: f32 = 1.0/256.0;
+const WEAR_TEXELS: i32 = 256;
+const WEAR_SHIFT: u32 = 8u;
 
 fn wear_bits(x: i32, z: i32, seed: u32) -> u32 {
     var v = (bitcast<u32>(x) * 0x8da6b343u) ^ (bitcast<u32>(z) * 0xd8163841u) ^ seed;
@@ -34,17 +36,13 @@ fn wear_patch(world: vec2<f32>, size: f32, seed: u32) -> f32 {
     return wear_value(q, seed)*0.75 + wear_value(q*2.0, seed ^ 0x463u)*0.25;
 }
 
-// The field at `uv` (0..1 over a page) of page `layer`: wear, rut depth in metres, and the
-// traffic direction (unit; its sign is arbitrary).
+// The field in a filtered texel `t`: wear, rut depth in metres, and the traffic direction (unit;
+// its sign is arbitrary).
 struct Wear { wear: f32, rut: f32, direction: vec2<f32>, }
-fn wear_at(pages: texture_2d_array<f32>, clamped: sampler, layer: i32, uv: vec2<f32>) -> Wear {
-    let t = textureSampleLevel(pages, clamped, uv, layer, 0.0);
+fn decode_wear(t: vec4<f32>) -> Wear {
     let doubled = t.zw*2.0 - 1.0;
     let angle = atan2(doubled.y, doubled.x)*0.5;
     return Wear(t.x, t.y*RUT_DEPTH_SCALE, vec2(cos(angle), sin(angle)));
-}
-fn rut_at(pages: texture_2d_array<f32>, clamped: sampler, layer: i32, uv: vec2<f32>) -> f32 {
-    return textureSampleLevel(pages, clamped, uv, layer, 0.0).y*RUT_DEPTH_SCALE;
 }
 
 // How much of the worn ground goes bare rather than trampled at `world` (absolute XZ), as world
@@ -52,28 +50,6 @@ fn rut_at(pages: texture_2d_array<f32>, clamped: sampler, layer: i32, uv: vec2<f
 fn bare_share(wear: f32, world: vec2<f32>) -> f32 {
     let t = clamp((wear + 0.3*(wear_patch(world, 1.8, 0x7a1u) - 0.5) - 0.3)/0.45, 0.0, 1.0);
     return t*t*(3.0 - 2.0*t);
-}
-
-// Where the view ray (`view`: toward the eye) entering the terrain at page uv `uv` meets the
-// rutted ground below it: the shift along the terrain (world XZ, metres) and the depth there.
-// `normal` is the terrain's; `size` the page's side in metres.
-fn rut_parallax(pages: texture_2d_array<f32>, clamped: sampler, layer: i32, uv: vec2<f32>, size: f32, view: vec3<f32>, normal: vec3<f32>, deepest: f32) -> vec3<f32> {
-    let vn = max(dot(view, normal), 0.15);
-    // Along the terrain per metre down.
-    let shift = -(view.xz - normal.xz*dot(view, normal))/vn;
-    var previous = vec2(0.0, rut_at(pages, clamped, layer, uv));
-    for (var i = 1u; i <= 6u; i += 1u) {
-        let z = deepest*f32(i)/6.0;
-        let h = rut_at(pages, clamped, layer, uv + shift*z/size);
-        if z >= h {
-            // Between the last step above the ground and this one below it.
-            let above = previous.y - previous.x; let below = z - h;
-            let at = mix(previous.x, z, above/max(above+below, 1e-6));
-            return vec3(shift*at, rut_at(pages, clamped, layer, uv + shift*at/size));
-        }
-        previous = vec2(z, h);
-    }
-    return vec3(shift*deepest, rut_at(pages, clamped, layer, uv + shift*deepest/size));
 }
 
 // Value noise along a line, 0..1, one value per unit.

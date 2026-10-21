@@ -8,7 +8,7 @@
 // one, which takes the prints feet pressed into it (terrain/prints.wesl).
 import package::shaders::lighting::pbr_lighting::apply_pbr_lighting;
 import package::shaders::terrain::clipmap_common::{ControlCell, Sample, clipmap_normal, control_cell, intervals, leaf_height, leaf_spacing, levels, node_of, origin_samples, resident_level, settings, unpack, wear_slot};
-import package::shaders::terrain::wear::{WEAR_TEXEL, bare_share, rut_at, rut_parallax, wear_at, wear_hash, wear_patch, wheel_grooves};
+import package::shaders::terrain::wear::{RUT_DEPTH_SCALE, WEAR_SHIFT, WEAR_TEXELS, Wear, bare_share, decode_wear, wear_hash, wear_patch, wheel_grooves};
 import package::shaders::terrain::prints::{print_relief_at, print_view};
 import package::shaders::weather::ground_wetness::apply_rain_puddles;
 import package::shaders::lighting::surface::{ground_celestial_irradiance, surface_weather};
@@ -288,6 +288,72 @@ fn macro_response(p: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, strength: f32) -> 
     return exp2(clamp(signal * settings.ground.x, -1.0, 1.0) * s.w * strength);
 }
 
+// A cell's road wear page (terrain/wear.wesl): the cell and its atlas layer.
+struct WearPage { cell: vec2<i32>, layer: i32, }
+
+// No road wear: none worn, no ruts, traffic along x.
+const NO_WEAR: vec4<f32> = vec4(0.0, 0.0, 1.0, 0.5);
+
+// The road wear of `page` at `r` leaf samples from its cell's first, filtered; within a texel of
+// the page's edge from the next cells' pages too, which hold the same field there, so cells meet
+// without a seam. None where a cell has no page.
+fn wear_texel(page: WearPage, r: vec2<f32>) -> vec4<f32> {
+    let t = r * (f32(WEAR_TEXELS) / f32(intervals())) - 0.5;
+    let first = vec2<i32>(floor(t));
+    if all(first >= vec2(0)) && all(first < vec2(WEAR_TEXELS - 1)) {
+        return textureSampleLevel(wear_pages, wear_sampler, (t + 0.5) / f32(WEAR_TEXELS), page.layer, 0.0);
+    }
+    let f = t - floor(t);
+    let a = mix(wear_load(page, first), wear_load(page, first + vec2(1, 0)), f.x);
+    let b = mix(wear_load(page, first + vec2(0, 1)), wear_load(page, first + vec2(1, 1)), f.x);
+    return mix(a, b, f.y);
+}
+
+// The texel `texel` of `page`, counted from its first, from the page of the cell holding it.
+fn wear_load(page: WearPage, texel: vec2<i32>) -> vec4<f32> {
+    let next = texel >> vec2(WEAR_SHIFT);
+    var layer = page.layer;
+    if any(next != vec2(0)) {
+        layer = wear_slot(page.cell + next);
+        if layer < 0 {
+            return NO_WEAR;
+        }
+    }
+    return textureLoad(wear_pages, texel & vec2(WEAR_TEXELS - 1), layer, 0);
+}
+
+fn wear_at(page: WearPage, r: vec2<f32>) -> Wear {
+    return decode_wear(wear_texel(page, r));
+}
+
+fn rut_at(page: WearPage, r: vec2<f32>) -> f32 {
+    return wear_texel(page, r).y * RUT_DEPTH_SCALE;
+}
+
+// Where the view ray (`view`: toward the eye) entering the terrain at `r` (leaf samples from the
+// first of `page`'s cell) meets the rutted ground below it: the shift along the terrain (world
+// XZ, metres) and the depth there. `normal` is the terrain's.
+fn rut_parallax(page: WearPage, r: vec2<f32>, view: vec3<f32>, normal: vec3<f32>, deepest: f32) -> vec3<f32> {
+    let vn = max(dot(view, normal), 0.15);
+    // Along the terrain per metre down, in metres and in leaf samples.
+    let shift = -(view.xz - normal.xz * dot(view, normal)) / vn;
+    let step = shift / leaf_spacing();
+    var previous = vec2(0.0, rut_at(page, r));
+    for (var i = 1u; i <= 6u; i += 1u) {
+        let z = deepest * f32(i) / 6.0;
+        let h = rut_at(page, r + step * z);
+        if z >= h {
+            // Between the last step above the ground and this one below it.
+            let above = previous.y - previous.x;
+            let below = z - h;
+            let at = mix(previous.x, z, above / max(above + below, 1e-6));
+            return vec3(shift * at, rut_at(page, r + step * at));
+        }
+        previous = vec2(z, h);
+    }
+    return vec3(shift * deepest, rut_at(page, r + step * deepest));
+}
+
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
     var out: FragmentOutput;
@@ -329,17 +395,14 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let wet = surface_weather().x > 0.3 && distance_to_camera < PUDDLE_DISTANCE;
     if distance_to_camera < WEAR_FADE.y {
         let cell = node_of(0u, leaf);
-        let layer = wear_slot(cell);
-        let size = leaf_spacing() * f32(intervals());
-        if layer >= 0 {
-            let uv = (vec2<f32>(leaf - cell * intervals()) + fraction) / f32(intervals());
-            let field = wear_at(wear_pages, wear_sampler, layer, uv);
+        let page = WearPage(cell, wear_slot(cell));
+        if page.layer >= 0 {
+            let r = vec2<f32>(leaf - cell * intervals()) + fraction;
+            let field = wear_at(page, r);
             // Over half a control sample each way: the wear the control samples averaged.
-            let q = 0.25 / size;
-            let blurred = (wear_at(wear_pages, wear_sampler, layer, uv + vec2(q, q)).wear
-                + wear_at(wear_pages, wear_sampler, layer, uv + vec2(-q, q)).wear
-                + wear_at(wear_pages, wear_sampler, layer, uv + vec2(q, -q)).wear
-                + wear_at(wear_pages, wear_sampler, layer, uv + vec2(-q, -q)).wear) * 0.25;
+            let q = 0.25 / leaf_spacing();
+            let blurred = (wear_texel(page, r + vec2(q, q)).x + wear_texel(page, r + vec2(-q, q)).x
+                + wear_texel(page, r + vec2(q, -q)).x + wear_texel(page, r + vec2(-q, -q)).x) * 0.25;
             refine = vec3(field.wear, blurred, 1.0 - smoothstep(WEAR_FADE.x, WEAR_FADE.y, distance_to_camera));
             if field.wear > 0.002 || field.rut > 0.0005 {
                 let fade = 1.0 - smoothstep(WEAR_FADE.x, WEAR_FADE.y, distance_to_camera);
@@ -349,13 +412,14 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
                 let sink = 1.0 - smoothstep(RUT_RANGE.x, RUT_RANGE.y, distance_to_camera);
                 if sink > 0.0 && field.wear > 0.05 {
                     let to_eye = normalize(view.world_position - in.world_position.xyz);
-                    let found = rut_parallax(wear_pages, wear_sampler, layer, uv, size, to_eye, n, RUT_DEEPEST * sink);
+                    let found = rut_parallax(page, r, to_eye, n, RUT_DEEPEST * sink);
                     sampled = p + found.xy * sink;
-                    let at = uv + found.xy * sink / size;
-                    let e = WEAR_TEXEL;
+                    let at = r + found.xy * sink / leaf_spacing();
+                    // A wear texel, in leaf samples.
+                    let e = f32(intervals()) / f32(WEAR_TEXELS);
                     let slope = vec2(
-                        rut_at(wear_pages, wear_sampler, layer, at + vec2(e, 0.0)) - rut_at(wear_pages, wear_sampler, layer, at - vec2(e, 0.0)),
-                        rut_at(wear_pages, wear_sampler, layer, at + vec2(0.0, e)) - rut_at(wear_pages, wear_sampler, layer, at - vec2(0.0, e))) / (2.0 * e * size) * sink;
+                        rut_at(page, at + vec2(e, 0.0)) - rut_at(page, at - vec2(e, 0.0)),
+                        rut_at(page, at + vec2(0.0, e)) - rut_at(page, at - vec2(0.0, e))) / (2.0 * e * leaf_spacing()) * sink;
                     ground_normal = normalize(n + vec3(slope.x, 0.0, slope.y));
                     let bottom = clamp(found.z / max(field.rut * 1.3, 0.02), 0.0, 1.0) * smoothstep(0.005, 0.03, found.z);
                     occlusion = 1.0 - 0.35 * bottom;
