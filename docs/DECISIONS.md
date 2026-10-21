@@ -47,11 +47,14 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
   a top-down map around the camera each frame (128² at 2 m, and at 32 m out to 2 km): each surface's
   mean texture colour under its grass field's, blended by the control shares, water below the sea,
   and the cosine at which the sun meets the ground past the terrain's horizon. The bounce takes the
-  sun only where the ground lies in it, by the shadow maps a metre towards the sun from a figure or
-  trunk (past its own body) and by the pixel's own shadow on the terrain and in crowns, and the sky
-  as far as the terrain leaves it: otherwise a figure on a shaded snow slope shone brighter than the
-  snow. The print walls' own bounce went. Snow walking ~0.14 ms slower (0.6 of 65 fps), the village
-  route within noise.
+  sun only where the ground lies in it, and the sky as far as the terrain leaves it: otherwise a
+  figure on a shaded snow slope shone brighter than the snow. The shadow maps tell it a metre
+  towards the sun from a figure, a trunk or a shaded tilted point of the terrain (past its own body
+  or hollow), with four points around where that one is shaded, so a figure's narrow shadow leaves
+  a trench in it lit by the snow around while a house's or a ridge's does not; crowns and level
+  ground keep their own shadow. The print walls' own bounce, which ignored shadows, went; the
+  pixel's own shadow alone (a first version) darkened trenches inside a figure's shadow. Snow
+  walking ~0.14 ms slower (0.6 of 65 fps), the village route and a forest view within noise.
 - **Bevy left alone.** Rewriting its atmosphere LUT pass: not pursued (static tables 0.08 ms). Mesh
   shaders for grass: not now (no hardware mesh shading on M2). Real leaves: no (30–300× triangles).
   Lights are never hidden: hiding one loses shadow casters for good.

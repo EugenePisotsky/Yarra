@@ -59,29 +59,52 @@ fn ground_light(P: vec3<f32>, sunlit: f32, sky: f32) -> vec3<f32> {
     return ground.rgb * irradiance / PI;
 }
 
-// Yarra: whether the ground around `P` lies in light `light_id`'s beam, by its shadow maps a step
-// towards the light, past the surface's own body: a figure's shaded back still faces sunlit snow,
-// while one standing in a ridge's or a house's shadow stands on shaded ground. One hardware
-// sample. Past the cascades the ground map's horizon stands in.
-fn ground_in_light(light_id: u32, P: vec3<f32>, view_z: f32) -> f32 {
+// Yarra: how much of the ground around `P` lies in light `light_id`'s beam, by its shadow maps a
+// step towards the light, past the surface's own body or hollow: a figure's shaded back and a
+// trench's shaded floor still face sunlit snow, while both stand on shaded ground in a ridge's or
+// a house's shadow. Where that point is shaded, four more around it across the beam tell a
+// shadow as narrow as a figure's, which leaves most of the ground around lit. Past the cascades
+// `past` stands in.
+fn ground_in_light(light_id: u32, P: vec3<f32>, view_z: f32, past: f32) -> f32 {
     let light = &view_bindings::lights.directional_lights[light_id];
     let cascade = shadows::get_cascade_index(light_id, view_z);
     if cascade >= (*light).num_cascades {
-        return 1.0;
+        return past;
     }
-    let point = vec4(P + (*light).direction_to_light * GROUND_SHADOW_STEP, 1.0);
-    let local = shadows::world_to_directional_light_local(light_id, cascade, point);
+    let to_light = (*light).direction_to_light;
+    let centre = P + to_light * GROUND_SHADOW_STEP;
+    var lit = cascade_light(light_id, cascade, centre);
+    if lit < 1.0 {
+        let side = normalize(cross(to_light, vec3(0.0, 1.0, 0.0))) * GROUND_SHADOW_REACH;
+        let across = cross(side, to_light);
+        lit = (lit + cascade_light(light_id, cascade, centre + side)
+            + cascade_light(light_id, cascade, centre - side)
+            + cascade_light(light_id, cascade, centre + across)
+            + cascade_light(light_id, cascade, centre - across)) / 5.0;
+    }
+    let end = (*light).cascades[(*light).num_cascades - 1u].far_bound;
+    return mix(lit, past, smoothstep(end * 0.7, end, -view_z));
+}
+
+// Yarra: whether light `light_id`'s cascade `cascade` lets its beam reach `point`; 1 outside it.
+// One hardware sample.
+fn cascade_light(light_id: u32, cascade: u32, point: vec3<f32>) -> f32 {
+    let local = shadows::world_to_directional_light_local(light_id, cascade, vec4(point, 1.0));
     if local.w == 0.0 {
         return 1.0;
     }
+    let light = &view_bindings::lights.directional_lights[light_id];
     let layer = i32((*light).depth_texture_base_index + cascade);
-    let lit = shadow_sampling::sample_shadow_map_hardware(local.xy, local.z, layer);
-    let end = (*light).cascades[(*light).num_cascades - 1u].far_bound;
-    return mix(lit, 1.0, smoothstep(end * 0.7, end, -view_z));
+    return shadow_sampling::sample_shadow_map_hardware(local.xy, local.z, layer);
 }
 
-// Metres towards the light a point's ground is tested from: past a body or a trunk.
+// Metres towards the light a point's ground is tested from (past a body, a trunk or a print's
+// walls), and across the beam around it.
 const GROUND_SHADOW_STEP: f32 = 1.0;
+const GROUND_SHADOW_REACH: f32 = 1.0;
+// The terrain tests the ground around it as its normal's height falls from the second of these
+// to the first: level ground takes almost no light from below.
+const GROUND_TILT: vec2<f32> = vec2(0.95, 0.99);
 
 // Yarra: sky light still reaching foliage the rest of its crown hides from the sky, passed
 // through and between the leaves (TREE_CROWN_SKY).
@@ -505,15 +528,27 @@ fn apply_pbr_lighting(
                 shadow = mix(shadow, distant, beyond);
             }
         }
-        // Yarra: the ground around a point of the terrain, or below one inside a crown, lies in
-        // the point's own shadow; anything else stands on ground the shadow maps test a step
-        // towards the sun.
+        // Yarra: the ground below a point inside a crown lies in the point's own shadow, and so
+        // does the terrain's around a sunlit or level point of it. A shaded tilted point of the
+        // terrain may lie in a print, and anything else stands on ground the shadow maps test a
+        // step towards the sun; past the cascades the terrain's own shadow holds the horizon, and
+        // the ground map's does for the rest.
         if dot((*light).direction_to_light, environment.sun.xyz) > 0.999 {
-            @if(TERRAIN_SURFACE || TREE_CROWN_SKY)
+            let shadows_on = ((*light).flags
+                & mesh_view_types::DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) != 0u;
+            @if(TREE_CROWN_SKY)
             ground_sunlit = shadow;
+            @elif(TERRAIN_SURFACE) {
+                ground_sunlit = shadow;
+                let tilted = 1.0 - smoothstep(GROUND_TILT.x, GROUND_TILT.y, in.N.y);
+                if shadows_on && shadow < 1.0 && tilted > 0.0 {
+                    let around = ground_in_light(i, in.world_position.xyz, view_z, shadow);
+                    ground_sunlit = mix(shadow, around, tilted);
+                }
+            }
             @else {
-                if ((*light).flags & mesh_view_types::DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) != 0u {
-                    ground_sunlit = ground_in_light(i, in.world_position.xyz, view_z);
+                if shadows_on {
+                    ground_sunlit = ground_in_light(i, in.world_position.xyz, view_z, 1.0);
                 }
             }
         }
