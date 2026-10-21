@@ -29,6 +29,7 @@ import bevy_pbr::render::pbr_functions::visibility_range_dither;
 import package::shaders::crossfade::crossfade_sample_mask;
 
 @if(TREE_BARK_BLEND) import package::shaders::tree::bark::blend_upper_bark;
+@if(TREE_SNOW) import package::shaders::tree::snow;
 
 @if(MESHLET_MESH_MATERIAL_PASS)
 import bevy_pbr::meshlet::visibility_buffer_resolve::resolve_vertex_output;
@@ -144,6 +145,20 @@ fn fragment(
 @if(TREE_BARK_BLEND && !TREE_BARK_SKY && !PREPASS_PIPELINE && VERTEX_COLORS && VERTEX_UVS_A && VERTEX_TANGENTS)
     blend_upper_bark(&pbr_input, in.uv, clamp(in.color.rgb, vec3(0.0), vec3(1.0)), in.color.a,
         in.world_normal, in.world_tangent);
+
+    // Snow over the surface built above (tree/snow.wesl). Foliage is cut out where its needles
+    // or its snow are, as in its prepass (tree/wind_prepass.wesl); uv_b carries the card's snow.
+@if(TREE_SNOW && TREE_CROWN_SHADING && VERTEX_UVS_A && VERTEX_UVS_B) {
+    let cover = snow::needle_cover(snow::needle_depth(in.uv), in.uv_b.x);
+    let needles = pbr_input.material.base_color.a;
+    let top = in.uv_b.y > 0.0;
+    snow::settle(&pbr_input, snow::needle_shown(cover, needles, pbr_input.material.alpha_cutoff, top),
+        select(-1.0, 1.0, top));
+    pbr_input.material.base_color.a = max(needles, cover);
+}
+@if(TREE_SNOW && TREE_BARK_SKY && VERTEX_COLORS)
+    snow::settle(&pbr_input, snow::bark_cover(normalize(in.world_normal).y,
+        clamp(in.color.r, 0.0, 1.0), in.world_position.xyz), 1.0);
 
     // alpha discard
     pbr_input.material.base_color = alpha_discard(

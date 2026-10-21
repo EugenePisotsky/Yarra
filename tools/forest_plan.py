@@ -19,7 +19,10 @@ OUT_DIR/preview.png and OUT_DIR/forest.json. --apply replaces the kit's trees an
 landmass in --project with these placements and adds forest-* views beside it. Cook afterwards.
 --roads FILE keeps trees and shrubs off the roads of a road import (content/roads/*.ron, as
 `yarra-world-cook import-roads` reads it): trunks stay ROAD_CLEARANCE metres beyond the road's
-edge, shrubs half that, while crowns may overhang.
+edge, shrubs half that, while crowns may overhang. --snow MASK grows snow-laden spruce alone on
+that mask, which the rest of the forest keeps open: patchy, sparser than the stands and thinning
+out toward the highest snow ground and its crests. It is planted last, with its own random
+stream, so the rest of the plan does not change.
 """
 import argparse
 import json
@@ -44,7 +47,7 @@ CROWN = {
     'yarra_longleaf/pine_longleaf_nearly_bare': 8.6, 'yarra_longleaf/pine_longleaf_one_sided': 8.6,
     'yarra_longleaf/pine_longleaf_tall_bole': 8.5, 'yarra_longleaf/pine_longleaf_broad': 9.7,
     'yarra_longleaf/pine_longleaf_leaning': 8.3, 'yarra_longleaf/pine_longleaf_flat_top': 8.4,
-    'yarra_spruces/spruce_forest': 7.8,
+    'yarra_spruces/spruce_forest': 7.8, 'yarra_spruces/spruce_snow': 7.8,
     'yarra_oaks/oak_forest': 16.8, 'yarra_oaks/oak_spreading': 20.6, 'yarra_oaks/oak_sparse': 16.2,
     'yarra_maples/maple_forest': 13.8, 'yarra_maples/maple_spreading': 17.3, 'yarra_maples/maple_sparse': 13.2,
     'yarra_tall_forest/tall_broadleaf_forest': 13.2,
@@ -102,6 +105,12 @@ SPACING = 0.42  # neighbouring trunks keep this share of their mean crown width 
 TYPE_SHARE = {PINE: 0.38, BROADLEAF: 0.40, SPRUCE: 0.22}
 FRINGE = 12.0  # metres of shrubs and young trees along every forest edge
 COLOURS = {PINE: (196, 160, 92), SPRUCE: (52, 96, 88), BROADLEAF: (104, 146, 70), BIRCH: (190, 200, 120)}
+# Snow ground's forest: its one form, trees per hectare as a share of --density, the share of the
+# ground left open, and the quantiles of the snow ground's height between which it thins to none.
+SNOW_FORM = 'yarra_spruces/spruce_snow'
+SNOW_DENSITY = 0.7
+SNOW_OPEN = 0.35
+TREE_LINE = (0.45, 0.95)
 
 
 # Metres between a tree's trunk and the road's edge; shrubs keep half of it.
@@ -208,7 +217,7 @@ class Field:
 
 
 class Plan:
-    def __init__(self, f, density, keep_open=()):
+    def __init__(self, f, density, keep_open=(), snow=None):
         self.f, self.density = f, density
         rng = f.rng
         h, mask = f.h, f.mask
@@ -222,7 +231,7 @@ class Plan:
         coast = nd.distance_transform_edt(f.land) * GRID
         # Masks kept free of trees and shrubs, such as stream beds and wet meadows.
         self.kept_open = np.zeros(h.shape, bool)
-        for name in keep_open:
+        for name in list(keep_open) + ([snow] if snow else []):
             if name not in mask:
                 raise SystemExit(f'the manifest has no {name} mask')
             self.kept_open |= mask[name] > 0.35
@@ -242,6 +251,18 @@ class Plan:
         # Forest types scored by their ground.
         near_coast = 1 - smoothstep(80, 600, coast)
         convex, concave = smoothstep(-0.5, 3, hollow), smoothstep(0.5, -3, hollow)
+        # Snow ground holds a forest of its own: how many trees each sample holds, as a share of
+        # the stands' density, patchy and none above the tree line or on bare rock.
+        self.snow_density = np.zeros(h.shape, np.float32)
+        if snow:
+            snowy = f.land & (mask[snow] > 0.35) & (rock < 0.35) & (scree < 0.5) & (self.slope < 36)
+            if snowy.any():
+                low, high = np.quantile(h[snowy], TREE_LINE)
+                snow_rng = np.random.default_rng((f.seed, 4049))
+                patches = nd.gaussian_filter(snow_rng.standard_normal(h.shape).astype(np.float32), 70 / GRID)
+                patches = smoothstep(np.quantile(patches[snowy], SNOW_OPEN), np.quantile(patches[snowy], SNOW_OPEN + .15), patches)
+                thin = (1 - smoothstep(low, high, h)) * (1 - 0.6 * convex) * patches
+                self.snow_density[snowy] = SNOW_DENSITY * thin[snowy]
         self.score = {
             PINE: 0.45 * (1 - wet) * (1 - 0.5 * soil) + 0.35 * near_coast + 0.25 * convex + 0.1 * np.clip(south, -1, 1),
             SPRUCE: 0.6 * wet + 0.4 * concave + 0.15 * np.clip(-south, -1, 1) + 0.05,
@@ -394,8 +415,31 @@ class Plan:
                     count -= 1
                     if count <= 0:
                         break
+        self.snow_trees(placed, clear, hash_, off_road)
         self.placed = [(form, f.lo[0] + px, f.lo[1] + pz, scale, i) for form, px, pz, scale, i in placed]
         return self.placed
+
+    def snow_trees(self, placed, clear, hash_, off_road):
+        """Plants snow ground's spruces into `placed`, mature and old sizes, clear of every tree."""
+        f = self.f
+        cells = np.argwhere(self.snow_density > 0)
+        if len(cells) == 0:
+            return
+        rng = np.random.default_rng((f.seed, 4050))
+        weight = self.snow_density[cells[:, 0], cells[:, 1]]
+        wanted = int(weight.sum() * GRID * GRID / 1e4 * self.density)
+        pick = cells[rng.choice(len(cells), size=wanted * 3, p=weight / weight.sum())]
+        lo, hi = AGES[MATURE][2][0], AGES[OLD][2][1]
+        candidates = [(CROWN[SNOW_FORM] * rng.uniform(lo, hi), px, pz) for pz, px in (pick + rng.random((len(pick), 2))) * GRID]
+        planted = 0
+        for width, px, pz in sorted(candidates, key=lambda c: -c[0]):
+            if planted >= wanted:
+                break
+            if not off_road(px, pz, ROAD_CLEARANCE) or not clear(px, pz, width / 2):
+                continue
+            hash_[(int(px // 12), int(pz // 12))].append((px, pz, width / 2))
+            placed.append((SNOW_FORM, px, pz, width / CROWN[SNOW_FORM], -1))
+            planted += 1
 
     def stats(self):
         forest_ha = self.forest.sum() * GRID * GRID / 1e4
@@ -461,6 +505,20 @@ def views(plan):
         gap, _ = trunks.query(np.stack([x, z], 1))
         k = int(np.argmax(gap))
         out[f'forest-{kind}'] = bookmark(float(x[k]), float(z[k]), (1, -1), 6.0, 9.7)
+    # An open spot on snow ground looking at the most snow spruces within 45 m.
+    snow = np.array([(x, z) for form, x, z, _, _ in plan.placed if form == SNOW_FORM])
+    spots = np.argwhere(plan.snow_density > 0)
+    if len(snow) and len(spots):
+        x, z = f.world(spots[:, 0], spots[:, 1])
+        spots = np.stack([x, z], 1)
+        gap, _ = trunks.query(spots)
+        spots = spots[gap > 10]
+        if len(spots):
+            near = cKDTree(snow).query_ball_point(spots, 45)
+            k = int(np.argmax([len(n) for n in near]))
+            x, z = spots[k]
+            look = snow[near[k]].mean(0) - spots[k]
+            out['forest-snow'] = bookmark(float(x), float(z), (look[0], look[1]), 6.0, 9.7)
     # A meadow point 50-80 m from a long edge, looking at the forest.
     meadow = f.land & ~plan.forest & (plan.outside > 50) & (plan.outside < 80) & (plan.slope < 6)
     pts = np.argwhere(meadow)
@@ -540,9 +598,10 @@ def main():
     parser.add_argument('--roads', type=Path, help='keep trees off the roads of this road import')
     parser.add_argument('--keep-open', action='append', default=[], metavar='MASK',
                         help='keep trees and shrubs off this mask of the manifest (repeatable)')
+    parser.add_argument('--snow', metavar='MASK', help='grow snow-laden spruce alone, sparser, on this mask')
     args = parser.parse_args()
     field = Field(args.manifest, args.at, args.seed)
-    plan = Plan(field, args.density, args.keep_open)
+    plan = Plan(field, args.density, args.keep_open, args.snow)
     plan.trees(road_samples(args.roads) if args.roads else None)
     stats = plan.stats()
     args.output.mkdir(parents=True, exist_ok=True)

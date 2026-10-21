@@ -1,11 +1,12 @@
 // Tree wind materials' vertex shader (crates/engine/src/trees/material.rs) for every pass:
 // Bevy 0.20's mesh vertex path (bevy_pbr render/mesh.wesl, prepass/prepass.wesl) with the
-// wind, characters' pushes (tree/touch.wesl) and branch cards applied. Tree meshes are neither skinned, morphed nor compressed
+// wind, characters' pushes (tree/touch.wesl), branch cards and snow (tree/snow.wesl) applied. Tree meshes are neither skinned, morphed nor compressed
 // (VERTEX_*_COMPRESSED), so only Bevy's plain attributes are read.
 import bevy_pbr::{render::mesh_functions, render::view_transformations::position_world_to_clip};
 import bevy_pbr::render::mesh_view_bindings::view;
 import package::shaders::tree::wind::{TreeVertex, WindFrames, animated_position, animated_vector};
 import package::shaders::tree::touch::{TouchWindow, touch_canonical, touch_inside, touch_moving, touch_uv, within};
+@if(TREE_SNOW) import package::shaders::tree::snow::card_amount;
 
 // Trees drawn by the GPU trees (crates/engine/src/trees/gpu.rs) rather than one mesh entity
 // each: `instance_index` picks this draw's record (the instance and its dither level), and
@@ -274,6 +275,23 @@ fn tree_vertex(vertex: Vertex) -> TreeVertex {
     return tree;
 }
 
+// How much snow a snowy card holds and whether the camera sees the side it lies on (> 0), for its
+// fragments (tree/snow.wesl). The card's own normal is the side it faces up with; cards that
+// turn toward the camera show their snow from the side, and only their front.
+@if(TREE_SNOW)
+fn card_snow(tree: TreeVertex, model: mat4x4<f32>, sky: f32) -> vec2<f32> {
+@if(TREE_BRANCH_CARDS) {
+    if dot(tree.card_axis, tree.card_axis) >= 0.25 {
+        return vec2(card_amount(sky, 1.0), 1.0);
+    }
+    let normal = normalize((model * vec4(tree.card_normal, 0.0)).xyz);
+    let pivot = (model * vec4(tree.card_pivot, 1.0)).xyz;
+    return vec2(card_amount(sky, normal.y), dot(normal, view.world_position - pivot));
+}
+@else
+    return vec2(0.0, 1.0);
+}
+
 @vertex
 fn vertex(vertex: Vertex) -> VertexOutput {
     var out: VertexOutput;
@@ -293,6 +311,10 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     out.uv_b = vertex.uv_b;
 @if(VERTEX_COLORS)
     out.color = vertex.color;
+    // Snowy foliage's vertex colour is its crown sky visibility (crown_sky_v2). Past the wind
+    // nothing reads uv_b, so it carries the card's snow.
+@if(TREE_SNOW && VERTEX_UVS_B && VERTEX_COLORS)
+    out.uv_b = card_snow(tree, model, vertex.color.r);
 
 // Depth, shadows and colour deliberately use the same wind pose. Damping the
 // entire prepass (as the old renderer did for shadows) breaks temporal depth.

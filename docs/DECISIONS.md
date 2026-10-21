@@ -240,6 +240,17 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
   through (it was ~1 ms when every tree near the player sampled it). Walking through dense shrubs
   ~0.35 ms, a forest view and snow walk within noise. Limbs, not twigs: the kit's hierarchy is
   trunk, primary limb, cards; the trunk stands.
+- **Snow on spruces from the kit, where the twigs are known.** *Kept* (October 22). Whitening cards
+  in the shader alone painted whole cards: a card is a picture of a spray, its normals face the
+  camera or the crown, and its sky visibility is one value. The kit bakes how deep snow lies on
+  each atlas texel (ridges along the photographed shoots, deeper where they crowd, ranked so a
+  threshold covers that share of needles) into the foliage ORM's unused blue; a card covers the
+  texels past a threshold set by its sky visibility and tilt, bridging the gaps between needles,
+  and from below shows snow only in them. Snow loads are VDB unions of particles over each bough
+  card's white texels, open below and moving with their card; bark takes snow on its upper sides.
+  `spruce_snow` is the forest spruce with all three and its own impostor; the planner grows it
+  alone on snow ground, which the rest of the forest keeps open. Heightfield loads over each card
+  read as paper sheets and are gone.
 
 ## Atmosphere & weather
 

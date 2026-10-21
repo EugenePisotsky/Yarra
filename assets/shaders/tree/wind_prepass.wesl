@@ -1,7 +1,8 @@
 // Tree wind materials' prepass fragment (crates/engine/src/trees/material.rs): Bevy 0.20's
 // pbr_prepass.wesl, except that depth-only passes (the shadow cascades) also dither by the
-// LOD fade, so a tree's shadow dissolves with the tree instead of switching, and that
-// instanced trees (TREE_INSTANCED) have no mesh uniform to read their winding from.
+// LOD fade, so a tree's shadow dissolves with the tree instead of switching, that instanced
+// trees (TREE_INSTANCED) have no mesh uniform to read their winding from, and that snowy foliage
+// (TREE_SNOW) is cut out where its snow is too.
 import bevy_pbr::{
     render::{
         pbr_prepass_functions,
@@ -17,6 +18,7 @@ import bevy_pbr::{
 };
 
 import bevy_render::bindless::{bindless_samplers_filtering, bindless_textures_2d};
+@if(TREE_SNOW) import package::shaders::tree::snow;
 
 @if(MESHLET_MESH_MATERIAL_PASS)
 import bevy_pbr::meshlet::visibility_buffer_resolve::resolve_vertex_output;
@@ -56,7 +58,7 @@ fn fragment(
     pbr_functions::visibility_range_dither(in.position, in.visibility_range_dither);
 
 @if(!MESHLET_MESH_MATERIAL_PASS)
-    pbr_prepass_functions::prepass_sample_color_and_alpha_discard(in);
+    alpha_discard(in);
 
     var out: prepass_io::FragmentOutput;
 
@@ -164,5 +166,25 @@ fn fragment(
 fn fragment(in: prepass_io::VertexOutput) {
 @if(VISIBILITY_RANGE_DITHER)
     pbr_functions::visibility_range_dither(in.position, in.visibility_range_dither);
+    alpha_discard(in);
+}
+
+// Bevy's cut-out, or with snow (tree/snow.wesl) the needles' or their snow's, whichever covers
+// more, as the colour pass cuts it (shaders/lighting/material.wesl). Snowy bark is opaque.
+fn alpha_discard(in: prepass_io::VertexOutput) {
+@if(TREE_SNOW && MAY_DISCARD && VERTEX_UVS_A && VERTEX_UVS_B) {
+    let standard = pbr_bindings::material;
+    var alpha = standard.base_color.a;
+    if (standard.flags & pbr_types::STANDARD_MATERIAL_FLAGS_BASE_COLOR_TEXTURE_BIT) != 0u {
+        let uv = (standard.uv_transform * vec3(in.uv, 1.0)).xy;
+        alpha *= textureSampleBias(pbr_bindings::base_color_texture, pbr_bindings::base_color_sampler,
+            uv, view.mip_bias).a;
+    }
+    alpha = max(alpha, snow::needle_cover(snow::needle_depth(in.uv), in.uv_b.x));
+    if alpha < standard.alpha_cutoff {
+        discard;
+    }
+}
+@else
     pbr_prepass_functions::prepass_sample_color_and_alpha_discard(in);
 }

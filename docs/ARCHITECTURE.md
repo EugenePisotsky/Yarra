@@ -296,7 +296,8 @@ SQLite. The renderers (Bevy) have no SQLite: `engine` is the only library joinin
 - Objects and vegetation: `ObjectLodPlugin`, GPU trees and wind (`TreeWindPlugin`,
   `TreeInstancing`), `WorldVegetationPlugin`, ground details, `OceanPlugin`. Characters push
   branches aside through a 3D field of springs around the player (`trees::touch`), which every
-  tree material reads in every pass and turns each limb about its root by.
+  tree material reads in every pass and turns each limb about its root by. Trees tagged
+  `yarra_snow` draw the snow their kit baked (`shaders/tree/snow.wesl`).
 - Actors: `GameplayPlugins` (player, camera, input, destination marker), `GameplaySystems`,
   `MoveIntent`, and `MinimalGamePlugin` (environment, terrain, streaming and actors). Characters'
   feet (`feet`, joints and soles from the character catalog) list their presses on the ground,

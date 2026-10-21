@@ -43,6 +43,7 @@ pub(super) struct TreeWindExtension {
     crown_sky: bool,
     bark_blend: bool,
     bark_sky: bool,
+    snow: bool,
     #[uniform(105)]
     profile: Vec4,
     #[texture(101)]
@@ -60,6 +61,7 @@ pub(super) struct TreeWindKey {
     crown_sky: bool,
     bark_blend: bool,
     bark_sky: bool,
+    snow: bool,
     /// Drawn from the instance buffer (`super::instancing`) rather than per mesh entity; only
     /// that path specializes with it.
     pub(super) instanced: bool,
@@ -72,6 +74,7 @@ impl From<&TreeWindExtension> for TreeWindKey {
             crown_sky: material.crown_sky,
             bark_blend: material.bark_blend,
             bark_sky: material.bark_sky,
+            snow: material.snow,
             instanced: false,
         }
     }
@@ -103,6 +106,15 @@ impl MaterialExtension for TreeWindExtension {
             && let Some(fragment) = descriptor.fragment.as_mut()
         {
             fragment.shader_defs.push("TREE_BARK_SKY".into());
+        }
+
+        // Cards hand their snow to their fragments (shaders/tree/snow.wesl).
+        if key.bind_group_data.snow {
+            descriptor.vertex.shader_defs.push("TREE_SNOW".into());
+
+            if let Some(fragment) = descriptor.fragment.as_mut() {
+                fragment.shader_defs.push("TREE_SNOW".into());
+            }
         }
 
         if key.bind_group_data.instanced {
@@ -184,6 +196,14 @@ fn extra_is(extras: &str, key: &str, value: &str) -> bool {
         .ok()
         .and_then(|v| v.get(key).and_then(|v| v.as_str()).map(|v| v == value))
         .unwrap_or(false)
+}
+
+/// `yarra_snow: "settled_v1"`: snow lies on the tree (shaders/tree/snow.wesl). It needs the share
+/// of the sky the crown leaves each surface, foliage's `crown_v2` or bark's `bark_sky_v1`.
+fn snowy(extras: &str, shading: FoliageShading) -> bool {
+    extra_is(extras, "yarra_snow", "settled_v1")
+        && (shading == FoliageShading::CrownOcclusion
+            || extra_is(extras, "yarra_shading", "bark_sky_v1"))
 }
 
 fn uses_wind(extras: &str) -> bool {
@@ -358,6 +378,7 @@ fn convert(
                             .and_then(|u| load(&u.metallic_roughness, false)),
                         crown_shading: shading != FoliageShading::Plain,
                         crown_sky: shading == FoliageShading::CrownOcclusion,
+                        snow: snowy(&extras.value, shading),
                     },
                 });
                 (material, shading)
@@ -421,6 +442,22 @@ mod tests {
             r#"{"name":"tree"}"#,
         ] {
             assert!(!uses_wind(text));
+        }
+    }
+
+    #[test]
+    fn snow_needs_its_versioned_tag_and_the_sky_a_crown_leaves() {
+        let foliage = r#"{"yarra_snow":"settled_v1","yarra_shading":"crown_v2"}"#;
+        assert!(snowy(foliage, foliage_shading(foliage)));
+        let bark = r#"{"yarra_snow":"settled_v1","yarra_shading":"bark_sky_v1"}"#;
+        assert!(snowy(bark, foliage_shading(bark)));
+
+        for text in [
+            r#"{"yarra_snow":"settled_v1","yarra_shading":"crown_v1"}"#,
+            r#"{"yarra_snow":"settled_v2","yarra_shading":"crown_v2"}"#,
+            r#"{"yarra_shading":"crown_v2"}"#,
+        ] {
+            assert!(!snowy(text, foliage_shading(text)));
         }
     }
 

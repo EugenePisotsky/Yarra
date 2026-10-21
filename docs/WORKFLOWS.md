@@ -309,7 +309,7 @@ target/release/yarra-world-cook cook
 | `yarra_oaks`, `oaks` / `yarra_maples`, `maples` | `oak_` / `maple_` + `forest spreading sparse` | T |
 | `yarra_tall_forest`, `tall_forest` | `tall_broadleaf_forest` | T |
 | `yarra_longleaf`, `longleaf` | `pine_longleaf`, and with `_half_bare _nearly_bare _one_sided _tall_bole _broad _leaning _flat_top` | T |
-| `yarra_spruces`, `spruces` | `spruce_forest` | T |
+| `yarra_spruces`, `spruces` | `spruce_forest`, `spruce_snow` | T |
 | `yarra_dead_trees`, `dead_trees` | `dead_` + `upright spreading split slender double triple` | T |
 | `yarra_shrubs`, `shrubs` | `shrub_` + `rounded spreading sparse medium_rounded medium_spreading medium_upright` | S |
 | `yarra_bay`, `bay` | `bay_upright` | S |
@@ -349,14 +349,15 @@ runtime and pass that as `--world-db` (not tried yet).
 uv run --with numpy --with scipy --with pillow python tools/forest_plan.py \
   assets/local/worlds/reteya-v13/planning/heightfield.json tmp/forest \
   --roads content/reteya/roads.ron --keep-open tributary --keep-open wetland \
-  --keep-open bedrock --keep-open riverbed --keep-open mud --keep-open wet_bank --keep-open snow
+  --keep-open bedrock --keep-open riverbed --keep-open mud --keep-open wet_bank --snow snow
 # check tmp/forest/preview.png; add --apply to plant it in the default world, then cook
 ```
 
 This is the plan `build_world.sh` plants. `--apply` replaces the kit's trees and shrubs on the
 landmass at the start (or `--at X Z`) in `--project` (default world) and adds `forest-*` views.
 Reteya's forest-floor masks come from this plan (`tools/island_masks.py`): a different plan needs
-new masks and a rebuild ([Reteya README](../content/reteya/README.md)).
+new masks and a rebuild ([Reteya README](../content/reteya/README.md)). `--snow` plants snow
+ground last with its own random stream, so the rest of the plan, and the masks, stay as they were.
 
 ### Grass and ground details
 
