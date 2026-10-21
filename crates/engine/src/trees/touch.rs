@@ -371,3 +371,44 @@ fn stamp(
     compute.set_bind_group(0, bind_group, &[]);
     compute.dispatch_workgroups(SIDE / WORKGROUP, HEIGHT / WORKGROUP, SIDE / WORKGROUP);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use vegetation_render::VegetationBender;
+
+    /// The frame `follow_bodies` places with one character at the focus.
+    fn placed(enabled: bool) -> TouchFrame {
+        let feet = Vec3::new(1.0, 2.0, 3.0);
+        let mut app = App::new();
+        app.init_resource::<Time>()
+            .init_resource::<TouchFrame>()
+            .insert_resource(TreeTouch { enabled })
+            .insert_resource(VegetationLodFocus {
+                position: Some(feet),
+            })
+            .insert_resource(VegetationBenders {
+                benders: vec![VegetationBender {
+                    position: feet,
+                    velocity: Vec2::ZERO,
+                    radius: 0.7,
+                }],
+                delta_seconds: 0.0,
+            })
+            .add_systems(Update, follow_bodies);
+        app.update();
+        app.world().resource::<TouchFrame>().clone()
+    }
+
+    #[test]
+    fn switched_off_no_field_is_placed_and_no_body_pushes() {
+        let on = placed(true);
+        assert_eq!(on.window.centre[3], VOXEL_METRES);
+        assert_eq!(on.bodies.len(), 1);
+
+        let off = placed(false);
+        assert_eq!(off.window, TouchWindow::default());
+        assert!(off.bodies.is_empty());
+    }
+}
