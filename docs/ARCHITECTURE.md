@@ -258,11 +258,11 @@ SQLite. The renderers (Bevy) have no SQLite: `engine` is the only library joinin
   (`GroundPresses`, in `GroundPressSystems`, heights of their soles over the firm ground);
   presses go into a log of 65,536 and a compute pass draws them into two toroidal windows centred
   on the player (2048² at 2 cm and at 8 cm, `terrain/print_map.wesl`): how high the soft layer
-  may stand and the lowest sole near. A second pass resolves the same tiles, with the leaves'
-  layer depths (`PrintGround`), into the relief: how far feet lowered the ground, rims beside
-  trenches and its slope, with six mip levels. Vertices take the coarse window's relief filtered
-  to their spacing; the material tilts, streaks and packs the ground by it at the pixel's
-  footprint.
+  may stand and the lowest sole near. A second pass resolves the same tiles and those beside
+  them (a slope reads its neighbours), with the leaves' layer depths (`PrintGround`), into the
+  relief: how far feet lowered the ground, rims beside trenches and its slope, with six mip
+  levels. Vertices take the coarse window's relief filtered to their spacing; the material tilts
+  and streaks the soft surfaces it shows by it at the pixel's footprint.
 - Invariants: selection uses distance to a node's box, so turning the camera changes only
   culling. A node splits only when all four children are resident and vertices morph to the
   coarser grid, so levels meet without cracks. Soft leaves near the camera split into detail

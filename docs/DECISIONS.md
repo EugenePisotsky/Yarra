@@ -88,7 +88,10 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
   fills six mip levels; a vertex takes the level of its spacing, widening as it morphs, so a
   fully morphed vertex takes what the coarser grid's takes, and pixels filter the slope like any
   texture (one sample a window, not eight loads four times). Steep walls get streaks finer than
-  the relief, faded by the pixel's footprint.
+  the relief, faded by the pixel's footprint. A texel's slope reads its neighbours, so the tiles
+  beside every listed one are resolved again: a tile entering at a window's edge otherwise kept
+  the slope it took beside ground from across the toroidal window, and trails 41 or 164 m away
+  came back as ladders of lines a tile apart (the user's "weird patterns").
 - **The legs plough a channel through deep snow.** *Kept* (October 21). Two feet sweeps alone
   left two narrow lanes with scalloped walls; Red Dead Redemption 2 and The Last of Us Part II
   show one body-wide channel with the feet lanes in its floor. Each character also presses a
@@ -117,7 +120,11 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
   gone; a screen of snow measured within noise of the run-time layer. Smoothing the depth itself
   spread it into grass among the snow, which then took trenches (the user's report): the layer
   now ends where half the ground is soft once soft ground is drawn back 1.5 m from its edge, and
-  thickens over about 3 m into the snow, so patches of firm ground hold none.
+  thickens over about 3 m into the snow, so patches of firm ground hold none. The same smoothing
+  filled a 2 m path of packed snow to 15–20 cm, so it took trenches like open snow; deep soft
+  ground is drawn back 1 m from shallower before its depth is smoothed, so a path keeps its 6 cm
+  and the banks rise from its sides. Grass whose control samples mix in snow still holds some of
+  it: prints tilt only the soft surfaces the pixel shows.
 - **Clean snow: one surface's own whiteness, shaded by its shape.** *Kept* (October 21). The
   carved windswept scan's dark crevices, tiled every 2 m, and the profile's macro albedo
   variation (×0.76–1.31) read as dirt on every snowfield; prints were tinted blue and darkened

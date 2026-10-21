@@ -192,8 +192,8 @@ fn ground_a_window_returns_to_takes_its_logged_presses_again() {
         prints.update(&presses(focus, Vec::new()), None, &[]);
         let fine = level_tiles(&prints.frame, 0);
         assert!(
-            fine.iter().all(|t| t[3] & 2 != 0),
-            "only entering tiles are listed"
+            fine.iter().all(|t| t[3] & 2 != 0 || t[3] >> 2 == 0),
+            "only entering tiles are pressed"
         );
         taken |= fine.iter().any(|t| t[3] >> 2 > 0);
     }
@@ -267,4 +267,29 @@ fn ground_whose_soft_layer_changed_is_resolved_again_without_new_presses() {
     }
 
     assert!(frame.stamps.is_empty());
+}
+
+#[test]
+fn the_tiles_beside_those_entered_are_resolved_again() {
+    let mut prints = GroundPrints::default();
+    let start = Vec2::new(0.0, 0.0);
+    prints.update(&presses(start, Vec::new()), None, &[]);
+    let tile = (TILE as f64 * TEXEL_METRES[0]) as f32;
+    prints.update(&presses(start - Vec2::X * tile, Vec::new()), None, &[]);
+    let fine = level_tiles(&prints.frame, 0);
+    let column = |flag: u32| {
+        let xs: HashSet<u32> = fine
+            .iter()
+            .filter(|t| t[3] & 2 == flag)
+            .map(|t| t[0])
+            .collect();
+        xs
+    };
+
+    // The window moved a tile west: its first column entered, and the one inside it, whose
+    // edge reads the entered one's, is resolved again pressing nothing.
+    assert_eq!(column(2), HashSet::from([0]));
+    assert_eq!(column(0), HashSet::from([1]));
+    assert_eq!(fine.len() as i64, 2 * N);
+    assert!(fine.iter().all(|t| t[3] >> 2 == 0));
 }

@@ -4,7 +4,7 @@
 //! (`shaders/terrain/press.wesl`). Like Rise of the Tomb Raider's deformation map, a window holds
 //! not the snow but how high over the firm ground it may stand: a foot passing through the layer
 //! lowers it to its sole, with walls rising steeply beside it, and the lowest sole near. Over the
-//! same tiles a second pass resolves that, with the soft layer's depth ([`PrintGround`],
+//! same tiles and those beside them a second pass resolves that, with the soft layer's depth ([`PrintGround`],
 //! `world::soft_layer`), into the relief the terrain draws: how far feet lowered the ground, rims
 //! risen beside trenches, and its slope, filtered level by level so vertices take it at their own
 //! spacing (`shaders/terrain/print_relief.wesl`, `shaders/terrain/prints.wesl`). Shallow snow takes
@@ -265,6 +265,7 @@ impl GroundPrints {
             let entered = entered(previous.map(|p| to_tiles(p[level])), window);
             work.press(level, window, &entered, &self.log, fresh);
             work.resolve(level, window, changed);
+            work.resolve_beside(level, window);
         }
 
         self.frame = work.finish(windows, presses.origin);
@@ -466,6 +467,29 @@ impl Work {
             for z in rect[1]..rect[3] {
                 for x in rect[0]..rect[2] {
                     self.tile(level, window, [x, z], false);
+                }
+            }
+        }
+    }
+
+    /// The tiles beside a window's listed ones are resolved again, pressing nothing: a texel's
+    /// slope reads the texels on either side of it, so a tile's edge changes with its
+    /// neighbour's. Without this a tile entering at the window's edge would keep the slope it took
+    /// beside ground the window had yet to reach, a line of a trail from across it.
+    fn resolve_beside(&mut self, level: usize, window: [i64; 2]) {
+        let n = i64::from(SIDE) / TILE;
+        let whole = [window[0], window[1], window[0] + n, window[1] + n];
+        let listed: Vec<[i64; 2]> = self
+            .tiles
+            .iter()
+            .filter(|t| t.0 == level)
+            .map(|t| t.2)
+            .collect();
+
+        for [x, z] in listed {
+            for [dx, dz] in [[1, 0], [-1, 0], [0, 1], [0, -1]] {
+                if inside(whole, x + dx, z + dz) {
+                    self.tile(level, window, [x + dx, z + dz], false);
                 }
             }
         }

@@ -379,31 +379,6 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         hollow = max(hollow, terrain_hollow(leaf, fraction));
     }
 
-    // The soft layer as feet left it (terrain/prints.wesl), where a sole went below its top: the
-    // prints' and trenches' slope tilts the ground the clipmap's normal gives, the untouched
-    // layer's. Their snow is the snow around them, lit by it; only their shape shades them.
-    var slope = vec2(0.0);
-    if distance_to_camera < PRINT_DISTANCE {
-        let xz = in.world_position.xz;
-        let windows = print_view(xz);
-        if dot(windows.shares, vec2(1.0)) > 0.0 {
-            slope = print_relief_at(windows, xz, world_dx, world_dy).yz;
-        }
-    }
-    slope *= min(1.0, PRINT_STEEPEST / max(length(slope), 1e-6));
-    let tilted = normalize(ground_normal - vec3(slope.x, 0.0, slope.y));
-    // The share of the ground's view its tilt turns from the sky to the snow around it.
-    let turned = 0.5 - 0.5 * dot(tilted, ground_normal);
-    ground_normal = tilted;
-    let wall = smoothstep(0.5, 1.2, length(slope))
-        * (1.0 - smoothstep(STREAK_FOOTPRINT.x, STREAK_FOOTPRINT.y, footprint));
-    if wall > 0.0 {
-        let local = (vec2<f32>(leaf & vec2(4095)) + fraction) * leaf_spacing();
-        let streaks = wall_streaks(local, slope);
-        ground_normal = normalize(ground_normal - vec3(streaks.y, 0.0, streaks.z) * wall);
-        occlusion *= 1.0 - 0.12 * wall * (1.0 - streaks.x);
-    }
-
     let side = side_share(n);
     let plane = side_projection(in.world_position.xyz, n, dpdx(in.world_position.xyz), dpdy(in.world_position.xyz));
     // Near the camera roads follow the fine wear field: the share of the ground worn bare
@@ -437,6 +412,34 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         heights.z = c.color.a;
     }
     let w = height_blend(top.weights, heights);
+
+    // The soft layer as feet left it (terrain/prints.wesl), where a sole went below its top: the
+    // prints' and trenches' slope tilts the ground the clipmap's normal gives, the untouched
+    // layer's, as far as soft surfaces show here; grass among the snow holds a little of it but
+    // takes no prints. Their snow is the snow around them, lit by it; only their shape shades
+    // them.
+    var slope = vec2(0.0);
+    let soft = dot(w, vec3(surfaces[top.layers.x].shade.y, surfaces[top.layers.y].shade.y, surfaces[top.layers.z].shade.y));
+    if distance_to_camera < PRINT_DISTANCE && soft > 0.0 {
+        let xz = in.world_position.xz;
+        let windows = print_view(xz);
+        if dot(windows.shares, vec2(1.0)) > 0.0 {
+            slope = print_relief_at(windows, xz, world_dx, world_dy).yz * soft;
+        }
+    }
+    slope *= min(1.0, PRINT_STEEPEST / max(length(slope), 1e-6));
+    let tilted = normalize(ground_normal - vec3(slope.x, 0.0, slope.y));
+    // The share of the ground's view its tilt turns from the sky to the snow around it.
+    let turned = 0.5 - 0.5 * dot(tilted, ground_normal);
+    ground_normal = tilted;
+    let wall = smoothstep(0.5, 1.2, length(slope))
+        * (1.0 - smoothstep(STREAK_FOOTPRINT.x, STREAK_FOOTPRINT.y, footprint));
+    if wall > 0.0 {
+        let local = (vec2<f32>(leaf & vec2(4095)) + fraction) * leaf_spacing();
+        let streaks = wall_streaks(local, slope);
+        ground_normal = normalize(ground_normal - vec3(streaks.y, 0.0, streaks.z) * wall);
+        occlusion *= 1.0 - 0.12 * wall * (1.0 - streaks.x);
+    }
     // Worn soil is darker and browner than loose soil of the same kind.
     let worn = mix(vec3(1.0), vec3(0.76, 0.7, 0.64), compacted) * (1.0 - 0.12 * rim);
     let color = (a.color.rgb * w.x + b.color.rgb * w.y + c.color.rgb * w.z) * worn;

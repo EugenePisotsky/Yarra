@@ -80,7 +80,8 @@ pub struct ClipmapSurface {
     pub material: Vec4,
     /// The grass field's linear colour and how fully it covers the surface.
     pub grass: Vec4,
-    /// x: how much of the macro albedo variation it takes (`world::TerrainSurface::macro_strength`).
+    /// x: how much of the macro albedo variation it takes (`world::TerrainSurface::macro_strength`);
+    /// y: whether it is soft and takes prints (0/1, `world::TerrainSurface::soft_depth`).
     pub shade: Vec4,
 }
 
@@ -129,7 +130,12 @@ impl ClipmapGround {
                     0.0,
                 ),
                 grass: Vec4::from_array(s.grass),
-                shade: Vec4::new(surface.macro_strength, 0.0, 0.0, 0.0),
+                shade: Vec4::new(
+                    surface.macro_strength,
+                    f32::from(surface.soft_depth > 0.0),
+                    0.0,
+                    0.0,
+                ),
             };
         }
 
