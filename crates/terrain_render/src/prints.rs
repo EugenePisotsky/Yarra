@@ -12,7 +12,9 @@
 //!
 //! The windows hold nothing the log does not: ground a window moves onto starts undisturbed and
 //! takes again every logged press that reaches it, so a trail lasts as long as the log holds it,
-//! however far the player walks away and back.
+//! however far the player walks away and back. Between its logged presses a moving foot's sweep
+//! since its last is drawn every frame, so a trench grows with the foot; the next logged sweep
+//! takes it in.
 mod gpu;
 
 use bevy::{math::DVec2, prelude::*};
@@ -39,11 +41,18 @@ const TILE: i64 = 8;
 const LOG_CAPACITY: usize = 65536;
 
 /// A foot is logged again only once it moves this far (metres, under half a sole) or reaches this
-/// much lower. A moving foot logs its sweep since its last press, from that heel to its ball,
-/// so its way through deep snow is one smooth trench, not a row of soles.
+/// much lower. A moving foot logs its sweep since its last press, so its way through deep snow
+/// is one smooth trench, not a row of soles.
 const LOG_MOVED: f64 = 0.1;
 
 const LOG_LOWER: f32 = 0.01;
+
+/// A foot moved this far from its last press (metres) has its sweep drawn until it is logged, and
+/// one moving less than the second in a frame has stopped: its sweep is logged then, however
+/// short. A planted foot sliding a little draws nothing.
+const DRAW_MOVED: f64 = 0.01;
+
+const STOPPED: f64 = 0.002;
 
 /// Most presses taken in a frame.
 const MAX_PRESSES: usize = 64;
@@ -55,8 +64,8 @@ const SOFT_REACH: f32 = 0.6;
 const MAX_RADIUS: f32 = 1.0;
 
 /// How far past its outline a sole's trench wall still matters (its shape is
-/// `terrain/print_map.wesl`'s), metres.
-const WALL_REACH_METRES: f32 = 0.2;
+/// `terrain/print_map.wesl`'s), metres: past the rim and the crumbs thrown beside a trench.
+const WALL_REACH_METRES: f32 = 0.3;
 
 /// A foot pressing the ground this frame, or the legs wading. Its outline is two circles, at the
 /// heel and the ball, joined along their tangents and drawn in at the middle by its arch.
@@ -129,22 +138,25 @@ struct Logged {
 }
 
 impl Logged {
-    fn moved_from(&self, last: &Self) -> bool {
-        self.heel.distance(last.heel) > LOG_MOVED || self.ball.distance(last.ball) > LOG_MOVED
+    fn moved_from(&self, last: &Self, distance: f64) -> bool {
+        self.heel.distance(last.heel) > distance || self.ball.distance(last.ball) > distance
     }
 
     fn lower_than(&self, last: &Self) -> bool {
         (0..2).any(|i| self.floor[i] < last.floor[i] - LOG_LOWER)
     }
 
-    /// The ground a foot swept from `last` to here: from its heel then to its ball now.
+    /// The ground a foot swept from `last` to here: its ball's way, which its heel follows, as low
+    /// as its sole reached at either end and with no waist. Sweep after sweep joins end to end at
+    /// the same floor, so a foot through deep snow lays one smooth lane.
     fn swept_from(&self, last: &Self) -> Self {
+        let lowest = |l: &Self| l.floor[0].min(l.floor[1]);
         Self {
-            heel: last.heel,
+            heel: last.ball,
             ball: self.ball,
-            radii: [last.radii[0], self.radii[1]],
-            floor: [last.floor[0], self.floor[1]],
-            arch: self.arch,
+            radii: [last.radii[1], self.radii[1]],
+            floor: [lowest(last), lowest(self)],
+            arch: 0.0,
         }
     }
 
@@ -186,6 +198,8 @@ pub(crate) struct GroundPrints {
     log: VecDeque<Logged>,
     /// Each foot in reach's last logged press.
     last: HashMap<u64, Logged>,
+    /// Each foot in reach that moved since its last logged press, as it was last frame.
+    moving: HashMap<u64, Logged>,
     pub(crate) frame: PrintFrame,
 }
 
@@ -196,6 +210,9 @@ pub(crate) struct PrintFrame {
     /// texel (f32 bits) and the toroidal texel holding it; metres per texel (f32 bits), texels per
     /// side, 1 while drawn, and samples per texel side taken when pressing it.
     pub(crate) windows: [[u32; 8]; LEVELS],
+    /// Per window, the world's fine texel holding its first texel (x, z), which the snow's
+    /// unevenness is drawn by.
+    pub(crate) cells: [i32; 4],
     /// Per tile: its x and z within its window, its first entry in `indices`, and its level
     /// (bit 0), whether it starts undisturbed (bit 1) and how many stamps it takes (from bit 2).
     pub(crate) tiles: Vec<[u32; 4]>,
@@ -248,7 +265,7 @@ impl GroundPrints {
             };
         }
 
-        let fresh = self.take(presses);
+        let (fresh, drawn) = self.take(presses);
         let Some(focus) = presses.focus else {
             self.windows = None;
             self.frame = PrintFrame::default();
@@ -264,6 +281,7 @@ impl GroundPrints {
             let window = to_tiles(windows[level]);
             let entered = entered(previous.map(|p| to_tiles(p[level])), window);
             work.press(level, window, &entered, &self.log, fresh);
+            work.draw(level, window, self.log.len(), &drawn);
             work.resolve(level, window, changed);
             work.resolve_beside(level, window);
         }
@@ -276,10 +294,12 @@ impl GroundPrints {
         }
     }
 
-    /// Logs this frame's presses that add to their foot's last; returns how many it logged.
-    fn take(&mut self, presses: &GroundPresses) -> usize {
+    /// Logs this frame's presses that add to their foot's last; returns how many it logged and
+    /// the sweeps of feet moving short of their next logged press, drawn this frame alone.
+    fn take(&mut self, presses: &GroundPresses) -> (usize, Vec<Logged>) {
         let mut touching = HashSet::new();
-        let mut fresh = 0;
+        let mut drawn = Vec::new();
+        let before = self.log.len();
 
         for press in presses.presses.iter().take(MAX_PRESSES) {
             let finite = press.heel.is_finite()
@@ -304,29 +324,52 @@ impl GroundPrints {
                 floor: press.floor.map(|f| f.clamp(0.0, SOFT_REACH)),
                 arch: press.arch.clamp(0.0, 0.5),
             };
-
-            let stamp = match self.last.get(&press.source) {
-                Some(last) if logged.moved_from(last) => Some(logged.swept_from(last)),
-                Some(last) if logged.lower_than(last) => Some(logged),
-                Some(_) => None,
-                None => Some(logged),
+            let previous = self.moving.remove(&press.source);
+            let Some(last) = self.last.insert(press.source, logged) else {
+                self.log.push_back(logged);
+                continue;
             };
 
-            if let Some(stamp) = stamp {
-                self.last.insert(press.source, logged);
-                self.log.push_back(stamp);
-                fresh += 1;
+            let moved = logged.moved_from(&last, DRAW_MOVED);
+            let stopped = previous.is_some_and(|p| !logged.moved_from(&p, STOPPED));
+            let lower = logged.lower_than(&last);
+
+            if logged.moved_from(&last, LOG_MOVED) || lower || (moved && stopped) {
+                if moved {
+                    self.log.push_back(logged.swept_from(&last));
+                }
+
+                if lower {
+                    self.log.push_back(logged);
+                }
+            } else {
+                self.last.insert(press.source, last);
+
+                if moved {
+                    drawn.push(logged.swept_from(&last));
+                    self.moving.insert(press.source, logged);
+                }
             }
         }
 
-        // A foot out of reach is logged whatever it was before when it comes back.
+        // A foot leaving reach logs how far it got; one out of reach is logged whatever it was
+        // before when it comes back.
+        for (source, moved) in std::mem::take(&mut self.moving) {
+            if touching.contains(&source) {
+                self.moving.insert(source, moved);
+            } else if let Some(last) = self.last.get(&source) {
+                self.log.push_back(moved.swept_from(last));
+            }
+        }
+
         self.last.retain(|source, _| touching.contains(source));
+        let fresh = self.log.len() - before;
 
         while self.log.len() > LOG_CAPACITY {
             self.log.pop_front();
         }
 
-        fresh.min(self.log.len())
+        (fresh.min(self.log.len()), drawn)
     }
 }
 
@@ -454,6 +497,19 @@ impl Work {
         }
     }
 
+    /// The sweeps drawn this frame alone, after the `logged` presses of the log, on every tile
+    /// they reach: those the window entered too, which the log does not give them.
+    fn draw(&mut self, level: usize, window: [i64; 2], logged: usize, drawn: &[Logged]) {
+        let n = i64::from(SIDE) / TILE;
+        let whole = [window[0], window[1], window[0] + n, window[1] + n];
+
+        for (i, press) in drawn.iter().enumerate() {
+            if let Some(rect) = overlap(press.tiles(level), whole) {
+                self.add(level, window, rect, logged + i, press, |_, _| true);
+            }
+        }
+    }
+
     /// A window's tiles under `changed` (world rects, metres) are resolved again, pressing
     /// nothing new.
     fn resolve(&mut self, level: usize, window: [i64; 2], changed: &[[f64; 4]]) {
@@ -553,6 +609,10 @@ impl Work {
                 1,
                 samples,
             ];
+
+            // World texels wrap the noise past 40,000 km.
+            frame.cells[2 * level] = (first[0] * i64::from(samples)) as i32;
+            frame.cells[2 * level + 1] = (first[1] * i64::from(samples)) as i32;
         }
 
         for ((level, window, tile, reset), list) in self.tiles.into_iter().zip(self.lists) {

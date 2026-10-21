@@ -1,8 +1,9 @@
 // Ground prints (crates/terrain_render/src/prints.rs): each workgroup updates one 8×8 tile of a
 // window, starting it untouched when the window has just moved onto it, then pressing the stamps
 // listed for it (terrain/print_map.wesl): a sole caps the soft layer at its floor under it, its
-// wall rising steeply beyond, and marks its floor as far as it reaches.
-import package::shaders::terrain::print_map::{print_values, wall_rise};
+// wall rising steeply beyond, and marks its floor as far as it reaches. Outlines waver with the
+// snow, so walls break unevenly.
+import package::shaders::terrain::print_map::{print_values, snow_noise, wall_rise};
 
 struct Prints {
     // Per window, two texels (prints.rs PrintFrame::windows): the render-space corner of its first
@@ -13,6 +14,8 @@ struct Prints {
     shape: vec4<f32>,
     // x: tiles listed.
     counts: vec4<u32>,
+    // Per window, the world's 2 cm texel holding its first texel (x, z).
+    cells: vec4<i32>,
 }
 
 // Heel and ball centres (render xz); their radii and floors over the firm ground; x: how far
@@ -30,16 +33,23 @@ struct Stamp { ends: vec4<f32>, sole: vec4<f32>, shape: vec4<f32>, }
 // prints/gpu.rs DISPATCH_ROW.
 const DISPATCH_ROW: u32 = 256u;
 const PI: f32 = 3.14159265;
+// How far outlines waver either way, metres: a leg's channel's this much, a narrower sole's in
+// proportion to its width, down to a share of it.
+const WAVER: f32 = 0.025;
+const WAVER_RADIUS: f32 = 0.14;
+const WAVER_LEAST: f32 = 0.4;
 
-// The values a stamp gives render xz `p`: its cap there and, within its reach, its floor.
-fn stamp_values(s: Stamp, p: vec2<f32>) -> vec2<f32> {
+// The values a stamp gives render xz `p`, its outline wavering by `waver` (-1..1) there: its cap
+// and, within its reach, its floor.
+fn stamp_values(s: Stamp, p: vec2<f32>, waver: f32) -> vec2<f32> {
     let heel = s.ends.xy;
     let along = s.ends.zw - heel;
     let length2 = dot(along, along);
     let t = select(0.0, clamp(dot(p - heel, along) / length2, 0.0, 1.0), length2 > 1e-8);
     let radius = mix(s.sole.x, s.sole.y, t) * (1.0 - s.shape.x * sin(PI * t));
     // Distance outside the sole's outline; negative inside.
-    let edge = length(p - heel - along * t) - radius;
+    let edge = length(p - heel - along * t) - radius
+        + waver * WAVER * clamp(radius / WAVER_RADIUS, WAVER_LEAST, 1.0);
     if edge >= prints.shape.x {
         return vec2(0.0);
     }
@@ -67,16 +77,22 @@ fn press(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_id) 
     if (tile.w & 2u) == 0u {
         held = unpack2x16float(textureLoad(map, at, level).r);
     }
-    // A coarse texel takes a stamp's mean over the fine texels it covers.
+    // A coarse texel takes a stamp's mean over the fine texels it covers. The snow wavers the
+    // same under every stamp: over 16 cm and, less, over 4 cm.
+    let cells = select(prints.cells.xy, prints.cells.zw, level == 1u);
+    let base = cells + vec2<i32>(texel * samples);
+    var waver: array<f32, 16>;
+    for (var k = 0u; k < samples * samples; k += 1u) {
+        let offset = vec2(f32(k % samples), f32(k / samples)) + 0.5;
+        waver[k] = (0.65 * snow_noise(base, offset, 3u) + 0.35 * snow_noise(base, offset, 1u)) * 2.0 - 1.0;
+    }
     let weight = 1.0 / f32(samples * samples);
     for (var i = 0u; i < count; i += 1u) {
         let s = stamps[indices[tile.z + i]];
         var values = vec2(0.0);
-        for (var y = 0u; y < samples; y += 1u) {
-            for (var x = 0u; x < samples; x += 1u) {
-                let offset = (vec2(f32(x), f32(y)) + 0.5) / f32(samples);
-                values += stamp_values(s, corner + (vec2<f32>(texel) + offset) * texel_metres);
-            }
+        for (var k = 0u; k < samples * samples; k += 1u) {
+            let offset = (vec2(f32(k % samples), f32(k / samples)) + 0.5) / f32(samples);
+            values += stamp_values(s, corner + (vec2<f32>(texel) + offset) * texel_metres, waver[k]);
         }
         held = max(held, values * weight);
     }

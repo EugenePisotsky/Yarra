@@ -125,6 +125,8 @@ struct PressGpu {
     shape: [f32; 4],
     /// Tiles listed.
     counts: [u32; 4],
+    /// Each window's first texel among the world's fine ones.
+    cells: [i32; 4],
 }
 
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -135,6 +137,8 @@ struct ReliefGpu {
     ground: [f32; 4],
     /// Tiles listed.
     counts: [u32; 4],
+    /// Each window's first texel among the world's fine ones.
+    cells: [i32; 4],
 }
 
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -441,11 +445,13 @@ fn write_uniforms(pass: &PrintPass, queue: &RenderQueue, frame: &PrintFrame, til
         windows: frame.windows,
         shape: super::shape(),
         counts: [tiles, 0, 0, 0],
+        cells: frame.cells,
     };
     let relief = ReliefGpu {
         windows: frame.windows,
         ground: frame.ground,
         counts: [tiles, 0, 0, 0],
+        cells: frame.cells,
     };
     queue.write_buffer(&pass.press_uniform, 0, bytemuck::bytes_of(&press));
     queue.write_buffer(&pass.relief_uniform, 0, bytemuck::bytes_of(&relief));

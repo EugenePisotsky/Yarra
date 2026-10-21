@@ -293,7 +293,7 @@ SQLite. The renderers (Bevy) have no SQLite: `engine` is the only library joinin
 - Actors: `GameplayPlugins` (player, camera, input, destination marker), `GameplaySystems`,
   `MoveIntent`, and `MinimalGamePlugin` (environment, terrain, streaming and actors). Characters'
   feet (`feet`, joints and soles from the character catalog) list their presses on the ground,
-  and their legs the channel they wade through deep snow.
+  and each leg the channel it wades through deep snow around its ankle.
 - Time and weather: `GameDayClock`, `GameWeather`, `GameLightning`.
 - Invariants: actor roots own movement; presentation scenes are children and never move them.
   Libraries do not read process arguments; the apps inject settings. The `gameplay` module here

@@ -104,8 +104,8 @@ fn a_held_foot_logs_once_and_again_when_it_reaches_lower_moves_or_comes_back() {
     assert_eq!(prints.log.len(), 3, "moving is logged");
     let sweep = prints.log[2];
     assert_eq!(
-        sweep.heel, prints.log[1].heel,
-        "a move sweeps from the last heel"
+        sweep.heel, prints.log[1].ball,
+        "a move sweeps the ball's way from where it was"
     );
     assert_eq!(
         sweep.ball,
@@ -292,4 +292,45 @@ fn the_tiles_beside_those_entered_are_resolved_again() {
     assert_eq!(column(0), HashSet::from([1]));
     assert_eq!(fine.len() as i64, 2 * N);
     assert!(fine.iter().all(|t| t[3] >> 2 == 0));
+}
+
+#[test]
+fn a_foot_moving_short_of_a_logged_press_is_drawn_and_logged_once_it_stops() {
+    let mut prints = GroundPrints::default();
+    let at = Vec2::new(3.0, 4.0);
+    prints.update(&presses(at, vec![press(7, at, 0.02)]), None, &[]);
+    assert_eq!(prints.log.len(), 1);
+
+    for (step, x) in [0.04, 0.07].into_iter().enumerate() {
+        let moved = at + Vec2::X * x;
+        prints.update(&presses(at, vec![press(7, moved, 0.02)]), None, &[]);
+        assert_eq!(prints.log.len(), 1, "step {step} is drawn, not logged");
+        let stamp = prints.frame.stamps.last().unwrap();
+        assert_eq!(
+            [stamp[0], stamp[2]],
+            [at.x, moved.x],
+            "its ball's sweep since its last press"
+        );
+    }
+
+    let stopped = at + Vec2::X * 0.07;
+    prints.update(&presses(at, vec![press(7, stopped, 0.02)]), None, &[]);
+    assert_eq!(prints.log.len(), 2, "a foot that stops logs its sweep");
+    assert_eq!(prints.log[1].ball.x, list_origin().x + f64::from(stopped.x));
+
+    // Moving on, then lifted out of reach: it logs how far it got.
+    let on = stopped + Vec2::X * 0.05;
+    prints.update(&presses(at, vec![press(7, on, 0.02)]), None, &[]);
+    prints.update(&presses(at, vec![press(7, on, SOFT_REACH)]), None, &[]);
+    assert_eq!(prints.log.len(), 3);
+    assert_eq!(prints.log[2].ball.x, list_origin().x + f64::from(on.x));
+
+    // A planted foot sliding a few millimetres draws nothing.
+    prints.update(&presses(at, vec![press(8, at, 0.0)]), None, &[]);
+    prints.update(
+        &presses(at, vec![press(8, at + Vec2::X * 0.004, 0.0)]),
+        None,
+        &[],
+    );
+    assert!(prints.frame.stamps.is_empty());
 }

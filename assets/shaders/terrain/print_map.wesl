@@ -30,3 +30,25 @@ fn print_heights(values: vec2<f32>) -> vec2<f32> {
 fn print_values(heights: vec2<f32>) -> vec2<f32> {
     return max(vec2(CAP_REFERENCE) - heights, vec2(0.0));
 }
+
+// Snow's own unevenness where feet broke it: value noise over the world's 2 cm texels
+// (prints.rs TEXEL_METRES), so a trail a window takes again comes back the same. `base` is a
+// world texel and `offset` how many texels on the point lies, cells are 2^`shift` texels a side;
+// in 0..1.
+fn snow_noise(base: vec2<i32>, offset: vec2<f32>, shift: u32) -> f32 {
+    let whole = floor(offset);
+    let at = base + vec2<i32>(whole);
+    let cell = at >> vec2(shift);
+    let t = (vec2<f32>(at - (cell << vec2(shift))) + offset - whole) / f32(1u << shift);
+    let f = t * t * (3.0 - 2.0 * t);
+    let a = mix(snow_hash(cell), snow_hash(cell + vec2(1, 0)), f.x);
+    let b = mix(snow_hash(cell + vec2(0, 1)), snow_hash(cell + vec2(1, 1)), f.x);
+    return mix(a, b, f.y);
+}
+
+fn snow_hash(cell: vec2<i32>) -> f32 {
+    var h = (bitcast<u32>(cell.x) * 0x8da6b343u) ^ (bitcast<u32>(cell.y) * 0xd8163841u);
+    h = (h ^ (h >> 15u)) * 0x2c1b3c6du;
+    h = (h ^ (h >> 12u)) * 0x297a2d39u;
+    return f32(h ^ (h >> 15u)) * (1.0 / 4294967295.0);
+}

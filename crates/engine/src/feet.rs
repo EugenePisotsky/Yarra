@@ -1,9 +1,10 @@
 //! Characters' feet pushing the soft layer down (`terrain_render::GroundPresses`). Each model
 //! names its foot joints and sole in the character catalog; every frame each foot lists its sole
 //! and how high over the firm ground its heel and ball are. Characters stand on the firm ground,
-//! so a planted foot pushes the snow to it and one swinging low through deep snow ploughs it. The
-//! legs plough a body-wide channel through deep snow besides, its floor over the feet lanes: a
-//! circle at the character, which the prints sweep along its way.
+//! so a planted foot pushes the snow to it and one swinging low through deep snow ploughs it. Each
+//! leg ploughs a channel through deep snow besides, its floor over the sole's lane: a circle at its
+//! ankle, which the prints sweep along its way, so the snow parts where the legs go and the two
+//! channels join into one between them.
 use crate::{
     WorldCatalog, WorldOrigin, WorldViewpoint, actor::CharacterMotion,
     character_catalog::FeetDefinition,
@@ -39,17 +40,16 @@ impl CharacterFeet {
         }
     }
 
-    /// The press of each foot whose joints are known, for a character grounded at `ground`.
-    fn presses(&self, ground: f32, joints: &Query<&GlobalTransform>) -> Vec<(usize, Press)> {
+    /// The sole and leg presses of each foot whose joints are known, for a character grounded at
+    /// `ground`.
+    fn presses(&self, ground: f32, joints: &Query<&GlobalTransform>) -> Vec<(usize, [Press; 2])> {
         self.joints
             .iter()
             .enumerate()
             .filter_map(|(foot, pair)| {
                 let [ankle, toe] = pair.map(|j| j.and_then(|e| joints.get(e).ok()));
-                Some((
-                    foot,
-                    self.press(ground, ankle?.translation(), toe?.translation()),
-                ))
+                let sole = self.press(ground, ankle?.translation(), toe?.translation());
+                Some((foot, [sole, self.wade(ankle?.translation().xz(), &sole)]))
             })
             .collect()
     }
@@ -67,13 +67,14 @@ impl CharacterFeet {
         }
     }
 
-    /// The legs' channel for a character standing at render xz `at`.
-    fn wade(&self, at: Vec2) -> Press {
+    /// The channel a leg ploughs around its ankle at render xz `ankle`, no lower than its `sole`'s
+    /// heel: a leg lifted high through the snow ploughs it higher.
+    fn wade(&self, ankle: Vec2, sole: &Press) -> Press {
         Press {
-            heel: at,
-            ball: at,
+            heel: ankle,
+            ball: ankle,
             radii: [self.sole.wade_radius_m; 2],
-            floor: [self.sole.wade_floor_m; 2],
+            floor: [self.sole.wade_floor_m.max(sole.floor[0]); 2],
             arch: 0.0,
         }
     }
@@ -82,8 +83,8 @@ impl CharacterFeet {
 /// A sole narrows by this share of its width at the arch.
 const SOLE_ARCH: f32 = 0.22;
 
-/// A character's presses are told apart by part: its feet (four at most, by the catalog), then
-/// the legs' channel.
+/// A character's presses are told apart by part: its soles (four at most, by the catalog), then
+/// its legs' channels.
 const WADE: u64 = 4;
 
 /// One press on the ground, in render space (`terrain_render::GroundPress`).
@@ -173,10 +174,12 @@ fn list_ground_presses(
     for (character, transform, feet) in &characters {
         let at = transform.translation();
         let source = |part: u64| character.to_bits() << 3 | part;
-        let wade = (WADE, feet.wade(at.xz()));
-        let feet = feet.presses(at.y, &joints).into_iter();
+        let parts = feet
+            .presses(at.y, &joints)
+            .into_iter()
+            .flat_map(|(foot, [sole, leg])| [(foot as u64, sole), (WADE + foot as u64, leg)]);
 
-        for (part, press) in feet.map(|(foot, p)| (foot as u64, p)).chain([wade]) {
+        for (part, press) in parts {
             presses.presses.push(GroundPress {
                 source: source(part),
                 heel: press.heel,
@@ -202,7 +205,7 @@ mod tests {
             toe_ahead_m: 0.06,
             heel_radius_m: 0.04,
             ball_radius_m: 0.045,
-            wade_radius_m: 0.26,
+            wade_radius_m: 0.14,
             wade_floor_m: 0.12,
         })
     }
@@ -233,12 +236,19 @@ mod tests {
     }
 
     #[test]
-    fn the_legs_plough_a_round_channel_its_sweeps_join_without_a_waist() {
-        let wade = feet().wade(Vec2::new(3.0, 4.0));
+    fn a_leg_ploughs_a_round_channel_at_its_ankle_no_lower_than_its_heel() {
+        let f = feet();
+        let planted = f.press(0.0, Vec3::new(3.0, 0.068, 4.0), Vec3::new(3.0, 0.012, 4.13));
+        let wade = f.wade(Vec2::new(3.0, 4.0), &planted);
+        assert_eq!(wade.heel, Vec2::new(3.0, 4.0));
         assert_eq!(wade.heel, wade.ball);
-        assert_eq!(wade.radii, [0.26; 2]);
+        assert_eq!(wade.radii, [0.14; 2]);
         assert_eq!(wade.floor, [0.12; 2]);
-        assert_eq!(wade.arch, 0.0);
+        assert_eq!(wade.arch, 0.0, "its sweeps join without a waist");
+
+        let lifted = f.press(0.0, Vec3::new(3.0, 0.3, 4.0), Vec3::new(3.0, 0.25, 4.13));
+        let wade = f.wade(Vec2::new(3.0, 4.0), &lifted);
+        assert!((wade.floor[0] - 0.232).abs() < 1e-5);
     }
 
     #[test]

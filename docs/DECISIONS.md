@@ -92,11 +92,23 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
   beside every listed one are resolved again: a tile entering at a window's edge otherwise kept
   the slope it took beside ground from across the toroidal window, and trails 41 or 164 m away
   came back as ladders of lines a tile apart (the user's "weird patterns").
-- **The legs plough a channel through deep snow.** *Kept* (October 21). Two feet sweeps alone
+- **Each leg ploughs a channel through deep snow.** *Kept* (October 21). Two feet sweeps alone
   left two narrow lanes with scalloped walls; Red Dead Redemption 2 and The Last of Us Part II
-  show one body-wide channel with the feet lanes in its floor. Each character also presses a
-  circle at its root (`wade_radius_m` 0.26, floor `wade_floor_m` 0.12 over the firm ground) whose
-  sweeps join without the sole's arch, so its walls run smooth; 6 cm of packed road takes none.
+  show one channel with the feet lanes in its floor. A circle at the character's root (October 21
+  morning) parted the snow ahead of and around the legs whatever they did (the user: "it
+  disappears around me and not affected by the character's feet"); each leg now presses a circle
+  at its ankle (`wade_radius_m` 0.14, floor `wade_floor_m` 0.12 over the firm ground, no lower
+  than its heel), and the two legs' sweeps join into one channel between them. 6 cm of packed
+  road takes none.
+- **Trenches grow with the feet, broken unevenly.** *Kept* (October 21). Presses are logged once
+  they move 10 cm, and were drawn only then: at a jog the channel's front jumped 15 cm every third
+  frame. Each frame now also draws every moving foot's sweep since its last logged press, and a
+  foot that stops logs its sweep however short. A sweep follows the ball's way at the sole's
+  lowest floor with no waist: from the last heel to the ball, consecutive sweeps overlapped with
+  different floors and left a crescent each. Outlines waver with world-space noise (up to 2.5 cm,
+  over 16 and 4 cm), rims lump, crumbs lie thrown beside trenches and floors are trodden rough,
+  all in the passes that press and resolve the touched tiles, so drawing costs nothing more and a
+  trail a window takes again comes back the same.
 - **Detail levels below the leaves for deep snow, not tessellation.** *Kept* (October 20). wgpu has
   no tessellation; shipped deep snow (Rise of the Tomb Raider, God of War Ragnarök, Ghost of Yōtei)
   displaces real geometry near the camera and keeps parallax for far or fallback snow (Batman:

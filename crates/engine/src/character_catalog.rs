@@ -100,8 +100,8 @@ pub(crate) struct FeetDefinition {
     /// Half the sole's width at the heel and at the ball, metres.
     pub(crate) heel_radius_m: f32,
     pub(crate) ball_radius_m: f32,
-    /// The channel the legs plough through deep snow, its feet lanes in its floor: half its
-    /// width, and how high over the firm ground its floor lies, metres.
+    /// The channel each leg ploughs through deep snow around its ankle, its sole's lane in its
+    /// floor: half its width, and how high over the firm ground its floor lies, metres.
     pub(crate) wade_radius_m: f32,
     pub(crate) wade_floor_m: f32,
 }
