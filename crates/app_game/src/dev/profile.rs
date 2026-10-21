@@ -22,6 +22,7 @@ pub(crate) struct ProfileSettings {
     pub fog: bool,
     pub particles: bool,
     pub light_shafts: bool,
+    pub tree_touch: bool,
     pub temporal_bypass: bool,
     pub msaa: Msaa,
     pub grass: bool,
@@ -109,6 +110,7 @@ impl ProfileSettings {
             fog: args.switch("--profile-fog")?,
             particles: args.switch("--profile-particles")?,
             light_shafts: args.switch("--profile-shafts")?,
+            tree_touch: args.switch("--profile-tree-touch")?,
             temporal_bypass: args.has("--profile-temporal-bypass"),
             msaa: args.choice(
                 "--profile-msaa",
@@ -357,6 +359,7 @@ pub(crate) fn apply_runtime_settings(app: &mut App) {
     settings.fog = profile.fog;
     settings.particles = profile.particles;
     settings.light_shafts = profile.light_shafts;
+    settings.tree_touch = profile.tree_touch;
 
     if profile.temporal_bypass {
         settings.temporal_debug = upscaling::temporal::TemporalDebug::Bypass;

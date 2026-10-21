@@ -133,6 +133,8 @@ pub(crate) struct RuntimeSettings {
     pub(crate) counters: bool,
     pub(crate) gpu_pass_timings: bool,
     pub(crate) wind: bool,
+    /// Characters pushing branches aside (`engine::TreeTouch`).
+    pub(crate) tree_touch: bool,
     pub(crate) controls_locked: bool,
     pub(crate) fast_movement: bool,
     pub(crate) show_ui: bool,
@@ -172,6 +174,7 @@ impl Default for RuntimeSettings {
             counters: false,
             gpu_pass_timings: false,
             wind: true,
+            tree_touch: true,
             controls_locked: false,
             fast_movement: false,
             show_ui: render.show_ui,
@@ -296,12 +299,23 @@ fn apply_settings(
 
 /// Trees have no mesh entities to hide (`engine::TreeInstancing`): they hide with the other
 /// objects, and in every scene but the current one.
-fn apply_trees(s: Res<RuntimeSettings>, trees: Option<ResMut<engine::TreeInstancing>>) {
+fn apply_trees(
+    s: Res<RuntimeSettings>,
+    trees: Option<ResMut<engine::TreeInstancing>>,
+    touch: Option<ResMut<engine::TreeTouch>>,
+) {
     let hidden = s.hide_objects || s.scene != Scene::Current;
+
     if let Some(mut trees) = trees
         && trees.hidden != hidden
     {
         trees.hidden = hidden;
+    }
+
+    if let Some(mut touch) = touch {
+        touch.set_if_neq(engine::TreeTouch {
+            enabled: s.tree_touch,
+        });
     }
 }
 

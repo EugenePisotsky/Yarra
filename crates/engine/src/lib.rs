@@ -22,7 +22,7 @@ mod trees;
 
 pub use trees::{
     LabAsset, LabBand, LabRepresentation, LabTree, LabVariant, LodLabPlugin, TreeInstancing,
-    TreeWindPlugin, TreeWindResponse, TreeWindSystems, TreeWindTuning, spawn_lab_tree,
+    TreeTouch, TreeWindPlugin, TreeWindResponse, TreeWindSystems, TreeWindTuning, spawn_lab_tree,
     tree_gltf_plugin,
 };
 

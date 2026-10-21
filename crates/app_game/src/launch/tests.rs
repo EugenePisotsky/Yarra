@@ -431,12 +431,15 @@ fn presentation_options_and_profile_scale() {
         "off",
         "--profile-auto-exposure",
         "off",
+        "--profile-tree-touch",
+        "off",
     ])
     .unwrap()
     .profile
     .unwrap();
     assert!(!switches.objects && !switches.terrain && !switches.fog);
     assert!(!switches.particles && !switches.light_shafts && !switches.auto_exposure);
+    assert!(!switches.tree_touch);
     assert!(switches.bloom && switches.grass);
     assert!(profile(&["--profile-fog", "dim"]).is_err());
 }

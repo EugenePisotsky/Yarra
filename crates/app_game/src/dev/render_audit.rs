@@ -99,6 +99,7 @@ enum Control {
     Counters,
     GpuPassTimings,
     Wind,
+    TreeTouch,
     Lock,
     Reset,
     Antialiasing,
@@ -132,6 +133,7 @@ impl Control {
         Control::Shadows,
         Control::ShadowMap,
         Control::Wind,
+        Control::TreeTouch,
     ];
 
     const QUALITY: &[Control] = &[
@@ -220,6 +222,7 @@ impl Control {
             Self::Counters => format!("GPU counters: {}", on_off(s.counters)),
             Self::GpuPassTimings => format!("GPU pass timings: {}", on_off(s.gpu_pass_timings)),
             Self::Wind => format!("Vegetation wind: {}", on_off(s.wind)),
+            Self::TreeTouch => format!("Tree touch: {}", on_off(s.tree_touch)),
             Self::Lock => format!("Lock controls: {}", on_off(s.controls_locked)),
             Self::Reset => "Reset launch settings".into(),
             Self::Antialiasing => {
@@ -347,6 +350,7 @@ fn buttons(
                 s.gpu_pass_timings = !s.gpu_pass_timings;
             }
             Control::Wind => s.wind = !s.wind,
+            Control::TreeTouch => s.tree_touch = !s.tree_touch,
             Control::Lock => {
                 s.controls_locked = !s.controls_locked;
                 if !s.controls_locked && s.grass == VegetationProfileMode::DrawFrozen {

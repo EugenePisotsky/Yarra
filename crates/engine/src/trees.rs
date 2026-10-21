@@ -33,6 +33,7 @@ pub use lab::{
     LabAsset, LabBand, LabRepresentation, LabTree, LabVariant, LodLabPlugin, spawn_lab_tree,
 };
 
+pub use touch::TreeTouch;
 pub use tuning::TreeWindTuning;
 pub use wind::TreeWindResponse;
 

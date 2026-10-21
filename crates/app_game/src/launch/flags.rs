@@ -341,6 +341,13 @@ const FLAGS: &[Flag] = &[
     )
     .needs(Needs::Profile),
     flag(
+        "--profile-tree-touch",
+        "on|off",
+        Profile,
+        "Characters pushing branches aside",
+    )
+    .needs(Needs::Profile),
+    flag(
         "--profile-temporal-bypass",
         "",
         Profile,

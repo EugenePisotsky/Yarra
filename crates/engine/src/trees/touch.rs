@@ -89,6 +89,19 @@ struct TouchGpu {
     bodies: [[f32; 4]; 2 * MAX_VEGETATION_BENDERS],
 }
 
+/// Whether characters push branches aside (F1 compares it off): off, no field is stepped and tree
+/// vertices skip it.
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TreeTouch {
+    pub enabled: bool,
+}
+
+impl Default for TreeTouch {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
+}
+
 /// This frame's field: where it lies and the bodies in it.
 #[derive(Resource, ExtractResource, Clone, Debug, Default)]
 #[extract_app(bevy::render::RenderApp)]
@@ -99,6 +112,7 @@ pub(super) struct TouchFrame {
 
 pub(super) fn plugin(app: &mut App) {
     app.init_resource::<TouchFrame>()
+        .init_resource::<TreeTouch>()
         .add_systems(Startup, setup)
         .add_systems(
             PostUpdate,
@@ -151,13 +165,14 @@ fn setup(mut images: ResMut<Assets<Image>>, mut buffers: ResMut<Assets<ShaderBuf
 /// The field follows the player; the characters among the plants push it.
 fn follow_bodies(
     time: Res<Time>,
+    touch: Res<TreeTouch>,
     focus: Option<Res<VegetationLodFocus>>,
     origin: Option<Res<VegetationRenderOrigin>>,
     benders: Option<Res<VegetationBenders>>,
     mut frame: ResMut<TouchFrame>,
 ) {
     frame.bodies.clear();
-    let Some(feet) = focus.and_then(|f| f.position) else {
+    let Some(feet) = focus.and_then(|f| f.position).filter(|_| touch.enabled) else {
         frame.window = TouchWindow::default();
         return;
     };
