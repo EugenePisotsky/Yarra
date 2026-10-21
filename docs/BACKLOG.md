@@ -17,6 +17,11 @@ decision when one is made.
   October 20 cleanup. Fix: keep the map's results out of the CPU image (e.g. a GPU-only texture
   the search owns, bound in its place), or rerun the search when the image is uploaded again.
 
+- **The game sometimes aborts while loading:** "thread 'IO Task Pool (n)' has overflowed its
+  stack". Seen in about one of fifteen profile launches on October 21, in builds from `b830d19`
+  on; the world then never starts. Likely a deep recursion in an asset or page decode on an IO
+  thread: a backtrace, or a larger IO task stack, would confirm it.
+
 ## Look and content
 
 - **Trees.** Pines in the vegetation kit, in small steps from the longleaf forms towards Scots pine
