@@ -50,6 +50,8 @@ pub struct EnvironmentAssets {
     pub terrain_shadow: Handle<Image>,
     /// The relief that map is searched from.
     pub terrain_heights: Handle<Image>,
+    /// The ground's albedo around the camera; see `crate::ground_albedo`.
+    pub ground_albedo: Handle<Image>,
     /// Where mist pools over the world; see `crate::valley_mist`.
     pub mist: Handle<Image>,
     /// How waves come ashore; see `crate::shore`.
@@ -135,6 +137,10 @@ pub(crate) struct EnvironmentParams {
     pub terrain_shadow: [f32; 4],
     /// The compass direction its horizon looks towards, unit XZ.
     pub terrain_light: [f32; 4],
+    /// Ground albedo map (`crate::ground_albedo`), near and far layers: first corner XZ in
+    /// render coordinates, metres per texel (0 off).
+    pub ground_near: [f32; 4],
+    pub ground_far: [f32; 4],
     /// The channel's segments, ends in pairs (xyz, width): `crate::lightning::channel`.
     pub lightning_segments: [[f32; 4]; 2 * crate::lightning::SEGMENTS],
 }
@@ -161,6 +167,7 @@ impl Plugin for EnvironmentPlugin {
             .init_resource::<crate::valley_mist::ValleyMist>()
             .init_resource::<crate::shore::Shore>()
             .init_resource::<crate::terrain_shadow::TerrainShadow>()
+            .init_resource::<crate::ground_albedo::GroundAlbedo>()
             .init_resource::<EnvironmentOrigin>()
             .init_resource::<EnvironmentParams>()
             .init_resource::<ForestSkyLevels>();
@@ -180,7 +187,7 @@ impl Plugin for EnvironmentPlugin {
         .add_systems(
             PostUpdate,
             (
-                sync::sync,
+                (crate::ground_albedo::follow_view, sync::sync).chain(),
                 publish::publish::<crate::shelter::RainShelter>,
                 publish::publish_forest_shadow,
                 publish::publish::<crate::valley_mist::ValleyMist>,
@@ -246,6 +253,7 @@ fn setup(
         forest_shadow: images.add(crate::forest_shadow::ForestShadow::image()),
         terrain_shadow: images.add(crate::terrain_shadow::TerrainShadow::image()),
         terrain_heights: images.add(crate::terrain_shadow::TerrainShadow::heights_image()),
+        ground_albedo: images.add(crate::ground_albedo::GroundAlbedo::image()),
         mist: images.add(crate::valley_mist::ValleyMist::image()),
         shore: images.add(crate::shore::Shore::image()),
         parameters: buffers.add(ShaderBuffer::new(

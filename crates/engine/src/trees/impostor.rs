@@ -295,7 +295,7 @@ pub(crate) type ImpostorMaterial = ExtendedMaterial<EnvironmentMaterial, Imposto
 
 #[derive(Asset, AsBindGroup, TypePath, Clone, Debug)]
 pub(crate) struct ImpostorExtension {
-    // StandardMaterial uses 0-99, tree wind 100-105, EnvironmentMaterial 120-125.
+    // StandardMaterial uses 0-99, tree wind 100-105, EnvironmentMaterial 120-129.
     #[uniform(130)]
     params: ImpostorParams,
     #[texture(131)]
@@ -416,6 +416,7 @@ impl ImpostorMaterials {
                             shelter: environment.shelter.clone(),
                             forest_shadow: environment.forest_shadow.clone(),
                             terrain_shadow: environment.terrain_shadow.clone(),
+                            ground_albedo: environment.ground_albedo.clone(),
                         },
                     },
                     extension: ImpostorExtension {

@@ -241,8 +241,9 @@ SQLite. The renderers (Bevy) have no SQLite: `engine` is the only library joinin
 - Owns the sky and the air: `WorldEnvironmentPlugin` (`game()`/`editor()`), `AtmosphereState`,
   `AtmosphereOwner` (Game, Editor, Isolated), the sky composite (`sky`), clouds, light shafts,
   sun glare, rain, particles, lightning, eye adaptation, the tone map (`WORLD_TONEMAPPING`).
-- Owns what all lit materials share (`environment::EnvironmentParams` and its maps) and the
-  terrain-derived maps (`valley_mist`, `shore`, `terrain_shadow`).
+- Owns what all lit materials share (`environment::EnvironmentParams` and its maps), the
+  terrain-derived maps (`valley_mist`, `shore`, `terrain_shadow`) and the place of the ground
+  albedo map around the camera (`ground_albedo`), which a terrain renderer fills.
 - Invariants: profile evaluation is pure and lives in `world`; this crate is its Bevy adapter.
   Bevy's sky pass is replaced (`BevySkyPassReplaced`); recheck on Bevy upgrades. Isolated views
   get no clouds, weather or particles.
@@ -263,6 +264,9 @@ SQLite. The renderers (Bevy) have no SQLite: `engine` is the only library joinin
   relief: how far feet lowered the ground, rims beside trenches and its slope, with six mip
   levels. Vertices take the coarse window's relief filtered to their spacing; the material tilts
   and streaks the soft surfaces it shows by it at the pixel's footprint.
+- Fills the environment's ground albedo map each frame (`ground_albedo`, from the streamed world's
+  clipmap, `GroundAlbedoSource`): the surfaces' colour and how squarely the sun meets the ground,
+  for the light every material takes from below (`lighting/ground.wesl`).
 - Invariants: selection uses distance to a node's box, so turning the camera changes only
   culling. A node splits only when all four children are resident and vertices morph to the
   coarser grid, so levels meet without cracks. Soft leaves near the camera split into detail
@@ -351,8 +355,8 @@ MetalFX Temporal, MSAA is off and the backend reconstructs at output size. In or
 5. Upscaling to the window (MetalFX Spatial, or Linear during UI composition) under a UI camera
    at native resolution.
 
-Every lit material binds the shared environment at slots 120–127 (`EnvironmentParams`, cloud
-shadow, rain shelter, forest and terrain shadow). `MsaaColorStorePlugin` discards multisample
+Every lit material binds the shared environment at slots 120–129 (`EnvironmentParams`, cloud
+shadow, rain shelter, forest and terrain shadow, ground albedo). `MsaaColorStorePlugin` discards multisample
 colour after the resolve only while `BevySkyPassReplaced` holds. The editor uses the same
 renderers.
 
@@ -396,7 +400,8 @@ All shaders are WESL in `assets/shaders/`, a folder per subsystem:
 - `sky/`: the composite and its parts (air, fog, celestial, sun, cloud layer), light shafts,
   sun occlusion and sun rays. `clouds/`: density, panorama, tracing, shadows.
 - `lighting/`: shared lit-material code: `material` (adapted from Bevy's PBR, see
-  `THIRD_PARTY.md`), `pbr_lighting`, `surface`, forest and terrain shadows, terrain horizon.
+  `THIRD_PARTY.md`), `pbr_lighting`, `surface`, forest and terrain shadows, terrain horizon, the
+  ground below (`ground`).
 - `environment/`: the `EnvironmentParams` layout and map lookups. `weather/`: rain, particles,
   ambient particles, ground wetness. `water/`: the sea and its waves.
 - Root: `crossfade` (LOD crossfades as MSAA sample masks), `environment_coverage` (editor).

@@ -37,5 +37,7 @@ struct EnvironmentParams {
     night_sky: vec4<f32>, // unexposed moonless night sky light just above the horizon
     terrain_shadow: vec4<f32>, // terrain shadow map: first corner xz in render coordinates, metres per texel (0 off), published
     terrain_light: vec4<f32>, // the compass direction its horizon looks towards, unit xz
+    ground_near: vec4<f32>, // ground albedo map's near layer: first corner xz in render coordinates, metres per texel (0 off)
+    ground_far: vec4<f32>, // its far layer, as the near one
     lightning_segments: array<vec4<f32>, 32>, // channel segment ends in pairs: xyz, width
 }

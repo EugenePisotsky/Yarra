@@ -4,7 +4,7 @@ mod gpu;
 mod patch;
 mod select;
 
-pub(crate) use gpu::install;
+pub(crate) use gpu::{ClipmapSettings, install};
 
 pub use gpu::{
     COVERED_GROUND, ClipmapFrame, ClipmapGround, ClipmapSurface, ClipmapTerrainMaterial,

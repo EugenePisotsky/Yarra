@@ -7,15 +7,14 @@
 // from the height clipmap at the pixel's footprint: the soft layer's (snow's) top where there is
 // one, which takes the prints feet pressed into it (terrain/prints.wesl).
 import package::shaders::lighting::pbr_lighting::apply_pbr_lighting;
-import package::shaders::terrain::clipmap_common::{ControlCell, Sample, clipmap_normal, control_cell, intervals, leaf_height, leaf_spacing, levels, node_of, origin_samples, resident_level, settings, unpack, wear_slot};
+import package::shaders::terrain::clipmap_common::{ControlCell, Sample, base_color, clipmap_normal, control_cell, intervals, leaf_height, leaf_spacing, levels, node_of, origin_samples, repeat_sampler, resident_level, settings, surfaces, unpack, wear_slot};
 import package::shaders::terrain::wear::{RUT_DEPTH_SCALE, WEAR_SHIFT, WEAR_TEXELS, Wear, bare_share, decode_wear, wear_hash, wear_patch, wheel_grooves};
 import package::shaders::terrain::prints::{print_relief_at, print_view};
 import package::shaders::weather::ground_wetness::apply_rain_puddles;
-import package::shaders::lighting::surface::{ground_celestial_irradiance, surface_weather};
+import package::shaders::lighting::surface::surface_weather;
 import package::shaders::terrain::stochastic::{quarter_turn, stochastic_vertex_turn, stochastic_vertex_offset};
 import package::shaders::terrain::blend::{BLEND_DEPTH, BLEND_HEIGHT, height_blend};
-import bevy_pbr::render::mesh_view_bindings::{globals, lights, view};
-import bevy_render::maths::PI;
+import bevy_pbr::render::mesh_view_bindings::{globals, view};
 import bevy_pbr::{
     render::forward_io::{FragmentOutput, VertexOutput},
     render::pbr_fragment::pbr_input_from_vertex_output,
@@ -23,11 +22,6 @@ import bevy_pbr::{
     render::pbr_types,
 };
 
-// crates/terrain_render/src/clipmap/gpu.rs ClipmapSurface, by texture array layer.
-struct ClipmapSurface { texture: vec4<f32>, material: vec4<f32>, grass: vec4<f32>, shade: vec4<f32>, }
-@group(constants::MATERIAL_BIND_GROUP) @binding(6) var<storage, read> surfaces: array<ClipmapSurface>;
-@group(constants::MATERIAL_BIND_GROUP) @binding(7) var base_color: texture_2d_array<f32>;
-@group(constants::MATERIAL_BIND_GROUP) @binding(8) var repeat_sampler: sampler;
 @group(constants::MATERIAL_BIND_GROUP) @binding(9) var normal_material: texture_2d_array<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(10) var macro_variation: texture_2d<f32>;
 // Road wear of the cells around the camera, one layer per toroidal slot (terrain/wear.wesl).
@@ -70,7 +64,7 @@ const STREAK_FOOTPRINT: vec2<f32> = vec2(0.008, 0.025);
 // each hold this share, and once the neighbourhood is worn this much (from the first).
 const REFINE_ROOM: f32 = 0.1;
 const REFINE_WORN: vec2<f32> = vec2(0.005, 0.03);
-// Ice crystals in snow glint in the sun (lighting/pbr_lighting.wesl TERRAIN_GLINTS): in this share
+// Ice crystals in snow glint in the sun (lighting/pbr_lighting.wesl TERRAIN_SURFACE): in this share
 // of the cells of a world grid, each as wide as this many pixels (no finer than the first size,
 // metres), a facet tilted at random up to this far (tangent) and smooth as this roughness, fading
 // out over this range (metres).
@@ -532,10 +526,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         }
     }
     slope *= min(1.0, PRINT_STEEPEST / max(length(slope), 1e-6));
-    let tilted = normalize(ground_normal - vec3(slope.x, 0.0, slope.y));
-    // The share of the ground's view its tilt turns from the sky to the snow around it.
-    let turned = 0.5 - 0.5 * dot(tilted, ground_normal);
-    ground_normal = tilted;
+    ground_normal = normalize(ground_normal - vec3(slope.x, 0.0, slope.y));
     let wall = smoothstep(0.5, 1.2, length(slope))
         * (1.0 - smoothstep(STREAK_FOOTPRINT.x, STREAK_FOOTPRINT.y, footprint));
     if wall > 0.0 {
@@ -573,13 +564,6 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         pbr.material.clearcoat = glint.z * glinting;
         pbr.material.clearcoat_perceptual_roughness = GLINT_ROUGHNESS;
         pbr.clearcoat_N = normalize(normal - vec3(glint.x, 0.0, glint.y));
-    }
-    // A print's walls face its sunlit floor and the snow around it, far brighter than the grass
-    // the shared ground light assumes: they take light reflected by snow as bright as their own.
-    if turned > 0.001 {
-        let irradiance = lights.ambient_color.rgb * PI + ground_celestial_irradiance(in.world_position.xyz);
-        let albedo = pbr.material.base_color.rgb;
-        pbr.material.emissive = vec4(albedo * albedo * irradiance / PI * turned, 1.0);
     }
     pbr = apply_rain_puddles(pbr, hollow);
     let lit = apply_pbr_lighting(pbr);

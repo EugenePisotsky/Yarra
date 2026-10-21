@@ -1,7 +1,8 @@
-//! Explicit GPU smoke test: compile and draw the clipmap material with real Bevy imports, on a
-//! one-node patch as the editor's preview draws it.
+//! Explicit GPU tests: compile and draw the clipmap material with real Bevy imports, on a one-node
+//! patch as the editor's preview draws it, and fill the ground albedo map from it.
 use super::*;
 
+use atmosphere::{environment::EnvironmentAssets, ground_albedo::GroundAlbedo};
 use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::{
     app::PluginsState,
@@ -10,11 +11,12 @@ use bevy::{
     core_pipeline::prepass::DepthPrepass,
     render::{
         RenderApp, RenderPlugin,
+        extract_resource::ExtractResourcePlugin,
         gpu_readback::{Readback, ReadbackComplete},
         pipelined_rendering::PipelinedRenderingPlugin,
         render_resource::{
             CachedPipelineState, Extent3d, PipelineCache, PipelineDescriptor, TextureDimension,
-            TextureFormat,
+            TextureFormat, TextureUsages,
         },
         storage::ShaderBuffer,
     },
@@ -30,6 +32,10 @@ use std::sync::{Arc, Mutex};
 #[derive(Resource, Default, Clone)]
 struct Pixels(Arc<Mutex<Vec<u8>>>);
 
+/// The ground albedo map as read back.
+#[derive(Resource, Default, Clone)]
+struct AlbedoTexels(Arc<Mutex<Vec<u8>>>);
+
 #[derive(Resource)]
 struct TestPatch(ClipmapPatch);
 
@@ -39,41 +45,9 @@ const EYE: Vec3 = Vec3::new(2.0, 5.0, 2.1);
 #[test]
 #[ignore = "requires a native GPU adapter; run explicitly on a development machine"]
 fn clipmap_material_compiles_and_renders() {
-    let mut app = App::new();
-    app.add_plugins(
-        DefaultPlugins
-            .set(AssetPlugin {
-                file_path: format!("{}/../../assets", env!("CARGO_MANIFEST_DIR")),
-                ..default()
-            })
-            .set(WindowPlugin {
-                primary_window: None,
-                exit_condition: ExitCondition::DontExit,
-                ..default()
-            })
-            .set(RenderPlugin {
-                synchronous_pipeline_compilation: true,
-                ..default()
-            })
-            .disable::<WinitPlugin>()
-            .disable::<PipelinedRenderingPlugin>(),
-    )
-    .add_plugins(TerrainRenderPlugin)
-    .init_resource::<Pixels>()
-    .add_systems(Startup, setup)
-    .add_systems(Update, follow);
+    let mut app = renderer();
+    start(&mut app);
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-
-    while app.plugins_state() != PluginsState::Ready {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "renderer startup timed out"
-        );
-        bevy::tasks::tick_global_task_pools_on_main_thread();
-    }
-
-    app.finish();
-    app.cleanup();
     let shader: Handle<Shader> = app
         .world()
         .resource::<AssetServer>()
@@ -142,6 +116,132 @@ fn clipmap_material_compiles_and_renders() {
             "variant {variant} is not stable"
         );
     }
+}
+
+/// The renderer with the terrain's plugin and the test patch under a camera, not yet started.
+fn renderer() -> App {
+    let mut app = App::new();
+    app.add_plugins(
+        DefaultPlugins
+            .set(AssetPlugin {
+                file_path: format!("{}/../../assets", env!("CARGO_MANIFEST_DIR")),
+                ..default()
+            })
+            .set(WindowPlugin {
+                primary_window: None,
+                exit_condition: ExitCondition::DontExit,
+                ..default()
+            })
+            .set(RenderPlugin {
+                synchronous_pipeline_compilation: true,
+                ..default()
+            })
+            .disable::<WinitPlugin>()
+            .disable::<PipelinedRenderingPlugin>(),
+    )
+    .add_plugins(TerrainRenderPlugin)
+    .init_resource::<Pixels>()
+    .add_systems(Startup, setup)
+    .add_systems(Update, follow);
+    app
+}
+
+/// Runs the plugins' startup to the first frame.
+fn start(app: &mut App) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+
+    while app.plugins_state() != PluginsState::Ready {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "renderer startup timed out"
+        );
+        bevy::tasks::tick_global_task_pools_on_main_thread();
+    }
+
+    app.finish();
+    app.cleanup();
+}
+
+#[test]
+#[ignore = "requires a native GPU adapter; run explicitly on a development machine"]
+fn the_ground_albedo_map_takes_the_surfaces_colours() {
+    let mut app = renderer();
+    app.add_plugins(ExtractResourcePlugin::<EnvironmentAssets>::default())
+        .init_resource::<AlbedoTexels>()
+        .add_systems(Startup, environment.after(setup));
+    start(&mut app);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let read = |app: &App| {
+        let world = app.world();
+        world
+            .get_resource::<GroundAlbedo>()
+            .is_some_and(|a| a.filled)
+            && !world
+                .resource::<AlbedoTexels>()
+                .0
+                .lock()
+                .unwrap()
+                .is_empty()
+    };
+
+    // Startup places the map on the first frame.
+    while !read(&app) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the map was not filled"
+        );
+        app.update();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+
+    // Some frames on, so the readback holds a filled map.
+    for _ in 0..5 {
+        app.update();
+    }
+
+    let texels = app
+        .world()
+        .resource::<AlbedoTexels>()
+        .0
+        .lock()
+        .unwrap()
+        .clone();
+    let side = atmosphere::ground_albedo::SIZE as usize;
+
+    // The near layer's corner lies 128 m back of the patch's: texel 64 holds its first 2 m.
+    let at = (64 * side + 64) * 8;
+    let texel: Vec<f32> = texels[at..at + 8]
+        .chunks(2)
+        .map(|h| half::f16::from_le_bytes([h[0], h[1]]).to_f32())
+        .collect();
+
+    // The surfaces' textures have no mips: their colour is the four texels at their centre.
+    let centre = |layer: usize| {
+        let texel = |x: usize, y: usize| {
+            [
+                40 + (x * 11 + layer * 21) % 180,
+                40 + (y * 9 + layer * 33) % 180,
+                100 + (x * y + layer * 29) % 140,
+            ]
+        };
+        let corners = [texel(7, 7), texel(8, 7), texel(7, 8), texel(8, 8)];
+        [0, 1, 2].map(|c| corners.iter().map(|t| t[c] as f32).sum::<f32>() / 4.0 / 255.0)
+    };
+    let (a, b) = (centre(0), centre(1));
+
+    for c in 0..3 {
+        let expected = 0.6 * a[c] + 0.4 * b[c];
+        assert!(
+            (texel[c] - expected).abs() < 0.005,
+            "channel {c}: {} against {expected}",
+            texel[c]
+        );
+    }
+
+    assert_eq!(
+        texel[3], 0.0,
+        "without a sun the ground takes none of its beam"
+    );
 }
 
 fn settled_pixels(app: &mut App) -> Vec<u8> {
@@ -295,4 +395,40 @@ fn setup(
     .unwrap();
     commands.spawn(patch.bundle(&mut meshes));
     commands.insert_resource(TestPatch(patch));
+}
+
+/// The environment's inputs as the atmosphere makes them, with the ground albedo map readable,
+/// centred on the patch and filled from it.
+fn environment(
+    mut commands: Commands,
+    mut images: ResMut<Assets<Image>>,
+    patch: Res<TestPatch>,
+    texels: Res<AlbedoTexels>,
+) {
+    commands.insert_resource(patch.0.textures().ground_albedo_source());
+    let mut map = GroundAlbedo::image();
+    map.texture_descriptor.usage |= TextureUsages::COPY_SRC;
+    let map = images.add(map);
+    let open = images.add(Image::default());
+    commands.insert_resource(EnvironmentAssets {
+        parameters: atmosphere::environment::fallback_parameters(),
+        shadows: open.clone(),
+        noise: open.clone(),
+        shelter: open.clone(),
+        forest_shadow: open.clone(),
+        terrain_shadow: open.clone(),
+        terrain_heights: open.clone(),
+        ground_albedo: map.clone(),
+        mist: open.clone(),
+        shore: open,
+    });
+    let mut albedo = GroundAlbedo::default();
+    albedo.follow(Vec2::ZERO, [0.0; 2]);
+    commands.insert_resource(albedo);
+    let texels = texels.0.clone();
+    commands
+        .spawn(Readback::texture(map))
+        .observe(move |event: On<ReadbackComplete>| {
+            *texels.lock().unwrap() = event.data.clone();
+        });
 }

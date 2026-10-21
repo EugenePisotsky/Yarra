@@ -24,13 +24,14 @@ fn cloud_light(p: vec3<f32>, direction: vec3<f32>) -> vec2<f32> {
     let direct = select(t.y,t.x,sun)*open*open;
     return vec2(direct, max(CLOUD_DIFFUSE_FLOOR-direct, 0.0));
 }
-// Sun and moon light on flat ground at `p`, unexposed: their light after the atmosphere at the
-// camera stands in for its light there (the ground around a surface lies within metres of it),
-// past the clouds above `p`.
-fn ground_celestial_irradiance(p: vec3<f32>) -> vec3<f32> {
+// Sun and moon light on the ground at `p`, unexposed, the sun's beam meeting it at `sun_cosine`
+// (the sun's height over flat, open ground) and the moon's on flat ground: their light after the
+// atmosphere at the camera stands in for its light there (the ground around a surface lies within
+// metres of it), past the clouds above `p`.
+fn ground_celestial_irradiance(p: vec3<f32>, sun_cosine: f32) -> vec3<f32> {
     var irradiance = vec3(0.0);
     if environment.sun.y > 0.0 {
-        irradiance += environment.near_sun.rgb * environment.sun.y * cloud_visibility(p, environment.sun.xyz);
+        irradiance += environment.near_sun.rgb * sun_cosine * cloud_visibility(p, environment.sun.xyz);
     }
     if environment.moon.w > 0.0 && environment.moon.y > 0.0 {
         irradiance += environment.moon_color.rgb * environment.moon.w * environment.moon.y
@@ -58,6 +59,10 @@ fn terrain_shadow_parameters() -> vec4<f32> {
 /// The compass direction the terrain shadow map's horizon looks towards, unit xz.
 fn terrain_light_parameters() -> vec4<f32> {
     return environment.terrain_light;
+}
+/// Ground albedo map layer `layer` (0 near, 1 far): first corner xz, metres per texel (0 off).
+fn ground_map_parameters(layer: u32) -> vec4<f32> {
+    return select(environment.ground_near, environment.ground_far, layer == 1u);
 }
 
 /// 1 where rain reaches `p`, 0 under full cover. Bilinear coverage, as on the CPU.

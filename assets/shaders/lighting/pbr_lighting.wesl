@@ -11,6 +11,7 @@ import bevy_pbr::{
         pbr_lighting::{LAYER_BASE, LAYER_CLEARCOAT},
         clustered_forward as clustering,
         shadows,
+        shadow_sampling,
         pbr_ambient as ambient,
         view_transformations,
         utils,
@@ -42,18 +43,45 @@ import bevy_render::maths::{E, PI, powsafe};
 import bevy_pbr::render::pbr_functions::{calculate_diffuse_color, calculate_F0, calculate_F0_dielectric};
 @if(STANDARD_MATERIAL_ANISOTROPY) import bevy_pbr::render::pbr_functions::bend_normal_for_anisotropy;
 @if(CONTACT_SHADOWS && DEPTH_PREPASS) import bevy_pbr::render::pbr_functions::calculate_contact_shadow;
-import package::shaders::lighting::surface::{cloud_light, ground_celestial_irradiance, surface_wetness};
+import package::shaders::lighting::surface::{cloud_light, environment, ground_celestial_irradiance, surface_wetness};
 import package::shaders::lighting::forest_shadow::{forest_transmittance, forest_sky_light, forest_sky_visibility, forest_crown_sky};
 import package::shaders::lighting::terrain_shadow::{terrain_sunlight, terrain_sky_visibility};
+import package::shaders::lighting::ground::ground_below;
 
 // Yarra: light reflected towards a surface by the ground around it, as environment radiance
-// (Bevy's ambient colour is used the same way): the ground's albedo times the sun, moon and
-// sky light reaching it. Grass and soil reflect a dim green-gold.
-const GROUND_ALBEDO: vec3<f32> = vec3(0.09, 0.12, 0.05);
-fn ground_light(P: vec3<f32>) -> vec3<f32> {
-    let irradiance = view_bindings::lights.ambient_color.rgb * PI + ground_celestial_irradiance(P);
-    return GROUND_ALBEDO * irradiance / PI;
+// (Bevy's ambient colour is used the same way): the albedo of the ground below it times the sun,
+// moon and sky light reaching that ground, the sun's as far as `sunlit` of the ground takes it
+// and the sky's as far as the terrain around leaves it `sky`.
+fn ground_light(P: vec3<f32>, sunlit: f32, sky: f32) -> vec3<f32> {
+    let ground = ground_below(P.xz);
+    let irradiance = view_bindings::lights.ambient_color.rgb * PI * sky
+        + ground_celestial_irradiance(P, ground.w * sunlit);
+    return ground.rgb * irradiance / PI;
 }
+
+// Yarra: whether the ground around `P` lies in light `light_id`'s beam, by its shadow maps a step
+// towards the light, past the surface's own body: a figure's shaded back still faces sunlit snow,
+// while one standing in a ridge's or a house's shadow stands on shaded ground. One hardware
+// sample. Past the cascades the ground map's horizon stands in.
+fn ground_in_light(light_id: u32, P: vec3<f32>, view_z: f32) -> f32 {
+    let light = &view_bindings::lights.directional_lights[light_id];
+    let cascade = shadows::get_cascade_index(light_id, view_z);
+    if cascade >= (*light).num_cascades {
+        return 1.0;
+    }
+    let point = vec4(P + (*light).direction_to_light * GROUND_SHADOW_STEP, 1.0);
+    let local = shadows::world_to_directional_light_local(light_id, cascade, point);
+    if local.w == 0.0 {
+        return 1.0;
+    }
+    let layer = i32((*light).depth_texture_base_index + cascade);
+    let lit = shadow_sampling::sample_shadow_map_hardware(local.xy, local.z, layer);
+    let end = (*light).cascades[(*light).num_cascades - 1u].far_bound;
+    return mix(lit, 1.0, smoothstep(end * 0.7, end, -view_z));
+}
+
+// Metres towards the light a point's ground is tested from: past a body or a trunk.
+const GROUND_SHADOW_STEP: f32 = 1.0;
 
 // Yarra: sky light still reaching foliage the rest of its crown hides from the sky, passed
 // through and between the leaves (TREE_CROWN_SKY).
@@ -101,8 +129,9 @@ fn through_atmosphere(P: vec3<f32>, light_id: u32) -> vec3<f32> {
     }
 }
 
-// Yarra: a crystal's glint in snow (TERRAIN_GLINTS): light `light_id` reflected by a facet of its
-// own normal `N` and perceptual roughness, as much of it as `cover` holds, ice's specular alone.
+// Yarra: a crystal's glint in snow (TERRAIN_SURFACE, the terrain's material): light `light_id`
+// reflected by a facet of its own normal `N` and perceptual roughness, as much of it as `cover`
+// holds, ice's specular alone.
 fn glint_light(light_id: u32, P: vec3<f32>, V: vec3<f32>, N: vec3<f32>, perceptual_roughness: f32, cover: f32) -> vec3<f32> {
     let light = &view_bindings::lights.directional_lights[light_id];
     let L = (*light).direction_to_light;
@@ -395,6 +424,8 @@ fn apply_pbr_lighting(
 
     // directional lights (direct)
     let n_directional_lights = view_bindings::lights.n_directional_lights;
+    // Yarra: how much of the ground around takes the sun's beam (ground_light).
+    var ground_sunlit = 1.0;
     for (var i: u32 = 0u; i < n_directional_lights; i = i + 1u) {
         // check if this light should be skipped, which occurs if this light does not intersect with the view
         // note point and spot lights aren't skippable, as the relevant lights are filtered in `assign_lights_to_clusters`
@@ -474,9 +505,21 @@ fn apply_pbr_lighting(
                 shadow = mix(shadow, distant, beyond);
             }
         }
+        // Yarra: the ground around a point of the terrain, or below one inside a crown, lies in
+        // the point's own shadow; anything else stands on ground the shadow maps test a step
+        // towards the sun.
+        if dot((*light).direction_to_light, environment.sun.xyz) > 0.999 {
+            @if(TERRAIN_SURFACE || TREE_CROWN_SKY)
+            ground_sunlit = shadow;
+            @else {
+                if ((*light).flags & mesh_view_types::DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) != 0u {
+                    ground_sunlit = ground_in_light(i, in.world_position.xyz, view_z);
+                }
+            }
+        }
         // Yarra: crystals glint in the direct beam alone, as its shadow lets them; the terrain
         // carries a glinting facet in the clearcoat fields it has no other use for.
-        @if(TERRAIN_GLINTS)
+        @if(TERRAIN_SURFACE)
         if in.material.clearcoat > 0.0 {
             direct_light += glint_light(i, in.world_position.xyz, in.V, in.clearcoat_N,
                 in.material.clearcoat_perceptual_roughness, in.material.clearcoat) * shadow * cloud.x;
@@ -655,19 +698,19 @@ fn apply_pbr_lighting(
             // horizon lies the ground, as for every other surface.
             let reach = crown_sky_reach(diffuse_occlusion.g, in.world_position.xyz);
             let below = 0.5 - 0.5 * in.N.y;
-            let ground = ground_light(in.world_position.xyz) * forest_sky_light(in.world_position.xyz);
+            let ground = ground_light(in.world_position.xyz, ground_sunlit, terrain_sky) * forest_sky_light(in.world_position.xyz);
             indirect_light += ambient::ambient_light(in.world_position, in.N, in.V, NdotV, diffuse_color, F0, perceptual_roughness, vec3(reach * (1.0 - below) * terrain_sky));
             indirect_light += diffuse_color * ground * below * reach;
         }
         @elif(TREE_CROWN_SHADING)
         indirect_light += ambient::ambient_light(in.world_position, in.N, in.V, NdotV, diffuse_color, F0, perceptual_roughness, diffuse_occlusion * sky_facing * terrain_sky);
         @else {
-            // Below the horizon of a surface lies sunlit ground, not sky: its lower half sees
+            // Below the horizon of a surface lies the ground, not sky: its lower half sees
             // the light the ground reflects, so trunks, cliffs and characters are not lit blue
             // from below. Flat ground is unchanged.
             let below = 0.5 - 0.5 * in.N.y;
             sky_facing = vec3(1.0 - below);
-            var ground = ground_light(in.world_position.xyz);
+            var ground = ground_light(in.world_position.xyz, ground_sunlit, terrain_sky);
             // Under the crowns most of the sky is hidden and the ground lies in their shade;
             // leaf-filtered light stands in for part of it.
             let canopy = forest_sky_light(in.world_position.xyz);

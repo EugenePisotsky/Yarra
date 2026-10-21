@@ -1,5 +1,5 @@
 // Terrain v2's clipmap (crates/terrain_render/src/clipmap/gpu.rs), shared by its vertex and
-// fragment shaders. Level L holds samples 2^L leaf spacings apart in a toroidal `side`² layer:
+// fragment shaders and the ground albedo pass (terrain/ground_albedo.wesl). Level L holds samples 2^L leaf spacings apart in a toroidal `side`² layer:
 // world sample s of the level is texel s mod side. Positions travel as a leaf sample index
 // (integer, world-wide) and a fraction of a leaf spacing, so they stay exact anywhere in the
 // world while render coordinates stay small. Heights are the drawn ground, the top of the soft
@@ -22,6 +22,11 @@ struct ClipmapSettings {
 @group(constants::MATERIAL_BIND_GROUP) @binding(3) var normal_sampler: sampler;
 @group(constants::MATERIAL_BIND_GROUP) @binding(4) var state: texture_2d<u32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(5) var control: texture_2d_array<u32>;
+// crates/terrain_render/src/clipmap/gpu.rs ClipmapSurface, by texture array layer, and their colours.
+struct ClipmapSurface { texture: vec4<f32>, material: vec4<f32>, grass: vec4<f32>, shade: vec4<f32>, }
+@group(constants::MATERIAL_BIND_GROUP) @binding(6) var<storage, read> surfaces: array<ClipmapSurface>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(7) var base_color: texture_2d_array<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(8) var repeat_sampler: sampler;
 
 // State texels (gpu.rs, whose tests check these copies): eye, origin, a window per level, each
 // level's residency rows, then the cell each wear atlas slot holds.

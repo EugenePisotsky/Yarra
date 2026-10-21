@@ -41,6 +41,17 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
 - **Composite shortcuts.** *Kept* (`f83773f`, `189488a`). Air at a silhouette pixel's nearest and
   farthest samples, interpolated; fog light once per pixel; dark lights skipped (~1 ms). A froxel
   mist grid was reverted (mist 0.4 ms, the pass up to 0.45 ms).
+- **Light from below takes the ground's colour.** *Kept* (October 21). Every lit material's lower
+  half took light reflected by grass (albedo 0.09, 0.12, 0.05), so a figure on a snowfield stayed
+  dark on its shaded side where Red Dead Redemption 2 lights it from the snow. A compute pass fills
+  a top-down map around the camera each frame (128² at 2 m, and at 32 m out to 2 km): each surface's
+  mean texture colour under its grass field's, blended by the control shares, water below the sea,
+  and the cosine at which the sun meets the ground past the terrain's horizon. The bounce takes the
+  sun only where the ground lies in it, by the shadow maps a metre towards the sun from a figure or
+  trunk (past its own body) and by the pixel's own shadow on the terrain and in crowns, and the sky
+  as far as the terrain leaves it: otherwise a figure on a shaded snow slope shone brighter than the
+  snow. The print walls' own bounce went. Snow walking ~0.14 ms slower (0.6 of 65 fps), the village
+  route within noise.
 - **Bevy left alone.** Rewriting its atmosphere LUT pass: not pursued (static tables 0.08 ms). Mesh
   shaders for grass: not now (no hardware mesh shading on M2). Real leaves: no (30–300× triangles).
   Lights are never hidden: hiding one loses shadow casters for good.
@@ -83,9 +94,9 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
   trench where a sole went below the snow's top, by the distance past the sole recovered from the
   cap. A moving foot logs its sweep from its last heel (a row of soles scalloped the walls).
   Parallax prints over the surface went with real geometry (characters on the surface, 7 cm,
-  only within 1.5–3.5 cm of the ground). Walls are lit by snow-bright bounce (the shared ground
-  light assumes grass albedo). Walking through deep snow measured within noise of the build
-  before snow.
+  only within 1.5–3.5 cm of the ground). Walls take the snow's light from below like any surface
+  (the ground albedo map). Walking through deep snow measured within noise of the build before
+  snow.
 - **Prints drawn from a resolved, filtered relief.** *Kept* (October 21). Vertices read the caps
   directly: 12.5 cm to 1 m apart over 2 and 8 cm texels, morphing with the camera's distance,
   they caught different samples as the player walked, so trails far behind crawled. A pass now
@@ -116,7 +127,7 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
   trail a window takes again comes back the same.
 - **Snow glints from sparse facets, specular alone.** *Kept* (October 21). A share of the cells of a
   world grid a few pixels across holds a crystal facet tilted at random up to 63° with roughness
-  0.15; the sun's light loop adds its specular (`TERRAIN_GLINTS`, the facet in the clearcoat fields
+  0.15; the sun's light loop adds its specular (`TERRAIN_SURFACE`, the facet in the clearcoat fields
   the terrain does not otherwise use), shadowed like the sun. Tilting the shading normal itself
   checkered the snow light and dark; tilts within 27° found no sun to catch beside the mirror
   direction. Walking measured within noise.

@@ -26,6 +26,9 @@ pub struct EnvironmentExtension {
     #[texture(126)]
     #[sampler(127)]
     pub terrain_shadow: Handle<Image>,
+    #[texture(128, dimension = "2d_array")]
+    #[sampler(129)]
+    pub ground_albedo: Handle<Image>,
 }
 
 impl MaterialExtension for EnvironmentExtension {
@@ -137,6 +140,7 @@ fn convert(
                         shelter: assets.shelter.clone(),
                         forest_shadow: assets.forest_shadow.clone(),
                         terrain_shadow: assets.terrain_shadow.clone(),
+                        ground_albedo: assets.ground_albedo.clone(),
                     },
                 })
             })
@@ -171,6 +175,7 @@ mod tests {
                 forest_shadow: default(),
                 terrain_shadow: default(),
                 terrain_heights: default(),
+                ground_albedo: default(),
                 mist: default(),
                 shore: default(),
             })

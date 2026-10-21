@@ -11,7 +11,9 @@ decision when one is made.
   the image's CPU data, all "open", uploaded again into the same texture), and since the texture
   keeps its identity the search counts as done and never runs again. Runs where the overwrite
   lands before the search ends (seen under heavy CPU load) do show the ridges' shadows; keeping
-  the search running shows them every time (`central-far` at phase 0.34). Present before the
+  the search running shows them every time (`central-far` at phase 0.34). The map also holds the
+  terrain's sky share and the ground light's horizon, so captures of one view differ between runs
+  (a figure in shade on snow at 0.79 or 0.99 of the snow's brightness). Present before the
   October 20 cleanup. Fix: keep the map's results out of the CPU image (e.g. a GPU-only texture
   the search owns, bound in its place), or rerun the search when the image is uploaded again.
 
@@ -33,9 +35,8 @@ decision when one is made.
   aliasing.
 - **Snow.** Slower walking in deep snow, and snow thrown up at the legs; depth varying with
   exposure and hollows; prints filling in while it snows (the caps rising); snowfall above a snow
-  line, its fog and blizzards; snow cover building up. The ground light under every material
-  assumes grass albedo, so characters and trees on snowfields lack the snow's bounce. Sand and
-  mud could take prints with a small `soft_depth`. Steep snow could take the snow-cliff scan.
+  line, its fog and blizzards; snow cover building up. Sand and mud could take prints with a small
+  `soft_depth`. Steep snow could take the snow-cliff scan.
 
 ## Performance
 

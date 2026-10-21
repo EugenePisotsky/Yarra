@@ -169,6 +169,9 @@ pub struct ClipmapTerrainMaterial {
     #[texture(126)]
     #[sampler(127)]
     pub(crate) terrain_shadow: Option<Handle<Image>>,
+    #[texture(128, dimension = "2d_array")]
+    #[sampler(129)]
+    pub(crate) ground_albedo: Option<Handle<Image>>,
     #[uniform(0)]
     settings: ClipmapSettings,
     #[texture(1, dimension = "2d_array", sample_type = "float", filterable = false)]
@@ -218,7 +221,8 @@ impl Material for ClipmapTerrainMaterial {
         false
     }
 
-    // Snow's crystals glint in the sun (`shaders/lighting/pbr_lighting.wesl` TERRAIN_GLINTS).
+    // The lighting knows the terrain (`shaders/lighting/pbr_lighting.wesl` TERRAIN_SURFACE): snow's
+    // crystals glint in the sun, and the ground around a point is as sunlit as the point.
     fn specialize(
         _pipeline: &MaterialPipeline,
         descriptor: &mut RenderPipelineDescriptor,
@@ -226,7 +230,7 @@ impl Material for ClipmapTerrainMaterial {
         _key: MaterialPipelineKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
         if let Some(fragment) = descriptor.fragment.as_mut() {
-            fragment.shader_defs.push("TERRAIN_GLINTS".into());
+            fragment.shader_defs.push("TERRAIN_SURFACE".into());
         }
         Ok(())
     }
@@ -236,8 +240,10 @@ impl Material for ClipmapTerrainMaterial {
 pub struct ClipmapTextures {
     pub layout: ClipmapLayout,
     pub material: Handle<ClipmapTerrainMaterial>,
+    settings: ClipmapSettings,
     surface_table: Vec<ClipmapSurface>,
     surfaces: Handle<ShaderBuffer>,
+    base_color: Handle<Image>,
     heights: Handle<Image>,
     normals: Handle<Image>,
     control: Handle<Image>,
@@ -330,37 +336,39 @@ impl ClipmapTextures {
             storage_bytes(&ground.surfaces),
             RenderAssetUsages::RENDER_WORLD,
         ));
+        let settings = ClipmapSettings {
+            layout: Vec4::new(
+                side as f32,
+                f32::from(layout.levels),
+                layout.intervals as f32,
+                leaf,
+            ),
+            // Morphing completes a little before the range so float error at a level's
+            // edge never leaves its outer vertices short of the coarser grid.
+            ranges: Vec4::new(ranges.leaf as f32, 1.0 - MORPH_SHARE as f32, 0.98, 0.0),
+            macro_scales: Vec4::new(
+                ground.macro_scales[0],
+                ground.macro_scales[1],
+                ground.macro_scales[2],
+                ground.macro_albedo_strength,
+            ),
+            ground: Vec4::new(ground.macro_contrast, 1.0, control_side as f32, 0.0),
+            detail: Vec4::new(ranges.detail as f32, 0.0, 0.0, 0.0),
+        };
         let material = materials.add(ClipmapTerrainMaterial {
             environment: atmosphere::environment::fallback_parameters(),
             cloud_shadows: None,
             rain_shelter: None,
             forest_shadow: None,
             terrain_shadow: None,
-            settings: ClipmapSettings {
-                layout: Vec4::new(
-                    side as f32,
-                    f32::from(layout.levels),
-                    layout.intervals as f32,
-                    leaf,
-                ),
-                // Morphing completes a little before the range so float error at a level's
-                // edge never leaves its outer vertices short of the coarser grid.
-                ranges: Vec4::new(ranges.leaf as f32, 1.0 - MORPH_SHARE as f32, 0.98, 0.0),
-                macro_scales: Vec4::new(
-                    ground.macro_scales[0],
-                    ground.macro_scales[1],
-                    ground.macro_scales[2],
-                    ground.macro_albedo_strength,
-                ),
-                ground: Vec4::new(ground.macro_contrast, 1.0, control_side as f32, 0.0),
-                detail: Vec4::new(ranges.detail as f32, 0.0, 0.0, 0.0),
-            },
+            ground_albedo: None,
+            settings,
             heights: Some(heights.clone()),
             normals: Some(normals.clone()),
             state: Some(state.clone()),
             control: Some(control.clone()),
             surfaces: surfaces.clone(),
-            base_color: Some(ground.base_color),
+            base_color: Some(ground.base_color.clone()),
             normal_material: Some(ground.normal_material),
             macro_variation: Some(ground.macro_variation),
             wear: Some(wear.clone()),
@@ -370,8 +378,10 @@ impl ClipmapTextures {
         Self {
             layout,
             material,
+            settings,
             surface_table: ground.surfaces,
             surfaces,
+            base_color: ground.base_color,
             heights,
             normals,
             control,
@@ -398,6 +408,19 @@ impl ClipmapTextures {
             soft: self.soft.clone(),
             spacing: self.layout.spacing(0),
             side: self.layout.side,
+        }
+    }
+
+    /// What the ground albedo map is filled from, when these textures draw the world.
+    pub fn ground_albedo_source(&self) -> crate::GroundAlbedoSource {
+        crate::GroundAlbedoSource {
+            settings: self.settings,
+            heights: self.heights.clone(),
+            normals: self.normals.clone(),
+            state: self.state.clone(),
+            control: self.control.clone(),
+            surfaces: self.surfaces.clone(),
+            base_color: self.base_color.clone(),
         }
     }
 

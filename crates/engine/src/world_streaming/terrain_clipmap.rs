@@ -463,6 +463,7 @@ impl ClipmapTerrain {
         if let Some(gpu) = &self.gpu {
             uploads.forget(gpu);
             commands.remove_resource::<terrain_render::PrintGround>();
+            commands.remove_resource::<terrain_render::GroundAlbedoSource>();
         }
 
         *self = Self::default();
@@ -739,6 +740,7 @@ pub(super) fn update(
         );
         uploads.target(&textures);
         commands.insert_resource(textures.print_ground());
+        commands.insert_resource(textures.ground_albedo_source());
         terrain.gpu = Some(textures);
         terrain.patches.mesh = Some(meshes.add(clipmap::patch_mesh(&layout)));
     }

@@ -123,6 +123,11 @@ impl ClipmapPatch {
         )
     }
 
+    #[cfg(test)]
+    pub(crate) fn textures(&self) -> &ClipmapTextures {
+        &self.textures
+    }
+
     /// The shaders' frame for a view at `eye` (render space, whose origin is the world's).
     pub fn follow(&self, eye: Vec3, uploads: &mut ClipmapUploads) {
         uploads.set_frame(

@@ -1,14 +1,17 @@
 //! The ground: terrain v2's clipmap material ([`clipmap`]), its surfaces and textures
-//! ([`ground`]), the prints feet press into it ([`GroundPresses`]) and the environment it is lit
-//! by.
+//! ([`ground`]), the prints feet press into it ([`GroundPresses`]), the environment it is lit
+//! by, and its albedo for the light it reflects onto everything above it ([`GroundAlbedoSource`]).
 pub mod clipmap;
 mod environment;
 mod ground;
+mod ground_albedo;
 mod prints;
 
 use bevy::prelude::*;
 
 pub use ground::{TerrainMacroVariation, TerrainSurfaceLayer};
+
+pub use ground_albedo::GroundAlbedoSource;
 
 pub use prints::{GroundPress, GroundPressSystems, GroundPresses, PrintGround};
 
@@ -24,13 +27,15 @@ where
     buffer.into_inner()
 }
 
-/// Installs terrain v2's clipmap material, ground prints and the macro-variation switch.
+/// Installs terrain v2's clipmap material, ground prints, the ground albedo map's pass and the
+/// macro-variation switch.
 pub struct TerrainRenderPlugin;
 
 impl Plugin for TerrainRenderPlugin {
     fn build(&self, app: &mut App) {
         clipmap::install(app);
         prints::install(app);
+        ground_albedo::install(app);
         app.init_resource::<TerrainMacroVariation>()
             .add_systems(Startup, atmosphere::environment::init_fallback)
             .add_systems(

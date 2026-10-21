@@ -5,6 +5,7 @@ pub mod ambient_particles;
 pub mod clouds;
 pub mod environment;
 pub mod forest_shadow;
+pub mod ground_albedo;
 pub mod light_shafts;
 pub mod lightning;
 pub mod precipitation;

@@ -63,10 +63,11 @@ pub(super) fn sync(
         Option<&GlobalTransform>,
     )>,
     shelter: Res<crate::shelter::RainShelter>,
-    (forest, sky, terrain): (
+    (forest, sky, terrain, ground): (
         Res<crate::forest_shadow::ForestShadow>,
         Res<crate::forest_shadow::ForestSkyOcclusion>,
         Res<crate::terrain_shadow::TerrainShadow>,
+        Res<crate::ground_albedo::GroundAlbedo>,
     ),
     (mist, presentation, tuning, sea, shore): LowAir,
     mut mist_fade: Local<(u64, f32)>,
@@ -93,6 +94,7 @@ pub(super) fn sync(
         .map(Vec3::normalize)
         .unwrap_or(Vec3::from_array(value.direction_to_sun));
     let params = &mut *params;
+    let [ground_near, ground_far] = ground.parameters();
     *params = EnvironmentParams {
         haze: Vec3::from_array(linear_rgb(state.profile.haze_srgb))
             .extend(state.profile.visibility_metres)
@@ -102,6 +104,8 @@ pub(super) fn sync(
         forest_sky: [sky.0.clamp(0., 1.), 0., 0., 0.],
         terrain_shadow: terrain.parameters(origin.0),
         terrain_light: terrain.light(),
+        ground_near,
+        ground_far,
         ..cloud_layer(profile, &value, sun, active, clock.seconds, origin.0)
     };
 
@@ -484,6 +488,7 @@ mod tests {
             .init_resource::<crate::valley_mist::ValleyMist>()
             .init_resource::<crate::shore::Shore>()
             .init_resource::<crate::terrain_shadow::TerrainShadow>()
+            .init_resource::<crate::ground_albedo::GroundAlbedo>()
             .add_systems(Update, sync);
         app.update();
         let first = app.world().resource::<EnvironmentParams>().offset;
@@ -538,6 +543,7 @@ mod tests {
             .init_resource::<crate::valley_mist::ValleyMist>()
             .init_resource::<crate::shore::Shore>()
             .init_resource::<crate::terrain_shadow::TerrainShadow>()
+            .init_resource::<crate::ground_albedo::GroundAlbedo>()
             .add_systems(Update, sync);
         app.update();
         let params = *app.world().resource::<EnvironmentParams>();
