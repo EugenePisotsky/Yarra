@@ -219,13 +219,13 @@ fn characters_press_grass_along_their_motion_nearest_first() {
     let mut app = App::new();
     app.init_resource::<Time>()
         .init_resource::<VegetationLodFocus>()
-        .init_resource::<vegetation_render::GrassBenders>()
-        .add_systems(Update, list_grass_benders);
+        .init_resource::<vegetation_render::VegetationBenders>()
+        .add_systems(Update, list_vegetation_benders);
     app.world_mut()
         .resource_mut::<VegetationLodFocus>()
         .position = Some(Vec3::ZERO);
 
-    for x in 0..vegetation_render::MAX_GRASS_BENDERS + 4 {
+    for x in 0..vegetation_render::MAX_VEGETATION_BENDERS + 4 {
         let motion = crate::actor::CharacterMotion {
             displacement: Vec2::new(0.0, 0.05),
             speed_mps: 1.5,
@@ -240,13 +240,13 @@ fn characters_press_grass_along_their_motion_nearest_first() {
     app.update();
     let benders = &app
         .world()
-        .resource::<vegetation_render::GrassBenders>()
+        .resource::<vegetation_render::VegetationBenders>()
         .benders;
-    assert_eq!(benders.len(), vegetation_render::MAX_GRASS_BENDERS);
+    assert_eq!(benders.len(), vegetation_render::MAX_VEGETATION_BENDERS);
     assert!(
         benders
             .iter()
-            .all(|b| b.position.x < vegetation_render::MAX_GRASS_BENDERS as f32)
+            .all(|b| b.position.x < vegetation_render::MAX_VEGETATION_BENDERS as f32)
     );
     assert!((benders[0].velocity - Vec2::new(0.0, 1.5)).length() < 1e-5);
 }

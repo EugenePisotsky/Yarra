@@ -136,16 +136,18 @@ fn evaluate(@builtin(global_invocation_id) id: vec3<u32>) {
     }
 }
 
-/// A compute harness importing the production wind module (`shaders/tree/wind.wesl`),
-/// composed as Bevy composes the tree shaders, with these definitions.
-fn harness(source: &str, defs: &str) -> String {
+/// A compute harness importing production tree modules (`shaders/tree/*.wesl`), composed as
+/// Bevy composes the tree shaders, with these definitions.
+pub(in crate::trees) fn harness(source: &str, defs: &str) -> String {
     let defs = shader_check::Def::parse_list(defs).unwrap();
     shader_check::Shaders::get()
         .compose_source(source, &defs)
         .unwrap_or_else(|error| panic!("{error}"))
 }
 
-fn run_shader(cases: &[Case], shader: &str) -> Vec<[f32; 16]> {
+/// Runs `shader`'s `evaluate` once per case: its inputs at binding 0, sixteen floats of results
+/// per case at binding 1.
+pub(in crate::trees) fn run_shader<T: Pod>(cases: &[T], shader: &str) -> Vec<[f32; 16]> {
     let resources = bevy::tasks::block_on(initialize_renderer(
         Backends::PRIMARY,
         None,
@@ -245,8 +247,8 @@ fn evaluate(@builtin(global_invocation_id) id: vec3<u32>) {
     card.card_normal = vec3(0., 0., 1.);
     card.card_facing = vec2(1., 1.);
     card.uv_b = vec2(1.);
-    results[id.x].card = animated_position(card, c.model, c.frames.current, PROFILE, VIEWER);
-    results[id.x].previous = animated_position(card, c.previous_model, c.frames.previous, PROFILE, VIEWER);
+    results[id.x].card = animated_position(card, c.model, c.frames.current, PROFILE, VIEWER, vec3(0.));
+    results[id.x].previous = animated_position(card, c.previous_model, c.frames.previous, PROFILE, VIEWER, vec3(0.));
     let limb = structural_frame(card.wind_pivot.xyz, card.wind_axis, 14., c.model, c.frames.current, PROFILE);
     results[id.x].wood = vec4(sway_point((c.model * vec4(card.position, 1.)).xyz, limb), 1.);
     let root = structural_frame(vec3(0.), vec4(0.), 14., c.model, c.frames.current, PROFILE);

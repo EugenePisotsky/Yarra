@@ -1,5 +1,5 @@
 //! Trees and shrubs: authored foliage weights deform on the GPU using the shared vegetation
-//! wind field ([`wind`]), composed with the environment-lit PBR material and identical colour,
+//! wind field ([`wind`]) and part where characters push through them ([`touch`]), composed with the environment-lit PBR material and identical colour,
 //! depth and shadow geometry, with two-layer bark ([`bark`]) and camera-facing cards
 //! ([`cards`]). Every representation of them is drawn on the GPU, LOD choice and fades
 //! included ([`gpu`], followed on the CPU by [`timed`]); far away, impostors draw them
@@ -21,6 +21,7 @@ mod material;
 mod scene_tests;
 
 mod timed;
+mod touch;
 mod tuning;
 mod wind;
 
@@ -64,6 +65,7 @@ impl Plugin for TreeWindPlugin {
                     .after(bevy::transform::TransformSystems::Propagate),
             );
         gpu::plugin(app);
+        touch::plugin(app);
 
         if app.get_sub_app(RenderApp).is_none() {
             return;

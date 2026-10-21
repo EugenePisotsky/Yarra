@@ -229,6 +229,17 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
   Impostors bend with their trunk, still by 2.5× the hand-off.
 - **LOD from side-on height.** *Kept.* The projected root-to-top segment switched LODs as the camera
   pitched.
+- **Branches part where characters push through, from a field of springs.** *Kept* (October 21).
+  Like grass's trample map but in 3D: 64×32×64 voxels at 25 cm around the player, each a spring
+  holding how far the foliage resting there is pushed. Bodies are upright capsules (0.3 m and a
+  0.12 m margin, 1.8 m), springs follow the way out in a few hundredths of a second and swing back
+  underdamped over about two. Every vertex of a limb turns about the limb's root (`_WIND_PIVOT`)
+  by the largest turn that points between the root and it need, so a limb pushed anywhere swings
+  whole; reading the field at the vertex alone moved only the leaves inside the body. Trees beyond
+  a limb's length of the moving voxels skip it, which took the cost out of forests nobody walks
+  through (it was ~1 ms when every tree near the player sampled it). Walking through dense shrubs
+  ~0.35 ms, a forest view and snow walk within noise. Limbs, not twigs: the kit's hierarchy is
+  trunk, primary limb, cards; the trunk stands.
 
 ## Atmosphere & weather
 

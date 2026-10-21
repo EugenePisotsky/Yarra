@@ -1,10 +1,11 @@
 // Tree wind materials' vertex shader (crates/engine/src/trees/material.rs) for every pass:
 // Bevy 0.20's mesh vertex path (bevy_pbr render/mesh.wesl, prepass/prepass.wesl) with the
-// wind and branch cards applied. Tree meshes are neither skinned, morphed nor compressed
+// wind, characters' pushes (tree/touch.wesl) and branch cards applied. Tree meshes are neither skinned, morphed nor compressed
 // (VERTEX_*_COMPRESSED), so only Bevy's plain attributes are read.
 import bevy_pbr::{render::mesh_functions, render::view_transformations::position_world_to_clip};
 import bevy_pbr::render::mesh_view_bindings::view;
 import package::shaders::tree::wind::{TreeVertex, WindFrames, animated_position, animated_vector};
+import package::shaders::tree::touch::{TouchWindow, touch_canonical, touch_inside, touch_moving, touch_uv, within};
 
 // Trees drawn by the GPU trees (crates/engine/src/trees/gpu.rs) rather than one mesh entity
 // each: `instance_index` picks this draw's record (the instance and its dither level), and
@@ -175,6 +176,76 @@ var<storage, read> wind: WindFrames;
 @if(TREE_HIERARCHY)
 @group(constants::MATERIAL_BIND_GROUP) @binding(105) var<uniform> tree_profile: vec4<f32>;
 
+// The touch field around the player (crates/engine/src/trees/touch.rs) and where it lies.
+@group(constants::MATERIAL_BIND_GROUP) @binding(106) var touch_field: texture_3d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(107) var touch_sampler: sampler;
+@group(constants::MATERIAL_BIND_GROUP) @binding(108)
+var<storage, read> touch_window: TouchWindow;
+
+// How characters push foliage resting at render-space `p` aside, in world metres; last frame's
+// push for `previous`, from the spring's velocity.
+fn touch_push(window: TouchWindow, p: vec3<f32>, previous: bool) -> vec3<f32> {
+    let q = touch_canonical(window, p);
+    let inside = touch_inside(window, q);
+    if inside <= 0.0 {
+        return vec3(0.0);
+    }
+    let spring = textureSampleLevel(touch_field, touch_sampler, touch_uv(window, q), 0.0);
+    var push = spring.xy;
+    if previous {
+        push -= spring.zw * window.sides.z;
+    }
+    return vec3(push.x, 0.0, push.y) * inside;
+}
+
+// The turn (axis times angle, radians) about its root with which characters push this vertex's
+// limb aside: the largest that points of the limb between its root and the vertex need to clear
+// them, so a limb pushed anywhere swings whole beyond the push, and foliage beside it follows.
+fn touch_turn(tree: TreeVertex, model: mat4x4<f32>, previous: bool) -> vec3<f32> {
+@if(TREE_HIERARCHY) {
+    let window = touch_window;
+    if tree.wind_axis.w == 0.0 || window.centre.w <= 0.0 {
+        return vec3(0.0);
+    }
+    // Only trees within a limb's length of the moving voxels move.
+    let moving = touch_moving(window, 0.0);
+    if !within(touch_moving(window, TOUCH_LIMB), touch_canonical(window, model[3].xyz).xz) {
+        return vec3(0.0);
+    }
+    let root = (model * vec4(tree.wind_pivot.xyz, 1.0)).xyz;
+    let along = normalize((model * vec4(tree.wind_axis.xyz, 0.0)).xyz);
+    let point = (model * vec4(tree.position, 1.0)).xyz;
+    let span = max(dot(point - root, along), 0.0);
+    var turn = vec3(0.0);
+    for (var k = 1u; k <= TOUCH_SAMPLES; k += 1u) {
+        var at = root + along * (span * f32(k) / f32(TOUCH_SAMPLES));
+        if k == TOUCH_SAMPLES {
+            at = point;
+        }
+        let lever = at - root;
+        let length2 = dot(lever, lever);
+        if length2 < 1e-4 || !within(moving, touch_canonical(window, at).xz) {
+            continue;
+        }
+        let push = touch_push(window, at, previous);
+        let across = push - lever * (dot(push, lever) / length2);
+        // |cross| is |lever| |across|: the angle that moves `at` by `across`.
+        let candidate = cross(lever, across) / length2;
+        if dot(candidate, candidate) > dot(turn, turn) {
+            turn = candidate;
+        }
+    }
+    return turn;
+}
+@else
+    return vec3(0.0);
+}
+
+// Points along a limb, the vertex last, at which its push is read.
+const TOUCH_SAMPLES: u32 = 4u;
+// Longest a limb reaches from its tree's trunk, metres.
+const TOUCH_LIMB: f32 = 6.0;
+
 // The tree's wind profile (trees/wind.rs); meshes without a wind hierarchy have none.
 fn profile() -> vec4<f32> {
 @if(TREE_HIERARCHY)
@@ -208,7 +279,8 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     var out: VertexOutput;
     let model = world_from_local(vertex.instance_index);
     let tree = tree_vertex(vertex);
-    out.world_position = animated_position(tree, model, wind.current, profile(), view.lod_view_world_position);
+    let turn = touch_turn(tree, model, false);
+    out.world_position = animated_position(tree, model, wind.current, profile(), view.lod_view_world_position, turn);
     out.position = position_world_to_clip(out.world_position.xyz);
 
 @if(UNCLIPPED_DEPTH_ORTHO_EMULATION) {
@@ -226,25 +298,26 @@ fn vertex(vertex: Vertex) -> VertexOutput {
 // entire prepass (as the old renderer did for shadows) breaks temporal depth.
 @if(PREPASS_PIPELINE) {
 @if(NORMAL_PREPASS_OR_DEFERRED_PREPASS && VERTEX_NORMALS)
-    out.world_normal = animated_vector(normal_to_world(vertex.normal, model, vertex.instance_index), tree, model, wind.current, profile());
+    out.world_normal = animated_vector(normal_to_world(vertex.normal, model, vertex.instance_index), tree, model, wind.current, profile(), turn);
 @if(NORMAL_PREPASS_OR_DEFERRED_PREPASS && VERTEX_TANGENTS) {
     let tangent = tangent_to_world(vertex.tangent, model, vertex.instance_index);
-    out.world_tangent = vec4(animated_vector(tangent.xyz, tree, model, wind.current, profile()), tangent.w);
+    out.world_tangent = vec4(animated_vector(tangent.xyz, tree, model, wind.current, profile(), turn), tangent.w);
 }
 @if(MOTION_VECTOR_PREPASS) {
 @if(TREE_INSTANCED)
     let previous_model = model;
 @else
     let previous_model = mesh_functions::get_previous_world_from_local(vertex.instance_index);
-    out.previous_world_position = animated_position(tree, previous_model, wind.previous, profile(), view.lod_view_world_position);
+    let previous_turn = touch_turn(tree, previous_model, true);
+    out.previous_world_position = animated_position(tree, previous_model, wind.previous, profile(), view.lod_view_world_position, previous_turn);
 }
 }
 @else {
 @if(VERTEX_NORMALS)
-    out.world_normal = animated_vector(normal_to_world(vertex.normal, model, vertex.instance_index), tree, model, wind.current, profile());
+    out.world_normal = animated_vector(normal_to_world(vertex.normal, model, vertex.instance_index), tree, model, wind.current, profile(), turn);
 @if(VERTEX_TANGENTS) {
     let tangent = tangent_to_world(vertex.tangent, model, vertex.instance_index);
-    out.world_tangent = vec4(animated_vector(tangent.xyz, tree, model, wind.current, profile()), tangent.w);
+    out.world_tangent = vec4(animated_vector(tangent.xyz, tree, model, wind.current, profile(), turn), tangent.w);
 }
 }
 

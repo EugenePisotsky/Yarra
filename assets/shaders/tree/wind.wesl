@@ -120,7 +120,8 @@ fn displaced_position(p: vec4<f32>, model: mat4x4<f32>, weights_in: vec2<f32>, p
     return p + vec4(horizontal.x, flutter * 0.16, horizontal.y, 0.0);
 }
 
-// Structural wind. All positions, pivots and directions share this pose.
+// Structural wind. All positions, pivots and directions share this pose. A touched limb first
+// turns about its root, out of the way of whoever pushes it (tree/touch.wesl).
 struct SwayFrame {
     source: vec3<f32>,
     deformed_anchor: vec3<f32>,
@@ -128,10 +129,17 @@ struct SwayFrame {
     trunk_angle: f32,
     branch_axis: vec3<f32>,
     branch_angle: f32,
+    touch_axis: vec3<f32>,
+    touch_angle: f32,
 }
 
+// Furthest a push turns a limb about its root, radians (crates/engine/src/trees/cards.rs
+// TOUCH_TURN, which pads the culling bounds by it).
+const TOUCH_TURN: f32 = 0.6;
+
 fn sway_vector(v: vec3<f32>, frame: SwayFrame) -> vec3<f32> {
-    return turn_axis(turn_axis(v, frame.branch_axis, frame.branch_angle), frame.trunk_axis, frame.trunk_angle);
+    let touched = turn_axis(v, frame.touch_axis, frame.touch_angle);
+    return turn_axis(turn_axis(touched, frame.branch_axis, frame.branch_angle), frame.trunk_axis, frame.trunk_angle);
 }
 fn sway_point(p: vec3<f32>, frame: SwayFrame) -> vec3<f32> {
     return frame.deformed_anchor + sway_vector(p - frame.source, frame);
@@ -192,7 +200,21 @@ fn structural_frame(local_anchor: vec3<f32>, limb_axis: vec4<f32>, height: f32,
         branch_angle = clamp(0.10 * pressure * profile.w * limb_axis.w * pose.hierarchy.y * lever
             * (0.6 + pose.response.x * sway_signal(model[3].xz, pose, profile.y * 0.35, phase)), -0.5, 0.5);
     }
-    return SwayFrame(source, deformed_anchor, bend_axis, angle, branch_axis, branch_angle);
+    return SwayFrame(source, deformed_anchor, bend_axis, angle, branch_axis, branch_angle,
+        vec3(0.0, 1.0, 0.0), 0.0);
+}
+
+// `frame` with its limb turned about its root by `turn` (axis times angle, radians), at most
+// TOUCH_TURN.
+fn touched(frame: SwayFrame, turn: vec3<f32>) -> SwayFrame {
+    let angle = length(turn);
+    if angle < 1e-6 {
+        return frame;
+    }
+    var result = frame;
+    result.touch_axis = turn / angle;
+    result.touch_angle = min(angle, TOUCH_TURN);
+    return result;
 }
 
 // Where the wind moves `point` of an upright tree rooted at `root`, with a stem `height`
@@ -223,25 +245,32 @@ fn sway_point_of_trunk(point: vec3<f32>, root: vec3<f32>, height: f32, profile: 
 }
 
 // The wind hierarchy's frame for a vertex (TREE_HIERARCHY), with the tree's `profile`
-// (tree_wind.rs, binding 105 of the tree material).
+// (tree_wind.rs, binding 105 of the tree material); a limb's vertex turns about the limb's root
+// by `turn` (axis times angle) where characters push it (tree/touch.wesl). The trunk stands.
 @if(TREE_HIERARCHY)
-fn vertex_frame(vertex: TreeVertex, model: mat4x4<f32>, pose: WindPose, profile: vec4<f32>) -> SwayFrame {
+fn vertex_frame(vertex: TreeVertex, model: mat4x4<f32>, pose: WindPose, profile: vec4<f32>,
+                turn: vec3<f32>) -> SwayFrame {
     var anchor = vertex.wind_pivot.xyz;
     if vertex.wind_axis.w == 0.0 {
         anchor = vertex.position;
 @if(TREE_BRANCH_CARDS)
         anchor = vertex.card_pivot;
     }
-    return structural_frame(anchor, vertex.wind_axis, vertex.wind_pivot.w, model, pose, profile);
+    let frame = structural_frame(anchor, vertex.wind_axis, vertex.wind_pivot.w, model, pose, profile);
+    if vertex.wind_axis.w == 0.0 {
+        return frame;
+    }
+    return touched(frame, turn);
 }
 
-// A vertex's world position in the wind; `viewer` is the view's LOD position, which cards
-// turn toward (shadows and temporal motion use the pose's camera instead).
+// A vertex's world position in the wind, its limb turned by `turn` (tree/touch.wesl); `viewer` is
+// the view's LOD position, which cards turn toward (shadows and temporal motion use the pose's
+// camera instead).
 fn animated_position(vertex: TreeVertex, model: mat4x4<f32>, pose: WindPose, profile: vec4<f32>,
-                     viewer: vec3<f32>) -> vec4<f32> {
+                     viewer: vec3<f32>, turn: vec3<f32>) -> vec4<f32> {
     var p = model * vec4(vertex.position, 1.0);
 @if(TREE_HIERARCHY) {
-    let frame = vertex_frame(vertex, model, pose, profile);
+    let frame = vertex_frame(vertex, model, pose, profile, turn);
     p = vec4(sway_point(p.xyz, frame), 1.0);
 @if(TREE_BRANCH_CARDS) {
     let pivot = sway_point((model * vec4(vertex.card_pivot, 1.0)).xyz, frame);
@@ -288,9 +317,9 @@ fn animated_position(vertex: TreeVertex, model: mat4x4<f32>, pose: WindPose, pro
 }
 
 fn animated_vector(v: vec3<f32>, vertex: TreeVertex, model: mat4x4<f32>, pose: WindPose,
-                   profile: vec4<f32>) -> vec3<f32> {
+                   profile: vec4<f32>, turn: vec3<f32>) -> vec3<f32> {
 @if(TREE_HIERARCHY)
-    return sway_vector(v, vertex_frame(vertex, model, pose, profile));
+    return sway_vector(v, vertex_frame(vertex, model, pose, profile, turn));
 @else
     return v;
 }

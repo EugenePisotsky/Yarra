@@ -282,7 +282,8 @@ SQLite. The renderers (Bevy) have no SQLite: `engine` is the only library joinin
 
 - Owns procedural grass after Ghost of Tsushima: `VegetationRenderPlugin`,
   `VegetationSceneState`, `VegetationView`, `VegetationWind` (which trees also read), trampling
-  (`GrassBender`), `VegetationDiagnostics`.
+  (`VegetationBenders`, the characters among the plants, which trees also read),
+  `VegetationDiagnostics`.
 - Invariants: dormant until a `VegetationSceneState` exists and a camera has `VegetationView`;
   installs no GPU timing probes; no entity or row per blade. The candidate cache holds only
   stable acceptance, never view-dependent visibility or LOD.
@@ -293,7 +294,9 @@ SQLite. The renderers (Bevy) have no SQLite: `engine` is the only library joinin
 - World at runtime: `WorldStreamingPlugin` (`game()`/`editor()`), `WorldOrigin`,
   `WorldRenderRoot`, `ClipmapTerrain`, `WorldGenerationReload`, `LiveTerrainPreview`.
 - Objects and vegetation: `ObjectLodPlugin`, GPU trees and wind (`TreeWindPlugin`,
-  `TreeInstancing`), `WorldVegetationPlugin`, ground details, `OceanPlugin`.
+  `TreeInstancing`), `WorldVegetationPlugin`, ground details, `OceanPlugin`. Characters push
+  branches aside through a 3D field of springs around the player (`trees::touch`), which every
+  tree material reads in every pass and turns each limb about its root by.
 - Actors: `GameplayPlugins` (player, camera, input, destination marker), `GameplaySystems`,
   `MoveIntent`, and `MinimalGamePlugin` (environment, terrain, streaming and actors). Characters'
   feet (`feet`, joints and soles from the character catalog) list their presses on the ground,

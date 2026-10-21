@@ -2,7 +2,9 @@
 //! press grass down (`shaders/vegetation/trample.wesl`) and from which it slowly rises. Blades
 //! read it at their roots; the previous frame's copy poses them for motion vectors. Texels the
 //! camera's movement wraps onto new ground start unpressed.
-use crate::{GrassBenders, MAX_GRASS_BENDERS, VegetationProfileMode, VegetationRenderOrigin};
+use crate::{
+    MAX_VEGETATION_BENDERS, VegetationBenders, VegetationProfileMode, VegetationRenderOrigin,
+};
 use crate::{VegetationSettings, VegetationView};
 
 use bevy::{
@@ -31,7 +33,7 @@ struct TrampleGpu {
     // x: metres per texel, y: texels per side, z: seconds since last frame, w: benders
     params: [f32; 4],
     // Per bender: (canonical x, z, radius, 0), (velocity x, z, 0, 0).
-    benders: [[f32; 4]; 2 * MAX_GRASS_BENDERS],
+    benders: [[f32; 4]; 2 * MAX_VEGETATION_BENDERS],
 }
 
 #[derive(Resource)]
@@ -142,7 +144,7 @@ pub(super) fn extent() -> f32 {
 #[allow(clippy::too_many_arguments)] // Independent render-world resources.
 pub(super) fn prepare(
     mut map: ResMut<TrampleMap>,
-    benders: Option<Res<GrassBenders>>,
+    benders: Option<Res<VegetationBenders>>,
     origin: Res<VegetationRenderOrigin>,
     settings: Res<VegetationSettings>,
     views: Query<&ExtractedView, With<VegetationView>>,
@@ -169,7 +171,7 @@ pub(super) fn prepare(
 
     if let Some(benders) = benders {
         delta = benders.delta_seconds.clamp(0.0, 0.1);
-        for bender in benders.benders.iter().take(MAX_GRASS_BENDERS) {
+        for bender in benders.benders.iter().take(MAX_VEGETATION_BENDERS) {
             gpu.benders[2 * count] = [
                 (f64::from(bender.position.x) + origin.world_xz[0]) as f32,
                 (f64::from(bender.position.z) + origin.world_xz[1]) as f32,

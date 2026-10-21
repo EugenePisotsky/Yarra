@@ -2,7 +2,7 @@
 //! sampled once a frame at the floating origin, with this frame's and the previous frame's
 //! pose in one GPU buffer.
 #[cfg(test)]
-mod gpu_tests;
+pub(in crate::trees) mod gpu_tests;
 
 #[cfg(test)]
 mod tests;

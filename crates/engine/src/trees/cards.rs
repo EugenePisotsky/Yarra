@@ -37,8 +37,9 @@ pub(super) fn structural(mesh: &bevy::mesh::Mesh) -> bool {
     mesh.contains_attribute(WIND_PIVOT) && mesh.contains_attribute(WIND_AXIS)
 }
 
-/// Local displacement bound at the shader's hard angle limits (.8 trunk, .5 limb).
-/// The arc plus any over-height extension moves by < .8 * anchor height.
+/// Local displacement bound at the shader's hard angle limits (.8 trunk, .5 limb, and a push's
+/// `TOUCH_TURN` about the limb's root, `shaders/tree/wind.wesl`): turns move a point by at most
+/// the sum of their chords. The arc plus any over-height extension moves by < .8 * anchor height.
 pub(super) fn structural_padding(mesh: &bevy::mesh::Mesh) -> f32 {
     use bevy::math::{Vec3, Vec3Swizzles};
     use bevy::mesh::VertexAttributeValues;
@@ -61,6 +62,7 @@ pub(super) fn structural_padding(mesh: &bevy::mesh::Mesh) -> f32 {
         Some(VertexAttributeValues::Float32x3(p)) => Some(p),
         _ => None,
     };
+    let touch_chord = 2.0 * (TOUCH_TURN * 0.5).sin();
     positions
         .iter()
         .zip(pivots)
@@ -76,11 +78,14 @@ pub(super) fn structural_padding(mesh: &bevy::mesh::Mesh) -> f32 {
             let card_radius = cards.map_or(0., |cards| p.distance(Vec3::from_array(cards[i])));
             0.8 * anchor.y.max(0.)
                 + 0.78 * anchor.xz().length()
-                + 1.28 * p.distance(anchor)
+                + (1.28 + touch_chord) * p.distance(anchor)
                 + 0.21 * card_radius
         })
         .fold(0., f32::max)
 }
+
+/// Furthest a push turns a limb about its root, radians (`shaders/tree/wind.wesl` TOUCH_TURN).
+const TOUCH_TURN: f32 = 0.6;
 
 /// Shader locations after Bevy's own vertex inputs (0–7 in every pass).
 const FIRST_LOCATION: u32 = 10;

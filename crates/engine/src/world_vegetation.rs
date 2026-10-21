@@ -10,8 +10,8 @@ use vegetation::{
 };
 
 use vegetation_render::{
-    GrassBender, GrassBenders, MAX_GRASS_BENDERS, VegetationLodFocus, VegetationRenderPlugin,
-    VegetationSceneState, VegetationTerrainGate,
+    MAX_VEGETATION_BENDERS, VegetationBender, VegetationBenders, VegetationLodFocus,
+    VegetationRenderPlugin, VegetationSceneState, VegetationTerrainGate,
 };
 
 use world::{CellCoord, PageKey, WorldSpaceId};
@@ -60,7 +60,7 @@ impl Plugin for WorldVegetationPlugin {
         )
         .add_systems(
             PostUpdate,
-            (update_lod_focus, list_grass_benders).after(TransformSystems::Propagate),
+            (update_lod_focus, list_vegetation_benders).after(TransformSystems::Propagate),
         );
     }
 }
@@ -68,31 +68,31 @@ impl Plugin for WorldVegetationPlugin {
 /// Radius of the grass a character presses down around its feet, in metres.
 const BENDER_RADIUS: f32 = 0.7;
 
-/// Characters press the grass under them: the ones nearest the detail focus (the player).
-fn list_grass_benders(
+/// Characters among the plants: the ones nearest the detail focus (the player).
+pub(crate) fn list_vegetation_benders(
     time: Res<Time>,
     focus: Res<VegetationLodFocus>,
     actors: Query<(&GlobalTransform, &crate::actor::CharacterMotion)>,
-    mut benders: ResMut<GrassBenders>,
+    mut benders: ResMut<VegetationBenders>,
 ) {
     benders.delta_seconds = time.delta_secs();
     benders.benders.clear();
     benders
         .benders
-        .extend(actors.iter().map(|(transform, motion)| GrassBender {
+        .extend(actors.iter().map(|(transform, motion)| VegetationBender {
             position: transform.translation(),
             velocity: motion.displacement.normalize_or_zero() * motion.speed_mps,
             radius: BENDER_RADIUS,
         }));
 
-    if benders.benders.len() > MAX_GRASS_BENDERS {
+    if benders.benders.len() > MAX_VEGETATION_BENDERS {
         let centre = focus.position.unwrap_or(Vec3::ZERO);
         benders.benders.sort_by(|a, b| {
             a.position
                 .distance_squared(centre)
                 .total_cmp(&b.position.distance_squared(centre))
         });
-        benders.benders.truncate(MAX_GRASS_BENDERS);
+        benders.benders.truncate(MAX_VEGETATION_BENDERS);
     }
 }
 

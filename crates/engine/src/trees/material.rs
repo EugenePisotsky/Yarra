@@ -30,9 +30,15 @@ pub(super) type TreeWindMaterial = ExtendedMaterial<EnvironmentMaterial, TreeWin
 #[derive(Asset, AsBindGroup, TypePath, Clone, Debug)]
 #[bind_group_data(TreeWindKey)]
 pub(super) struct TreeWindExtension {
-    // StandardMaterial uses 0–99; EnvironmentMaterial uses 120–122.
+    // StandardMaterial uses 0–99; EnvironmentMaterial uses 120–129.
     #[storage(100, read_only)]
     wind: Handle<ShaderBuffer>,
+    /// The touch field and where it lies (`super::touch`).
+    #[texture(106, dimension = "3d")]
+    #[sampler(107)]
+    touch_field: Handle<Image>,
+    #[storage(108, read_only)]
+    touch_window: Handle<ShaderBuffer>,
     crown_shading: bool,
     crown_sky: bool,
     bark_blend: bool,
@@ -338,6 +344,8 @@ fn convert(
                     base: foliage_base(material, shading),
                     extension: TreeWindExtension {
                         wind: buffer.0.clone(),
+                        touch_field: super::touch::field_handle(),
+                        touch_window: super::touch::window_handle(),
                         profile: wind_profile(&extras.value),
                         bark_blend: upper.is_some(),
                         // `yarra_shading: "bark_sky_v1"`: vertex colour is the share of the
