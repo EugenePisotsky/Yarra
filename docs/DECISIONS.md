@@ -61,12 +61,17 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
   error), skipping zero-weight layers (slower).
 - **Control decode with fixed candidates.** *Kept* (`13ee912`). A per-pixel surface array cost
   ~3.5 ms of a 10.4 ms frame. Ground grass covers ≥0.7 takes one plain sample under the field
-  colour.
+  colour. Candidates are every sample's two heaviest surfaces and the nearest's third (October
+  21): the nearest sample's second alone stepped where it changed, and roads refined from the
+  wear field turned the step into half-metre blocks of snow in packed roads.
 - **Top-three height blend; biplanar on steep ground.** *Kept* (`2827271`, `124d85f`). Blend height
   rides in base-colour alpha; planar projection smeared cliffs.
 - **Roads as a wear field per page.** *Kept* (`c1d20d3`, `47fc8de`). 256² (12.5 cm) wear, rut depth
   and direction; each surface names what it tramples and wears to. It replaced per-pixel centre-line
-  search; v2 draws ruts from a wear atlas, for horses and carts, never cars.
+  search; v2 draws ruts from a wear atlas, for horses and carts, never cars. Pages were sampled
+  clamped at their own edges, so every road stepped at every cell border; within a texel of an edge
+  the material filters across into the next cells' pages (October 21). The refinement from the
+  field fades in as both the worn and the unworn ground gain room to trade.
 - **Neighbouring pages agree at edges.** *Kept* (`602ac07`). Up to 12 surfaces per cell, chosen with
   edge weight ×16 and road ground first; independent choices of eight drew 328 seams.
 - **Ground prints as caps on the snow, from a press log.** *Kept* (October 21). Feet stamp a log;
@@ -109,6 +114,12 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
   over 16 and 4 cm), rims lump, crumbs lie thrown beside trenches and floors are trodden rough,
   all in the passes that press and resolve the touched tiles, so drawing costs nothing more and a
   trail a window takes again comes back the same.
+- **Snow glints from sparse facets, specular alone.** *Kept* (October 21). A share of the cells of a
+  world grid a few pixels across holds a crystal facet tilted at random up to 63° with roughness
+  0.15; the sun's light loop adds its specular (`TERRAIN_GLINTS`, the facet in the clearcoat fields
+  the terrain does not otherwise use), shadowed like the sun. Tilting the shading normal itself
+  checkered the snow light and dark; tilts within 27° found no sun to catch beside the mirror
+  direction. Walking measured within noise.
 - **Detail levels below the leaves for deep snow, not tessellation.** *Kept* (October 20). wgpu has
   no tessellation; shipped deep snow (Rise of the Tomb Raider, God of War Ragnarök, Ghost of Yōtei)
   displaces real geometry near the camera and keeps parallax for far or fallback snow (Batman:

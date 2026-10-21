@@ -66,6 +66,20 @@ const PRINT_STEEPEST: f32 = 1.5;
 const STREAKS_PER_METRE: f32 = 24.0;
 const STREAK_DEPTH: f32 = 0.006;
 const STREAK_FOOTPRINT: vec2<f32> = vec2(0.008, 0.025);
+// Roads near the camera take the fine wear field's shape fully once the worn and the unworn ground
+// each hold this share, and once the neighbourhood is worn this much (from the first).
+const REFINE_ROOM: f32 = 0.1;
+const REFINE_WORN: vec2<f32> = vec2(0.005, 0.03);
+// Ice crystals in snow glint in the sun (lighting/pbr_lighting.wesl TERRAIN_GLINTS): in this share
+// of the cells of a world grid, each as wide as this many pixels (no finer than the first size,
+// metres), a facet tilted at random up to this far (tangent) and smooth as this roughness, fading
+// out over this range (metres).
+const GLINT_CELL: f32 = 0.004;
+const GLINT_PIXELS: f32 = 2.5;
+const GLINT_SHARE: f32 = 0.6;
+const GLINT_TILT: f32 = 2.0;
+const GLINT_ROUGHNESS: f32 = 0.15;
+const GLINT_RANGE: vec2<f32> = vec2(25.0, 50.0);
 
 // Where rain stands on the ground: how far it lies below two rings around it.
 fn terrain_hollow(leaf: vec2<i32>, fraction: vec2<f32>) -> f32 {
@@ -102,6 +116,23 @@ fn wall_streaks(p: vec2<f32>, slope: vec2<f32>) -> vec3<f32> {
     return vec3((a.x + 0.5 * b.x) / 1.5, along * rise);
 }
 
+// The crystal at world xz `p` for a pixel `footprint` metres across: its facet's tilt of the
+// ground's normal along x and z, and how much of one lies there (0..1). Cells grow with the footprint
+// by whole octaves, so a crystal spans a few pixels at any distance.
+fn snow_glint(p: vec2<f32>, footprint: f32) -> vec3<f32> {
+    let level = ceil(log2(max(footprint * GLINT_PIXELS / GLINT_CELL, 1.0)));
+    let q = p / (GLINT_CELL * exp2(level));
+    let cell = vec2<i32>(floor(q));
+    let seed = 0x3c1u + u32(level);
+    if wear_hash(cell.x, cell.y, seed) > GLINT_SHARE {
+        return vec3(0.0);
+    }
+    let tilt = vec2(wear_hash(cell.x, cell.y, seed ^ 0x9e3u), wear_hash(cell.x, cell.y, seed ^ 0x7f1u));
+    // A grain, round within its cell.
+    let grain = 1.0 - smoothstep(0.25, 0.45, length(fract(q) - 0.5));
+    return vec3((tilt * 2.0 - 1.0) * GLINT_TILT, grain);
+}
+
 // A layer's share of a sample.
 fn share(s: Sample, layer: u32) -> f32 {
     return dot(select(vec3(0.0), s.shares, s.layers == vec3(layer)), vec3(1.0));
@@ -110,11 +141,8 @@ fn share(s: Sample, layer: u32) -> f32 {
 struct Top { layers: vec3<u32>, weights: vec3<f32>, }
 
 
-// Ranks a candidate into the three heaviest; a layer already ranked is not ranked again.
+// Ranks a candidate not yet ranked into the three heaviest.
 fn rank(top: Top, layer: u32, weight: f32) -> Top {
-    if any((top.layers == vec3(layer)) & (top.weights > vec3(0.0))) {
-        return top;
-    }
     if weight > top.weights.x {
         return Top(vec3(layer, top.layers.xy), vec3(weight, top.weights.xy));
     }
@@ -128,9 +156,12 @@ fn rank(top: Top, layer: u32, weight: f32) -> Top {
 }
 
 // The three heaviest surfaces of a level's four control samples around a leaf sample plus a
-// fraction of one, bilinearly. Candidates are each sample's heaviest surface and the nearest
-// sample's other two: a surface none of them names weighs too little to show. Control samples
-// lie half a height sample apart at every level.
+// fraction of one, bilinearly. Candidates are each sample's two heaviest surfaces and the
+// nearest sample's third: a surface none of them names weighs too little to show. Every
+// sample's second counts, so neighbouring cells weigh a surface on their shared edge alike; the
+// nearest sample's alone stepped where it changed, and roads refined from the wear field (which
+// trade worn ground for the rest) turned the step into half-metre blocks. Control samples lie half
+// a height sample apart at every level.
 fn level_surfaces(cell: ControlCell) -> Top {
     let f = cell.f;
     let p00 = cell.packed.x;
@@ -143,10 +174,14 @@ fn level_surfaces(cell: ControlCell) -> Top {
     let s11 = unpack(p11);
     let w = vec4((1.0 - f.x) * (1.0 - f.y), f.x * (1.0 - f.y), (1.0 - f.x) * f.y, f.x * f.y);
     let near = unpack(select(select(p00, p10, w.y > w.x), select(p01, p11, w.w > w.z), max(w.z, w.w) > max(w.x, w.y)));
-    let candidates = array<u32, 6>(s00.layers.x, s10.layers.x, s01.layers.x, s11.layers.x, near.layers.y, near.layers.z);
+    let candidates = array<u32, 9>(s00.layers.x, s10.layers.x, s01.layers.x, s11.layers.x,
+        s00.layers.y, s10.layers.y, s01.layers.y, s11.layers.y, near.layers.z);
     var top = Top(vec3(s00.layers.x), vec3(0.0));
-    for (var i = 0u; i < 6u; i += 1u) {
+    for (var i = 0u; i < 9u; i += 1u) {
         let c = candidates[i];
+        if any((top.layers == vec3(c)) & (top.weights > vec3(0.0))) {
+            continue;
+        }
         let weight = dot(w, vec4(share(s00, c), share(s10, c), share(s01, c), share(s11, c)));
         top = rank(top, c, weight);
     }
@@ -447,14 +482,19 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let plane = side_projection(in.world_position.xyz, n, dpdx(in.world_position.xyz), dpdy(in.world_position.xyz));
     // Near the camera roads follow the fine wear field: the share of the ground worn bare
     // scales with how much more (or less) worn this point is than its half-metre neighbourhood,
-    // so wheel tracks and the strip between them stay sharp.
-    if refine.z > 0.0 && refine.y > 0.01 {
+    // so wheel tracks and the strip between them stay sharp. It gives way where the worn or the
+    // unworn ground has next to nothing to give, and where the neighbourhood is barely worn:
+    // switching on there drew the half-metre cells' edges.
+    if refine.z > 0.0 {
         let worn = vec3<f32>(vec3(surfaces[top.layers.x].material.w, surfaces[top.layers.y].material.w,
             surfaces[top.layers.z].material.w) > vec3(0.5));
         let total = dot(top.weights, vec3(1.0));
         let bare = dot(top.weights, worn);
-        if bare > 0.001 && bare < total - 0.001 {
-            let wanted = clamp(bare * mix(1.0, refine.x / refine.y, refine.z), 0.0, total);
+        let room = clamp(min(bare, total - bare) / REFINE_ROOM, 0.0, 1.0)
+            * smoothstep(REFINE_WORN.x, REFINE_WORN.y, refine.y);
+        if room > 0.0 {
+            let ratio = refine.x / max(refine.y, REFINE_WORN.x);
+            let wanted = mix(bare, clamp(bare * mix(1.0, ratio, refine.z), 0.0, total), room);
             top.weights = mix(top.weights * (total - wanted) / (total - bare), top.weights * wanted / bare, worn);
         }
     }
@@ -526,6 +566,14 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     pbr.specular_occlusion = ao;
     pbr.N = normal;
     pbr.clearcoat_N = normal;
+    // A crystal's facet, its glint's normal, roughness and cover in the clearcoat fields.
+    let glinting = soft * (1.0 - smoothstep(GLINT_RANGE.x, GLINT_RANGE.y, distance_to_camera));
+    if glinting > 0.0 {
+        let glint = snow_glint(p, footprint);
+        pbr.material.clearcoat = glint.z * glinting;
+        pbr.material.clearcoat_perceptual_roughness = GLINT_ROUGHNESS;
+        pbr.clearcoat_N = normalize(normal - vec3(glint.x, 0.0, glint.y));
+    }
     // A print's walls face its sunlit floor and the snow around it, far brighter than the grass
     // the shared ground light assumes: they take light reflected by snow as bright as their own.
     if turned > 0.001 {

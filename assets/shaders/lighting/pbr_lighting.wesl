@@ -101,6 +101,24 @@ fn through_atmosphere(P: vec3<f32>, light_id: u32) -> vec3<f32> {
     }
 }
 
+// Yarra: a crystal's glint in snow (TERRAIN_GLINTS): light `light_id` reflected by a facet of its
+// own normal `N` and perceptual roughness, as much of it as `cover` holds, ice's specular alone.
+fn glint_light(light_id: u32, P: vec3<f32>, V: vec3<f32>, N: vec3<f32>, perceptual_roughness: f32, cover: f32) -> vec3<f32> {
+    let light = &view_bindings::lights.directional_lights[light_id];
+    let L = (*light).direction_to_light;
+    let H = normalize(L + V);
+    let NdotL = saturate(dot(N, L));
+    let NdotV = max(dot(N, V), 0.0001);
+    let roughness = lighting::perceptualRoughnessToRoughness(perceptual_roughness);
+    let D = lighting::D_GGX(roughness, saturate(dot(N, H)));
+    let visibility = lighting::V_SmithGGXCorrelated(roughness, NdotV, NdotL);
+    let F = lighting::F_Schlick(GLINT_F0, 1.0, saturate(dot(L, H)));
+    return (*light).color.rgb * through_atmosphere(P, light_id) * (D * visibility * F * NdotL * cover);
+}
+
+// Ice reflects this much at normal incidence.
+const GLINT_F0: f32 = 0.02;
+
 fn apply_pbr_lighting(
     input: pbr_types::PbrInput,
 ) -> vec4<f32> {
@@ -455,6 +473,13 @@ fn apply_pbr_lighting(
                 @else
                 shadow = mix(shadow, distant, beyond);
             }
+        }
+        // Yarra: crystals glint in the direct beam alone, as its shadow lets them; the terrain
+        // carries a glinting facet in the clearcoat fields it has no other use for.
+        @if(TERRAIN_GLINTS)
+        if in.material.clearcoat > 0.0 {
+            direct_light += glint_light(i, in.world_position.xyz, in.V, in.clearcoat_N,
+                in.material.clearcoat_perceptual_roughness, in.material.clearcoat) * shadow * cloud.x;
         }
         // The clouds' direct beam is shaded like any sunlight; what they pass on diffusely casts
         // no shadows, and crowns hold it back as they do the sky.

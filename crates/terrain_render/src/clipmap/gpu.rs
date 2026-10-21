@@ -17,7 +17,8 @@ use bevy::{
     asset::RenderAssetUsages,
     image::ImageAddressMode,
     image::{ImageFilterMode, ImageSampler, ImageSamplerDescriptor},
-    pbr::{Material, MaterialPlugin},
+    mesh::MeshVertexBufferLayoutRef,
+    pbr::{Material, MaterialPipeline, MaterialPipelineKey, MaterialPlugin},
     prelude::*,
     reflect::TypePath,
     render::storage::ShaderBuffer,
@@ -215,6 +216,19 @@ impl Material for ClipmapTerrainMaterial {
     // No prepass: MetalFX motion comes from the main pass's depth and the camera.
     fn enable_prepass() -> bool {
         false
+    }
+
+    // Snow's crystals glint in the sun (`shaders/lighting/pbr_lighting.wesl` TERRAIN_GLINTS).
+    fn specialize(
+        _pipeline: &MaterialPipeline,
+        descriptor: &mut RenderPipelineDescriptor,
+        _layout: &MeshVertexBufferLayoutRef,
+        _key: MaterialPipelineKey<Self>,
+    ) -> Result<(), SpecializedMeshPipelineError> {
+        if let Some(fragment) = descriptor.fragment.as_mut() {
+            fragment.shader_defs.push("TERRAIN_GLINTS".into());
+        }
+        Ok(())
     }
 }
 
