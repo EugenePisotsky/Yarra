@@ -444,6 +444,8 @@ fn camera(
             wind.gustiness.clamp(0.0, 1.0),
             wind.flutter.max(0.0),
         ],
+        gusts: wind.gusts.frame,
+        gust_swell: [wind.gusts.swell.clamp(0.0, 1.0), 0.0, 0.0, 0.0],
     }
 }
 

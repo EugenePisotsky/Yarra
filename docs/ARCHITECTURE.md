@@ -246,7 +246,8 @@ SQLite. The renderers (Bevy) have no SQLite: `engine` is the only library joinin
   by `weather/gust.wesl`). Rain and the ambient particles move with the gust at the camera;
   blowing snow (`sky/drift.wesl`, a medium of the sky composite's fog) lifts where the gusts
   pass its onset over snow ground, whose albedo, height and sky share it finds in the ground
-  albedo map. Trees and grass still sway to `vegetation_render::VegetationWind`.
+  albedo map. Trees and grass sway to `vegetation_render::VegetationWind`, whose field the
+  gusts swell where they pass (`VegetationWind::gusts`, a `GustField`).
 - Owns what all lit materials share (`environment::EnvironmentParams` and its maps), the
   terrain-derived maps (`valley_mist`, `shore`, `terrain_shadow`) and the place of the ground
   albedo map around the camera (`ground_albedo`: albedo, sun, height and sky share of the drawn

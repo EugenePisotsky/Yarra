@@ -56,6 +56,9 @@ pub struct VegetationWind {
     /// Clock multiplier for every travelling wave and flutter. Weather changes this rather than
     /// `speed`: phase is `time * speed`, so varying `speed` would jump the whole field.
     pub rate: f32,
+    /// The weather's gusts passing over (`atmosphere::wind`), which swell the field where they
+    /// pass; none by default.
+    pub gusts: atmosphere::wind::GustField,
     pub(crate) phase_seconds: f32,
 }
 
@@ -71,6 +74,7 @@ impl Default for VegetationWind {
             gustiness: 0.95,
             flutter: 0.28,
             rate: 1.0,
+            gusts: atmosphere::wind::GustField::default(),
             phase_seconds: 0.0,
         }
     }
@@ -83,7 +87,8 @@ impl VegetationWind {
         self.phase_seconds = seconds.rem_euclid(4096.0);
     }
 
-    /// Samples the coherent scalar push used by non-rendering systems.
+    /// Samples the coherent scalar push used by non-rendering systems, at `world_xz` in the
+    /// render coordinates the gusts lie over.
     pub fn sample_force(&self, world_xz: Vec2) -> f32 {
         if !self.enabled {
             return 0.0;
@@ -103,6 +108,7 @@ impl VegetationWind {
         let gust_rise = ((gust_coordinate - 0.28) / 0.72).clamp(0.0, 1.0);
         let gust_pulse = gust_rise * gust_rise * (3.0 - 2.0 * gust_rise);
         self.strength.max(0.0)
+            * self.gusts.at(world_xz)
             * (0.25 + broad_amount * 0.18 + gust_pulse * self.gustiness.clamp(0.0, 1.0) * 0.90)
                 .clamp(0.12, 1.30)
     }

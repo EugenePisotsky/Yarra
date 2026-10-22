@@ -1,7 +1,8 @@
 //! The wind near the ground: its speed, and the gusts that cross the land with it. One frozen
 //! pattern of gusts is carried downwind with the air, so a gust that lifts snow off the ground
-//! upwind reaches the camera seconds later and hurries the falling snow there.
-//! `shaders/weather/gust.wesl` evaluates the same pattern on the GPU.
+//! upwind reaches the camera seconds later and hurries the falling snow there, bending the grass
+//! and trees it passes. `shaders/weather/gust.wesl` evaluates the same pattern on the GPU, from
+//! a [`GustField`].
 use crate::{AtmosphereState, WorldEnvironmentView, environment::EnvironmentOrigin};
 
 use bevy::prelude::*;
@@ -58,20 +59,46 @@ impl Gusts {
         (self.travel / GUST_PERIOD) as f32
     }
 
-    /// Where the pattern lies along and across the wind at render XZ zero, for a world whose
-    /// render origin is `origin`: world-anchored and wrapped to the period, so it never jumps
-    /// when the origin moves.
-    pub fn offsets(&self, origin: [f64; 2]) -> [f32; 2] {
+    /// The gusts over render XZ of a world whose render origin is `origin`: the pattern lies
+    /// world-anchored and wrapped to its period, so it never jumps when the origin moves.
+    pub fn field(&self, origin: [f64; 2]) -> GustField {
         let [x, z] = [f64::from(self.direction.x), f64::from(self.direction.y)];
         let along = origin[0] * x + origin[1] * z - self.travel;
         let across = origin[0] * z - origin[1] * x;
-        [along, across].map(|v| v.rem_euclid(GUST_PERIOD) as f32)
+        let [along, across] = [along, across].map(|v| v.rem_euclid(GUST_PERIOD) as f32);
+        GustField {
+            frame: [self.direction.x, self.direction.y, along, across],
+            swell: self.swell,
+        }
     }
+}
 
-    /// The air's speed at render XZ `p` as a share of the mean, with the pattern at `offsets`.
-    pub fn at(&self, p: Vec2, offsets: [f32; 2]) -> f32 {
-        let along = p.dot(self.direction) + offsets[0];
-        let across = p.perp_dot(self.direction) + offsets[1];
+/// The gusts over render XZ, as the GPU takes them (`shaders/weather/gust.wesl`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GustField {
+    /// The wind's unit direction in XZ, and where the pattern lies along and across it at render
+    /// XZ zero, metres.
+    pub frame: [f32; 4],
+    /// How far gusts swell the wind above and below its mean, as a share of it.
+    pub swell: f32,
+}
+
+impl Default for GustField {
+    /// No gusts: the mean wind everywhere.
+    fn default() -> Self {
+        Self {
+            frame: [1.0, 0.0, 0.0, 0.0],
+            swell: 0.0,
+        }
+    }
+}
+
+impl GustField {
+    /// The air's speed at render XZ `p` as a share of the mean.
+    pub fn at(&self, p: Vec2) -> f32 {
+        let direction = Vec2::new(self.frame[0], self.frame[1]);
+        let along = p.dot(direction) + self.frame[2];
+        let across = p.perp_dot(direction) + self.frame[3];
         let t = smoothstep(0.25, 0.75, pattern(along, across));
         1.0 + self.swell * (2.0 * t - 1.0)
     }
@@ -135,11 +162,11 @@ pub(crate) fn advance(
     gusts.swell = (GUST_SWELL * weather.map_or(1.0, |w| w.wind_gustiness)).clamp(0.0, MAX_SWELL);
     let step = f64::from(time.delta_secs().min(0.1));
     gusts.travel = (gusts.travel + f64::from(gusts.speed) * step).rem_euclid(GUST_PERIOD);
-    let offsets = gusts.offsets(origin.0);
+    let field = gusts.field(origin.0);
     gusts.here = views
         .iter()
         .next()
-        .map_or(1.0, |view| gusts.at(view.translation().xz(), offsets));
+        .map_or(1.0, |view| field.at(view.translation().xz()));
 }
 
 #[cfg(test)]
@@ -170,14 +197,9 @@ mod tests {
     #[test]
     fn gusts_swell_the_wind_both_ways_around_its_mean() {
         let g = gusts();
-        let offsets = g.offsets([0.0, 0.0]);
+        let field = g.field([0.0, 0.0]);
         let samples: Vec<f32> = (0..400)
-            .map(|i| {
-                g.at(
-                    Vec2::new((i % 20) as f32 * 37.0, (i / 20) as f32 * 41.0),
-                    offsets,
-                )
-            })
+            .map(|i| field.at(Vec2::new((i % 20) as f32 * 37.0, (i / 20) as f32 * 41.0)))
             .collect();
         let (low, high) = samples
             .iter()
@@ -192,13 +214,13 @@ mod tests {
     fn gusts_travel_downwind_with_the_air_and_stay_put_as_the_origin_moves() {
         let mut g = gusts();
         let p = Vec2::new(40.0, -12.0);
-        let before = g.at(p, g.offsets([0.0, 0.0]));
+        let before = g.field([0.0, 0.0]).at(p);
         g.travel += 30.0;
         let downwind = p + g.direction * 30.0;
-        assert!((g.at(downwind, g.offsets([0.0, 0.0])) - before).abs() < 1e-4);
+        assert!((g.field([0.0, 0.0]).at(downwind) - before).abs() < 1e-4);
 
         let origin = [5120.0, -2048.0];
         let shifted = downwind - Vec2::new(origin[0] as f32, origin[1] as f32);
-        assert!((g.at(shifted, g.offsets(origin)) - before).abs() < 1e-3);
+        assert!((g.field(origin).at(shifted) - before).abs() < 1e-3);
     }
 }

@@ -139,6 +139,10 @@ pub(super) struct CameraGpu {
     pub(super) lod_focus: [f32; 4],
     // xy: the trample map's canonical centre, z: its side in metres, w: 1 when it is stamped
     pub(super) trample: [f32; 4],
+    // The weather's gusts over render XZ (atmosphere::wind::GustField): the wind's direction xz,
+    // the pattern's offsets along and across it; x of the second, how far they swell the wind.
+    pub(super) gusts: [f32; 4],
+    pub(super) gust_swell: [f32; 4],
 }
 
 impl CameraGpu {
@@ -151,6 +155,8 @@ impl CameraGpu {
         self.lighting = [0.0; 4];
         self.wind[3] = 0.0;
         self.trample = [0.0; 4];
+        self.gusts = [0.0; 4];
+        self.gust_swell = [0.0; 4];
         self
     }
 }
@@ -172,7 +178,7 @@ mod tests {
         assert_eq!(size_of::<GrassTypeGpu>(), 144);
         assert_eq!(size_of::<SurfaceSampleGpu>(), 32);
         assert_eq!(size_of::<InstanceGpu>(), 32);
-        assert_eq!(size_of::<CameraGpu>(), 240);
+        assert_eq!(size_of::<CameraGpu>(), 272);
         assert_eq!(size_of::<ConfigGpu>(), 16);
         assert_eq!(GPU_TELEMETRY_SIZE, 64);
         assert_eq!(DRAW_ARGS_SIZE, 40);

@@ -91,7 +91,9 @@ pub fn terrain_contact_radius(
         + catalog
             .grass
             .iter()
-            .map(|g| horizontal_reach(g) + g.height[1] * strength * WIND_REACH)
+            .map(|g| {
+                horizontal_reach(g) + g.height[1] * strength * (1. + wind.gusts.swell) * WIND_REACH
+            })
             .fold(0., f32::max)
 }
 

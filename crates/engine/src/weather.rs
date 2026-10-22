@@ -464,9 +464,12 @@ struct WindBaseline {
 }
 
 /// Weather scales the baseline field. Direction follows the authored cloud drift, so grass,
-/// trees and clouds share one wind. Wind driven externally (editor previews, tests) is left alone.
+/// trees and clouds share one wind, and its gusts swell it where they pass. Wind driven
+/// externally (editor previews, tests) is left alone.
 fn apply_weather_wind(
     atmosphere: Res<AtmosphereState>,
+    gusts: Option<Res<atmosphere::wind::Gusts>>,
+    origin: Option<Res<atmosphere::environment::EnvironmentOrigin>>,
     wind: Option<ResMut<VegetationWind>>,
     mut baseline: Local<Option<WindBaseline>>,
 ) {
@@ -482,9 +485,15 @@ fn apply_weather_wind(
             wind.strength = base.strength;
             wind.gustiness = base.gustiness;
             wind.rate = base.rate;
+            wind.gusts = default();
         }
         return;
     };
+
+    if let (Some(gusts), Some(origin)) = (gusts, origin) {
+        wind.gusts = gusts.field(origin.0);
+    }
+
     let base = *baseline.get_or_insert(WindBaseline {
         direction: wind.direction,
         strength: wind.strength,

@@ -307,7 +307,8 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
   shows by hiding what lies in it. *Rejected*: fine streaks ("feels more like a noise", dark
   stripes) and light taken from the weather fog, which greyed the snow. The gusts are one frozen
   pattern evaluated alike on the CPU and GPU, so a sheet that passes the camera also hurries its
-  snowflakes.
+  snowflakes, and swells the wind of the grass and trees under it: each keeps its own motion
+  (the grass's rolling patches, the trees' sway), scaled by the gust where it stands.
 
 - **Snowfall fills prints and lays snow back on shaken boughs.** *Kept* (October 22). One total
   of snow fallen on the mountains (`GameWeather::snowfall`, 1.2 mm/s at their heaviest snowfall,

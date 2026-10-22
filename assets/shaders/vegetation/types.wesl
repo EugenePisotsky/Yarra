@@ -69,6 +69,10 @@ struct Camera {
     lod_focus: vec4<f32>,
     // xy: the trample map's canonical centre, z: its side in metres, w: 1 when it is stamped
     trample: vec4<f32>,
+    // The weather's gusts over render XZ (weather/gust.wesl): the wind's direction xz, the
+    // pattern's offsets along and across it; x of the second, how far they swell the wind.
+    gusts: vec4<f32>,
+    gust_swell: vec4<f32>,
 }
 
 struct Config {

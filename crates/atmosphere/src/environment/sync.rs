@@ -197,8 +197,7 @@ pub(super) fn sync(
     }
 
     if world {
-        let offsets = gusts.offsets(origin.0);
-        params.gusts = [gusts.direction.x, gusts.direction.y, offsets[0], offsets[1]];
+        params.gusts = gusts.field(origin.0).frame;
         params.wind = [gusts.speed, gusts.swell, gusts.travelled(), 0.];
     }
 

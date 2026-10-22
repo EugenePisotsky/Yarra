@@ -3,6 +3,8 @@
 // the pose, the tree's profile and the viewer come in as arguments, so tests run these exact
 // functions (crates/engine/src/trees/wind/gpu_tests.rs).
 
+import package::shaders::weather::gust::{gust, wind_frame};
+
 // trees/wind.rs WindBuffer: this frame's pose and the previous one, for temporal motion.
 struct WindPose {
     field: vec4<f32>,
@@ -11,6 +13,7 @@ struct WindPose {
     camera: vec4<f32>,
     hierarchy: vec4<f32>,
     sway_phases: vec4<f32>,
+    gusts: vec4<f32>,
 }
 struct WindFrames {
     current: WindPose,
@@ -36,6 +39,12 @@ struct TreeVertex {
     card_facing: vec2<f32>,
 }
 
+// The wind's strength for a tree standing at render XZ `root`: the weather's gusts
+// (weather/gust.wesl) swell it as they pass.
+fn strength_at(root: vec2<f32>, pose: WindPose) -> f32 {
+    return pose.field.w * gust(wind_frame(root, pose.gusts), pose.response.w);
+}
+
 // Matches VegetationWind's coherent travelling field. All independent phase
 // offsets include the floating origin and time, reduced on the CPU in f64.
 fn field_force(anchor: vec2<f32>, pose: WindPose) -> f32 {
@@ -50,7 +59,7 @@ fn field_force(anchor: vec2<f32>, pose: WindPose) -> f32 {
     let gust_coordinate = clamp(sin(gust) * 0.5 + 0.5, 0.0, 1.0);
     let rise = clamp((gust_coordinate - 0.28) / 0.72, 0.0, 1.0);
     let pulse = rise * rise * (3.0 - 2.0 * rise);
-    return pose.field.w * clamp(0.25 + broad_amount * 0.18 + pulse * pose.response.x * 0.90, 0.12, 1.30);
+    return strength_at(anchor, pose) * clamp(0.25 + broad_amount * 0.18 + pulse * pose.response.x * 0.90, 0.12, 1.30);
 }
 
 fn turn_axis(v: vec3<f32>, axis: vec3<f32>, angle: f32) -> vec3<f32> {
@@ -115,7 +124,7 @@ fn displaced_position(p: vec4<f32>, model: mat4x4<f32>, weights_in: vec2<f32>, p
     let perpendicular = vec2(-direction.y, direction.x);
     let flutter_wave = sin(dot(p.xz, vec2(1.91, -1.37)) + p.y * 1.13 + pose.phases.w);
     let branch = pose.response.y * weights.y * field_force(model[3].xz, pose);
-    let flutter = pose.response.z * weights.x * pose.field.w * flutter_wave;
+    let flutter = pose.response.z * weights.x * strength_at(model[3].xz, pose) * flutter_wave;
     let horizontal = direction * branch + perpendicular * flutter;
     return p + vec4(horizontal.x, flutter * 0.16, horizontal.y, 0.0);
 }
@@ -169,7 +178,8 @@ fn structural_frame(local_anchor: vec3<f32>, limb_axis: vec4<f32>, height: f32,
     var bend_axis = cross(up, direction);
     if dot(bend_axis, bend_axis) < 1e-8 { bend_axis = vec3(0.0, 0.0, 1.0); }
     bend_axis = normalize(bend_axis);
-    let pressure = pose.field.w * pose.field.w;
+    let strength = strength_at(model[3].xz, pose);
+    let pressure = strength * strength;
     let wave = sway_signal(model[3].xz, pose, profile.y, 0.0);
     let lean = clamp(0.11 * pressure * profile.x * profile.w * pose.hierarchy.x
                     * (1.0 + pose.response.x * wave), -0.15, 0.8);
@@ -227,7 +237,8 @@ fn sway_point_of_trunk(point: vec3<f32>, root: vec3<f32>, height: f32, profile: 
     var bend_axis = cross(up, direction);
     if dot(bend_axis, bend_axis) < 1e-8 { bend_axis = vec3(0.0, 0.0, 1.0); }
     bend_axis = normalize(bend_axis);
-    let pressure = pose.field.w * pose.field.w;
+    let strength = strength_at(root.xz, pose);
+    let pressure = strength * strength;
     let wave = sway_signal(root.xz, pose, profile.y, 0.0);
     let lean = amount * clamp(0.11 * pressure * profile.x * profile.w * pose.hierarchy.x
                               * (1.0 + pose.response.x * wave), -0.15, 0.8);
@@ -302,7 +313,7 @@ fn animated_position(vertex: TreeVertex, model: mat4x4<f32>, pose: WindPose, pro
     let leaf = select(0.35, 1.0, vertex.uv_b.x > 0.0);
     let flutter = sin(dot(vertex.card_pivot, vec3(1.91, 1.13, -1.37)) + pose.phases.w
                       + dot(model[3].xz, vec2(1.91, -1.37)))
-                  * 0.035 * pose.field.w * pose.hierarchy.z * profile.z * leaf;
+                  * 0.035 * strength_at(model[3].xz, pose) * pose.hierarchy.z * profile.z * leaf;
     p = vec4(pivot + turn_axis(p.xyz - pivot, frame.trunk_axis, flutter), 1.0);
 }
 }

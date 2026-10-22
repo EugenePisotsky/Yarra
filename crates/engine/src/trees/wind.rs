@@ -53,7 +53,7 @@ pub(super) struct WindPose {
     field: [f32; 4],
     // Broad, cross, gust and flutter phases at the floating origin.
     phases: [f32; 4],
-    // gustiness, branch amplitude, flutter amplitude, padding
+    // gustiness, branch amplitude, flutter amplitude, the weather's gusts' swell
     response: [f32; 4],
     // Main camera in the same floating-origin coordinates as this frame's meshes.
     // W indicates a valid sample; the GPU history retains the previous camera too.
@@ -61,6 +61,9 @@ pub(super) struct WindPose {
     // hierarchy: trunk gain, branch gain, flutter gain, rhythm multiplier
     hierarchy: [f32; 4],
     sway_phases: [f32; 4],
+    // The weather's gusts over render XZ (atmosphere::wind::GustField): the wind's direction
+    // XZ and the pattern's offsets along and across it; response.w how far they swell the wind.
+    gusts: [f32; 4],
 }
 
 fn finite(value: f32, fallback: f32) -> f32 {
@@ -113,7 +116,7 @@ impl WindPose {
                 finite(wind.gustiness, 0.).clamp(0., 1.),
                 finite(response.branch_amplitude, 0.).clamp(0., 0.5),
                 finite(response.flutter_amplitude, 0.).clamp(0., 0.1),
-                0.,
+                finite(wind.gusts.swell, 0.).clamp(0., 1.),
             ],
             camera: [0.; 4],
             hierarchy: [1.; 4],
@@ -124,6 +127,7 @@ impl WindPose {
                         .rem_euclid(std::f64::consts::TAU) as f32
                 },
             ),
+            gusts: wind.gusts.frame,
         }
     }
 }

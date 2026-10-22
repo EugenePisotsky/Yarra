@@ -5,6 +5,7 @@ import package::shaders::vegetation::types::{
     Instance, GrassType, Camera, PI, TYPE_INDEX_MASK, LOD_MORPH_MASK, LOD_MORPH_SHIFT,
 };
 import package::shaders::vegetation::random::{hash32, random01};
+import package::shaders::weather::gust::{gust, wind_frame};
 
 // Largest lean of the tip from upright, at tilt 1, in radians: nearly lying on the ground.
 const MAX_LEAN: f32 = 1.45;
@@ -270,7 +271,9 @@ fn wind_curve(rest: Curve, blade: Blade, grass: GrassType, camera: Camera) -> Cu
         return rest;
     }
     let canonical = blade.root.xz + camera.render_origin.xy;
-    let force = field_force(canonical, camera);
+    // The weather's gusts swell the broad field as they pass.
+    let force = field_force(canonical, camera)
+        * gust(wind_frame(blade.root.xz, camera.gusts), camera.gust_swell.x);
     let gust = grass_gust(canonical, camera);
     let response = strength * (1.0 - 0.75 * grass.material.w) * (1.0 - 0.85 * blade.pressed);
     let wind = vec3<f32>(camera.wind.x, 0.0, camera.wind.y);
