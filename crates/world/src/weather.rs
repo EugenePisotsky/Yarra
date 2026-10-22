@@ -422,6 +422,27 @@ const WETTING_SECONDS: f32 = 90.;
 
 const DRYING_SECONDS: f32 = 240.;
 
+/// How much of the ground fallen precipitation covers, 0..1, after `seconds` more of
+/// `precipitation`: it gathers towards all of it, the faster the heavier it falls (time constant
+/// `gather_seconds` at full precipitation), and clears with time constant `clear_seconds` once
+/// nothing falls. Exact for constant precipitation over the step, so accelerated clocks stay
+/// stable.
+pub fn lying(
+    cover: f32,
+    precipitation: f32,
+    seconds: f32,
+    gather_seconds: f32,
+    clear_seconds: f32,
+) -> f32 {
+    let cover = if precipitation > 0.01 {
+        let k = precipitation / gather_seconds;
+        cover + (1. - cover) * (1. - (-k * seconds).exp())
+    } else {
+        cover * (-seconds / clear_seconds).exp()
+    };
+    cover.clamp(0., 1.)
+}
+
 /// Weather state and automatic sequence. Manual requests blend from the current values, so a
 /// change can start mid-transition without a jump.
 #[derive(Debug, Clone)]
@@ -576,16 +597,13 @@ impl WeatherRuntime {
         }
 
         let precipitation = self.current().precipitation;
-
-        // Exact for constant precipitation over the step, so accelerated clocks stay stable.
-        if precipitation > 0.01 {
-            let k = precipitation / WETTING_SECONDS;
-            self.wetness += (1. - self.wetness) * (1. - (-k * seconds).exp());
-        } else {
-            self.wetness *= (-seconds / DRYING_SECONDS).exp();
-        }
-
-        self.wetness = self.wetness.clamp(0., 1.);
+        self.wetness = lying(
+            self.wetness,
+            precipitation,
+            seconds,
+            WETTING_SECONDS,
+            DRYING_SECONDS,
+        );
         let mut remaining = seconds;
 
         // Bounded: each iteration either consumes the step or starts a positive-length change.

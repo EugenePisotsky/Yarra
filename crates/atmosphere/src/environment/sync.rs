@@ -165,7 +165,7 @@ pub(super) fn sync(
             state.wetness.clamp(0., 1.),
             state.weather.map_or(0., |w| w.precipitation.clamp(0., 1.)),
             0.,
-            0.,
+            state.fresh_snow.clamp(0., 1.),
         ];
     }
 

@@ -93,6 +93,46 @@ fn ground_relief(map: texture_2d_array<f32>, map_sampler: sampler, near: vec4<f3
     return vec2(relief.r + near.w, relief.g);
 }
 
+// Snow country at render XZ `p`: 1 where the ground map's far layer, each of its 32 m texels the
+// mean of the ground it covers, shows mostly snow, so bare patches within snowfields count and
+// broad meadows do not; 0 beyond the map.
+fn snow_country(map: texture_2d_array<f32>, map_sampler: sampler, near: vec4<f32>,
+    far: vec4<f32>, p: vec2<f32>) -> f32 {
+    if near.z <= 0.0 {
+        return 0.0;
+    }
+    let size = f32(textureDimensions(map).x);
+    let weight = ground_layer_weight(p, far, size, 1.0);
+    let albedo = ground_layer_texel(map, map_sampler, p, far, size, 1u, weight).rgb;
+    return weight * smoothstep(SNOW_COUNTRY.x, SNOW_COUNTRY.y,
+        dot(albedo, vec3(0.2126, 0.7152, 0.0722)));
+}
+
+// Mean albedo over which ground counts as snow country.
+const SNOW_COUNTRY: vec2<f32> = vec2(0.3, 0.55);
+
+// Fresh snow's albedo.
+const FRESH_SNOW: vec3<f32> = vec3(0.8, 0.82, 0.86);
+
+// Share of the ground at render XZ `p` fresh snow covers on average: `fresh` (the environment's
+// weather.w) in snow country.
+fn fresh_snow_share(map: texture_2d_array<f32>, map_sampler: sampler, near: vec4<f32>,
+    far: vec4<f32>, p: vec2<f32>, fresh: f32) -> f32 {
+    if fresh <= 0.0 {
+        return 0.0;
+    }
+    return fresh * snow_country(map, map_sampler, near, far, p);
+}
+
+// Where fresh snow covering `share` of the ground lies on a surface: first in its hollows, where
+// its `rise` (0 lowest, 1 highest) is low, and less on slopes (`up`, its normal's height); the
+// highest tufts and stones stay bare. 0 bare, 1 white.
+fn fresh_snow_cover(share: f32, rise: f32, up: f32) -> f32 {
+    let level = 1.05 * share;
+    return (1.0 - smoothstep(level - 0.1, level + 0.1, rise)) * smoothstep(0.3, 0.8, up)
+        * min(4.0 * share, 1.0);
+}
+
 // The map's near and far texels at `p` from the layer pair starting at `first`.
 fn ground_layers(map: texture_2d_array<f32>, map_sampler: sampler, near: vec4<f32>,
     far: vec4<f32>, p: vec2<f32>, first: u32, open: vec4<f32>) -> vec4<f32> {

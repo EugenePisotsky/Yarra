@@ -317,7 +317,8 @@ SQLite. The renderers (Bevy) have no SQLite: `engine` is the only library joinin
   sequence of their own (`WeatherSettings::mountains`), blended in by the share of snow ground
   around the camera (`SnowGround`, from the resident leaves under a soft layer); there its
   precipitation falls as snow (`AtmosphereState::snow`), drawn as ambient particles in place of
-  rain.
+  rain. Its snowfall lays fresh snow (`AtmosphereState::fresh_snow`, `world::weather::lying`)
+  over snow country's bare ground wherever the camera is.
 - Invariants: actor roots own movement; presentation scenes are children and never move them.
   Libraries do not read process arguments; the apps inject settings. The `gameplay` module here
   is actor control, not the `gameplay` crate.

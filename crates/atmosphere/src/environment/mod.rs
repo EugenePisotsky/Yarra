@@ -78,8 +78,9 @@ pub(crate) struct EnvironmentParams {
     /// Previous coverage, extinction and erosion, and linear change progress. Each region of
     /// the field blends from these to `shape` at its own time within the change.
     pub transition: [f32; 4],
-    /// Game weather for surfaces and precipitation: wetness, precipitation intensity; and how
-    /// closed the cloud deck is (0 open, 1 overcast).
+    /// Game weather for surfaces and precipitation: wetness, precipitation intensity; how
+    /// closed the cloud deck is (0 open, 1 overcast); and the share of snowy country's bare ground
+    /// fresh snow covers.
     pub weather: [f32; 4],
     /// Rain shelter map: origin XZ, metres per texel, enabled.
     pub shelter: [f32; 4],

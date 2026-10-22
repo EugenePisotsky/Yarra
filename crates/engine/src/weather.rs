@@ -1,8 +1,9 @@
 //! Game weather: advances the shared sequence and overlays it on the authored atmosphere and
 //! vegetation wind. The mountains have a sequence of their own (`WeatherSettings::mountains`),
 //! blended in by the share of snow ground around the camera, where their precipitation falls as
-//! snow: a sunny valley can lie under a snowing mountain. Editor workspaces own the authored
-//! profile and never see it.
+//! snow: a sunny valley can lie under a snowing mountain. Fresh snow from them settles over snowy
+//! country's bare ground wherever the camera is, and thaws after. Editor workspaces own the
+//! authored profile and never see it.
 mod rain;
 
 use crate::{
@@ -27,6 +28,12 @@ const SNOW_GROUND_SECONDS: f32 = 8.0;
 /// The mountains' sequence runs from its own seed.
 const MOUNTAIN_SEED: u64 = 0x6d6f_756e_7461_696e;
 
+/// Fresh snow settles over bare ground with this time constant in heavy snow, slower in lighter,
+/// and thaws with this one once it stops.
+const SNOW_SETTLING_SECONDS: f32 = 120.0;
+
+const SNOW_THAW_SECONDS: f32 = 600.0;
+
 /// How weather starts once the first world space is active.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum WeatherStart {
@@ -46,6 +53,8 @@ pub struct GameWeather {
     runtime: Option<WeatherRuntime>,
     /// The mountains' sequence, beside the island's.
     mountains: Option<WeatherRuntime>,
+    /// Share of snowy country's bare ground the mountains' snowfall has covered, 0..1.
+    fresh_snow: f32,
     /// Freeze the weather clock, e.g. during an A/B capture.
     pub paused: bool,
     /// Weather clock multiplier for testing transitions.
@@ -62,6 +71,7 @@ impl GameWeather {
             seed,
             runtime: None,
             mountains: None,
+            fresh_snow: 0.0,
             paused: false,
             time_scale: 1.0,
             wetness_override: None,
@@ -129,6 +139,7 @@ impl GameWeather {
     pub fn clear(&mut self) {
         self.runtime = None;
         self.mountains = None;
+        self.fresh_snow = 0.0;
         self.start = WeatherStart::Authored;
     }
 
@@ -159,7 +170,15 @@ impl GameWeather {
                 WeatherStart::Manual(kind) => kind,
                 _ => WeatherKind::Overcast,
             };
-            self.mountains = Some(mountains(self.seed, initial, runtime.automatic));
+            let mountains = mountains(self.seed, initial, runtime.automatic);
+
+            // Weather that starts in snow finds it lying.
+            self.fresh_snow = if mountains.current().precipitation > 0.01 {
+                1.0
+            } else {
+                0.0
+            };
+            self.mountains = Some(mountains);
             info!(
                 "WEATHER start={:?} seed={} initial={:?}",
                 self.start,
@@ -293,6 +312,7 @@ pub(crate) fn advance_weather(
             atmosphere.weather_transition = None;
             atmosphere.wetness = 0.0;
             atmosphere.snow = 0.0;
+            atmosphere.fresh_snow = 0.0;
         }
         return;
     }
@@ -318,11 +338,26 @@ pub(crate) fn advance_weather(
 
     if !paused {
         let GameWeather {
-            runtime, mountains, ..
+            runtime,
+            mountains,
+            fresh_snow,
+            ..
         } = &mut *weather;
 
+        let seconds = time.delta_secs() * scale;
+
         for runtime in runtime.iter_mut().chain(mountains.iter_mut()) {
-            runtime.advance(time.delta_secs() * scale);
+            runtime.advance(seconds);
+        }
+
+        if let Some(mountains) = mountains {
+            *fresh_snow = world::weather::lying(
+                *fresh_snow,
+                mountains.current().precipitation,
+                seconds,
+                SNOW_SETTLING_SECONDS,
+                SNOW_THAW_SECONDS,
+            );
         }
     }
 
@@ -351,11 +386,13 @@ pub(crate) fn advance_weather(
         || atmosphere.weather_transition != transition
         || atmosphere.wetness != wetness
         || atmosphere.snow != snow
+        || atmosphere.fresh_snow != weather.fresh_snow
     {
         atmosphere.weather = current;
         atmosphere.weather_transition = transition;
         atmosphere.wetness = wetness;
         atmosphere.snow = snow;
+        atmosphere.fresh_snow = weather.fresh_snow;
     }
 }
 
@@ -501,6 +538,40 @@ mod tests {
             "held weather holds in the mountains, as snow"
         );
         assert_eq!(mountains.wetness, 0.0);
+    }
+
+    #[test]
+    fn fresh_snow_settles_while_the_mountains_snow_wherever_the_camera_is_and_thaws_after() {
+        let mut app = test_app(WeatherStart::Authored);
+        let profile = app.world().resource::<AtmosphereState>().profile.clone();
+        app.world_mut()
+            .resource_mut::<GameWeather>()
+            .request(&profile, WeatherKind::Storm, 0.);
+
+        // The test clock steps a second an update; the camera stays off the snow.
+        for _ in 0..300 {
+            app.update();
+        }
+
+        let settled = app.world().resource::<AtmosphereState>().fresh_snow;
+        assert!(
+            (settled - (1.0 - (-300.0_f32 / 120.0).exp())).abs() < 0.01,
+            "{settled}"
+        );
+
+        app.world_mut()
+            .resource_mut::<GameWeather>()
+            .request(&profile, WeatherKind::Clear, 0.);
+
+        for _ in 0..600 {
+            app.update();
+        }
+
+        let thawed = app.world().resource::<AtmosphereState>().fresh_snow;
+        assert!(
+            (thawed - settled * (-1.0_f32).exp()).abs() < 0.01,
+            "{thawed}"
+        );
     }
 
     #[test]

@@ -6,6 +6,8 @@
 // normal maps near the camera and one sample each further out. The normal under them comes per pixel
 // from the height clipmap at the pixel's footprint: the soft layer's (snow's) top where there is
 // one, which takes the prints feet pressed into it (terrain/prints.wesl).
+import package::shaders::environment::maps::{FRESH_SNOW, fresh_snow_cover};
+import package::shaders::lighting::ground::fresh_snow_at;
 import package::shaders::lighting::pbr_lighting::apply_pbr_lighting;
 import package::shaders::terrain::clipmap_common::{ControlCell, Sample, base_color, clipmap_normal, control_cell, intervals, leaf_height, leaf_spacing, levels, node_of, origin_samples, repeat_sampler, resident_level, settings, surfaces, unpack, wear_slot};
 import package::shaders::terrain::wear::{RUT_DEPTH_SCALE, WEAR_SHIFT, WEAR_TEXELS, Wear, bare_share, decode_wear, wear_hash, wear_patch, wheel_grooves};
@@ -511,7 +513,13 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     // Worn soil is darker and browner than loose soil of the same kind.
     let worn = mix(vec3(1.0), vec3(0.76, 0.7, 0.64), compacted) * (1.0 - 0.12 * rim);
     let color = (a.color.rgb * w.x + b.color.rgb * w.y + c.color.rgb * w.z) * worn;
-    let local_normal = normalize(a.normal * w.x + b.normal * w.y + c.normal * w.z);
+    // Fresh snow on the bare ground (snow surfaces are snow already): in its surfaces' hollows
+    // first, filling their relief, white and rough.
+    let rise = a.color.a * w.x + b.color.a * w.y + c.color.a * w.z;
+    let dust = fresh_snow_cover(fresh_snow_at(in.world_position.xz), rise, ground_normal.y)
+        * (1.0 - soft);
+    let local_normal = normalize(mix(a.normal * w.x + b.normal * w.y + c.normal * w.z,
+        vec3(0.0, 0.0, 1.0), 0.8 * dust));
     // World-X tangent with the heightfield's +Z bitangent.
     let t = normalize(vec3(ground_normal.y, -ground_normal.x, 0.0));
     let bt = normalize(cross(t, ground_normal));
@@ -520,12 +528,12 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     var pbr = pbr_input_from_vertex_output(in, is_front, false);
     let shade = vec3(surfaces[top.layers.x].shade.x, surfaces[top.layers.y].shade.x, surfaces[top.layers.z].shade.x);
     let response = macro_response(p, world_dx, world_dy, dot(w, shade));
-    pbr.material.base_color = vec4(clamp(color * response, vec3(0.0), vec3(1.0)), 1.0);
-    pbr.material.perceptual_roughness = clamp(a.roughness * w.x + b.roughness * w.y + c.roughness * w.z, 0.08, 1.0);
+    pbr.material.base_color = vec4(mix(clamp(color * response, vec3(0.0), vec3(1.0)), FRESH_SNOW, dust), 1.0);
+    pbr.material.perceptual_roughness = mix(clamp(a.roughness * w.x + b.roughness * w.y + c.roughness * w.z, 0.08, 1.0), 0.9, dust);
     pbr.material.metallic = 0.0;
     pbr.material.reflectance = vec3(0.25);
     pbr.material.flags = pbr_types::STANDARD_MATERIAL_FLAGS_FOG_ENABLED_BIT;
-    let ao = (a.ao * w.x + b.ao * w.y + c.ao * w.z) * occlusion;
+    let ao = mix((a.ao * w.x + b.ao * w.y + c.ao * w.z) * occlusion, 1.0, 0.7 * dust);
     pbr.diffuse_occlusion = vec3(ao);
     pbr.specular_occlusion = ao;
     pbr.N = normal;

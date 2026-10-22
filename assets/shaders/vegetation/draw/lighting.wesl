@@ -5,6 +5,9 @@
 import package::shaders::lighting::surface::{cloud_light, surface_wetness};
 @if(ENVIRONMENT_SURFACE)
 import package::shaders::lighting::forest_shadow::{forest_sky_light, forest_sky_visibility};
+@if(ENVIRONMENT_SURFACE)
+import package::shaders::lighting::ground::fresh_snow_at;
+import package::shaders::environment::maps::{FRESH_SNOW, fresh_snow_cover};
 @if(ATMOSPHERE)
 import bevy_pbr::atmosphere::functions::{clamp_to_surface, calculate_visible_sun_ratio};
 
@@ -170,6 +173,12 @@ fn shade(input: VertexOutput) -> vec4<f32> {
     var albedo = input.color;
     @if(ENVIRONMENT_SURFACE)
     albedo *= mix(1.0, 0.7, surface_wetness(input.world_position, vec3<f32>(0.0, 1.0, 0.0)));
+    // Fresh snow settles on the blades' upper halves, most at their tips, in patches.
+    @if(ENVIRONMENT_SURFACE) {
+        let patches = value_noise(input.world_position.xz * 0.8);
+        let settled = fresh_snow_cover(fresh_snow_at(input.world_position.xz), patches, 1.0);
+        albedo = mix(albedo, FRESH_SNOW, 0.85 * settled * smoothstep(0.35, 1.0, t));
+    }
 
     // Diffuse: a thin sheet, its normal halfway to the clump's ground so a field lit from above
     // reads as lit like the ground beneath it, wrapping the light a little; unresolved blades
