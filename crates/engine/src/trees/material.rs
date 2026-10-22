@@ -39,11 +39,17 @@ pub(super) struct TreeWindExtension {
     touch_field: Handle<Image>,
     #[storage(108, read_only)]
     touch_window: Handle<ShaderBuffer>,
+    /// Where characters shook snow off trees, and where that map lies (`super::shed`).
+    #[texture(109, sample_type = "float", filterable = false)]
+    shed_map: Handle<Image>,
+    #[storage(110, read_only)]
+    shed_window: Handle<ShaderBuffer>,
     crown_shading: bool,
     crown_sky: bool,
     bark_blend: bool,
     bark_sky: bool,
     snow: bool,
+    snow_load: bool,
     #[uniform(105)]
     profile: Vec4,
     #[texture(101)]
@@ -62,6 +68,7 @@ pub(super) struct TreeWindKey {
     bark_blend: bool,
     bark_sky: bool,
     snow: bool,
+    snow_load: bool,
     /// Drawn from the instance buffer (`super::instancing`) rather than per mesh entity; only
     /// that path specializes with it.
     pub(super) instanced: bool,
@@ -75,6 +82,7 @@ impl From<&TreeWindExtension> for TreeWindKey {
             bark_blend: material.bark_blend,
             bark_sky: material.bark_sky,
             snow: material.snow,
+            snow_load: material.snow_load,
             instanced: false,
         }
     }
@@ -115,6 +123,11 @@ impl MaterialExtension for TreeWindExtension {
             if let Some(fragment) = descriptor.fragment.as_mut() {
                 fragment.shader_defs.push("TREE_SNOW".into());
             }
+        }
+
+        // Snow loads drop off their cards where characters shake them (shaders/tree/shed.wesl).
+        if key.bind_group_data.snow_load {
+            descriptor.vertex.shader_defs.push("TREE_SNOW_LOAD".into());
         }
 
         if key.bind_group_data.instanced {
@@ -204,6 +217,19 @@ fn snowy(extras: &str, shading: FoliageShading) -> bool {
     extra_is(extras, "yarra_snow", "settled_v1")
         && (shading == FoliageShading::CrownOcclusion
             || extra_is(extras, "yarra_shading", "bark_sky_v1"))
+}
+
+/// `yarra_snow: "load_v1"`: snow lying on the boughs as meshes, lit as bark is. Each vertex keeps
+/// its card's pivot and normal, so a shaken load drops off its card.
+fn snow_load(extras: &str) -> bool {
+    extra_is(extras, "yarra_snow", "load_v1") && extra_is(extras, "yarra_shading", "bark_sky_v1")
+}
+
+impl TreeWindExtension {
+    /// Whether snow lies on what this material draws.
+    pub(super) fn holds_snow(&self) -> bool {
+        self.snow || self.snow_load
+    }
 }
 
 fn uses_wind(extras: &str) -> bool {
@@ -366,6 +392,8 @@ fn convert(
                         wind: buffer.0.clone(),
                         touch_field: super::touch::field_handle(),
                         touch_window: super::touch::window_handle(),
+                        shed_map: super::shed::map_handle(),
+                        shed_window: super::shed::window_handle(),
                         profile: wind_profile(&extras.value),
                         bark_blend: upper.is_some(),
                         // `yarra_shading: "bark_sky_v1"`: vertex colour is the share of the
@@ -379,6 +407,7 @@ fn convert(
                         crown_shading: shading != FoliageShading::Plain,
                         crown_sky: shading == FoliageShading::CrownOcclusion,
                         snow: snowy(&extras.value, shading),
+                        snow_load: snow_load(&extras.value),
                     },
                 });
                 (material, shading)
@@ -446,7 +475,7 @@ mod tests {
     }
 
     #[test]
-    fn snow_needs_its_versioned_tag_and_the_sky_a_crown_leaves() {
+    fn snow_and_its_loads_need_their_versioned_tags_and_the_sky_a_crown_leaves() {
         let foliage = r#"{"yarra_snow":"settled_v1","yarra_shading":"crown_v2"}"#;
         assert!(snowy(foliage, foliage_shading(foliage)));
         let bark = r#"{"yarra_snow":"settled_v1","yarra_shading":"bark_sky_v1"}"#;
@@ -459,6 +488,13 @@ mod tests {
         ] {
             assert!(!snowy(text, foliage_shading(text)));
         }
+
+        let load = r#"{"yarra_snow":"load_v1","yarra_shading":"bark_sky_v1"}"#;
+        assert!(snow_load(load) && !snowy(load, foliage_shading(load)));
+        assert!(!snow_load(
+            r#"{"yarra_snow":"load_v1","yarra_shading":"crown_v2"}"#
+        ));
+        assert!(!snow_load(bark));
     }
 
     #[test]

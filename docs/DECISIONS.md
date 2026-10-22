@@ -251,6 +251,17 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
   `spruce_snow` is the forest spruce with all three and its own impostor; the planner grows it
   alone on snow ground, which the rest of the forest keeps open. Heightfield loads over each card
   read as paper sheets and are gone.
+- **Shaken snow as a log and a map, like the prints.** *Kept* (October 22). Where a character's
+  body meets the snow a crown holds (a per-form profile of how far its snow reaches by height and
+  bearing), the spot and the heights from below its feet to above its head are logged and drawn
+  into a 64 m map at 25 cm; snowy vertices read it along their limb as they read the touch field,
+  so a bough shaken anywhere sheds beyond that. Needle and bark snow slides off over a third of a
+  second and loads sink into their card as they drop, while bursts of clumps and powder fall from
+  where the snow lay, analytic like the ambient particles. The map is drawn again from the log
+  when the player moves 16 m, so shaken trees stay bare. A shake disc as wide as the body's touch
+  (0.45 m) bared too little to see from the camera; 0.75 m reads as a path through the boughs.
+  Powder as large puffs read as smoke under the crowns; it is fine flakes lit with the snow
+  ground's bounce.
 
 ## Atmosphere & weather
 

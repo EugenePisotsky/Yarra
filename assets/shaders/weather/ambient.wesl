@@ -1,13 +1,14 @@
 // Ambient particles: dust motes, seed fluff and falling leaves as instanced quads in
-// camera-anchored boxes that wrap a world-fixed lattice (crates/atmosphere/src/ambient_particles.rs).
-// Drawn over the resolved HDR scene with a soft depth test, like the rain.
+// camera-anchored boxes that wrap a world-fixed lattice (crates/atmosphere/src/ambient_particles.rs),
+// and snow shaken off branches falling from where it lay (vertex_snow). Drawn over the resolved
+// HDR scene with a soft depth test, like the rain.
 import bevy_pbr::render::mesh_view_types::{Lights, DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT};
 import package::shaders::environment::maps::{cloud_beam, forest_sky_share};
 import package::shaders::sky::sun::cascade_visibility;
 import package::shaders::weather::particles::{environment, view, random3, scene_depth};
 
 struct Ambient {
-    time: vec4<f32>, // x: fraction of the motion period, y: the period in seconds
+    time: vec4<f32>, // x: fraction of the motion period, y: the period in seconds, z: the game clock
     drift: vec4<f32>, // xyz: wind drift velocity (m/s) at full share
     kinds: array<vec4<f32>, 3>, // box size, box height, first instance, instance count
     offsets: array<vec4<f32>, 3>, // accumulated drift (m), w: the kind's drift share
@@ -24,9 +25,22 @@ struct Ambient {
 @group(0) @binding(10) var mist_map: texture_2d<f32>;
 @group(0) @binding(11) var clamp_sampler: sampler;
 
+// A burst of snow shaken off a branch (SnowFall in ambient_particles.rs).
+struct SnowFall {
+    // xyz: render-space centre of the snow's lowest part; w: when it fell, on the game clock.
+    origin: vec4<f32>,
+    // How far it reaches round that and up from it, the share of a whole burst, a seed.
+    shape: vec4<f32>,
+    // xy: horizontal velocity of what shook it; z: the ground it lands on.
+    motion: vec4<f32>,
+}
+@group(0) @binding(12) var<storage, read> snow_falls: array<SnowFall>;
+
 const MOTES: u32 = 0u;
 const FLUFF: u32 = 1u;
 const LEAVES: u32 = 2u;
+const POWDER: u32 = 3u;
+const CLUMP: u32 = 4u;
 const TAU: f32 = 6.2831853;
 const FOUR_PI: f32 = 12.566371;
 // Dust is flakes and fibres, not spheres: as they turn they glint far brighter than a sphere
@@ -36,6 +50,14 @@ const MOTE_GLINT: f32 = 4.0;
 const DOT_NORMAL: f32 = 3.157;
 // Lowest seed height over the ground.
 const FLUFF_LIFT: f32 = 0.3;
+// A whole burst of shaken snow: its first SNOW_CLUMPS particles are clumps, the rest powder, and
+// its powder has settled after SNOW_SECONDS.
+const SNOW_PARTICLES: u32 = 64u;
+const SNOW_CLUMPS: u32 = 14u;
+const SNOW_SECONDS: f32 = 3.0;
+const GRAVITY: f32 = 9.81;
+// Snow lit by the sky also takes the light the snow ground under it throws back up.
+const SNOW_BOUNCE: f32 = 0.8;
 
 struct Particle {
     @builtin(position) position: vec4<f32>,
@@ -318,6 +340,94 @@ fn vertex(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance:
     return out;
 }
 
+// Snow shaken off a branch: clumps drop through the air, a few metres a second at most, while the
+// powder hangs, flung along by what shook it, drifting with the wind and spreading as it sinks.
+// Both are white spheres lit by the sun past its shadow maps and by the sky.
+@vertex
+fn vertex_snow(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance: u32) -> Particle {
+    var out: Particle;
+    out.position = vec4(0.0, 0.0, 0.0, 1.0);
+    out.coords = vec2(0.0);
+    out.view_depth = 0.0;
+    out.radiance = vec3(0.0);
+    out.alpha = 0.0;
+    out.kind = POWDER;
+    out.shape = 0.0;
+    let fall = snow_falls[instance / SNOW_PARTICLES];
+    let index = instance % SNOW_PARTICLES;
+    let age = ambient.time.z - fall.origin.w;
+    let clump = index < SNOW_CLUMPS;
+    // A smaller burst holds fewer of each.
+    let rank = select((f32(index - SNOW_CLUMPS) + 0.5) / f32(SNOW_PARTICLES - SNOW_CLUMPS),
+        (f32(index) + 0.5) / f32(SNOW_CLUMPS), clump);
+    if age < 0.0 || age > SNOW_SECONDS || rank > fall.shape.z {
+        return out;
+    }
+
+    let seed = u32(fall.shape.w) * SNOW_PARTICLES + index;
+    let a = random3(seed * 3u + 29u);
+    let b = random3(seed * 5u + 611u);
+    let c = random3(seed * 7u + 1307u);
+    let angle = TAU * a.x;
+    let across = sqrt(a.y) * fall.shape.x;
+    let start = fall.origin.xyz + vec3(cos(angle) * across, a.z * fall.shape.y, sin(angle) * across);
+    // Falling against the air's drag: towards its terminal speed and the wind's drift, from the
+    // fling it left with, over tau.
+    let terminal = select(mix(0.3, 0.8, b.x), mix(2.5, 4.5, b.x), clump);
+    let tau = terminal / GRAVITY;
+    let drift = ambient.drift.xyz * select(0.5, 0.1, clump);
+    let toss = (b - 0.5) * vec3(0.8, 0.4, 0.8) * select(1.0, 0.4, clump);
+    let fling = vec3(fall.motion.x, 0.0, fall.motion.y) * select(0.35, 0.15, clump) + toss;
+    let settled = vec3(drift.x, -terminal, drift.z);
+    var p = start + settled * age + (fling - settled) * tau * (1.0 - exp(-age / tau));
+    var radius: f32;
+    var alpha: f32;
+    if clump {
+        // Gone where it lands.
+        if p.y < fall.motion.z {
+            return out;
+        }
+        radius = mix(0.025, 0.06, c.y);
+        alpha = 0.95 * smoothstep(0.0, 0.03, age);
+    } else {
+        let swirl = smoothstep(0.0, 1.5, age) * 0.15;
+        p += vec3(sin(age * mix(1.5, 3.0, c.x) + TAU * c.y), 0.0, cos(age * mix(1.2, 2.5, c.z) + TAU * a.x)) * swirl;
+        let life = mix(1.2, SNOW_SECONDS, c.x);
+        radius = mix(0.025, 0.06, c.y) * (1.0 + 1.2 * min(age, 1.5));
+        alpha = 0.35 * smoothstep(0.0, 0.08, age) * (1.0 - smoothstep(0.35 * life, life, age))
+            * smoothstep(-0.1, 0.25, p.y - fall.motion.z);
+    }
+
+    let sun = environment.sun.xyz;
+    let ray = normalize(p - view.world_position);
+    let mu = dot(sun, ray);
+    let sunlight = environment.near_sun.rgb * shadow_map_visibility(p) * cloud_visibility(p) * step(0.0, sun.y);
+    let sky = environment.ambient.rgb * environment.ambient.w * sky_visibility(p);
+    let moon = environment.moon_color.rgb * environment.moon.w;
+    let moon_mu = dot(environment.moon.xyz, ray);
+    // Powder is fine grains, scattering forwards a little; a clump is a pale sphere.
+    let sun_phase = select(0.4 * phase(mu, 0.4) + 0.6 * sphere_phase(mu), sphere_phase(mu), clump);
+    let moon_phase = select(0.4 * phase(moon_mu, 0.4) + 0.6 * sphere_phase(moon_mu), sphere_phase(moon_mu), clump);
+    let radiance = 0.9 * (sunlight * sun_phase + moon * moon_phase + sky * (1.0 + SNOW_BOUNCE) / 3.14159265);
+
+    let corner = vertex % 6u;
+    let cx = select(-1.0, 1.0, corner == 1u || corner == 2u || corner == 4u);
+    let cy = select(-1.0, 1.0, corner == 2u || corner == 4u || corner == 5u);
+    let world_corner = p + (view.world_from_view[0].xyz * cx + view.world_from_view[1].xyz * cy) * radius;
+    let clip = view.unjittered_clip_from_world * vec4(world_corner, 1.0);
+    if clip.w < 0.2 {
+        return out;
+    }
+    alpha *= smoothstep(0.3, 1.0, clip.w) * exp(-environment.fog.w * clip.w);
+    out.position = clip;
+    out.coords = vec2(cx, cy);
+    out.view_depth = clip.w;
+    out.radiance = radiance * view.exposure;
+    out.alpha = alpha;
+    out.kind = select(POWDER, CLUMP, clump);
+    return out;
+}
+
 @fragment
 fn fragment(in: Particle) -> @location(0) vec4<f32> {
     var shape: f32;
@@ -331,6 +441,13 @@ fn fragment(in: Particle) -> @location(0) vec4<f32> {
         let d = abs(in.coords.y) - half_width;
         shape = clamp(0.5 - d / max(fwidth(d), 1e-3), 0.0, 1.0);
         softness = 0.03;
+    } else if in.kind == CLUMP {
+        shape = 1.0 - smoothstep(0.55, 1.0, dot(in.coords, in.coords));
+        softness = 0.05;
+    } else if in.kind == POWDER {
+        let r2 = dot(in.coords, in.coords);
+        shape = exp(-2.5 * r2) * (1.0 - smoothstep(0.6, 1.0, r2));
+        softness = 0.2;
     } else {
         let r2 = dot(in.coords, in.coords);
         shape = exp(-3.0 * r2) * (1.0 - smoothstep(0.7, 1.0, r2));

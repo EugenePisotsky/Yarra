@@ -1,13 +1,16 @@
 //! Forms: each object that ends in an impostor, by impostor, with its mesh LODs' primitives
 //! and materials. One hidden template scene per mesh LOD lets the trees' material conversion
 //! (`super::super::material`) make the same tree materials it makes for every tree scene; the
-//! templates stay for as long as the game runs, so their meshes and materials stay loaded.
+//! templates stay for as long as the game runs, so their meshes and materials stay loaded. A
+//! form's nearest LOD also gives where its snow lies, which characters shake off
+//! (`super::super::shed`).
 use super::super::impostor::{
     ImpostorBatch, ImpostorDescriptor, ImpostorMaterial, ImpostorMaterialInputs, ImpostorMaterials,
     TreeFormSpec, instanced_quad, quad_reach,
 };
 
 use super::super::material::{TreeWindMaterial, WindBoundsPending, WindChecked};
+use super::super::shed::SnowProfile;
 use super::super::wind::WindBuffer;
 use super::MAX_REPRESENTATIONS;
 use atmosphere::environment::EnvironmentAssets;
@@ -41,6 +44,8 @@ pub(super) struct Form {
     pub(super) impostor_sphere: Vec4,
     /// Its views' texels per metre, which place its hand-off.
     pub(super) texels_per_metre: f32,
+    /// Where its snow lies, for forms holding any.
+    snow: Option<Arc<SnowProfile>>,
     pub(super) ready: bool,
     failed: bool,
 }
@@ -65,6 +70,12 @@ impl TreeForms {
     pub(crate) fn ready(&self, impostor: &str) -> bool {
         self.index(impostor)
             .is_some_and(|index| self.forms[index as usize].ready)
+    }
+
+    /// Where the snow of the form of `impostor` lies, once it is ready and if it holds any.
+    pub(crate) fn snow(&self, impostor: &str) -> Option<Arc<SnowProfile>> {
+        self.index(impostor)
+            .and_then(|index| self.forms[index as usize].snow.clone())
     }
 }
 
@@ -129,6 +140,7 @@ pub(super) fn register(
             impostor: None,
             impostor_sphere: Vec4::ZERO,
             texels_per_metre: 0.0,
+            snow: None,
             ready: false,
             failed: false,
         });
@@ -155,6 +167,7 @@ pub(super) fn harvest(
         Option<ResMut<ImpostorMaterials>>,
         Option<ResMut<Assets<ImpostorMaterial>>>,
     ),
+    (meshes, tree_materials): (Res<Assets<Mesh>>, Res<Assets<TreeWindMaterial>>),
 ) {
     let forms = forms.as_mut();
     let mut readied = false;
@@ -234,11 +247,13 @@ pub(super) fn harvest(
 
         form.impostor_sphere = impostor_sphere(descriptor);
         form.texels_per_metre = descriptor.texels_per_metre;
+        form.snow = snow_profile(form, &meshes, &tree_materials);
         debug!(
-            "TREE_GPU_FORM {} height={:.1} texels_per_metre={:.2} parts={:?} impostor_sphere={:?}",
+            "TREE_GPU_FORM {} height={:.1} texels_per_metre={:.2} snow={} parts={:?} impostor_sphere={:?}",
             form.spec.impostor,
             form.spec.height,
             form.texels_per_metre,
+            form.snow.is_some(),
             form.lods
                 .iter()
                 .map(|parts| parts.iter().flatten().map(|p| p.bounds).collect::<Vec<_>>())
@@ -258,6 +273,30 @@ pub(super) fn harvest(
     if readied {
         forms.revision += 1;
     }
+}
+
+/// Where the snow of a form's nearest LOD lies: the points of its primitives that hold snow.
+fn snow_profile(
+    form: &Form,
+    meshes: &Assets<Mesh>,
+    materials: &Assets<TreeWindMaterial>,
+) -> Option<Arc<SnowProfile>> {
+    let parts = form.lods.first()?.as_ref()?;
+    let snowy = parts.iter().filter(|part| {
+        materials
+            .get(&part.material)
+            .is_some_and(|m| m.extension.holds_snow())
+    });
+    let points = snowy
+        .filter_map(|part| {
+            meshes
+                .get(&part.mesh)?
+                .attribute(Mesh::ATTRIBUTE_POSITION)?
+                .as_float3()
+        })
+        .flatten()
+        .map(|&p| Vec3::from_array(p));
+    SnowProfile::of(points).map(Arc::new)
 }
 
 /// A sphere round the impostor's quad facing any way, leaning in any wind.

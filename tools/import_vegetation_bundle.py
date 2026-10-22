@@ -126,9 +126,10 @@ def adapt_foliage(doc, blob, blend):
                 # Bark whose vertex colour is its sky visibility past the crown, not a tint.
                 if material['extras'].get('vegetation_occlusion') == 'bark_sky_v1':
                     material['extras']['yarra_shading'] = 'bark_sky_v1'
-            # Snow settled on the tree (shaders/tree/snow.wesl), foliage's in its ORM's blue.
-            if material.get('extras', {}).get('vegetation_snow') == 'settled_v1':
-                material['extras']['yarra_snow'] = 'settled_v1'
+            # Snow settled on the tree (shaders/tree/snow.wesl), foliage's in its ORM's blue, and
+            # the snow loads lying on its boughs, which characters shake off (tree/shed.wesl).
+            if material.get('extras', {}).get('vegetation_snow') in ('settled_v1', 'load_v1'):
+                material['extras']['yarra_snow'] = material['extras']['vegetation_snow']
             if material.get('alphaMode') == 'MASK':
                 extras = material.setdefault('extras', {})
                 bare_wood = extras.get('vegetation_surface') == 'bare_wood'

@@ -156,9 +156,10 @@ fn fragment(
         select(-1.0, 1.0, top));
     pbr_input.material.base_color.a = max(needles, cover);
 }
-@if(TREE_SNOW && TREE_BARK_SKY && VERTEX_COLORS)
+    // uv_b.x holds the share of the bark's snow characters have not shaken off.
+@if(TREE_SNOW && TREE_BARK_SKY && VERTEX_COLORS && VERTEX_UVS_B)
     snow::settle(&pbr_input, snow::bark_cover(normalize(in.world_normal).y,
-        clamp(in.color.r, 0.0, 1.0), in.world_position.xyz), 1.0);
+        clamp(in.color.r, 0.0, 1.0), in.world_position.xyz) * in.uv_b.x, 1.0);
 
     // alpha discard
     pbr_input.material.base_color = alpha_discard(
