@@ -293,6 +293,15 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
   is endless and wind-driven, which particles and fog do at runtime; baked effects wait for
   one-off set pieces.
 
+- **Blowing snow is a medium of the fog, driven by one pattern of gusts.** *Kept* (October 22,
+  after the user's photo of a ground blizzard). Snow lifts off snow ground where the air near it
+  runs past 3.5 m/s and blows in full from 6: in a blizzard the gusts carried downwind lift it in
+  passing sheets, in steady snow only in the strongest gusts. It is integrated in the sky
+  composite with the haze, mist and weather fog: a layer 0.3 m deep under a thin veil, in
+  streaks drawn out along the wind, lit a little brighter than the weather fog over snow so it
+  shows over white ground. The gusts are one frozen pattern evaluated alike on the CPU and GPU,
+  so a sheet that passes the camera also hurries its snowflakes.
+
 - **A moving moon, not a fixed giant planet.** *Planet rejected* (October 11, `feat/planet`,
   `5a35e8f`): "a moving moon is better". Fix flat dusks inside the moon model; measure key/fill
   (liked 0.5–10, flat 0–0.1).

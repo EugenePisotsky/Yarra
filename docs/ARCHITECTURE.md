@@ -241,6 +241,12 @@ SQLite. The renderers (Bevy) have no SQLite: `engine` is the only library joinin
 - Owns the sky and the air: `WorldEnvironmentPlugin` (`game()`/`editor()`), `AtmosphereState`,
   `AtmosphereOwner` (Game, Editor, Isolated), the sky composite (`sky`), clouds, light shafts,
   sun glare, rain, particles, lightning, eye adaptation, the tone map (`WORLD_TONEMAPPING`).
+- Owns the wind near the ground (`wind`): its air speed (`AIR_SPEED` per unit of weather wind
+  strength) and one pattern of gusts carried downwind with the air (`Gusts`, twinned on the GPU
+  by `weather/gust.wesl`). Rain and the ambient particles move with the gust at the camera;
+  blowing snow (`sky/drift.wesl`, a medium of the sky composite's fog) lifts where the gusts
+  pass its onset over snow ground, which it finds in the ground albedo map. Trees and grass
+  still sway to `vegetation_render::VegetationWind`.
 - Owns what all lit materials share (`environment::EnvironmentParams` and its maps), the
   terrain-derived maps (`valley_mist`, `shore`, `terrain_shadow`) and the place of the ground
   albedo map around the camera (`ground_albedo`), which a terrain renderer fills.

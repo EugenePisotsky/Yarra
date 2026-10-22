@@ -42,10 +42,14 @@ const LUMINANCE: Vec3 = Vec3::new(0.2126, 0.7152, 0.0722);
 /// blizzard ground and sky meet without a horizon.
 const SNOW_BOUNCE: f32 = 0.8;
 
-/// Inputs for the low air and the sea: valley mist, presentation switches, look tuning, the
-/// sea surface and its shore.
+/// Blowing snow's light as a share of the weather fog's over snow ground.
+const DRIFT_GLOW: f32 = 1.4;
+
+/// Inputs for the low air and the sea: valley mist, the gusts, presentation switches, look
+/// tuning, the sea surface and its shore.
 type LowAir<'w> = (
     Res<'w, crate::valley_mist::ValleyMist>,
+    Res<'w, crate::wind::Gusts>,
     Option<Res<'w, crate::AtmospherePresentation>>,
     Option<Res<'w, crate::FogTuning>>,
     Option<Res<'w, crate::SeaSurface>>,
@@ -74,7 +78,7 @@ pub(super) fn sync(
         Res<crate::terrain_shadow::TerrainShadow>,
         Res<crate::ground_albedo::GroundAlbedo>,
     ),
-    (mist, presentation, tuning, sea, shore): LowAir,
+    (mist, gusts, presentation, tuning, sea, shore): LowAir,
     mut mist_fade: Local<(u64, f32)>,
 ) {
     let profile = state.effective_profile();
@@ -177,15 +181,30 @@ pub(super) fn sync(
         flash.map_or(0., |f| f.flash),
     );
 
-    if let Some(fog) = state
-        .weather_fog()
-        .filter(|f| profile.outdoor && f.extinction > 0.)
-    {
-        let lit = light.ambient * (1. + SNOW_BOUNCE * state.snow.clamp(0., 1.))
-            + (light.sun + light.moon) * 0.025;
+    let fog = state.weather_fog().filter(|_| profile.outdoor);
+    let snow = state.snow.clamp(0., 1.);
+
+    if let Some(fog) = fog.filter(|f| f.extinction > 0.) {
+        let lit = even_light(&light, snow, sun.y);
         params.fog = (Vec3::from_array(fog.tint_linear) * lit + light.flash)
             .extend(fog.extinction)
             .to_array();
+    }
+
+    // Blowing snow over snow ground scatters as the weather fog there does, and a little more:
+    // lit from the ground below as well as from above, it shows brighter than the snow it
+    // blows over.
+    if let Some(fog) = fog.filter(|_| world && snow > 0.) {
+        let lit = even_light(&light, 1., sun.y) * DRIFT_GLOW;
+        params.drift = (Vec3::from_array(fog.tint_linear) * lit + light.flash)
+            .extend(snow)
+            .to_array();
+    }
+
+    if world {
+        let offsets = gusts.offsets(origin.0);
+        params.gusts = [gusts.direction.x, gusts.direction.y, offsets[0], offsets[1]];
+        params.wind = [gusts.speed, gusts.swell, gusts.travelled(), 0.];
     }
 
     // The map also gives falling leaves their ground.
@@ -463,6 +482,16 @@ fn air_light(
     }
 }
 
+/// Light the weather fog and blowing snow scatter evenly: the sky's, and a little of the sun's
+/// and moon's. Over snow ground (`snow`, its share around the camera) they also take the light the
+/// ground throws back up, the sky's and the sun's at its height `sun_height`.
+fn even_light(light: &AirLight, snow: f32, sun_height: f32) -> Vec3 {
+    let bounce = SNOW_BOUNCE * snow;
+    light.ambient * (1. + bounce)
+        + light.sun * (0.025 + bounce * sun_height.max(0.) / std::f32::consts::TAU)
+        + light.moon * 0.025
+}
+
 /// Approximate clear-air extinction of moonlight for the cloud lighting path. Authored lux is
 /// outside the atmosphere; it must not illuminate clouds or haze after the moon has set.
 fn cloud_illuminance(lux: f32, elevation_sine: f32) -> f32 {
@@ -486,6 +515,7 @@ mod tests {
             .insert_resource(time)
             .init_resource::<CloudClock>()
             .init_resource::<EnvironmentOrigin>()
+            .init_resource::<crate::wind::Gusts>()
             .init_resource::<CloudQuality>()
             .init_resource::<EnvironmentParams>()
             .init_resource::<crate::shelter::RainShelter>()
@@ -541,6 +571,7 @@ mod tests {
             .init_resource::<Time>()
             .init_resource::<CloudClock>()
             .init_resource::<EnvironmentOrigin>()
+            .init_resource::<crate::wind::Gusts>()
             .init_resource::<CloudQuality>()
             .init_resource::<EnvironmentParams>()
             .init_resource::<crate::shelter::RainShelter>()

@@ -1,10 +1,11 @@
-// Ground haze, valley mist and weather fog along the sky composite's view rays.
+// Ground haze, valley mist, weather fog and blowing snow along the sky composite's view rays.
 import package::shaders::sky::air::{
     scattering, OPEN_DEPTH, OPEN_DENSITY, WISP_LIFT, mist_texel, mist_wisps,
 };
 import package::shaders::sky::composite_common::{
     environment, mist_map, mist_sampler, noise, noise_sampler, Path, in_front,
 };
+import package::shaders::sky::drift::drift_depth;
 @if(ATMOSPHERE)
 import bevy_pbr::atmosphere::bindings::view;
 @else
@@ -12,9 +13,9 @@ import package::shaders::sky::composite_common::view;
 @if(ATMOSPHERE)
 import package::shaders::sky::celestial::clear_sky;
 
-// Ground haze, valley mist and weather fog over the first `distance` metres of a ray, as one
-// medium in front of everything beyond: each adds its optical depth, and the light scattered
-// towards the eye is their mix by optical depth.
+// Ground haze, valley mist, weather fog and blowing snow over the first `distance` metres of a
+// ray, as one medium in front of everything beyond: each adds its optical depth, and the light
+// scattered towards the eye is their mix by optical depth.
 struct Fog {
     // Exposed light scattered towards the eye where the fog is opaque, and optical depth.
     light: vec3<f32>,
@@ -26,22 +27,26 @@ struct Fog {
 struct FogLight {
     haze: vec3<f32>,
     mist: vec3<f32>,
+    drift: vec3<f32>,
 }
 
 fn fog_light(ray: vec3<f32>) -> FogLight {
     let air = environment.air_light.rgb + environment.air_sun.rgb * scattering(dot(ray, environment.sun.xyz));
-    return FogLight(haze_light(ray, air) * view.exposure, air * view.exposure);
+    return FogLight(haze_light(ray, air) * view.exposure, air * view.exposure,
+        environment.drift.rgb * view.exposure);
 }
 
 fn fog_along(ray: vec3<f32>, distance: f32, lights: FogLight) -> Fog {
     let weather = environment.fog.w * distance;
     let haze = haze_depth(ray, distance);
     let mist = mist_depth(ray, distance);
-    let depth = weather + haze + mist;
+    let drift = drift_depth(ray, distance);
+    let depth = weather + haze + mist + drift;
     if depth <= 0.0 {
         return Fog(vec3(0.0), 0.0);
     }
-    let light = environment.fog.rgb * view.exposure * weather + lights.haze * haze + lights.mist * mist;
+    let light = environment.fog.rgb * view.exposure * weather + lights.haze * haze + lights.mist * mist
+        + lights.drift * drift;
     return Fog(light / depth, depth);
 }
 

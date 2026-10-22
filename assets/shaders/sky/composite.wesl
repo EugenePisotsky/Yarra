@@ -137,7 +137,8 @@ fn fragment(in: FullscreenVertexOutput) -> Output {
     if any(uv < vec2(0.0)) || any(uv > vec2(1.0)) {
         discard;
     }
-    let fog = environment.fog.w > 0.0 || environment.low_haze.x > 0.0 || environment.mist.x > 0.0;
+    let fog = environment.fog.w > 0.0 || environment.low_haze.x > 0.0 || environment.mist.x > 0.0
+        || environment.drift.w > 0.0;
     // Clouds are traced only above this elevation; `start` is the distance to their base.
     // A closing deck continues down to the horizon at its lowest traced elevation, so no band of
     // clear sky shows beneath it.
@@ -191,7 +192,7 @@ fn fragment(in: FullscreenVertexOutput) -> Output {
     let sea_t = NO_SEA;
 
     // The fog's light, once for every sample.
-    var fog_lights = FogLight(vec3(0.0), vec3(0.0));
+    var fog_lights = FogLight(vec3(0.0), vec3(0.0), vec3(0.0));
     if fog {
         fog_lights = fog_light(ray);
     }

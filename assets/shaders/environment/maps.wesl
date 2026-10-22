@@ -1,4 +1,5 @@
-// Lookups into the environment's maps: the cloud layer's shadow, rain shelter and the forest map.
+// Lookups into the environment's maps: the cloud layer's shadow, rain shelter, the forest map and
+// the ground albedo map.
 // Materials bind the maps in their material group (lighting/surface.wesl,
 // lighting/forest_shadow.wesl) and passes in their own groups, so each lookup takes its map and
 // the placement it needs.
@@ -70,4 +71,46 @@ fn forest_sky_share(map: texture_2d<f32>, map_sampler: sampler, placement: vec4<
         return 1.0;
     }
     return mix(1.0, mix(SKY_FLOOR, 1.0, around.b), strength);
+}
+
+// The ground around the camera, seen from above (crates/atmosphere/src/ground_albedo.rs, filled
+// by terrain/ground_albedo.wesl) at render XZ `p`: its albedo, and the cosine at which the sun's
+// beam meets it past the terrain's horizon. `near` and `far` place its layers (`ground_near`,
+// `ground_far`); the near layer lies over the far one and fades into it at its edge, and ground
+// neither holds is `open`.
+fn ground_texel(map: texture_2d_array<f32>, map_sampler: sampler, near: vec4<f32>,
+    far: vec4<f32>, p: vec2<f32>, open: vec4<f32>) -> vec4<f32> {
+    if near.z <= 0.0 {
+        return open;
+    }
+    let size = f32(textureDimensions(map).x);
+    let near_weight = ground_layer_weight(p, near, size, GROUND_NEAR_FADE);
+    let near_texel = ground_layer_texel(map, map_sampler, p, near, size, 0u, near_weight);
+    if near_weight >= 1.0 {
+        return near_texel;
+    }
+    let far_weight = ground_layer_weight(p, far, size, 1.0);
+    let far_texel = ground_layer_texel(map, map_sampler, p, far, size, 1u, far_weight);
+    return mix(mix(open, far_texel, far_weight), near_texel, near_weight);
+}
+
+// The ground map's near layer fades into the far one over this many of its texels.
+const GROUND_NEAR_FADE: f32 = 8.0;
+
+// How much of a layer placed at `placement` (`size` texels a side) holds at `p`: none past its
+// edge, all from `fade` texels inside it, measured from the outer texels' centres so filtering
+// never reaches past them.
+fn ground_layer_weight(p: vec2<f32>, placement: vec4<f32>, size: f32, fade: f32) -> f32 {
+    let texels = (p - placement.xy) / placement.z;
+    let inside = min(min(texels.x, texels.y), size - max(texels.x, texels.y)) - 0.5;
+    return clamp(inside / fade, 0.0, 1.0);
+}
+
+fn ground_layer_texel(map: texture_2d_array<f32>, map_sampler: sampler, p: vec2<f32>,
+    placement: vec4<f32>, size: f32, layer: u32, weight: f32) -> vec4<f32> {
+    if weight <= 0.0 {
+        return vec4(0.0);
+    }
+    let uv = (p - placement.xy) / (placement.z * size);
+    return textureSampleLevel(map, map_sampler, uv, layer, 0.0);
 }

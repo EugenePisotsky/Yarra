@@ -134,9 +134,6 @@ const LAYERS: [Layer; 3] = [
 
 const FALL_SPEED: f32 = 8.5;
 
-/// Horizontal drift at unscaled weather wind.
-const DRIFT_SPEED: f32 = 2.5;
-
 /// Motion-blur length of a streak, as seconds of fall.
 const STREAK_SECONDS: f32 = 0.02;
 
@@ -229,7 +226,10 @@ impl Plugin for PrecipitationPlugin {
             ExtractResourcePlugin::<RainSplashes>::default(),
             ExtractComponentPlugin::<PrecipitationView>::default(),
         ))
-        .add_systems(PostUpdate, sync.after(ApplyAtmosphere));
+        .add_systems(
+            PostUpdate,
+            sync.after(ApplyAtmosphere).after(crate::wind::advance),
+        );
         app.sub_app_mut(RenderApp)
             .add_systems(RenderStartup, init)
             .add_systems(
@@ -247,6 +247,7 @@ type RainViews<'w, 's> =
 fn sync(
     mut commands: Commands,
     state: Res<AtmosphereState>,
+    gusts: Res<crate::wind::Gusts>,
     presentation: Res<PrecipitationPresentation>,
     time: Res<Time>,
     views: RainViews,
@@ -263,13 +264,10 @@ fn sync(
         .filter(|_| !state.isolated() && state.profile.outdoor)
         .map_or(0.0, |w| w.precipitation.clamp(0.0, 1.0))
         * (1.0 - state.snow.clamp(0.0, 1.0));
-    let wind = state.weather.map_or(1.0, |w| w.wind_strength);
-    let direction = state.profile.clouds.wind_degrees.to_radians();
-    let velocity = Vec3::new(
-        direction.cos() * DRIFT_SPEED * wind,
-        -FALL_SPEED,
-        direction.sin() * DRIFT_SPEED * wind,
-    );
+
+    // The rain moves with the gust at the camera.
+    let drift = gusts.direction * gusts.speed * gusts.here;
+    let velocity = Vec3::new(drift.x, -FALL_SPEED, drift.y);
 
     // Integrate rather than multiply elapsed time by velocity: wind changes stay continuous.
     let step = f64::from(time.delta_secs().min(0.1));
@@ -518,6 +516,7 @@ mod tests {
                 ..default()
             })
             .init_resource::<PrecipitationPresentation>()
+            .init_resource::<crate::wind::Gusts>()
             .init_resource::<RainFrame>()
             .init_resource::<PrecipitationReference>()
             .add_systems(Update, sync);

@@ -141,6 +141,15 @@ pub(crate) struct EnvironmentParams {
     /// render coordinates, metres per texel (0 off).
     pub ground_near: [f32; 4],
     pub ground_far: [f32; 4],
+    /// The gusts (`crate::wind`): the wind's unit direction in XZ, and where their pattern lies
+    /// along and across it at render XZ zero, metres.
+    pub gusts: [f32; 4],
+    /// The air near the ground: mean speed in metres a second, the gusts' swell as a share of
+    /// it, and the share of the gusts' period it has travelled downwind.
+    pub wind: [f32; 4],
+    /// Blowing snow: unexposed light it scatters towards the eye where it is opaque, and the
+    /// share of snow ground around the camera (0: none blows).
+    pub drift: [f32; 4],
     /// The channel's segments, ends in pairs (xyz, width): `crate::lightning::channel`.
     pub lightning_segments: [[f32; 4]; 2 * crate::lightning::SEGMENTS],
 }
@@ -169,6 +178,7 @@ impl Plugin for EnvironmentPlugin {
             .init_resource::<crate::terrain_shadow::TerrainShadow>()
             .init_resource::<crate::ground_albedo::GroundAlbedo>()
             .init_resource::<EnvironmentOrigin>()
+            .init_resource::<crate::wind::Gusts>()
             .init_resource::<EnvironmentParams>()
             .init_resource::<ForestSkyLevels>();
 
@@ -187,7 +197,12 @@ impl Plugin for EnvironmentPlugin {
         .add_systems(
             PostUpdate,
             (
-                (crate::ground_albedo::follow_view, sync::sync).chain(),
+                (
+                    crate::wind::advance,
+                    crate::ground_albedo::follow_view,
+                    sync::sync,
+                )
+                    .chain(),
                 publish::publish::<crate::shelter::RainShelter>,
                 publish::publish_forest_shadow,
                 publish::publish::<crate::valley_mist::ValleyMist>,

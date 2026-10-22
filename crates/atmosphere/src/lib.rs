@@ -18,6 +18,7 @@ pub mod sunlight;
 pub mod terrain_shadow;
 mod tonemapping;
 pub mod valley_mist;
+pub mod wind;
 
 use bevy::{
     camera::Exposure,

@@ -60,10 +60,6 @@ fn terrain_shadow_parameters() -> vec4<f32> {
 fn terrain_light_parameters() -> vec4<f32> {
     return environment.terrain_light;
 }
-/// Ground albedo map layer `layer` (0 near, 1 far): first corner xz, metres per texel (0 off).
-fn ground_map_parameters(layer: u32) -> vec4<f32> {
-    return select(environment.ground_near, environment.ground_far, layer == 1u);
-}
 
 /// 1 where rain reaches `p`, 0 under full cover. Bilinear coverage, as on the CPU.
 fn rain_shelter(p: vec3<f32>) -> f32 {

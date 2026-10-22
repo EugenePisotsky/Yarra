@@ -93,9 +93,6 @@ const KINDS: [Kind; 5] = [
     },
 ];
 
-/// Horizontal wind drift at unscaled weather wind, as for the rain.
-const DRIFT_SPEED: f32 = 2.5;
-
 /// Every periodic motion completes whole cycles in this many seconds, so wrapping the clock
 /// never makes a particle jump.
 const MOTION_PERIOD: f64 = 3600.0;
@@ -193,7 +190,10 @@ impl Plugin for AmbientParticlesPlugin {
             ExtractResourcePlugin::<AmbientFrame>::default(),
             ExtractComponentPlugin::<AmbientParticlesView>::default(),
         ))
-        .add_systems(PostUpdate, sync.after(ApplyAtmosphere));
+        .add_systems(
+            PostUpdate,
+            sync.after(ApplyAtmosphere).after(crate::wind::advance),
+        );
         app.sub_app_mut(RenderApp)
             .add_systems(RenderStartup, init)
             .add_systems(
@@ -235,19 +235,15 @@ fn smoothstep(a: f32, b: f32, x: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
-/// Slow swells of the wind, shared by every particle.
-fn gust(seconds: f64) -> f32 {
-    let t = seconds as f32;
-    1.0 + 0.35 * (t * 0.21).sin() * (t * 0.13 + 1.0).sin()
-}
-
 type ParticleViews<'w, 's> =
     Query<'w, 's, (Entity, Option<&'static AmbientParticlesView>), With<WorldEnvironmentView>>;
 
-/// What the particles follow: the weather and time of day, the clock, and snow shaken off.
+/// What the particles follow: the weather and time of day, the gusts, the clock, and snow shaken
+/// off.
 #[derive(bevy::ecs::system::SystemParam)]
 struct ParticleInputs<'w> {
     state: Res<'w, AtmosphereState>,
+    gusts: Res<'w, crate::wind::Gusts>,
     presentation: Option<Res<'w, AtmospherePresentation>>,
     time: Res<'w, Time>,
     falls: Res<'w, SnowFalls>,
@@ -262,18 +258,19 @@ fn sync(
 ) {
     let ParticleInputs {
         state,
+        gusts,
         presentation,
         time,
         falls,
     } = inputs;
     let enabled = presentation.is_none_or(|p| p.particles);
     let amounts = if enabled { amounts(&state) } else { [0.0; 5] };
-    let wind = state.weather.map_or(1.0, |w| w.wind_strength);
-    let direction = state.profile.clouds.wind_degrees.to_radians();
     let elapsed = time.elapsed_secs_f64();
-    let drift = Vec3::new(direction.cos(), 0.0, direction.sin()) * DRIFT_SPEED * wind;
+    let drift = Vec3::new(gusts.direction.x, 0.0, gusts.direction.y) * gusts.speed;
     let step = f64::from(time.delta_secs().min(0.1));
-    let velocity = drift * gust(elapsed);
+
+    // Every particle moves with the gust at the camera.
+    let velocity = drift * gusts.here;
 
     for (offset, kind) in offsets.iter_mut().zip(&KINDS) {
         let v = [velocity.x * kind.drift, kind.rise, velocity.z * kind.drift];
@@ -600,6 +597,7 @@ mod tests {
             .insert_resource(AtmosphereState::default())
             .insert_resource(presentation)
             .init_resource::<AmbientFrame>()
+            .init_resource::<crate::wind::Gusts>()
             .init_resource::<SnowFalls>()
             .add_systems(Update, sync);
 
