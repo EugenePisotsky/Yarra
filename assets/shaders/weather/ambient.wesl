@@ -12,7 +12,8 @@ struct Ambient {
     time: vec4<f32>, // x: fraction of the motion period, y: the period in seconds, z: the game clock
     drift: vec4<f32>, // xyz: wind drift velocity (m/s) at full share
     kinds: array<vec4<f32>, 5>, // box size, box height, first instance, instance count
-    offsets: array<vec4<f32>, 5>, // accumulated drift (m), w: the kind's drift share
+    offsets: array<vec4<f32>, 5>, // accumulated drift (m)
+    velocities: array<vec4<f32>, 5>, // velocity (m/s): the wind's share the kind follows, its own fall
     amounts: array<vec4<f32>, 2>, // share of each kind present, four a vec4
 }
 @group(0) @binding(0) var<uniform> ambient: Ambient;
@@ -52,6 +53,8 @@ const FLUFF_LIFT: f32 = 0.3;
 const SNOW_PARTICLES: u32 = 64u;
 const SNOW_CLUMPS: u32 = 20u;
 const SNOW_SECONDS: f32 = 3.0;
+// Flakes blur over this much of their motion, seconds: a film shutter's at fifty frames.
+const STREAK_SECONDS: f32 = 0.02;
 const GRAVITY: f32 = 9.81;
 // Snow lit by the sky also takes the light the snow ground under it throws back up, as the
 // weather fog does over snow ground (`SNOW_BOUNCE` in crates/atmosphere/src/environment/sync.rs).
@@ -236,7 +239,7 @@ fn vertex(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance:
         let cycles = round(mix(170.0, 300.0, b.x));
         let age = fract(ambient.time.x * cycles + b.y);
         let seconds = ambient.time.y / cycles;
-        let spawn = p.xz - ambient.drift.xz * ambient.offsets[LEAVES].w * age * seconds;
+        let spawn = p.xz - ambient.velocities[LEAVES].xz * age * seconds;
         let crown = crown_at(spawn);
         // Denser crowns shed more.
         if crown.b < mix(0.05, 0.6, b.z) { return out; }
@@ -336,7 +339,22 @@ fn vertex(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance:
         // Particles brushing past the lens would fill the screen.
         alpha *= smoothstep(0.2, 0.6, centre.w) * exp(-environment.fog.w * centre.w);
         if alpha < 1e-5 { return out; }
-        let pixel = centre.xy / centre.w * half_size + vec2(cx, cy) * drawn;
+        // A flake crossing the view fast blurs into a streak: drawn from where it was
+        // STREAK_SECONDS ago to where it is, its light spread along it.
+        var along = vec2(0.0);
+        if flake {
+            let before = view.unjittered_clip_from_world
+                * vec4(p - ambient.velocities[kind].xyz * STREAK_SECONDS, 1.0);
+            if before.w > 0.2 {
+                along = (centre.xy / centre.w - before.xy / before.w) * half_size;
+            }
+        }
+        let streak = length(along);
+        let axis = select(vec2(1.0, 0.0), along / max(streak, 1e-6), streak > 1e-3);
+        let half_along = 0.5 * streak + drawn;
+        alpha *= drawn / half_along;
+        let middle = centre.xy / centre.w * half_size - 0.5 * along;
+        let pixel = middle + axis * cx * half_along + vec2(-axis.y, axis.x) * cy * drawn;
         out.position = vec4(pixel / half_size * centre.w, 0.5 * centre.w, centre.w);
         out.coords = vec2(cx, cy);
         out.view_depth = centre.w;

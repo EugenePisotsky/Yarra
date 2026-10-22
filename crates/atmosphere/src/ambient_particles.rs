@@ -80,14 +80,14 @@ const KINDS: [Kind; 5] = [
     Kind {
         size: 10.0,
         height: 8.0,
-        count: 8000,
+        count: 20000,
         drift: 0.9,
         rise: -1.0,
     },
     Kind {
         size: 40.0,
         height: 24.0,
-        count: 12000,
+        count: 24000,
         drift: 0.9,
         rise: -1.2,
     },
@@ -157,8 +157,10 @@ struct AmbientUniform {
     drift: [f32; 4],
     /// Per kind: horizontal box size, box height, first instance, instance count.
     kinds: [[f32; 4]; 5],
-    /// Per kind: accumulated drift (m), wrapped by its box; w the kind's drift share.
+    /// Per kind: accumulated drift (m), wrapped by its box.
     offsets: [[f32; 4]; 5],
+    /// Per kind: its velocity (m/s), the wind's share it follows and its own fall.
+    velocities: [[f32; 4]; 5],
     /// Per kind: share of the instances present, 0..1.
     amounts: [[f32; 4]; 2],
 }
@@ -206,7 +208,8 @@ impl Plugin for AmbientParticlesPlugin {
 
 /// Share of each kind present: motes and fluff need a dry day, and wind stirs up fluff and
 /// shakes leaves loose while it scatters the motes. Snowflakes fall as the weather's snow does,
-/// by day and night; where it snows no leaves fall.
+/// by day and night, as the square of its snowfall: light snow keeps a few, a blizzard fills the
+/// air. Where it snows no leaves fall.
 fn amounts(state: &AtmosphereState) -> [f32; 5] {
     if state.isolated() || !state.profile.outdoor {
         return [0.0; 5];
@@ -225,8 +228,8 @@ fn amounts(state: &AtmosphereState) -> [f32; 5] {
     share[MOTES] = day * dry * (1.3 - 0.4 * stir).clamp(0.2, 1.0);
     share[FLUFF] = day * dry * (0.4 + 0.3 * stir).clamp(0.2, 1.0);
     share[LEAVES] = (0.2 + 0.3 * stir).clamp(0.1, 1.0) * (1.0 - snow);
-    share[NEAR_FLAKES] = rain * snow;
-    share[FAR_FLAKES] = rain * snow;
+    share[NEAR_FLAKES] = rain * rain * snow;
+    share[FAR_FLAKES] = rain * rain * snow;
     share
 }
 
@@ -302,7 +305,13 @@ fn sync(
     for (i, kind) in KINDS.iter().enumerate() {
         let o = offsets[i];
         uniform.kinds[i] = [kind.size, kind.height, first as f32, kind.count as f32];
-        uniform.offsets[i] = [o[0] as f32, o[1] as f32, o[2] as f32, kind.drift];
+        uniform.offsets[i] = [o[0] as f32, o[1] as f32, o[2] as f32, 0.0];
+        uniform.velocities[i] = [
+            velocity.x * kind.drift,
+            kind.rise,
+            velocity.z * kind.drift,
+            0.0,
+        ];
 
         // The shader fades the last 5% of the present share.
         active[i] = if amounts[i] > 0.0 {
@@ -651,10 +660,16 @@ mod tests {
         assert_eq!((rain[NEAR_FLAKES], rain[FAR_FLAKES]), (0.0, 0.0));
         let snow = snowing(1.0);
         assert!(
-            snow[NEAR_FLAKES] > 0.5 && snow[FAR_FLAKES] > 0.5,
+            snow[NEAR_FLAKES] > 0.2 && snow[FAR_FLAKES] > 0.2,
             "{snow:?}"
         );
         assert_eq!(snow[LEAVES], 0.0);
+        let blizzard = amounts(&AtmosphereState {
+            snow: 1.0,
+            ..state(Some(WeatherKind::Storm), 0.34)
+        });
+        assert_eq!(blizzard[NEAR_FLAKES], 1.0, "a blizzard fills the air");
+        assert!(blizzard[NEAR_FLAKES] > 2.0 * snow[NEAR_FLAKES] - 0.01);
         let night = amounts(&AtmosphereState {
             snow: 1.0,
             ..state(Some(WeatherKind::Rain), 0.0)
