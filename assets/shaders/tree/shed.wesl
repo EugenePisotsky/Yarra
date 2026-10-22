@@ -41,7 +41,7 @@ fn shed_slot(batch: vec4<u32>, pool: u32, limb: u32) -> u32 {
 }
 
 // Snow fallen since a limb shed lays back all it held once this much has fallen, metres.
-const REGROW_SNOWFALL: f32 = 0.1;
+const REGROW_SNOWFALL: f32 = 0.3;
 
 // A limb as `now` (ShedTrees.now) finds it: seconds since it shed (negative while it holds the
 // snow it always had), its bough's velocity in x and z as it shed, its share of the snow it shed,

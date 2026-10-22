@@ -310,11 +310,11 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
   snowflakes.
 
 - **Snowfall fills prints and lays snow back on shaken boughs.** *Kept* (October 22). One total
-  of snow fallen on the mountains (`GameWeather::snowfall`, 0.4 mm/s at their heaviest snowfall,
-  in proportion at lighter) drives both: a print is drawn as much shallower as has fallen since
-  it was made (a footprint fills in a few minutes of a blizzard, a trench in a quarter of an
-  hour), and a shaken limb's needles whiten, its loads build up where they lay and its bough
-  sinks again until 0.1 m has fallen; it sheds again from 0.3 of that. The press log stamps each
+  of snow fallen on the mountains (`GameWeather::snowfall`, 1.2 mm/s at their heaviest snowfall,
+  in proportion at lighter; a third of that filled too slowly, user) drives both: a print is
+  drawn as much shallower as has fallen since it was made (a footprint fills in about a minute
+  of a blizzard, a trench in five), and a shaken limb's needles whiten, its loads build up where
+  they lay and its bough sinks again until 0.3 m has fallen; it sheds again from 0.3 of that. The press log stamps each
   press with the total, so the window refilling ground it moves onto draws prints as filled as
   they are by now, without any per-texel time; tiles holding prints are brought up to date a
   budget at a time while snow falls.

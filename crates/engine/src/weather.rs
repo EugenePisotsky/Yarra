@@ -45,9 +45,8 @@ const FROST_SETTLING_SECONDS: f32 = 90.0;
 const FROST_CLEARING_SECONDS: f32 = 240.0;
 
 /// Snow piles up on the soft layer this fast at the mountains' heaviest snowfall, metres a second,
-/// in proportion at lighter: a footprint fills in a few minutes of a blizzard, a trench in a
-/// quarter of an hour.
-const SNOWFALL_METRES_PER_SECOND: f64 = 0.0004;
+/// in proportion at lighter: a footprint fills in about a minute of a blizzard, a trench in five.
+const SNOWFALL_METRES_PER_SECOND: f64 = 0.0012;
 
 /// How weather starts once the first world space is active.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
