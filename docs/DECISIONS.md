@@ -283,7 +283,9 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
 - **Snow is where the weather falls, not a weather of its own.** *Kept* (October 22). The island
   keeps one sequence of clouds, wind and storminess; the mountains have their own, snowing about
   four fifths of the time from flurries to a blizzard with clear spells, blended in by the share
-  of snow ground within three cells of the camera. There its precipitation falls as snow: flakes
+  of snow ground within three cells of the camera. Once that share passes 0.6 its precipitation
+  falls as snow (back to rain below 0.4, changing over 4 s: rain and snow falling together read
+  as a fault, user October 22): flakes
   as two boxes of ambient particles (lit by the sun's shadow maps and the sky, with the snow
   ground's light thrown back up), no rain, splashes or wet ground, and hardly any lightning. The
   weather fog over snow takes the ground's light too, so in a blizzard ground and sky meet

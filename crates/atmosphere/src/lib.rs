@@ -150,9 +150,12 @@ pub struct AtmosphereState {
     pub weather_transition: Option<WeatherTransition>,
     /// 0..1 surface wetness accumulated by game rain; lags precipitation.
     pub wetness: f32,
-    /// 0..1 share of the weather's precipitation falling as snow where the camera is: the game
-    /// blends the mountains' weather in where snow lies.
+    /// 0..1 share of the weather's precipitation falling as snow where the camera is: rain until
+    /// snow ground covers most of the ground around, then snow.
     pub snow: f32,
+    /// 0..1 share of the ground around the camera under snow, by which the game blends the
+    /// mountains' weather in.
+    pub snow_ground: f32,
     /// 0..1 how far the mountains' blizzards have frosted snow country's bare ground, wherever
     /// the camera is: it settles in a blizzard and blows off after.
     pub fresh_snow: f32,
@@ -173,6 +176,7 @@ impl Default for AtmosphereState {
             weather: None,
             weather_transition: None,
             snow: 0.0,
+            snow_ground: 0.0,
             fresh_snow: 0.0,
             lightning: None,
             wetness: 0.0,

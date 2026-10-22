@@ -315,9 +315,9 @@ SQLite. The renderers (Bevy) have no SQLite: `engine` is the only library joinin
   and each leg the channel it wades through deep snow around its ankle.
 - Time and weather: `GameDayClock`, `GameWeather`, `GameLightning`. The mountains run a weather
   sequence of their own (`WeatherSettings::mountains`), blended in by the share of snow ground
-  around the camera (`SnowGround`, from the resident leaves under a soft layer); there its
-  precipitation falls as snow (`AtmosphereState::snow`), drawn as ambient particles in place of
-  rain. Its blizzards frost snow country's bare ground near the camera wherever it is
+  around the camera (`SnowGround`, from the resident leaves under a soft layer,
+  `AtmosphereState::snow_ground`); once that passes most of the ground, precipitation falls as
+  snow (`AtmosphereState::snow`), drawn as ambient particles in place of rain. Its blizzards frost snow country's bare ground near the camera wherever it is
   (`AtmosphereState::fresh_snow`, `world::weather::lying`).
 - Invariants: actor roots own movement; presentation scenes are children and never move them.
   Libraries do not read process arguments; the apps inject settings. The `gameplay` module here

@@ -179,7 +179,7 @@ pub(super) fn sync(
     );
 
     let fog = state.weather_fog().filter(|_| profile.outdoor);
-    let snow = state.snow.clamp(0., 1.);
+    let snow = state.snow_ground.clamp(0., 1.);
 
     if let Some(fog) = fog.filter(|f| f.extinction > 0.) {
         let lit = even_light(&light, snow, sun.y);

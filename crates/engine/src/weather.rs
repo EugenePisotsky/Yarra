@@ -25,6 +25,13 @@ const SNOW_GROUND_RADIUS: i32 = 3;
 /// Seconds over which the sensed snow ground follows the camera.
 const SNOW_GROUND_SECONDS: f32 = 8.0;
 
+/// What falls turns from rain to snow once snow ground covers this much of the ground around,
+/// and back below this much, over this many seconds: rain and snow falling together read as a
+/// fault, not as sleet.
+const SNOWFALL_SHARES: [f32; 2] = [0.4, 0.6];
+
+const SNOWFALL_CHANGE_SECONDS: f32 = 4.0;
+
 /// The mountains' sequence runs from its own seed.
 const MOUNTAIN_SEED: u64 = 0x6d6f_756e_7461_696e;
 
@@ -231,10 +238,27 @@ fn mountains(seed: u64, initial: WeatherKind, automatic: bool) -> WeatherRuntime
 }
 
 /// How much of the ground around the camera lies under snow, followed smoothly: where the
-/// mountains' weather is.
+/// mountains' weather is; and the share of what falls there as snow.
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
 pub struct SnowGround {
     pub share: f32,
+    pub falling: f32,
+    snowing: bool,
+}
+
+impl SnowGround {
+    /// Turns what falls towards snow or rain as the share passes `SNOWFALL_SHARES`.
+    fn change_falling(&mut self, seconds: f32) {
+        if self.share >= SNOWFALL_SHARES[1] {
+            self.snowing = true;
+        } else if self.share <= SNOWFALL_SHARES[0] {
+            self.snowing = false;
+        }
+
+        let change = seconds / SNOWFALL_CHANGE_SECONDS;
+        let target = f32::from(u8::from(self.snowing));
+        self.falling += (target - self.falling).clamp(-change, change);
+    }
 }
 
 pub struct GameWeatherPlugin;
@@ -285,6 +309,8 @@ fn sense_snow_ground(
     // The first reading holds at once: a game starting in the mountains starts in their weather.
     if !std::mem::replace(&mut *sensed, true) {
         ground.share = share;
+        ground.snowing = share >= SNOWFALL_SHARES[1];
+        ground.falling = f32::from(u8::from(ground.snowing));
     } else if ground.share != share {
         let follow = 1.0 - (-time.delta_secs() / SNOW_GROUND_SECONDS).exp();
         let next = ground.share + (share - ground.share) * follow;
@@ -299,6 +325,8 @@ fn sense_snow_ground(
             next
         };
     }
+
+    ground.change_falling(time.delta_secs());
 }
 
 /// How hard the mountains' snowfall comes as a blizzard's, 0..1: what frosts bare ground.
@@ -322,6 +350,7 @@ pub(crate) fn advance_weather(
             atmosphere.weather_transition = None;
             atmosphere.wetness = 0.0;
             atmosphere.snow = 0.0;
+            atmosphere.snow_ground = 0.0;
             atmosphere.fresh_snow = 0.0;
         }
         return;
@@ -371,8 +400,9 @@ pub(crate) fn advance_weather(
         }
     }
 
-    let snow = ground.share.clamp(0.0, 1.0);
-    let local = weather.local(snow);
+    let share = ground.share.clamp(0.0, 1.0);
+    let snow = ground.falling.clamp(0.0, 1.0);
+    let local = weather.local(share);
     let current = local.map(|(params, ..)| params);
     let target = weather.runtime.as_ref().map(WeatherRuntime::target);
 
@@ -396,12 +426,14 @@ pub(crate) fn advance_weather(
         || atmosphere.weather_transition != transition
         || atmosphere.wetness != wetness
         || atmosphere.snow != snow
+        || atmosphere.snow_ground != share
         || atmosphere.fresh_snow != weather.fresh_snow
     {
         atmosphere.weather = current;
         atmosphere.weather_transition = transition;
         atmosphere.wetness = wetness;
         atmosphere.snow = snow;
+        atmosphere.snow_ground = share;
         atmosphere.fresh_snow = weather.fresh_snow;
     }
 }
@@ -538,7 +570,11 @@ mod tests {
         assert_eq!(island.snow, 0.0);
         assert_eq!(island.weather, Some(WeatherKind::Rain.preset()));
 
-        app.world_mut().resource_mut::<SnowGround>().share = 1.0;
+        *app.world_mut().resource_mut::<SnowGround>() = SnowGround {
+            share: 1.0,
+            falling: 1.0,
+            snowing: true,
+        };
         app.update();
         let mountains = app.world().resource::<AtmosphereState>();
         assert_eq!(mountains.snow, 1.0);
@@ -583,6 +619,25 @@ mod tests {
             (cleared - settled * (-1.0_f32).exp()).abs() < 0.01,
             "{cleared}"
         );
+    }
+
+    #[test]
+    fn rain_turns_to_snow_past_most_of_the_ground_under_snow_and_back_below_less() {
+        let mut ground = SnowGround::default();
+        let mut walk = |share: f32, seconds: f32| {
+            ground.share = share;
+            ground.change_falling(seconds);
+            ground.falling
+        };
+        assert_eq!(
+            walk(0.5, 10.0),
+            0.0,
+            "half the ground under snow still rains"
+        );
+        assert_eq!(walk(0.65, 2.0), 0.5, "past most of it, rain turns to snow");
+        assert_eq!(walk(0.65, 2.0), 1.0);
+        assert_eq!(walk(0.5, 10.0), 1.0, "and half of it keeps the snow");
+        assert_eq!(walk(0.35, 4.0), 0.0);
     }
 
     #[test]
