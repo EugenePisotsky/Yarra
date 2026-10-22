@@ -15,6 +15,11 @@
 //! however far the player walks away and back. Between its logged presses a moving foot's sweep
 //! since its last is drawn every frame, so a trench grows with the foot; the next logged sweep
 //! takes it in.
+//!
+//! Falling snow fills prints: each press keeps how much snow had fallen when it was made
+//! ([`GroundPresses::snowfall`]), and is drawn as much shallower as has fallen since. While snow
+//! falls the tiles holding prints are brought up to date a few at a time, and a press the snow has
+//! buried leaves the log.
 mod gpu;
 
 use bevy::{math::DVec2, prelude::*};
@@ -63,6 +68,16 @@ const SOFT_REACH: f32 = 0.6;
 /// Widest a press's circles may be, metres: the legs' channel.
 const MAX_RADIUS: f32 = 1.0;
 
+/// While snow falls, a tile holding prints is filled once this much more has fallen on it
+/// (metres), at most this many tiles a frame.
+const FILL_STEP: f64 = 0.003;
+
+const FILL_BUDGET: usize = 256;
+
+/// Snow this deep fallen on a press since it was made buries it, and the rims beside its trench:
+/// deeper than any soft layer it could press.
+const BURIED: f64 = SOFT_REACH as f64 + 0.2;
+
 /// How far past its outline a sole's trench wall still matters (its shape is
 /// `terrain/print_map.wesl`'s), metres: past the rim and the crumbs thrown beside a trench.
 const WALL_REACH_METRES: f32 = 0.3;
@@ -96,6 +111,8 @@ pub struct GroundPresses {
     /// The render origin's world XZ, metres.
     pub origin: DVec2,
     pub presses: Vec<GroundPress>,
+    /// Snow fallen on the soft layer since the game began, metres: it fills prints made before.
+    pub snowfall: f64,
 }
 
 /// Systems listing [`GroundPresses`] run in this set; the prints take them after it.
@@ -127,7 +144,7 @@ impl PrintGround {
     }
 }
 
-/// A logged press in world coordinates.
+/// A logged press in world coordinates, and the snow fallen when it was made.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Logged {
     heel: DVec2,
@@ -135,6 +152,7 @@ struct Logged {
     radii: [f32; 2],
     floor: [f32; 2],
     arch: f32,
+    snowfall: f64,
 }
 
 impl Logged {
@@ -157,6 +175,7 @@ impl Logged {
             radii: [last.radii[1], self.radii[1]],
             floor: [lowest(last), lowest(self)],
             arch: 0.0,
+            snowfall: self.snowfall,
         }
     }
 
@@ -168,8 +187,9 @@ impl Logged {
         world_tiles([min.x, min.y, max.x, max.y], level)
     }
 
-    /// Heel and ball in render space, their radii and floors, the arch.
-    fn stamp(&self, origin: DVec2) -> [f32; 12] {
+    /// Heel and ball in render space, their radii and floors, the arch and the snow fallen on it
+    /// by `snowfall`.
+    fn stamp(&self, origin: DVec2, snowfall: f64) -> [f32; 12] {
         let heel = (self.heel - origin).as_vec2();
         let ball = (self.ball - origin).as_vec2();
         [
@@ -182,11 +202,19 @@ impl Logged {
             self.floor[0],
             self.floor[1],
             self.arch,
-            0.0,
+            (snowfall - self.snowfall).max(0.0) as f32,
             0.0,
             0.0,
         ]
     }
+}
+
+/// A tile holding prints: the snow fallen when its values were last brought up to date, and when
+/// its newest press was made.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Filled {
+    at: f64,
+    pressed: f64,
 }
 
 /// The log, the windows and the work the render world takes each frame.
@@ -200,6 +228,8 @@ pub(crate) struct GroundPrints {
     last: HashMap<u64, Logged>,
     /// Each foot in reach that moved since its last logged press, as it was last frame.
     moving: HashMap<u64, Logged>,
+    /// The windows' tiles holding prints, by level and world tile.
+    filled: HashMap<(usize, i64, i64), Filled>,
     pub(crate) frame: PrintFrame,
 }
 
@@ -220,6 +250,8 @@ pub(crate) struct PrintFrame {
     pub(crate) indices: Vec<u32>,
     /// Render-space heel and ball, radii, floors and arch, as [`Logged::stamp`] lays them out.
     pub(crate) stamps: Vec<[f32; 12]>,
+    /// Per tile, snow fallen on it since its values were last brought up to date, metres.
+    pub(crate) fills: Vec<f32>,
     /// The soft layer's depths, and where they lie ([`PrintGround::placement`]; no side, none).
     pub(crate) soft: Option<AssetId<Image>>,
     pub(crate) ground: [f32; 4],
@@ -266,8 +298,20 @@ impl GroundPrints {
         }
 
         let (fresh, drawn) = self.take(presses);
+        let snowfall = presses.snowfall;
+
+        while self
+            .log
+            .front()
+            .is_some_and(|press| snowfall - press.snowfall > BURIED)
+        {
+            self.log.pop_front();
+        }
+
+        let fresh = fresh.min(self.log.len());
         let Some(focus) = presses.focus else {
             self.windows = None;
+            self.filled.clear();
             self.frame = PrintFrame::default();
             return;
         };
@@ -283,15 +327,41 @@ impl GroundPrints {
             work.press(level, window, &entered, &self.log, fresh);
             work.draw(level, window, self.log.len(), &drawn);
             work.resolve(level, window, changed);
+
+            for tile in self.stale(level, window, snowfall) {
+                work.tile(level, window, tile, false);
+            }
+
             work.resolve_beside(level, window);
         }
 
-        self.frame = work.finish(windows, presses.origin);
+        self.frame = work.finish(windows, presses.origin, snowfall, &mut self.filled);
+        let n = i64::from(SIDE) / TILE;
+        self.filled.retain(|&(level, x, z), filled| {
+            let window = windows[level].map(|t| t.div_euclid(TILE));
+            snowfall - filled.pressed <= BURIED
+                && inside([window[0], window[1], window[0] + n, window[1] + n], x, z)
+        });
 
         if let Some(ground) = ground {
             self.frame.soft = Some(ground.soft.id());
             self.frame.ground = ground.placement(presses.origin);
         }
+    }
+
+    /// Up to [`FILL_BUDGET`] tiles of a window holding prints that [`FILL_STEP`] more snow has
+    /// fallen on since they were last brought up to date.
+    fn stale(&self, level: usize, window: [i64; 2], snowfall: f64) -> Vec<[i64; 2]> {
+        let n = i64::from(SIDE) / TILE;
+        let whole = [window[0], window[1], window[0] + n, window[1] + n];
+        self.filled
+            .iter()
+            .filter(|&(&(l, x, z), filled)| {
+                l == level && inside(whole, x, z) && snowfall - filled.at >= FILL_STEP
+            })
+            .map(|(&(_, x, z), _)| [x, z])
+            .take(FILL_BUDGET)
+            .collect()
     }
 
     /// Logs this frame's presses that add to their foot's last; returns how many it logged and
@@ -323,6 +393,7 @@ impl GroundPrints {
                 radii: press.radii.map(|r| r.clamp(0.005, MAX_RADIUS)),
                 floor: press.floor.map(|f| f.clamp(0.0, SOFT_REACH)),
                 arch: press.arch.clamp(0.0, 0.5),
+                snowfall: presses.snowfall,
             };
             let previous = self.moving.remove(&press.source);
             let Some(last) = self.last.insert(press.source, logged) else {
@@ -587,9 +658,21 @@ impl Work {
         }
     }
 
-    fn finish(self, windows: [[i64; 2]; LEVELS], origin: DVec2) -> PrintFrame {
+    /// The frame's work, each tile brought up to date with the snow fallen on it since `filled`
+    /// last saw it, which then holds the tiles holding prints as this frame leaves them.
+    fn finish(
+        self,
+        windows: [[i64; 2]; LEVELS],
+        origin: DVec2,
+        snowfall: f64,
+        filled: &mut HashMap<(usize, i64, i64), Filled>,
+    ) -> PrintFrame {
         let mut frame = PrintFrame {
-            stamps: self.stamps.iter().map(|s| s.stamp(origin)).collect(),
+            stamps: self
+                .stamps
+                .iter()
+                .map(|s| s.stamp(origin, snowfall))
+                .collect(),
             ..default()
         };
 
@@ -616,6 +699,41 @@ impl Work {
         }
 
         for ((level, window, tile, reset), list) in self.tiles.into_iter().zip(self.lists) {
+            let key = (level, tile[0], tile[1]);
+            let held = filled.get(&key).filter(|_| !reset).copied();
+            frame
+                .fills
+                .push(held.map_or(0.0, |h| (snowfall - h.at).max(0.0) as f32));
+            let newest = list
+                .iter()
+                .map(|&i| self.stamps[i as usize].snowfall)
+                .reduce(f64::max);
+
+            match (newest, held) {
+                (Some(newest), _) => {
+                    let pressed = held.map_or(newest, |h| h.pressed.max(newest));
+                    filled.insert(
+                        key,
+                        Filled {
+                            at: snowfall,
+                            pressed,
+                        },
+                    );
+                }
+                (None, Some(held)) => {
+                    filled.insert(
+                        key,
+                        Filled {
+                            at: snowfall,
+                            ..held
+                        },
+                    );
+                }
+                (None, None) => {
+                    filled.remove(&key);
+                }
+            }
+
             let local = [tile[0] - window[0], tile[1] - window[1]].map(|t| t as u32);
             let flags = level as u32 | u32::from(reset) << 1 | (list.len() as u32) << 2;
             frame

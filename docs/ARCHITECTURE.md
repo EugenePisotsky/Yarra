@@ -282,7 +282,10 @@ SQLite. The renderers (Bevy) have no SQLite: `engine` is the only library joinin
   raises leaves by their soft layer); the leaves' layer depths, uploaded to a level-0 texture,
   are all the prints need to lower it, and tiles under a leaf whose depths arrive are resolved
   again. The print windows hold nothing the log does not: ground a window moves onto starts
-  undisturbed and takes every logged press reaching it.
+  undisturbed and takes every logged press reaching it. Snow falling fills prints: each press
+  keeps the snowfall total it was made at (`GroundPresses::snowfall`), stamps and tiles holding
+  prints are lowered by what fell since (the press pass's fills), and a press the snow buried
+  leaves the log.
 - Must not depend on `world_db` or `engine`.
 
 ### vegetation_render
@@ -309,6 +312,8 @@ SQLite. The renderers (Bevy) have no SQLite: `engine` is the only library joinin
   where the touch field pushes its bough, snowy vertices read their limb's state by the number
   the kit gives them (the loads' chunks fall, the bough springs up), and its snow falls as a burst
   in a GPU ring the ambient particle pass draws (`atmosphere::ambient_particles::snow_falls_handle`).
+  A shed limb keeps the snowfall total it shed at; snow falling since lays its snow back
+  (`GameWeather::snowfall`).
 - Actors: `GameplayPlugins` (player, camera, input, destination marker), `GameplaySystems`,
   `MoveIntent`, and `MinimalGamePlugin` (environment, terrain, streaming and actors). Characters'
   feet (`feet`, joints and soles from the character catalog) list their presses on the ground,

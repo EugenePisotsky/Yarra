@@ -152,11 +152,13 @@ fn list_ground_presses(
     catalog: Res<WorldCatalog>,
     characters: Query<(Entity, &GlobalTransform, &CharacterFeet), With<CharacterMotion>>,
     joints: Query<&GlobalTransform>,
+    weather: Option<Res<crate::weather::GameWeather>>,
     mut presses: ResMut<GroundPresses>,
 ) {
     let presses = presses.as_mut();
     presses.presses.clear();
     presses.space = origin.space();
+    presses.snowfall = weather.map_or(0.0, |w| w.snowfall());
     let Some(cell_size) = origin
         .space()
         .and_then(|space| catalog.world_space(space))

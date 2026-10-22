@@ -8,7 +8,7 @@ import bevy_pbr::render::mesh_view_bindings::view;
 import package::shaders::tree::wind::{TreeVertex, WindFrames, WindPose, animated_position, animated_vector, turn_axis};
 import package::shaders::tree::touch::{TouchWindow, touch_canonical, touch_inside, touch_moving, touch_uv, within};
 import package::shaders::tree::instance::Instance;
-import package::shaders::tree::shed::{ChunkFall, CHUNK_CRUMBLE, ShedTrees, SHED_NONE, UNLOAD_LIFT, chunk_fall, shed_fallen, shed_since, shed_slot, unload_rise};
+import package::shaders::tree::shed::{ChunkFall, CHUNK_CRUMBLE, LimbShed, ShedTrees, SHED_NONE, UNLOAD_LIFT, chunk_fall, limb_shed, shed_fallen, shed_slot, unload_rise};
 @if(TREE_SNOW) import package::shaders::tree::snow::{card_amount, seen_from_above};
 
 // Trees drawn by the GPU trees (crates/engine/src/trees/gpu.rs) rather than one mesh entity
@@ -262,20 +262,21 @@ const TOUCH_SAMPLES: u32 = 4u;
 // Longest a limb reaches from its tree's trunk, metres.
 const TOUCH_LIMB: f32 = 6.0;
 
-// This vertex's limb's state (tree/shed.wesl `shed_since`): snowy trees number each vertex's
-// primary limb in uv_b.y (-1 the trunk). Only the GPU trees hold states; others hold their snow.
-fn limb_state(tree: TreeVertex, instance_index: u32) -> vec4<f32> {
+// This vertex's limb (tree/shed.wesl `limb_shed`): snowy trees number each vertex's primary limb
+// in uv_b.y (-1 the trunk). Only the GPU trees hold states; others hold their snow.
+fn limb_state(tree: TreeVertex, instance_index: u32) -> LimbShed {
+    let holding = LimbShed(-1.0, vec2(0.0), 0.0, 1.0);
 @if(TREE_INSTANCED && VERTEX_UVS_B) {
     let pool = tree_records[instance_index] & 0xffffffu;
     let batch = shed_trees.batches[tree_instances[pool].origin];
     let limb = i32(round(tree.uv_b.y));
     if batch.x == SHED_NONE || limb < 0 || u32(limb) >= batch.z {
-        return vec4(-1.0, 0.0, 0.0, 0.0);
+        return holding;
     }
-    return shed_since(shed_trees.now.x, shed_states[shed_slot(batch, pool, u32(limb))]);
+    return limb_shed(shed_trees.now, shed_states[shed_slot(batch, pool, u32(limb))]);
 }
 @else
-    return vec4(-1.0, 0.0, 0.0, 0.0);
+    return holding;
 }
 
 // The frame's time step, by which motion vectors see a shed limb a moment earlier.
@@ -286,11 +287,12 @@ fn shed_step() -> f32 {
     return 0.0;
 }
 
-// The turn (axis times angle) with which a limb in `state` springs up to its unloaded pose once
-// it shed, `back` seconds ago: about its root, across its axis, past a wobble.
-fn unload_turn(tree: TreeVertex, model: mat4x4<f32>, state: vec4<f32>, back: f32) -> vec3<f32> {
+// The turn (axis times angle) with which a limb springs up to its unloaded pose once it shed,
+// `back` seconds ago, about its root, across its axis, past a wobble; and sinks back as its snow
+// settles back.
+fn unload_turn(tree: TreeVertex, model: mat4x4<f32>, shed: LimbShed, back: f32) -> vec3<f32> {
 @if(TREE_HIERARCHY) {
-    let t = state.x - back;
+    let t = shed.since - back;
     if t < 0.0 || tree.wind_axis.w == 0.0 {
         return vec3(0.0);
     }
@@ -298,7 +300,7 @@ fn unload_turn(tree: TreeVertex, model: mat4x4<f32>, state: vec4<f32>, back: f32
     if dot(side, side) < 1e-8 {
         return vec3(0.0);
     }
-    return normalize(side) * (UNLOAD_LIFT * state.w * unload_rise(t));
+    return normalize(side) * (UNLOAD_LIFT * shed.share * unload_rise(t) * (1.0 - shed.regrown));
 }
 @else
     return vec3(0.0);
@@ -311,28 +313,27 @@ struct Dropping {
     fall: ChunkFall,
 }
 
-// How the chunk `chunk` (middle xyz, seed w) of a limb in `state` drops, `back` seconds ago, with
-// the limb's pose `pose` and turn `turn`. It crumbles at once on reaching the ground beneath its
-// tree, and once crumbled lies at its middle, unmoved.
+// How the chunk `chunk` (middle xyz, seed w) of a limb drops, `back` seconds ago, with the limb's
+// pose `pose` and turn `turn`. It crumbles at once on reaching the ground beneath its tree; once
+// crumbled, the snow settling back builds it up again where it lay.
 @if(TREE_SNOW_CHUNKS)
-fn dropping(tree: TreeVertex, chunk: vec4<f32>, model: mat4x4<f32>, state: vec4<f32>, pose: WindPose,
+fn dropping(tree: TreeVertex, chunk: vec4<f32>, model: mat4x4<f32>, shed: LimbShed, pose: WindPose,
             turn: vec3<f32>, back: f32) -> Dropping {
     var out: Dropping;
     out.anchor = vec3(0.0);
     out.fall = ChunkFall(vec3(0.0), vec3(0.0, 0.0, 1.0), 0.0, 1.0);
-    let t = state.x - back;
+    let t = shed.since - back;
     if t < 0.0 {
-        return out;
-    }
-    if t >= CHUNK_CRUMBLE.y {
-        out.anchor = (model * vec4(chunk.xyz, 1.0)).xyz;
-        out.fall.scale = 0.0;
         return out;
     }
     var middle = tree;
     middle.position = chunk.xyz;
     out.anchor = animated_position(middle, model, pose, profile(), view.lod_view_world_position, turn).xyz;
-    out.fall = chunk_fall(chunk.w, state, t);
+    if t >= CHUNK_CRUMBLE.y {
+        out.fall.scale = shed.regrown;
+        return out;
+    }
+    out.fall = chunk_fall(chunk.w, shed, t);
     out.fall.scale *= smoothstep(0.0, 0.15, out.anchor.y + out.fall.offset.y - model[3].y);
     return out;
 }
@@ -374,8 +375,8 @@ fn tree_vertex(vertex: Vertex) -> TreeVertex {
 // normal is the side it faces up with; cards that turn toward the camera show their snow from the
 // side, and only their front. Snow characters shook off has gone (tree/shed.wesl).
 @if(TREE_SNOW)
-fn card_snow(tree: TreeVertex, model: mat4x4<f32>, sky: f32, state: vec4<f32>) -> vec2<f32> {
-    let held = 1.0 - shed_fallen(state.x);
+fn card_snow(tree: TreeVertex, model: mat4x4<f32>, sky: f32, shed: LimbShed) -> vec2<f32> {
+    let held = max(1.0 - shed_fallen(shed.since), shed.regrown);
 @if(TREE_BRANCH_CARDS) {
     if dot(tree.card_axis, tree.card_axis) >= 0.25 {
         return vec2(card_amount(sky, 1.0) * held, 1.0);
@@ -389,10 +390,11 @@ fn card_snow(tree: TreeVertex, model: mat4x4<f32>, sky: f32, state: vec4<f32>) -
 }
 
 // A direction of this vertex as its chunk, if a falling snow load's, tumbles.
-fn snow_vector(v: vec3<f32>, vertex: Vertex, model: mat4x4<f32>, state: vec4<f32>, turn: vec3<f32>) -> vec3<f32> {
+fn snow_vector(v: vec3<f32>, vertex: Vertex, model: mat4x4<f32>, shed: LimbShed, turn: vec3<f32>) -> vec3<f32> {
 @if(TREE_SNOW_CHUNKS) {
-    let fall = chunk_fall(vertex.snow_chunk.w, state, state.x);
-    return select(v, turn_axis(v, fall.axis, fall.angle), state.x >= 0.0);
+    let fall = chunk_fall(vertex.snow_chunk.w, shed, shed.since);
+    let falling = shed.since >= 0.0 && shed.since < CHUNK_CRUMBLE.y;
+    return select(v, turn_axis(v, fall.axis, fall.angle), falling);
 }
 @else
     return v;

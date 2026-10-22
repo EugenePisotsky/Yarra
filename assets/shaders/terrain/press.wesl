@@ -2,7 +2,9 @@
 // window, starting it untouched when the window has just moved onto it, then pressing the stamps
 // listed for it (terrain/print_map.wesl): a sole caps the soft layer at its floor under it, its
 // wall rising steeply beyond, and marks its floor as far as it reaches. Outlines waver with the
-// snow, so walls break unevenly.
+// snow, so walls break unevenly. Snow fallen since fills prints: a tile's caps and floors rise by
+// what fell on it since it was last brought up to date, and a stamp's by what fell since its
+// press.
 import package::shaders::terrain::print_map::{print_values, snow_noise, wall_rise};
 
 struct Prints {
@@ -19,7 +21,8 @@ struct Prints {
 }
 
 // Heel and ball centres (render xz); their radii and floors over the firm ground; x: how far
-// the outline draws in at its middle, as a share of its width.
+// the outline draws in at its middle, as a share of its width, y: snow fallen since its press,
+// metres.
 struct Stamp { ends: vec4<f32>, sole: vec4<f32>, shape: vec4<f32>, }
 
 @group(0) @binding(0) var<uniform> prints: Prints;
@@ -29,6 +32,8 @@ struct Stamp { ends: vec4<f32>, sole: vec4<f32>, shape: vec4<f32>, }
 @group(0) @binding(2) var<storage, read> indices: array<u32>;
 @group(0) @binding(3) var<storage, read> stamps: array<Stamp>;
 @group(0) @binding(4) var map: texture_storage_2d_array<r32uint, read_write>;
+// Per tile: snow fallen on it since its values were last brought up to date, metres.
+@group(0) @binding(5) var<storage, read> fills: array<f32>;
 
 // prints/gpu.rs DISPATCH_ROW.
 const DISPATCH_ROW: u32 = 256u;
@@ -75,7 +80,7 @@ fn press(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_id) 
     let at = vec2<i32>((texel + a.zw) % b.y);
     var held = vec2(0.0);
     if (tile.w & 2u) == 0u {
-        held = unpack2x16float(textureLoad(map, at, level).r);
+        held = max(unpack2x16float(textureLoad(map, at, level).r) - fills[index], vec2(0.0));
     }
     // A coarse texel takes a stamp's mean over the fine texels it covers. The snow wavers the
     // same under every stamp: over 16 cm and, less, over 4 cm.
@@ -94,7 +99,7 @@ fn press(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_id) 
             let offset = (vec2(f32(k % samples), f32(k / samples)) + 0.5) / f32(samples);
             values += stamp_values(s, corner + (vec2<f32>(texel) + offset) * texel_metres, waver[k]);
         }
-        held = max(held, values * weight);
+        held = max(held, values * weight - s.shape.y);
     }
     textureStore(map, at, level, vec4(pack2x16float(held), 0u, 0u, 0u));
 }

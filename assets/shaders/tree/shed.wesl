@@ -1,13 +1,16 @@
 // Snow characters shake off trees (crates/engine/src/trees/gpu/shed.rs). Each snowy tree in the GPU
-// trees' pool holds a state per primary limb: when it shed (negative while it holds its snow),
-// how fast its bough moved, and its share of the snow. tree/shed_shake.wesl sheds a limb where
-// the touch field pushes its bough; snowy vertices read their limb's state by the number they
-// carry in uv_b.y (tree/material.wesl). Needles and bark lose their snow over SHED_SECONDS, the
-// loads' chunks fall from the bough as it moved, and the bough, unloaded, springs up.
+// trees' pool holds a state per primary limb: when it shed (negative while it holds the snow it
+// always had), how fast its bough moved, the snow fallen when it shed, and its share of the snow.
+// tree/shed_shake.wesl sheds a limb where the touch field pushes its bough; snowy vertices read
+// their limb's state by the number they carry in uv_b.y (tree/material.wesl). Needles and bark
+// lose their snow over SHED_SECONDS, the loads' chunks fall from the bough as it moved, and the
+// bough, unloaded, springs up. Snow falling since lays it back: the needles whiten, the loads
+// build up again where they lay and the bough sinks, until REGROW_SNOWFALL has fallen.
 
-// What reads the states: the game clock and the frame's time step (x, y), and per batch origin
-// slot of the pool its first state, its first pool instance and limbs per tree (x SHED_NONE: its
-// trees hold no snow).
+// What reads the states: the game clock, the frame's time step and the snow fallen on the
+// mountains' soft layer since the game began, metres (x, y, z), and per batch origin slot of the
+// pool its first state, its first pool instance and limbs per tree (x SHED_NONE: its trees hold
+// no snow).
 struct ShedTrees {
     now: vec4<f32>,
     batches: array<vec4<u32>>,
@@ -37,10 +40,33 @@ fn shed_slot(batch: vec4<u32>, pool: u32, limb: u32) -> u32 {
     return batch.x + (pool - batch.y) * batch.z + limb;
 }
 
-// A limb's state at `now`: seconds since it shed (negative while it holds its snow), its bough's
-// velocity in x and z as it shed, and its share of the snow.
-fn shed_since(now: f32, state: vec4<f32>) -> vec4<f32> {
-    return vec4(select(-1.0, now - state.x, state.x >= 0.0), state.yzw);
+// Snow fallen since a limb shed lays back all it held once this much has fallen, metres.
+const REGROW_SNOWFALL: f32 = 0.1;
+
+// A limb as `now` (ShedTrees.now) finds it: seconds since it shed (negative while it holds the
+// snow it always had), its bough's velocity in x and z as it shed, its share of the snow it shed,
+// and how much of its snow has settled back since (1 while it never shed).
+struct LimbShed {
+    since: f32,
+    velocity: vec2<f32>,
+    share: f32,
+    regrown: f32,
+}
+
+// A limb state: x when it shed (negative: never), y its bough's velocity in x and z as two half
+// floats, z the snow fallen then, w its share of the snow it shed.
+fn limb_shed(now: vec4<f32>, state: vec4<f32>) -> LimbShed {
+    if state.x < 0.0 {
+        return LimbShed(-1.0, vec2(0.0), 0.0, 1.0);
+    }
+    let regrown = clamp((now.z - state.z) / REGROW_SNOWFALL, 0.0, 1.0);
+    return LimbShed(now.x - state.x, unpack2x16float(bitcast<u32>(state.y)), state.w, regrown);
+}
+
+// The state of a limb shedding at `now` as its bough moves at `velocity`, its share of the snow
+// `share`.
+fn shed_state(now: vec4<f32>, velocity: vec2<f32>, share: f32) -> vec4<f32> {
+    return vec4(now.x, bitcast<f32>(pack2x16float(velocity)), now.z, share);
 }
 
 // How far a limb's snow has slid off `since` seconds after it shed, 0 (all held) to 1 (gone).
@@ -83,13 +109,12 @@ const CHUNK_TERMINAL: vec2<f32> = vec2(3.0, 5.0);
 const CHUNK_SPIN: vec2<f32> = vec2(0.5, 2.0);
 const CHUNK_CRUMBLE: vec2<f32> = vec2(0.2, 0.55);
 
-// How the chunk seeded `seed` (0..1) falls `t` seconds after its limb, in state `shed`
-// (shed_since), shed.
-fn chunk_fall(seed: f32, shed: vec4<f32>, t: f32) -> ChunkFall {
+// How the chunk seeded `seed` (0..1) falls `t` seconds after its limb, as `shed` finds it, shed.
+fn chunk_fall(seed: f32, shed: LimbShed, t: f32) -> ChunkFall {
     let r = fract(sin(seed * vec3(127.1, 311.7, 74.7) + vec3(1.3, 4.1, 7.7)) * 43758.5453);
     let terminal = mix(CHUNK_TERMINAL.x, CHUNK_TERMINAL.y, r.x);
     let tau = terminal / SHED_GRAVITY;
-    let thrown = vec3(shed.y * CHUNK_FLING, CHUNK_KICK * r.y, shed.z * CHUNK_FLING);
+    let thrown = vec3(shed.velocity.x * CHUNK_FLING, CHUNK_KICK * r.y, shed.velocity.y * CHUNK_FLING);
     let settled = vec3(0.0, -terminal, 0.0);
     var fall: ChunkFall;
     fall.offset = settled * t + (thrown - settled) * tau * (1.0 - exp(-t / tau));

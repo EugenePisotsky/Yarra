@@ -44,6 +44,11 @@ const FROST_SETTLING_SECONDS: f32 = 90.0;
 
 const FROST_CLEARING_SECONDS: f32 = 240.0;
 
+/// Snow piles up on the soft layer this fast at the mountains' heaviest snowfall, metres a second,
+/// in proportion at lighter: a footprint fills in a few minutes of a blizzard, a trench in a
+/// quarter of an hour.
+const SNOWFALL_METRES_PER_SECOND: f64 = 0.0004;
+
 /// How weather starts once the first world space is active.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum WeatherStart {
@@ -65,6 +70,8 @@ pub struct GameWeather {
     mountains: Option<WeatherRuntime>,
     /// How far the mountains' blizzards have frosted snow country's bare ground, 0..1.
     fresh_snow: f32,
+    /// Snow fallen on the mountains' soft layer since the game began, metres.
+    snowfall: f64,
     /// Freeze the weather clock, e.g. during an A/B capture.
     pub paused: bool,
     /// Weather clock multiplier for testing transitions.
@@ -82,6 +89,7 @@ impl GameWeather {
             runtime: None,
             mountains: None,
             fresh_snow: 0.0,
+            snowfall: 0.0,
             paused: false,
             time_scale: 1.0,
             wetness_override: None,
@@ -90,6 +98,12 @@ impl GameWeather {
 
     pub fn start(&self) -> WeatherStart {
         self.start
+    }
+
+    /// Snow fallen on the mountains' soft layer since the game began, metres: it fills prints
+    /// and settles back on shaken boughs.
+    pub fn snowfall(&self) -> f64 {
+        self.snowfall
     }
 
     pub fn seed(&self) -> u64 {
@@ -380,6 +394,7 @@ pub(crate) fn advance_weather(
             runtime,
             mountains,
             fresh_snow,
+            snowfall,
             ..
         } = &mut *weather;
 
@@ -397,6 +412,8 @@ pub(crate) fn advance_weather(
                 FROST_SETTLING_SECONDS,
                 FROST_CLEARING_SECONDS,
             );
+            *snowfall +=
+                f64::from(mountains.current().precipitation * seconds) * SNOWFALL_METRES_PER_SECOND;
         }
     }
 

@@ -23,6 +23,7 @@ fn presses(focus: Vec2, list: Vec<GroundPress>) -> GroundPresses {
         focus: Some(Vec3::new(focus.x, 0.0, focus.y)),
         origin: list_origin(),
         presses: list,
+        snowfall: 0.0,
     }
 }
 
@@ -333,4 +334,48 @@ fn a_foot_moving_short_of_a_logged_press_is_drawn_and_logged_once_it_stops() {
         &[],
     );
     assert!(prints.frame.stamps.is_empty());
+}
+
+#[test]
+fn snow_fallen_since_fills_prints_until_it_buries_them() {
+    let mut prints = GroundPrints::default();
+    let at = Vec2::new(3.0, 4.0);
+    let fall = |snowfall: f64, focus: Vec2, list| GroundPresses {
+        snowfall,
+        ..presses(focus, list)
+    };
+    prints.update(&fall(0.0, at, vec![press(7, at, 0.02)]), None, &[]);
+    prints.update(&fall(0.0, at, vec![]), None, &[]);
+    let held = prints.filled.len();
+    assert!(held > 0, "the pressed tiles hold prints");
+
+    // Snow falling brings them up to date, pressing nothing; their neighbours are resolved.
+    prints.update(&fall(0.01, at, vec![]), None, &[]);
+    let frame = &prints.frame;
+    assert!(frame.tiles.iter().all(|t| t[3] >> 2 == 0));
+    let filling = frame.fills.iter().filter(|&&f| (f - 0.01).abs() < 1e-6);
+    assert_eq!(filling.count(), held);
+    prints.update(&fall(0.011, at, vec![]), None, &[]);
+    assert!(
+        prints.frame.tiles.is_empty(),
+        "less than a step fills nothing"
+    );
+
+    // Ground a window takes again presses its prints as filled as they are by now.
+    let away = at + Vec2::X * 400.0;
+    prints.update(&fall(0.02, away, vec![]), None, &[]);
+    prints.update(&fall(0.05, at, vec![]), None, &[]);
+    assert!(
+        prints
+            .frame
+            .stamps
+            .iter()
+            .any(|s| (s[9] - 0.05).abs() < 1e-6)
+    );
+
+    // Deep enough, the snow buries them.
+    prints.update(&fall(BURIED + 0.1, at, vec![]), None, &[]);
+    assert!(prints.log.is_empty());
+    prints.update(&fall(BURIED + 0.2, at, vec![]), None, &[]);
+    assert!(prints.filled.is_empty());
 }

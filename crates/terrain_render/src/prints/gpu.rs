@@ -192,6 +192,7 @@ struct PrintPass {
     tiles: RawBufferVec<[u32; 4]>,
     indices: RawBufferVec<u32>,
     stamps: RawBufferVec<[f32; 12]>,
+    fills: RawBufferVec<f32>,
     soft_sampler: Sampler,
     map_view: Option<TextureView>,
     /// The relief's levels, one view each.
@@ -223,6 +224,7 @@ fn init_pass(
                 storage_buffer_read_only_sized(false, None),
                 storage_buffer_read_only_sized(false, None),
                 texture_storage_2d_array(TextureFormat::R32Uint, StorageTextureAccess::ReadWrite),
+                storage_buffer_read_only_sized(false, None),
             ),
         ),
     );
@@ -280,6 +282,7 @@ fn init_pass(
         tiles: storage("ground print tiles"),
         indices: storage("ground print stamp lists"),
         stamps: storage("ground print stamps"),
+        fills: storage("ground print fills"),
         soft_sampler: device.create_sampler(&SamplerDescriptor {
             label: Some("ground print soft layer"),
             address_mode_u: AddressMode::Repeat,
@@ -346,11 +349,13 @@ fn prepare(
     *pass.tiles.values_mut() = frame.tiles;
     *pass.indices.values_mut() = frame.indices;
     *pass.stamps.values_mut() = frame.stamps;
+    *pass.fills.values_mut() = frame.fills;
     pass.indices.values_mut().push(0);
     pass.stamps.values_mut().push([0.0; 12]);
     pass.tiles.write_buffer(&device, &queue);
     pass.indices.write_buffer(&device, &queue);
     pass.stamps.write_buffer(&device, &queue);
+    pass.fills.write_buffer(&device, &queue);
     let map_view = pass
         .map_view
         .get_or_insert_with(|| array_view(map, "ground prints", 0))
@@ -366,10 +371,11 @@ fn prepare(
         .soft
         .and_then(|id| images.get(id))
         .map_or(&fallback.d2.texture_view, |image| &image.texture_view);
-    let (Some(tiles_buffer), Some(indices), Some(stamps)) = (
+    let (Some(tiles_buffer), Some(indices), Some(stamps), Some(fills)) = (
         pass.tiles.buffer(),
         pass.indices.buffer(),
         pass.stamps.buffer(),
+        pass.fills.buffer(),
     ) else {
         return;
     };
@@ -384,6 +390,7 @@ fn prepare(
                 indices.as_entire_binding(),
                 stamps.as_entire_binding(),
                 &map_view,
+                fills.as_entire_binding(),
             )),
         ),
         device.create_bind_group(

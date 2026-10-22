@@ -1,12 +1,13 @@
 //! Snow characters shake off trees (`shaders/tree/shed.wesl`). Each snowy form has a table of its
 //! primary limbs from its nearest LOD: root, direction and reach, and where along it its snow lies
 //! ([`limb_table`]). Each snowy batch in the pool gets a state per limb of each of its trees (when
-//! the limb shed, how fast its bough moved and its share of the snow) for as long as it stays in
-//! the pool. Each frame a
-//! compute pass (`shaders/tree/shed_shake.wesl`) reads the touch field (`super::super::touch`)
-//! along every limb of the snowy trees near it: a limb whose bough characters push aside sheds.
-//! Its snow slides off and its loads' chunks fall, flung as the bough moved, while the bough
-//! springs up (`shaders/tree/material.wesl`), and powder and clumps break off them ([`SnowFalls`]).
+//! the limb shed, how fast its bough moved, the snow fallen then and its share of the snow) for as
+//! long as it stays in the pool. Each frame a compute pass (`shaders/tree/shed_shake.wesl`) reads
+//! the touch field (`super::super::touch`) along every limb of the snowy trees near it: a limb
+//! whose bough characters push aside sheds. Its snow slides off and its loads' chunks fall, flung
+//! as the bough moved, while the bough springs up (`shaders/tree/material.wesl`), and powder and
+//! clumps break off them ([`SnowFalls`]). Snow falling since lays it back
+//! ([`crate::GameWeather::snowfall`]).
 use super::super::cards::{WIND_AXIS, WIND_PIVOT};
 use super::super::impostor::ImpostorBatch;
 use super::super::material::SnowHolder;
@@ -344,6 +345,8 @@ pub(super) fn release(removed: On<Remove<ImpostorBatch>>, mut shed: Option<ResMu
 pub(super) struct ShedFrame {
     now: f32,
     step: f32,
+    /// Snow fallen on the mountains since the game began, metres.
+    snowfall: f32,
     /// The trees' pool instances.
     trees: Vec<u32>,
     tables: Arc<ShedTables>,
@@ -354,6 +357,7 @@ pub(super) struct ShedFrame {
 #[allow(clippy::too_many_arguments)] // The clock, the field, the pool and what it writes.
 pub(super) fn list(
     time: Res<Time>,
+    weather: Option<Res<crate::GameWeather>>,
     touch: Res<TreeTouch>,
     focus: Option<Res<VegetationLodFocus>>,
     pool: Res<TreePool>,
@@ -408,6 +412,7 @@ pub(super) fn list(
 
     frame.now = now;
     frame.step = time.delta_secs();
+    frame.snowfall = weather.map_or(0.0, |w| w.snowfall() as f32);
     frame.trees = trees;
     frame.fresh = std::mem::take(&mut shed.fresh);
 }
@@ -590,7 +595,7 @@ fn prepare(
         );
     }
 
-    let clock = [frame.now, frame.step, 0.0, 0.0];
+    let clock = [frame.now, frame.step, frame.snowfall, 0.0];
     queue.write_buffer(gpu.trees.get(), 0, bytemuck::bytes_of(&clock));
     gpu.listed.reserve(
         &device,

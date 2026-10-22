@@ -1,11 +1,12 @@
 // Each frame's shake of the snowy trees near the touch field (crates/engine/src/trees/gpu/shed.rs):
 // one invocation per limb of each listed tree reads the field (tree/touch.wesl) over its bough,
 // across the width its foliage spreads, where its snow lies, and along its axis. A limb still
-// holding its snow whose bough is pushed past SHED_PUSH sheds it, noting when, how fast the bough
-// moved and its share of the snow, and its snow falls from where it lay as a burst in the ambient
-// particles' ring (weather/ambient.wesl).
+// holding snow whose bough is pushed past SHED_PUSH sheds it, noting when, how fast the bough
+// moved, the snow fallen then and its share of the snow, and its snow falls from where it lay as a
+// burst in the ambient particles' ring (weather/ambient.wesl). A limb that shed holds snow again
+// once enough has settled back on it (SHAKEN_AGAIN), and sheds what has.
 import package::shaders::tree::instance::Instance;
-import package::shaders::tree::shed::{Limb, SHED_NONE, ShedTrees, shed_slot};
+import package::shaders::tree::shed::{Limb, SHED_NONE, ShedTrees, limb_shed, shed_slot, shed_state};
 import package::shaders::tree::touch::{TouchWindow, touch_canonical, touch_inside, touch_uv};
 import package::shaders::weather::snow_fall::SnowFall;
 
@@ -35,6 +36,8 @@ struct Shake {
 const MAX_LIMBS: u32 = 128u;
 // A bough pushed this far aside, metres, sheds its snow: it has visibly moved.
 const SHED_PUSH: f32 = 0.06;
+// A limb sheds again once this share of its snow has settled back on it.
+const SHAKEN_AGAIN: f32 = 0.3;
 // Points read along the bough, each across its width at ACROSS of them, and along its axis. A
 // body parts foliage within about 0.4 m of it, so the points lie closer than that.
 const SAMPLES: u32 = 8u;
@@ -78,7 +81,8 @@ fn shake_limbs(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
     let slot = shed_slot(batch, pool, limb);
-    if states[slot].x >= 0.0 {
+    let held = limb_shed(shed.now, states[slot]);
+    if held.since >= 0.0 && held.regrown < SHAKEN_AGAIN {
         return;
     }
     let l = limbs[forms[instance.form].x + limb];
@@ -111,11 +115,12 @@ fn shake_limbs(@builtin(global_invocation_id) id: vec3<u32>) {
 
     let now = shake.frame.x;
     let velocity = vec3(pushed.z, 0.0, pushed.w);
-    states[slot] = vec4(now, velocity.xz, l.axis.w);
+    let share = l.axis.w * held.regrown;
+    states[slot] = shed_state(shed.now, velocity.xz, share);
     let scale = r[1].y;
     let fall = atomicAdd(&next_fall, 1u) % u32(shake.frame.z);
     // The seed is a whole number below 2^24, which f32 holds exactly.
     let seed = f32((pool * MAX_LIMBS + limb) & 0xffffffu);
     falls[fall] = SnowFall(vec4(start, now), vec4(along, l.snow.w * scale), vec4(velocity, r[1].w),
-        vec4(l.axis.w, seed, 0.0, 0.0));
+        vec4(share, seed, 0.0, 0.0));
 }
