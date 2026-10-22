@@ -149,11 +149,11 @@ fn fragment(
     // Snow over the surface built above (tree/snow.wesl). Foliage is cut out where its needles
     // or its snow are, as in its prepass (tree/wind_prepass.wesl); uv_b carries the card's snow.
 @if(TREE_SNOW && TREE_CROWN_SHADING && VERTEX_UVS_A && VERTEX_UVS_B) {
-    let cover = snow::needle_cover(snow::needle_depth(in.uv), in.uv_b.x);
+    let cover = snow::needle_snow(in.uv, in.uv_b.x);
     let needles = pbr_input.material.base_color.a;
-    let top = in.uv_b.y > 0.0;
-    snow::settle(&pbr_input, snow::needle_shown(cover, needles, pbr_input.material.alpha_cutoff, top),
-        select(-1.0, 1.0, top));
+    let above = in.uv_b.y;
+    snow::settle(&pbr_input, snow::needle_shown(cover, needles, pbr_input.material.alpha_cutoff, above),
+        mix(-1.0, 1.0, above));
     pbr_input.material.base_color.a = max(needles, cover);
 }
     // uv_b.x holds the share of the bark's snow characters have not shaken off.

@@ -251,6 +251,15 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
   `spruce_snow` is the forest spruce with all three and its own impostor; the planner grows it
   alone on snow ground, which the rest of the forest keeps open. Heightfield loads over each card
   read as paper sheets and are gone.
+- **Far snowy foliage reads a filtered cover, not a filtered depth.** *Kept* (October 22). Spruces
+  were snowy as impostors, green from about 75 m to 170 m, and snowy again near: thresholding a
+  minified depth averages it under every threshold (the bake samples full resolution, so the
+  impostor kept its snow). The ORM's alpha holds the share snow covers at a whole amount, box
+  filtered; where the texture is minified the shader reads it, scaled to the card's amount, and
+  up close the depth's crisp threshold. Depth mips keeping each tile's distribution did not help
+  alone (filtering between texels still averages), and the impostor's views from 8° up were not
+  the cause. Past 12–35 m a card shows all its snow from either side, as the impostor, seen from
+  further, bakes it, and the far LOD carries coarse loads.
 - **Snow falls when its bough moves, limb by limb.** *Kept* (October 22). Each snowy tree in the
   GPU trees' pool holds a state per primary limb (when it shed, how fast its bough moved), for
   as long as its batch stays in the pool. A compute pass reads the touch field over each nearby

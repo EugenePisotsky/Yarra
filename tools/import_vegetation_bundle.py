@@ -237,7 +237,10 @@ def main():
             name = manifest['asset']
             if not name.replace('_', '').replace('-', '').isalnum():
                 raise ValueError('Invalid asset name')
-            levels = json.loads((bundle/'texture_mips.json').read_text())['foliage_basecolor']
+            # The kit's own levels where a box filter would be wrong: the foliage colour keeps
+            # each tile's alpha coverage, and snowy foliage's ORM its snow depth.
+            mips = json.loads((bundle/'texture_mips.json').read_text())
+            levels = {f'{key}.png': mips[key] for key in ('foliage_basecolor', 'foliage_orm') if key in mips}
             variants, counts, first_ids = [], [], None
             bounds = [max(max(abs(v['min'][c]), abs(v['max'][c])) * (1 if c == 1 else 2)
                           for v in manifest['bounds'].values()) for c in range(3)]
@@ -249,7 +252,7 @@ def main():
                 doc, blob = read_glb(glb)
                 for im in doc['images']:
                     uri = im['uri']
-                    files = [bundle/uri] + ([bundle/p for p in levels] if uri.endswith('foliage_basecolor.png') else [])
+                    files = [bundle/uri] + [bundle/p for p in levels.get(Path(uri).name, [])]
                     filename = Path(uri).with_suffix('.ktx2').name
                     digest = hashlib.sha256(b''.join(p.read_bytes() for p in files)).hexdigest()
                     if filename in texture_hashes and texture_hashes[filename] != digest:

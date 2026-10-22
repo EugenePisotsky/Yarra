@@ -339,7 +339,10 @@ uv run --with numpy --with pillow python tools/lod_lab_sheet.py tmp/lod-lab/spru
 
 The form (`pack/asset`) stands at the start view's focus, drawn as the game draws it; the panel
 sets distance, bearing, pitch, what draws, wind and sun. LOD distances follow the window's height,
-so judge fullscreen (captures are). For frames without the forest, run `forest_plan.py` with
+so judge fullscreen (captures are). For snowy trees, `content/reteya/views/snow-lab.ron` stands on
+open snow, nothing within 84 m, facing snowy spruces at every LOD's distance: from it the lab's
+switch captures (`--lod-lab-capture DIR --lod-lab-pitch 9`) show each switch before and after, and a
+look capture the bands as play sees them. For frames without the forest, run `forest_plan.py` with
 `--clear --project` on a copy of the project (`sqlite3 … ".backup …"`), cook the copy to its own
 runtime and pass that as `--world-db` (not tried yet).
 

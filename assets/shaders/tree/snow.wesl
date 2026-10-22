@@ -3,7 +3,8 @@
 // of the needle sprays into the foliage ORM's blue channel, which the foliage's zero metallic
 // factor leaves unused (YarraVegetation scripts/needle_snow.py): the depth is the share of a
 // spray's needles lying shallower, so a card covers the texels deeper than a threshold set by
-// how much snow it holds. Bark takes snow on its upper sides. The kit's impostor bake
+// how much snow it holds. The ORM's alpha holds the share snow covers at a whole amount, which
+// keeps far foliage as snowy as near (needle_snow). Bark takes snow on its upper sides. The kit's impostor bake
 // (scripts/bake_impostor.py) repeats these rules for the far trees.
 import bevy_pbr::render::{pbr_bindings, pbr_types, pbr_types::PbrInput};
 import bevy_pbr::render::mesh_view_bindings::view;
@@ -25,10 +26,23 @@ fn needle_cover(depth: f32, amount: f32) -> f32 {
     return smoothstep(threshold - 0.06, threshold + 0.06, depth);
 }
 
-// Snow seen from below a card shows only where it bridges the gaps between needles; on top it
-// hides them. `top` is the side snow falls on.
-fn needle_shown(cover: f32, needle_alpha: f32, cutoff: f32, top: bool) -> f32 {
-    return select(cover * (1.0 - step(cutoff, needle_alpha)), cover, top);
+// Up close, snow seen from below a card shows only where it bridges the gaps between needles; on
+// top it hides them. Between these distances (metres) a card comes to show all its snow from
+// either side: a far bough is thin, and what shows of it is its snowy edge. The impostors, all
+// further away, bake every card so (scripts/bake_impostor.py in the vegetation kit), and every
+// LOD between agrees with them.
+const SNOW_SIDE: vec2<f32> = vec2(12.0, 35.0);
+
+// How much of a card's snow shows as from above, 0 (only between its needles) to 1: all of it
+// when the camera, `distance` metres away, is above the card (`side` > 0), and more the further
+// the camera is.
+fn seen_from_above(side: f32, distance: f32) -> f32 {
+    return max(select(0.0, 1.0, side > 0.0), smoothstep(SNOW_SIDE.x, SNOW_SIDE.y, distance));
+}
+
+// The share of a texel snow covers (`cover`) that shows, seen `above` as from above.
+fn needle_shown(cover: f32, needle_alpha: f32, cutoff: f32, above: f32) -> f32 {
+    return mix(cover * (1.0 - step(cutoff, needle_alpha)), cover, above);
 }
 
 fn hash(cell: vec3<i32>) -> f32 {
@@ -61,15 +75,30 @@ fn snow_normal(n: vec3<f32>, side: f32) -> vec3<f32> {
     return normalize(n * 0.4 + vec3(0.0, side, 0.0));
 }
 
-// The baked snow depth under a foliage texel; none without the kit's texture.
-fn needle_depth(uv_in: vec2<f32>) -> f32 {
+// The share of a spray's needles snow covers at `amount`, as needle_cover thresholds them.
+fn needle_share(amount: f32) -> f32 {
+    return clamp(0.6 * amount - 0.08, 0.0, 1.0);
+}
+
+// The share of the foliage under `uv_in` snow covers at `amount`; none without the kit's texture.
+// Up close, the texels whose baked depth (the ORM's blue) passes the amount's threshold. Where
+// the texture is minified, filtering averages the depth under every threshold, so instead the
+// share of the texels snow covers at a whole amount (the ORM's alpha, which filters exactly),
+// scaled to this amount.
+fn needle_snow(uv_in: vec2<f32>, amount: f32) -> f32 {
     let standard = pbr_bindings::material;
     if (standard.flags & pbr_types::STANDARD_MATERIAL_FLAGS_METALLIC_ROUGHNESS_TEXTURE_BIT) == 0u {
         return 0.0;
     }
     let uv = (standard.uv_transform * vec3(uv_in, 1.0)).xy;
-    return textureSampleBias(pbr_bindings::metallic_roughness_texture,
-        pbr_bindings::metallic_roughness_sampler, uv, view.mip_bias).b;
+    let orm = textureSampleBias(pbr_bindings::metallic_roughness_texture,
+        pbr_bindings::metallic_roughness_sampler, uv, view.mip_bias);
+    let texels = uv * vec2<f32>(textureDimensions(pbr_bindings::metallic_roughness_texture));
+    let dx = dpdx(texels);
+    let dy = dpdy(texels);
+    let level = 0.5 * log2(max(max(dot(dx, dx), dot(dy, dy)), 1e-8)) + view.mip_bias;
+    let far = orm.a * needle_share(amount) / needle_share(1.0);
+    return mix(needle_cover(orm.b, amount), far, smoothstep(0.5, 2.0, level));
 }
 
 // Lays snow over `shown` of a surface, seen from above (`side` 1) or below (-1).

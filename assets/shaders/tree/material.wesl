@@ -9,7 +9,7 @@ import package::shaders::tree::wind::{TreeVertex, WindFrames, WindPose, animated
 import package::shaders::tree::touch::{TouchWindow, touch_canonical, touch_inside, touch_moving, touch_uv, within};
 import package::shaders::tree::instance::Instance;
 import package::shaders::tree::shed::{ChunkFall, CHUNK_CRUMBLE, ShedTrees, SHED_NONE, UNLOAD_LIFT, chunk_fall, shed_fallen, shed_since, shed_slot, unload_rise};
-@if(TREE_SNOW) import package::shaders::tree::snow::card_amount;
+@if(TREE_SNOW) import package::shaders::tree::snow::{card_amount, seen_from_above};
 
 // Trees drawn by the GPU trees (crates/engine/src/trees/gpu.rs) rather than one mesh entity
 // each: `instance_index` picks this draw's record (the instance and its dither level), and
@@ -369,10 +369,10 @@ fn tree_vertex(vertex: Vertex) -> TreeVertex {
     return tree;
 }
 
-// How much snow a snowy card holds and whether the camera sees the side it lies on (> 0), for its
-// fragments (tree/snow.wesl); for bark, the share of its snow left. The card's own normal is the
-// side it faces up with; cards that turn toward the camera show their snow from the side, and
-// only their front. Snow characters shook off has gone (tree/shed.wesl).
+// How much snow a snowy card holds and how much of it shows as from above (tree/snow.wesl
+// `seen_from_above`), for its fragments; for bark, the share of its snow left. The card's own
+// normal is the side it faces up with; cards that turn toward the camera show their snow from the
+// side, and only their front. Snow characters shook off has gone (tree/shed.wesl).
 @if(TREE_SNOW)
 fn card_snow(tree: TreeVertex, model: mat4x4<f32>, sky: f32, state: vec4<f32>) -> vec2<f32> {
     let held = 1.0 - shed_fallen(state.x);
@@ -381,8 +381,8 @@ fn card_snow(tree: TreeVertex, model: mat4x4<f32>, sky: f32, state: vec4<f32>) -
         return vec2(card_amount(sky, 1.0) * held, 1.0);
     }
     let normal = normalize((model * vec4(tree.card_normal, 0.0)).xyz);
-    let pivot = (model * vec4(tree.card_pivot, 1.0)).xyz;
-    return vec2(card_amount(sky, normal.y) * held, dot(normal, view.world_position - pivot));
+    let to_camera = view.world_position - (model * vec4(tree.card_pivot, 1.0)).xyz;
+    return vec2(card_amount(sky, normal.y) * held, seen_from_above(dot(normal, to_camera), length(to_camera)));
 }
 @else
     return vec2(held, 1.0);

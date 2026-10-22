@@ -180,7 +180,7 @@ fn alpha_discard(in: prepass_io::VertexOutput) {
         alpha *= textureSampleBias(pbr_bindings::base_color_texture, pbr_bindings::base_color_sampler,
             uv, view.mip_bias).a;
     }
-    alpha = max(alpha, snow::needle_cover(snow::needle_depth(in.uv), in.uv_b.x));
+    alpha = max(alpha, snow::needle_snow(in.uv, in.uv_b.x));
     if alpha < standard.alpha_cutoff {
         discard;
     }

@@ -8,7 +8,7 @@
 (key: "yarra_spruces/spruce_snow", display_name: "Spruce Snow", source_uri: "local/yarra_spruces/source/spruce_snow.glb", variants: [
 (uri: "local/yarra_spruces/runtime/spruce_snow/spruce_snow_lod0.gltf", bounds: (7.8863, 14.0541, 7.8824), gpu_bytes_estimate: 7487652, minimum_screen_height: 480.0),
 (uri: "local/yarra_spruces/runtime/spruce_snow/spruce_snow_lod1.gltf", bounds: (7.8863, 14.0541, 7.8824), gpu_bytes_estimate: 2243756, minimum_screen_height: 240.0),
-(uri: "local/yarra_spruces/runtime/spruce_snow/spruce_snow_lod2.gltf", bounds: (7.8863, 14.0541, 7.8824), gpu_bytes_estimate: 588872, minimum_screen_height: 200.0),
-(uri: "local/yarra_spruces/runtime/spruce_snow/spruce_snow.impostor.json", bounds: (7.8863, 14.0541, 7.8824), gpu_bytes_estimate: 3406930, minimum_screen_height: 0.0),
+(uri: "local/yarra_spruces/runtime/spruce_snow/spruce_snow_lod2.gltf", bounds: (7.8863, 14.0541, 7.8824), gpu_bytes_estimate: 897356, minimum_screen_height: 200.0),
+(uri: "local/yarra_spruces/runtime/spruce_snow/spruce_snow.impostor.json", bounds: (7.8863, 14.0541, 7.8824), gpu_bytes_estimate: 3418466, minimum_screen_height: 0.0),
 ]),
 ])
