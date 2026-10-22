@@ -180,9 +180,9 @@ def adapt_foliage(doc, blob, blend):
                 overwrite(doc, blob, a['_CARD_AXIS'], axes)
                 moving_ids.update(int(m[1]) for m in meta if m[0] > .5)
             # These authoring attributes are retained in the original GLB. The
-            # game registers the card transform attributes below.
+            # game registers the card transform attributes below, and snow loads' chunks.
             for key in list(a):
-                if key.startswith('_') and key not in ('_CARD_AXIS', '_CARD_PIVOT', '_CARD_NORMAL', '_CARD_FACING', '_WIND_PIVOT', '_WIND_AXIS'):
+                if key.startswith('_') and key not in ('_CARD_AXIS', '_CARD_PIVOT', '_CARD_NORMAL', '_CARD_FACING', '_WIND_PIVOT', '_WIND_AXIS', '_SNOW_CHUNK'):
                     del a[key]
     doc['extensionsUsed'] = sorted(set(doc.get('extensionsUsed', [])) | {'KHR_materials_specular'})
     return moving_ids

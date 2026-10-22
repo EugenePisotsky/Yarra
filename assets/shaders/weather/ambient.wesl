@@ -46,11 +46,18 @@ const FLUFF_LIFT: f32 = 0.3;
 // A whole burst of shaken snow: its first SNOW_CLUMPS particles are clumps, the rest powder, and
 // its powder has settled after SNOW_SECONDS.
 const SNOW_PARTICLES: u32 = 64u;
-const SNOW_CLUMPS: u32 = 14u;
+const SNOW_CLUMPS: u32 = 20u;
 const SNOW_SECONDS: f32 = 3.0;
 const GRAVITY: f32 = 9.81;
 // Snow lit by the sky also takes the light the snow ground under it throws back up.
 const SNOW_BOUNCE: f32 = 0.8;
+// The snow breaks off the loads' chunks as they fall (tree/shed.wesl `chunk_fall`, whose middle
+// terminal speed and fling these take): powder over the first POWDER_BIRTH seconds, clumps as
+// the chunks crumble.
+const CHUNK_TERMINAL: f32 = 4.0;
+const CHUNK_FLING: f32 = 0.6;
+const POWDER_BIRTH: f32 = 0.6;
+const CLUMP_BIRTH: vec2<f32> = vec2(0.2, 0.55);
 
 struct Particle {
     @builtin(position) position: vec4<f32>,
@@ -333,9 +340,9 @@ fn vertex(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance:
     return out;
 }
 
-// Snow shaken off a branch: clumps drop through the air, a few metres a second at most, while the
-// powder hangs, flung along by what shook it, drifting with the wind and spreading as it sinks.
-// Both are white spheres lit by the sun past its shadow maps and by the sky.
+// Snow shaken off a bough, breaking off its loads' chunks as they fall: clumps drop through the
+// air, a few metres a second at most, while the powder hangs, drifting with the wind and spreading
+// as it sinks. Both are white spheres lit by the sun past its shadow maps and by the sky.
 @vertex
 fn vertex_snow(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance: u32) -> Particle {
     var out: Particle;
@@ -348,12 +355,12 @@ fn vertex_snow(@builtin(vertex_index) vertex: u32, @builtin(instance_index) inst
     out.shape = 0.0;
     let fall = snow_falls[instance / SNOW_PARTICLES];
     let index = instance % SNOW_PARTICLES;
-    let age = ambient.time.z - fall.start.w;
+    let since = ambient.time.z - fall.start.w;
     let clump = index < SNOW_CLUMPS;
     // A smaller burst holds fewer of each.
     let rank = select((f32(index - SNOW_CLUMPS) + 0.5) / f32(SNOW_PARTICLES - SNOW_CLUMPS),
         (f32(index) + 0.5) / f32(SNOW_CLUMPS), clump);
-    if age < 0.0 || age > SNOW_SECONDS || rank > fall.shape.x {
+    if since < 0.0 || rank > fall.shape.x {
         return out;
     }
 
@@ -361,17 +368,30 @@ fn vertex_snow(@builtin(vertex_index) vertex: u32, @builtin(instance_index) inst
     let a = random3(seed * 3u + 29u);
     let b = random3(seed * 5u + 611u);
     let c = random3(seed * 7u + 1307u);
-    // Anywhere along the bough's snow, and across it as far as it lay.
+    let born = select(POWDER_BIRTH * c.z * c.z, mix(CLUMP_BIRTH.x, CLUMP_BIRTH.y, c.z), clump);
+    let age = since - born;
+    if age < 0.0 || age > SNOW_SECONDS {
+        return out;
+    }
+    // Where its chunk has fallen to by then, from anywhere along the bough's snow and across it
+    // as far as it lay.
+    let thrown = vec3(fall.motion.x * CHUNK_FLING, 0.3, fall.motion.z * CHUNK_FLING);
+    let chunk_settled = vec3(0.0, -CHUNK_TERMINAL, 0.0);
+    let chunk_tau = CHUNK_TERMINAL / GRAVITY;
+    let decay = exp(-born / chunk_tau);
+    let chunk_velocity = chunk_settled + (thrown - chunk_settled) * decay;
     let angle = TAU * a.x;
     let across = sqrt(a.y) * fall.along.w;
-    let start = fall.start.xyz + fall.along.xyz * a.z + vec3(cos(angle) * across, 0.0, sin(angle) * across);
+    let start = fall.start.xyz + fall.along.xyz * a.z + vec3(cos(angle) * across, 0.0, sin(angle) * across)
+        + chunk_settled * born + (thrown - chunk_settled) * chunk_tau * (1.0 - decay);
     // Falling against the air's drag: towards its terminal speed and the wind's drift, from the
     // fling it left with, over tau.
     let terminal = select(mix(0.3, 0.8, b.x), mix(2.5, 4.5, b.x), clump);
     let tau = terminal / GRAVITY;
     let drift = ambient.drift.xyz * select(0.5, 0.1, clump);
     let toss = (b - 0.5) * vec3(0.8, 0.4, 0.8) * select(1.0, 0.4, clump);
-    let fling = fall.motion.xyz * select(0.35, 0.15, clump) + toss;
+    // Clumps keep their chunk's speed; powder, fine, soon loses it.
+    let fling = chunk_velocity * select(0.3, 1.0, clump) + toss;
     let settled = vec3(drift.x, -terminal, drift.z);
     var p = start + settled * age + (fling - settled) * tau * (1.0 - exp(-age / tau));
     var radius: f32;
@@ -381,7 +401,7 @@ fn vertex_snow(@builtin(vertex_index) vertex: u32, @builtin(instance_index) inst
         if p.y < fall.motion.w {
             return out;
         }
-        radius = mix(0.025, 0.06, c.y);
+        radius = mix(0.03, 0.07, c.y);
         alpha = 0.95 * smoothstep(0.0, 0.03, age);
     } else {
         let swirl = smoothstep(0.0, 1.5, age) * 0.15;

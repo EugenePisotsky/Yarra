@@ -91,8 +91,9 @@ const SNOW_FALL_BYTES: usize = 64;
 /// Particles a whole burst holds (`SNOW_PARTICLES` in `shaders/weather/ambient.wesl`).
 const SNOW_FALL_PARTICLES: u32 = 64;
 
-/// A burst's powder has settled by then, seconds (`SNOW_SECONDS`).
-const SNOW_FALL_SECONDS: f32 = 3.0;
+/// A burst's last particle has settled by then, seconds: the latest born (`CLUMP_BIRTH`, `POWDER_BIRTH`)
+/// lasts `SNOW_SECONDS`.
+const SNOW_FALL_SECONDS: f32 = 3.6;
 
 /// The ring of shaken snow bursts, which what shakes the snow writes on the GPU and the ambient
 /// particles draw.

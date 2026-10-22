@@ -33,6 +33,11 @@ pub const WIND_PIVOT: MeshVertexAttribute =
 pub const WIND_AXIS: MeshVertexAttribute =
     MeshVertexAttribute::new("Wind_Axis", 0x5952_5241_4341_0006, VertexFormat::Float32x4);
 
+/// A snow load's chunk: its middle (object space) and a seed, by which it falls on its own
+/// (`shaders/tree/shed.wesl`).
+pub const SNOW_CHUNK: MeshVertexAttribute =
+    MeshVertexAttribute::new("Snow_Chunk", 0x5952_5241_4341_0007, VertexFormat::Float32x4);
+
 pub(super) fn structural(mesh: &bevy::mesh::Mesh) -> bool {
     mesh.contains_attribute(WIND_PIVOT) && mesh.contains_attribute(WIND_AXIS)
 }
@@ -143,6 +148,7 @@ pub fn tree_gltf_plugin() -> GltfPlugin {
         .add_custom_vertex_attribute("CARD_FACING", CARD_FACING)
         .add_custom_vertex_attribute("WIND_PIVOT", WIND_PIVOT)
         .add_custom_vertex_attribute("WIND_AXIS", WIND_AXIS)
+        .add_custom_vertex_attribute("SNOW_CHUNK", SNOW_CHUNK)
 }
 
 /// Adds the card attributes to the pipeline's vertex buffer when the mesh has them.
@@ -160,6 +166,17 @@ pub(super) fn specialize(
         if let Some(buffer) = descriptor.vertex.buffers.first_mut() {
             buffer.attributes.extend(attrs.attributes);
             descriptor.vertex.shader_defs.push("TREE_HIERARCHY".into());
+        }
+    }
+
+    if mesh.contains(SNOW_CHUNK) {
+        let attrs = mesh.get_layout(&[SNOW_CHUNK.at_shader_location(9)])?;
+        if let Some(buffer) = descriptor.vertex.buffers.first_mut() {
+            buffer.attributes.extend(attrs.attributes);
+            descriptor
+                .vertex
+                .shader_defs
+                .push("TREE_SNOW_CHUNKS".into());
         }
     }
 

@@ -300,8 +300,8 @@ SQLite. The renderers (Bevy) have no SQLite: `engine` is the only library joinin
   `yarra_snow` draw the snow their kit baked (`shaders/tree/snow.wesl`). Snowy trees in the GPU
   trees' pool hold a state per primary limb (`trees::gpu::shed`): a compute pass sheds a limb
   where the touch field pushes its bough, snowy vertices read their limb's state by the number
-  the kit gives them, and its snow falls as a burst in a GPU ring the ambient particle pass draws
-  (`atmosphere::ambient_particles::snow_falls_handle`).
+  the kit gives them (the loads' chunks fall, the bough springs up), and its snow falls as a burst
+  in a GPU ring the ambient particle pass draws (`atmosphere::ambient_particles::snow_falls_handle`).
 - Actors: `GameplayPlugins` (player, camera, input, destination marker), `GameplaySystems`,
   `MoveIntent`, and `MinimalGamePlugin` (environment, terrain, streaming and actors). Characters'
   feet (`feet`, joints and soles from the character catalog) list their presses on the ground,

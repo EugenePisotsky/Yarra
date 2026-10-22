@@ -1,9 +1,9 @@
 // Each frame's shake of the snowy trees near the touch field (crates/engine/src/trees/gpu/shed.rs):
 // one invocation per limb of each listed tree reads the field (tree/touch.wesl) over its bough,
 // across the width its foliage spreads, where its snow lies, and along its axis. A limb still
-// holding its snow whose bough is pushed past SHED_PUSH sheds it, noting when and how fast the
-// bough moved, and its snow falls from where it lay as a burst in the ambient particles' ring
-// (weather/ambient.wesl).
+// holding its snow whose bough is pushed past SHED_PUSH sheds it, noting when, how fast the bough
+// moved and its share of the snow, and its snow falls from where it lay as a burst in the ambient
+// particles' ring (weather/ambient.wesl).
 import package::shaders::tree::instance::Instance;
 import package::shaders::tree::shed::{Limb, SHED_NONE, ShedTrees, shed_slot};
 import package::shaders::tree::touch::{TouchWindow, touch_canonical, touch_inside, touch_uv};
@@ -111,7 +111,7 @@ fn shake_limbs(@builtin(global_invocation_id) id: vec3<u32>) {
 
     let now = shake.frame.x;
     let velocity = vec3(pushed.z, 0.0, pushed.w);
-    states[slot] = vec4(now, velocity);
+    states[slot] = vec4(now, velocity.xz, l.axis.w);
     let scale = r[1].y;
     let fall = atomicAdd(&next_fall, 1u) % u32(shake.frame.z);
     // The seed is a whole number below 2^24, which f32 holds exactly.

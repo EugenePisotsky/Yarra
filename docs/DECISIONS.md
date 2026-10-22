@@ -255,9 +255,14 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
   GPU trees' pool holds a state per primary limb (when it shed, how fast its bough moved), for
   as long as its batch stays in the pool. A compute pass reads the touch field over each nearby
   limb's bough, across the width its foliage spreads: pushed past 6 cm, the limb sheds. Its
-  needle and bark snow slides off over a third of a second, its loads sink into their card, and
-  its snow falls as a burst along where it lay, flung as the bough moved; vertices find their
-  limb by the number the kit writes in their second UV's y. *Rejected first:* the CPU guessing
+  needle and bark snow slides off over a third of a second. Its loads, broken by the kit into
+  chunks of about 15 cm (Voronoi cells of the surface, each vertex carrying its chunk's middle
+  and a seed), slide off with the bough's motion, drop against the air's drag and crumble within
+  about half a second into the clumps and powder the ambient particles carry on, born along the
+  chunks' way. The bough, unloaded, springs up to its pose 7° higher for a whole load, past an
+  underdamped wobble, through the same limb turn the touch field drives. Vertices find their limb
+  by the number the kit writes in their second UV's y. Chunks are their load's open top surface:
+  tumbling showed them as paper shards, so they turn at most 2 rad/s and break up early. *Rejected first:* the CPU guessing
   contact from a per-form outline of the snow against a widened body, logged into a 64 m map:
   snow fell before anything was touched, from the body's whole height, and the bursts started
   round the body rather than on the boughs. Reading the field only along each limb's axis
