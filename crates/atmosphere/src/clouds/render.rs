@@ -28,8 +28,11 @@ fn hidden_behind_fog(extinction: f32, above: f32) -> bool {
 pub(crate) struct Pipelines {
     compute_layout: BindGroupLayoutDescriptor,
     render_layout: BindGroupLayoutDescriptor,
+    noise_layout: BindGroupLayoutDescriptor,
     compute: CachedComputePipelineId,
     render: [CachedRenderPipelineId; 2],
+    /// Filling the base shape and the detail noise volumes.
+    noise: [CachedComputePipelineId; 2],
     sampler: Sampler,
     clamp_sampler: Sampler,
     /// Cached sky: wraps across the azimuth seam, clamps at the horizon and zenith rows.
@@ -87,6 +90,8 @@ fn init(
                 texture_3d(TextureSampleType::Float { filterable: true }),
                 sampler(SamplerBindingType::Filtering),
                 texture_storage_2d(TextureFormat::Rgba8Unorm, StorageTextureAccess::WriteOnly),
+                texture_3d(TextureSampleType::Float { filterable: true }),
+                texture_3d(TextureSampleType::Float { filterable: true }),
             ),
         ),
     );
@@ -99,9 +104,30 @@ fn init(
                 texture_3d(TextureSampleType::Float { filterable: true }),
                 sampler(SamplerBindingType::Filtering),
                 uniform_buffer::<ViewUniform>(true),
+                texture_3d(TextureSampleType::Float { filterable: true }),
+                texture_3d(TextureSampleType::Float { filterable: true }),
             ),
         ),
     );
+    let noise_layout = BindGroupLayoutDescriptor::new(
+        "cloud noise",
+        &BindGroupLayoutEntries::sequential(
+            ShaderStages::COMPUTE,
+            (
+                texture_storage_3d(TextureFormat::Rgba8Unorm, StorageTextureAccess::WriteOnly),
+                texture_storage_3d(TextureFormat::Rgba8Unorm, StorageTextureAccess::WriteOnly),
+            ),
+        ),
+    );
+    let noise = ["generate_shape", "generate_detail"].map(|entry| {
+        cache.queue_compute_pipeline(ComputePipelineDescriptor {
+            label: Some("cloud noise".into()),
+            layout: vec![noise_layout.clone()],
+            shader: server.load("shaders/clouds/noise.wesl"),
+            entry_point: Some(entry.into()),
+            ..default()
+        })
+    });
     let compute = cache.queue_compute_pipeline(ComputePipelineDescriptor {
         label: Some("cloud sun/moon transmittance".into()),
         layout: vec![compute_layout.clone()],
@@ -133,8 +159,10 @@ fn init(
     commands.insert_resource(Pipelines {
         compute_layout,
         render_layout,
+        noise_layout,
         compute,
         render,
+        noise,
         clamp_sampler: device.create_sampler(&SamplerDescriptor {
             mag_filter: FilterMode::Linear,
             min_filter: FilterMode::Linear,
@@ -166,34 +194,34 @@ fn update_shadows(
     buffers: Res<RenderAssets<GpuShaderBuffer>>,
     images: Res<RenderAssets<GpuImage>>,
     params: Res<EnvironmentParams>,
-    mut previous: Local<
-        Option<(
-            ShadowInputs,
-            TextureViewId,
-            TextureViewId,
-            ComputePipelineId,
-        )>,
-    >,
+    mut previous: Local<Option<(ShadowInputs, [TextureViewId; 4], ComputePipelineId)>>,
     mut ctx: RenderContext,
 ) {
     let _ = view.into_inner();
     let Some(assets) = assets else {
         return;
     };
-    let (Some(buffer), Some(noise), Some(shadows), Some(pipeline)) = (
+    let (Some(buffer), Some(noise), Some(shadows), Some(shape), Some(detail), Some(pipeline)) = (
         buffers.get(&assets.parameters),
         images.get(&assets.noise),
         images.get(&assets.shadows),
+        images.get(&assets.cloud_shape),
+        images.get(&assets.cloud_detail),
         cache.get_compute_pipeline(pipelines.compute),
     ) else {
         return;
     };
-    let key = (
-        ShadowInputs::from(&*params),
-        noise.texture_view.id(),
-        shadows.texture_view.id(),
-        pipeline.id(),
-    );
+    let views = [noise, shadows, shape, detail].map(|image| image.texture_view.id());
+
+    // The noise volumes are filled before anything reads them, and again when made anew; the
+    // shadows follow them.
+    if previous.as_ref().is_none_or(|p| p.1[2..] != views[2..])
+        && !generate_noise(&mut ctx, &pipelines, &cache, shape, detail)
+    {
+        return;
+    }
+
+    let key = (ShadowInputs::from(&*params), views, pipeline.id());
 
     if previous.as_ref() == Some(&key) {
         return;
@@ -207,6 +235,8 @@ fn update_shadows(
             &noise.texture_view,
             &pipelines.sampler,
             &shadows.texture_view,
+            &shape.texture_view,
+            &detail.texture_view,
         )),
     );
     let mut pass = ctx
@@ -220,6 +250,45 @@ fn update_shadows(
     pass.dispatch_workgroups(32, 32, 1);
     drop(pass);
     *previous = Some(key);
+}
+
+/// Fills the base shape and detail noise volumes; false until their pipelines are ready.
+fn generate_noise(
+    ctx: &mut RenderContext,
+    pipelines: &Pipelines,
+    cache: &PipelineCache,
+    shape: &GpuImage,
+    detail: &GpuImage,
+) -> bool {
+    let (Some(shape_pipeline), Some(detail_pipeline)) = (
+        cache.get_compute_pipeline(pipelines.noise[0]),
+        cache.get_compute_pipeline(pipelines.noise[1]),
+    ) else {
+        return false;
+    };
+    let group = ctx.render_device().create_bind_group(
+        "cloud noise",
+        &cache.get_bind_group_layout(&pipelines.noise_layout),
+        &BindGroupEntries::sequential((&shape.texture_view, &detail.texture_view)),
+    );
+    let mut pass = ctx
+        .command_encoder()
+        .begin_compute_pass(&ComputePassDescriptor {
+            label: Some("cloud noise"),
+            timestamp_writes: None,
+        });
+    pass.set_bind_group(0, &group, &[]);
+
+    for (pipeline, size) in [
+        (shape_pipeline, super::SHAPE_SIZE),
+        (detail_pipeline, super::DETAIL_SIZE),
+    ] {
+        let groups = size.div_ceil(4);
+        pass.set_pipeline(pipeline);
+        pass.dispatch_workgroups(groups, groups, groups);
+    }
+
+    true
 }
 
 /// Shadows are stored in the moving cloud field's coordinates. Wind and origin
@@ -466,9 +535,11 @@ pub(crate) fn refresh(
         return;
     };
     let cached = *quality == CloudQuality::Balanced;
-    let (Some(buffer), Some(noise), Some(render), Some(view_binding)) = (
+    let (Some(buffer), Some(noise), Some(shape), Some(detail), Some(render), Some(view_binding)) = (
         buffers.get(&assets.parameters),
         images.get(&assets.noise),
+        images.get(&assets.cloud_shape),
+        images.get(&assets.cloud_detail),
         cache.get_render_pipeline(pipelines.render[usize::from(cached)]),
         uniforms.uniforms.binding(),
     ) else {
@@ -555,6 +626,8 @@ pub(crate) fn refresh(
                 &noise.texture_view,
                 &pipelines.sampler,
                 view_binding.clone(),
+                &shape.texture_view,
+                &detail.texture_view,
             )),
         );
         let full = region == sky_cache::Region::Full;

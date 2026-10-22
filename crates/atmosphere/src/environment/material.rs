@@ -171,6 +171,8 @@ mod tests {
                 parameters: default(),
                 shadows: default(),
                 noise: default(),
+                cloud_shape: default(),
+                cloud_detail: default(),
                 shelter: default(),
                 forest_shadow: default(),
                 terrain_shadow: default(),

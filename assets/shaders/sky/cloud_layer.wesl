@@ -1,4 +1,6 @@
-// The cloud layer as the sky composite sees it: the cached panorama or this frame's clouds.
+// The cloud layer as the sky composite sees it: the cached panorama or this frame's clouds, whose
+// texels hold the light scattered per unit of sun, moon and sky light (clouds/render.wesl), lit
+// here by this frame's lights.
 import package::shaders::clouds::panorama::sky_panorama_uv;
 import package::shaders::sky::composite_common::{
     environment, cloud_newer, cloud_older, cloud_sampler, composite_settings, LIGHTNING_COLOR,
@@ -14,6 +16,13 @@ struct Cloud {
     light: vec3<f32>,
     transmittance: f32,
 }
+
+// Radiance a cloud scatters per unit of light it scatters (clouds/render.wesl) and lux of the sun
+// or moon on it.
+const CLOUD_LIGHT: f32 = 0.065;
+// Sunlit land and sea below light the clouds' bases (albedo about 0.1 over the island): at midday
+// as much as the sky lights them from above.
+const GROUND_BOUNCE: f32 = 0.07;
 
 // The cloud panorama as a cubic B-spline, in four bilinear taps: drawn bilinearly, sharp cloud
 // edges showed the texels as staircases.
@@ -64,7 +73,13 @@ fn cloud_layer(ray: vec3<f32>, start: f32, screen_uv: vec2<f32>, cubic: bool) ->
     // Under a closing deck far clouds keep the deck's grey.
     @if(ATMOSPHERE)
     air = mix(clear_sky(ray) * view.exposure, air, environment.weather.z);
-    var lit = c.rgb * 1024.0;
+    // The sky lights the clouds from above and the lit ground a little from below.
+    let sky = environment.ambient.rgb * environment.ambient.w;
+    let ground = environment.near_sun.rgb * max(environment.sun.y, 0.0)
+        * (1.0 - environment.weather.z) + sky;
+    var lit = c.r * environment.sun_color.rgb * environment.sun.w * CLOUD_LIGHT
+        + c.g * environment.moon_color.rgb * environment.moon.w * CLOUD_LIGHT
+        + c.b * (sky + ground * GROUND_BOUNCE);
     // A lightning flash lights the clouds, most near the strike.
     if environment.lightning.w > 0.0 {
         let to_strike = normalize(environment.lightning.xyz - view.world_position);

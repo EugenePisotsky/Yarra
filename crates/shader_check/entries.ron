@@ -24,6 +24,9 @@
         (shader: "shaders/clouds/shadows.wesl", variants: [
             [],
         ]),
+        (shader: "shaders/clouds/noise.wesl", variants: [
+            [],
+        ]),
         (shader: "shaders/sky/composite.wesl", variants: [
             ["ATMOSPHERE", "CACHED_CLOUDS", "CLOUDS", "DUAL_SOURCE_BLENDING", "MIST_NOISE_PERIOD=2048", "MULTISAMPLED"],
             ["ATMOSPHERE", "DUAL_SOURCE_BLENDING", "MIST_NOISE_PERIOD=2048"],

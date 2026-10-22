@@ -2,20 +2,19 @@
 use bevy::prelude::*;
 use std::time::Duration;
 
-/// Azimuth × elevation panorama. Its rows follow the horizon: the former 512² stereographic
-/// disk's square grid crossed thin distant clouds diagonally, and bilinear filtering rendered
-/// them as sawtooth staircases. Twice that texel count at half the refresh rate traces the same
-/// rays per second with ~5.7 texels per degree of azimuth (the disk had ~4.2).
+/// Azimuth × elevation panorama. Its rows follow the horizon, so thin distant clouds run along
+/// texels instead of crossing a square grid, which filtering drew as staircases. About 5.7 texels
+/// per degree of azimuth, and 4 to 5 per degree of elevation where the eye looks up at the
+/// clouds' billows, which half as many rows blur into smooth blobs.
 pub(crate) const WIDTH: u32 = 2048;
 
-pub(crate) const HEIGHT: u32 = 256;
+pub(crate) const HEIGHT: u32 = 512;
 
 /// Complete atlas refreshes per second, spread evenly over frames. The per-frame share
 /// varies with frame rate; total work per second does not.
-const REFRESH_HZ: f64 = 4.0;
+const REFRESH_HZ: f64 = 2.0;
 
-/// After a hitch, refresh at most this many rows instead of catching up: 65,536 rays, as
-/// one stripe of the former disk.
+/// After a hitch, refresh at most this many rows instead of catching up.
 const MAX_ROWS: u32 = HEIGHT / 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

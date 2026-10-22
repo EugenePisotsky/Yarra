@@ -414,6 +414,8 @@ fn environment(
         parameters: atmosphere::environment::fallback_parameters(),
         shadows: open.clone(),
         noise: open.clone(),
+        cloud_shape: open.clone(),
+        cloud_detail: open.clone(),
         shelter: open.clone(),
         forest_shadow: open.clone(),
         terrain_shadow: open.clone(),

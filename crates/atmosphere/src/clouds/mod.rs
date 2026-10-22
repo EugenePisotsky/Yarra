@@ -18,6 +18,27 @@ use bevy::{
 pub(crate) use noise::generate as noise;
 pub(crate) use render::{CloudTarget, Pipelines as CloudPipelines, refresh as refresh_clouds};
 
+/// Texels a side of the clouds' base shape and detail noise volumes (`shaders/clouds/noise.wesl`).
+pub(crate) const SHAPE_SIZE: u32 = 128;
+
+pub(crate) const DETAIL_SIZE: u32 = 32;
+
+/// A cloud noise volume `size` texels a side, which the GPU fills once.
+pub(crate) fn noise_volume(size: u32) -> Image {
+    let mut image = Image::new_uninit(
+        Extent3d {
+            width: size,
+            height: size,
+            depth_or_array_layers: size,
+        },
+        TextureDimension::D3,
+        TextureFormat::Rgba8Unorm,
+        bevy::asset::RenderAssetUsages::RENDER_WORLD,
+    );
+    image.texture_descriptor.usage |= TextureUsages::STORAGE_BINDING;
+    image
+}
+
 #[derive(Resource, Default)]
 pub struct CloudClock {
     pub seconds: f64,
@@ -82,7 +103,7 @@ mod tests {
     fn cached_sky_has_a_fixed_budget_and_high_handles_odd_or_tiny_views() {
         assert_eq!(
             CloudQuality::Balanced.target_size(UVec2::new(2592, 1456)),
-            UVec2::new(2048, 256)
+            UVec2::new(2048, 512)
         );
         assert_eq!(
             CloudQuality::High.target_size(UVec2::new(2592, 1456)),
@@ -90,7 +111,7 @@ mod tests {
         );
         assert_eq!(
             CloudQuality::Balanced.target_size(UVec2::new(5, 3)),
-            UVec2::new(2048, 256)
+            UVec2::new(2048, 512)
         );
         assert_eq!(CloudQuality::High.target_size(UVec2::ONE), UVec2::ONE);
     }

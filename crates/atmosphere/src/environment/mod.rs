@@ -42,6 +42,9 @@ pub struct EnvironmentAssets {
     pub parameters: Handle<ShaderBuffer>,
     pub shadows: Handle<Image>,
     pub noise: Handle<Image>,
+    /// The clouds' base shape and detail noise, generated on the GPU once (`crate::clouds`).
+    pub cloud_shape: Handle<Image>,
+    pub cloud_detail: Handle<Image>,
     /// Top-down rain shelter around the camera; see `crate::shelter`.
     pub shelter: Handle<Image>,
     /// Crowns around the camera for distant forest shadows; see `crate::forest_shadow`.
@@ -264,6 +267,8 @@ fn setup(
     shadows.sampler = repeat();
     commands.insert_resource(EnvironmentAssets {
         noise: images.add(noise),
+        cloud_shape: images.add(crate::clouds::noise_volume(crate::clouds::SHAPE_SIZE)),
+        cloud_detail: images.add(crate::clouds::noise_volume(crate::clouds::DETAIL_SIZE)),
         shadows: images.add(shadows),
         shelter: images.add(crate::shelter::RainShelter::image()),
         forest_shadow: images.add(crate::forest_shadow::ForestShadow::image()),
