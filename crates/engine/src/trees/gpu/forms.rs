@@ -2,17 +2,17 @@
 //! and materials. One hidden template scene per mesh LOD lets the trees' material conversion
 //! (`super::super::material`) make the same tree materials it makes for every tree scene; the
 //! templates stay for as long as the game runs, so their meshes and materials stay loaded. A
-//! form's nearest LOD also gives where its snow lies, which characters shake off
-//! (`super::super::shed`).
+//! snowy form's nearest LOD also gives its limbs, whose snow characters shake off
+//! (`super::shed`).
 use super::super::impostor::{
     ImpostorBatch, ImpostorDescriptor, ImpostorMaterial, ImpostorMaterialInputs, ImpostorMaterials,
     TreeFormSpec, instanced_quad, quad_reach,
 };
 
 use super::super::material::{TreeWindMaterial, WindBoundsPending, WindChecked};
-use super::super::shed::SnowProfile;
 use super::super::wind::WindBuffer;
 use super::MAX_REPRESENTATIONS;
+use super::shed::{Limb, limb_table};
 use atmosphere::environment::EnvironmentAssets;
 
 use bevy::{
@@ -44,8 +44,8 @@ pub(super) struct Form {
     pub(super) impostor_sphere: Vec4,
     /// Its views' texels per metre, which place its hand-off.
     pub(super) texels_per_metre: f32,
-    /// Where its snow lies, for forms holding any.
-    snow: Option<Arc<SnowProfile>>,
+    /// Its limbs, for forms holding snow.
+    limbs: Option<Arc<Vec<Limb>>>,
     pub(super) ready: bool,
     failed: bool,
 }
@@ -72,10 +72,17 @@ impl TreeForms {
             .is_some_and(|index| self.forms[index as usize].ready)
     }
 
-    /// Where the snow of the form of `impostor` lies, once it is ready and if it holds any.
-    pub(crate) fn snow(&self, impostor: &str) -> Option<Arc<SnowProfile>> {
-        self.index(impostor)
-            .and_then(|index| self.forms[index as usize].snow.clone())
+    pub(super) fn len(&self) -> usize {
+        self.forms.len()
+    }
+
+    pub(super) fn is_ready(&self, form: u32) -> bool {
+        self.forms.get(form as usize).is_some_and(|f| f.ready)
+    }
+
+    /// The limbs of form `form`, once it is ready, if it holds snow.
+    pub(super) fn limbs(&self, form: u32) -> Option<&Arc<Vec<Limb>>> {
+        self.forms.get(form as usize)?.limbs.as_ref()
     }
 }
 
@@ -140,7 +147,7 @@ pub(super) fn register(
             impostor: None,
             impostor_sphere: Vec4::ZERO,
             texels_per_metre: 0.0,
-            snow: None,
+            limbs: None,
             ready: false,
             failed: false,
         });
@@ -247,13 +254,13 @@ pub(super) fn harvest(
 
         form.impostor_sphere = impostor_sphere(descriptor);
         form.texels_per_metre = descriptor.texels_per_metre;
-        form.snow = snow_profile(form, &meshes, &tree_materials);
+        form.limbs = snowy_limbs(form, &meshes, &tree_materials);
         debug!(
-            "TREE_GPU_FORM {} height={:.1} texels_per_metre={:.2} snow={} parts={:?} impostor_sphere={:?}",
+            "TREE_GPU_FORM {} height={:.1} texels_per_metre={:.2} snowy_limbs={} parts={:?} impostor_sphere={:?}",
             form.spec.impostor,
             form.spec.height,
             form.texels_per_metre,
-            form.snow.is_some(),
+            form.limbs.as_ref().map_or(0, |l| l.len()),
             form.lods
                 .iter()
                 .map(|parts| parts.iter().flatten().map(|p| p.bounds).collect::<Vec<_>>())
@@ -275,28 +282,18 @@ pub(super) fn harvest(
     }
 }
 
-/// Where the snow of a form's nearest LOD lies: the points of its primitives that hold snow.
-fn snow_profile(
+/// The limbs of a form's nearest LOD, from its primitives that hold snow.
+fn snowy_limbs(
     form: &Form,
     meshes: &Assets<Mesh>,
     materials: &Assets<TreeWindMaterial>,
-) -> Option<Arc<SnowProfile>> {
+) -> Option<Arc<Vec<Limb>>> {
     let parts = form.lods.first()?.as_ref()?;
-    let snowy = parts.iter().filter(|part| {
-        materials
-            .get(&part.material)
-            .is_some_and(|m| m.extension.holds_snow())
+    let snowy = parts.iter().filter_map(|part| {
+        let holder = materials.get(&part.material)?.extension.snow_holder()?;
+        Some((meshes.get(&part.mesh)?, holder))
     });
-    let points = snowy
-        .filter_map(|part| {
-            meshes
-                .get(&part.mesh)?
-                .attribute(Mesh::ATTRIBUTE_POSITION)?
-                .as_float3()
-        })
-        .flatten()
-        .map(|&p| Vec3::from_array(p));
-    SnowProfile::of(points).map(Arc::new)
+    limb_table(snowy).map(Arc::new)
 }
 
 /// A sphere round the impostor's quad facing any way, leaning in any wind.

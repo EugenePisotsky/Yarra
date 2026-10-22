@@ -39,11 +39,6 @@ pub(super) struct TreeWindExtension {
     touch_field: Handle<Image>,
     #[storage(108, read_only)]
     touch_window: Handle<ShaderBuffer>,
-    /// Where characters shook snow off trees, and where that map lies (`super::shed`).
-    #[texture(109, sample_type = "float", filterable = false)]
-    shed_map: Handle<Image>,
-    #[storage(110, read_only)]
-    shed_window: Handle<ShaderBuffer>,
     crown_shading: bool,
     crown_sky: bool,
     bark_blend: bool,
@@ -211,24 +206,39 @@ fn extra_is(extras: &str, key: &str, value: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// `yarra_snow: "settled_v1"`: snow lies on the tree (shaders/tree/snow.wesl). It needs the share
-/// of the sky the crown leaves each surface, foliage's `crown_v2` or bark's `bark_sky_v1`.
+/// `yarra_snow: "settled_v2"`: snow lies on the tree (shaders/tree/snow.wesl), and each vertex
+/// numbers its primary limb in its second UV's y, by which characters shake it off
+/// (`super::gpu::shed`). It needs the share of the sky the crown leaves each surface, foliage's
+/// `crown_v2` or bark's `bark_sky_v1`.
 fn snowy(extras: &str, shading: FoliageShading) -> bool {
-    extra_is(extras, "yarra_snow", "settled_v1")
+    extra_is(extras, "yarra_snow", "settled_v2")
         && (shading == FoliageShading::CrownOcclusion
             || extra_is(extras, "yarra_shading", "bark_sky_v1"))
 }
 
-/// `yarra_snow: "load_v1"`: snow lying on the boughs as meshes, lit as bark is. Each vertex keeps
-/// its card's pivot and normal, so a shaken load drops off its card.
+/// `yarra_snow: "load_v2"`: snow lying on the boughs as meshes, lit as bark is. Each vertex keeps
+/// its card's pivot and normal, so a shaken load drops off its card, and numbers its limb as
+/// settled snow does.
 fn snow_load(extras: &str) -> bool {
-    extra_is(extras, "yarra_snow", "load_v1") && extra_is(extras, "yarra_shading", "bark_sky_v1")
+    extra_is(extras, "yarra_snow", "load_v2") && extra_is(extras, "yarra_shading", "bark_sky_v1")
+}
+
+/// What snow lies on: where a limb's snow is (`super::gpu::shed`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum SnowHolder {
+    Load,
+    Needles,
+    Bark,
 }
 
 impl TreeWindExtension {
-    /// Whether snow lies on what this material draws.
-    pub(super) fn holds_snow(&self) -> bool {
-        self.snow || self.snow_load
+    pub(super) fn snow_holder(&self) -> Option<SnowHolder> {
+        match (self.snow_load, self.snow, self.crown_shading) {
+            (true, _, _) => Some(SnowHolder::Load),
+            (false, true, true) => Some(SnowHolder::Needles),
+            (false, true, false) => Some(SnowHolder::Bark),
+            (false, false, _) => None,
+        }
     }
 }
 
@@ -392,8 +402,6 @@ fn convert(
                         wind: buffer.0.clone(),
                         touch_field: super::touch::field_handle(),
                         touch_window: super::touch::window_handle(),
-                        shed_map: super::shed::map_handle(),
-                        shed_window: super::shed::window_handle(),
                         profile: wind_profile(&extras.value),
                         bark_blend: upper.is_some(),
                         // `yarra_shading: "bark_sky_v1"`: vertex colour is the share of the
@@ -476,23 +484,23 @@ mod tests {
 
     #[test]
     fn snow_and_its_loads_need_their_versioned_tags_and_the_sky_a_crown_leaves() {
-        let foliage = r#"{"yarra_snow":"settled_v1","yarra_shading":"crown_v2"}"#;
+        let foliage = r#"{"yarra_snow":"settled_v2","yarra_shading":"crown_v2"}"#;
         assert!(snowy(foliage, foliage_shading(foliage)));
-        let bark = r#"{"yarra_snow":"settled_v1","yarra_shading":"bark_sky_v1"}"#;
+        let bark = r#"{"yarra_snow":"settled_v2","yarra_shading":"bark_sky_v1"}"#;
         assert!(snowy(bark, foliage_shading(bark)));
 
         for text in [
-            r#"{"yarra_snow":"settled_v1","yarra_shading":"crown_v1"}"#,
-            r#"{"yarra_snow":"settled_v2","yarra_shading":"crown_v2"}"#,
+            r#"{"yarra_snow":"settled_v2","yarra_shading":"crown_v1"}"#,
+            r#"{"yarra_snow":"settled_v1","yarra_shading":"crown_v2"}"#,
             r#"{"yarra_shading":"crown_v2"}"#,
         ] {
             assert!(!snowy(text, foliage_shading(text)));
         }
 
-        let load = r#"{"yarra_snow":"load_v1","yarra_shading":"bark_sky_v1"}"#;
+        let load = r#"{"yarra_snow":"load_v2","yarra_shading":"bark_sky_v1"}"#;
         assert!(snow_load(load) && !snowy(load, foliage_shading(load)));
         assert!(!snow_load(
-            r#"{"yarra_snow":"load_v1","yarra_shading":"crown_v2"}"#
+            r#"{"yarra_snow":"load_v2","yarra_shading":"crown_v2"}"#
         ));
         assert!(!snow_load(bark));
     }

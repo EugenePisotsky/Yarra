@@ -6,16 +6,7 @@
 // draw entry in each view. `finalize` then writes each bucket's count into its entry's
 // indirect draw.
 
-// An instance, relative to its batch's origin.
-struct Instance {
-    position_yaw: vec4<f32>,
-    scale: f32,
-    form: u32,
-    origin: u32,
-    // ALIVE, and the forced representation (FORCED_MASK: 0 the distance picks, 1 + n
-    // representation n, FORCED_NOTHING none).
-    flags: u32,
-}
+import package::shaders::tree::instance::Instance;
 
 // A form's representations (mesh LODs, then its impostor) at unit scale.
 struct Form {

@@ -127,8 +127,9 @@ def adapt_foliage(doc, blob, blend):
                 if material['extras'].get('vegetation_occlusion') == 'bark_sky_v1':
                     material['extras']['yarra_shading'] = 'bark_sky_v1'
             # Snow settled on the tree (shaders/tree/snow.wesl), foliage's in its ORM's blue, and
-            # the snow loads lying on its boughs, which characters shake off (tree/shed.wesl).
-            if material.get('extras', {}).get('vegetation_snow') in ('settled_v1', 'load_v1'):
+            # the snow loads lying on its boughs; each vertex numbers its limb in TEXCOORD_1.y, by
+            # which characters shake off each limb's snow (tree/shed.wesl).
+            if material.get('extras', {}).get('vegetation_snow') in ('settled_v2', 'load_v2'):
                 material['extras']['yarra_snow'] = material['extras']['vegetation_snow']
             if material.get('alphaMode') == 'MASK':
                 extras = material.setdefault('extras', {})

@@ -103,7 +103,11 @@ pub(super) fn install(render_app: &mut SubApp, shared: Arc<Mutex<PoolData>>) {
                 prepare.in_set(RenderSystems::PrepareBindGroups),
             ),
         )
-        .add_systems(RenderGraph, cull.before(camera_driver));
+        // The shed pass reads the transforms the LOD pass writes.
+        .add_systems(
+            RenderGraph,
+            (cull, super::shed::shake).chain().before(camera_driver),
+        );
 }
 
 pub(super) fn initialize(world: &mut World) {
@@ -159,14 +163,14 @@ impl FromWorld for TreeGpuPipelines {
 
 /// A storage buffer that grows by doubling.
 #[derive(Default)]
-struct Growing {
+pub(super) struct Growing {
     buffer: Option<Buffer>,
     bytes: u64,
 }
 
 impl Growing {
     /// Makes room for `bytes`; true when the buffer is new (its contents lost).
-    fn reserve(
+    pub(super) fn reserve(
         &mut self,
         device: &RenderDevice,
         label: &'static str,
@@ -190,7 +194,34 @@ impl Growing {
         true
     }
 
-    fn get(&self) -> &Buffer {
+    /// As `reserve`, but a new buffer starts with the old one's contents. True when the buffer
+    /// is new.
+    pub(super) fn reserve_keeping(
+        &mut self,
+        device: &RenderDevice,
+        queue: &RenderQueue,
+        label: &'static str,
+        usage: BufferUsages,
+        bytes: u64,
+    ) -> bool {
+        let old = self.buffer.clone().map(|buffer| (buffer, self.bytes));
+
+        if !self.reserve(device, label, usage | BufferUsages::COPY_SRC, bytes) {
+            return false;
+        }
+
+        // Submitted now, so this frame's writes to the new buffer land after it.
+        if let Some((old, size)) = old {
+            let mut encoder =
+                device.create_command_encoder(&CommandEncoderDescriptor { label: Some(label) });
+            encoder.copy_buffer_to_buffer(&old, 0, self.get(), 0, size);
+            queue.submit([encoder.finish()]);
+        }
+
+        true
+    }
+
+    pub(super) fn get(&self) -> &Buffer {
         self.buffer.as_ref().expect("reserved before use")
     }
 }
@@ -221,6 +252,8 @@ pub(super) struct TreeGpu {
     active: bool,
     /// Bucket counts copied back now and then for the `TREE_GPU_COUNTS` debug line.
     readback: Readback,
+    /// The shed buffers the draws' bind group holds (`super::shed::ShedGpu::generation`).
+    shed_generation: Option<u64>,
 }
 
 /// Frames between bucket count readbacks.
@@ -236,6 +269,13 @@ struct Readback {
 }
 
 impl TreeGpu {
+    /// The pool's instances and this frame's transforms, once the compute pass has run with
+    /// them.
+    pub(super) fn pool_buffers(&self) -> Option<(&Buffer, &Buffer)> {
+        self.active
+            .then(|| (self.instances.get(), self.transforms.get()))
+    }
+
     /// The view a phase draws for: a shadow view's own number, else the main view's.
     fn view_index(&self, view: &RetainedViewEntity) -> usize {
         self.shadow_views.get(view).map_or(0, |i| 1 + i)
@@ -342,11 +382,13 @@ fn prepare(
     pipelines: Res<TreeGpuPipelines>,
     cache: Res<PipelineCache>,
     (meshes, allocator): (Res<RenderAssets<RenderMesh>>, Res<MeshAllocator>),
+    shed: Res<super::shed::ShedGpu>,
 ) {
     let gpu = gpu.as_mut();
     let next = layout.layout.clone();
     let mut regroup = gpu.upload_pool(&shared, &device, &queue);
     regroup |= gpu.upload_layout(&next, &device, &queue);
+    regroup |= gpu.shed_generation != Some(shed.generation());
 
     if bevy::log::tracing::enabled!(bevy::log::Level::DEBUG) {
         log_counts(gpu, &next);
@@ -356,7 +398,7 @@ fn prepare(
     gpu.write_camera(&frame, &next, &device, &queue);
 
     if regroup || gpu.compute_group.is_none() {
-        gpu.rebind(&device, &cache, &pipelines);
+        gpu.rebind(&device, &cache, &pipelines, &shed);
     }
 
     gpu.active = frame.view.is_some()
@@ -577,6 +619,7 @@ impl TreeGpu {
         device: &RenderDevice,
         cache: &PipelineCache,
         pipelines: &TreeGpuPipelines,
+        shed: &super::shed::ShedGpu,
     ) {
         let layout = cache.get_bind_group_layout(&pipelines.compute_layout);
         self.compute_group = Some(device.create_bind_group(
@@ -603,8 +646,11 @@ impl TreeGpu {
                 self.instances.get().as_entire_binding(),
                 self.origins.get().as_entire_binding(),
                 self.transforms.get().as_entire_binding(),
+                shed.states().as_entire_binding(),
+                shed.trees().as_entire_binding(),
             )),
         ));
+        self.shed_generation = Some(shed.generation());
     }
 }
 

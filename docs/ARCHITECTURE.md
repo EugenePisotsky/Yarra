@@ -297,10 +297,11 @@ SQLite. The renderers (Bevy) have no SQLite: `engine` is the only library joinin
   `TreeInstancing`), `WorldVegetationPlugin`, ground details, `OceanPlugin`. Characters push
   branches aside through a 3D field of springs around the player (`trees::touch`), which every
   tree material reads in every pass and turns each limb about its root by. Trees tagged
-  `yarra_snow` draw the snow their kit baked (`shaders/tree/snow.wesl`). Where a body meets a
-  form's snow (its profile, from the nearest LOD) it shakes it off (`trees::shed`): a log in world
-  coordinates, drawn into a map around the player that snowy vertices read along their limb, and
-  bursts of falling snow that the ambient particle pass draws (`atmosphere::ambient_particles::SnowFalls`).
+  `yarra_snow` draw the snow their kit baked (`shaders/tree/snow.wesl`). Snowy trees in the GPU
+  trees' pool hold a state per primary limb (`trees::gpu::shed`): a compute pass sheds a limb
+  where the touch field pushes its bough, snowy vertices read their limb's state by the number
+  the kit gives them, and its snow falls as a burst in a GPU ring the ambient particle pass draws
+  (`atmosphere::ambient_particles::snow_falls_handle`).
 - Actors: `GameplayPlugins` (player, camera, input, destination marker), `GameplaySystems`,
   `MoveIntent`, and `MinimalGamePlugin` (environment, terrain, streaming and actors). Characters'
   feet (`feet`, joints and soles from the character catalog) list their presses on the ground,

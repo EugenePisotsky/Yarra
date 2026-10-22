@@ -1,4 +1,4 @@
-// Snow settled on a tree (material extras `yarra_snow: "settled_v1"`, TREE_SNOW,
+// Snow settled on a tree (material extras `yarra_snow: "settled_v2"`, TREE_SNOW,
 // crates/engine/src/trees/material.rs). Its vegetation kit bakes how deep snow lies on each texel
 // of the needle sprays into the foliage ORM's blue channel, which the foliage's zero metallic
 // factor leaves unused (YarraVegetation scripts/needle_snow.py): the depth is the share of a

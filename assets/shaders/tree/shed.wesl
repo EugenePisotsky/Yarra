@@ -1,18 +1,29 @@
-// Snow characters shook off trees (crates/engine/src/trees/shed.rs): a map wrapping around the
-// player of the lowest and highest height at which they shook snowy boughs over each spot, and
-// when. Snowy tree vertices read it along their limb (tree/material.wesl), which binds it: needles
-// and bark lose their snow over SHED_SECONDS, and snow loads sink into their card as they drop.
+// Snow characters shake off trees (crates/engine/src/trees/gpu/shed.rs). Each snowy tree in the GPU
+// trees' pool holds a state per primary limb: when it shed (negative while it holds its snow) and
+// how fast its bough moved. tree/shed_shake.wesl sheds a limb where the touch field pushes its
+// bough; snowy vertices read their limb's state by the number they carry in uv_b.y
+// (tree/material.wesl): needles and bark lose their snow over SHED_SECONDS, and snow loads sink
+// into their card as they drop.
 
-// Where the map lies: shared by every tree material.
-struct ShedWindow {
-    // xy: canonical x and z of the window's first texel's corner; z: metres per texel; w: texels
-    // per side (0: no map).
-    area: vec4<f32>,
-    // xy: the render origin's canonical x and z; z: the game clock, seconds.
-    origin: vec4<f32>,
-    // The canonical x and z every shaken texel lies within: lowest, then highest (the lowest
-    // above the highest while none is).
-    shaken: vec4<f32>,
+// What reads the states: the game clock (x), and per batch origin slot of the pool its first
+// state, its first pool instance and limbs per tree (x SHED_NONE: its trees hold no snow).
+struct ShedTrees {
+    now: vec4<f32>,
+    batches: array<vec4<u32>>,
+}
+
+const SHED_NONE: u32 = 0xffffffffu;
+
+// A limb of a snowy form at unit scale (`Limb` in shed.rs).
+struct Limb {
+    // xyz: its root; w: how far it reaches along its axis (0: no such limb).
+    root: vec4<f32>,
+    // xyz: its direction; w: its share of the snow, 0..1.
+    axis: vec4<f32>,
+    // xyz: where its snow starts along it; w: how far across the snow lies.
+    snow: vec4<f32>,
+    // xyz: from there to where the snow ends; w: how far its foliage spreads from its axis.
+    along: vec4<f32>,
 }
 
 // Seconds a shaken bough's snow takes to slide off it.
@@ -20,24 +31,13 @@ const SHED_SECONDS: f32 = 0.35;
 
 const SHED_GRAVITY: f32 = 9.81;
 
-// Whether the snow of a tree rooted at render-space `root`, its limbs reaching `reach` metres, may
-// have been shaken.
-fn shed_near(window: ShedWindow, root: vec3<f32>, reach: f32) -> bool {
-    let q = root.xz + window.origin.xy;
-    return window.area.w > 0.0 && all(q >= window.shaken.xy - reach) && all(q <= window.shaken.zw + reach);
+// The state of `limb` of pool instance `pool`, whose batch is `batch`.
+fn shed_slot(batch: vec4<u32>, pool: u32, limb: u32) -> u32 {
+    return batch.x + (pool - batch.y) * batch.z + limb;
 }
 
-// The map texel over render-space `p` (xy), and 1 in z where the window holds it.
-fn shed_texel(window: ShedWindow, p: vec3<f32>) -> vec3<i32> {
-    let texel = vec2<i32>(floor((p.xz + window.origin.xy) / window.area.z));
-    let side = i32(window.area.w);
-    let inside = texel - vec2<i32>(round(window.area.xy / window.area.z));
-    let held = all(inside >= vec2(0)) && all(inside < vec2(side));
-    return vec3(((texel % side) + side) % side, select(0, 1, held));
-}
-
-// How far snow has slid off, 0 (all held) to 1 (gone), `since` seconds after it was shaken
-// (negative: never).
-fn shed_fallen(since: f32) -> f32 {
-    return select(0.0, clamp(since / SHED_SECONDS, 0.0, 1.0), since >= 0.0);
+// How far a limb's snow has slid off at `now`, 0 (all held) to 1 (gone), for a limb that shed at
+// `shed` (negative: never).
+fn shed_fallen(now: f32, shed: f32) -> f32 {
+    return select(0.0, clamp((now - shed) / SHED_SECONDS, 0.0, 1.0), shed >= 0.0);
 }

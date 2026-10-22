@@ -138,8 +138,8 @@ pub(crate) struct HiddenTrees(HashSet<IVec2>);
 /// A batch's place in the pool.
 #[derive(Clone, Debug)]
 pub(super) struct Batch {
-    range: Range<u32>,
-    origin: u32,
+    pub(super) range: Range<u32>,
+    pub(super) origin: u32,
     pub(super) form: u32,
     pub(super) flags: u32,
     /// Each instance's [`object_key`], when the batch's world position is known.
@@ -188,6 +188,16 @@ impl TreePool {
 
     pub(super) fn batches(&self) -> impl Iterator<Item = &Batch> {
         self.batches.values()
+    }
+
+    /// Every batch, by its entity.
+    pub(super) fn placed(&self) -> impl Iterator<Item = (Entity, &Batch)> {
+        self.batches.iter().map(|(entity, batch)| (*entity, batch))
+    }
+
+    /// Origin slots handed out so far: every batch's lies below.
+    pub(super) fn origin_slots(&self) -> u32 {
+        self.origins
     }
 
     fn allocate(&mut self, count: u32) -> Option<u32> {

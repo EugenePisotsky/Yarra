@@ -7,7 +7,8 @@ import bevy_pbr::{render::mesh_functions, render::view_transformations::position
 import bevy_pbr::render::mesh_view_bindings::view;
 import package::shaders::tree::wind::{TreeVertex, WindFrames, animated_position, animated_vector};
 import package::shaders::tree::touch::{TouchWindow, touch_canonical, touch_inside, touch_moving, touch_uv, within};
-import package::shaders::tree::shed::{ShedWindow, SHED_GRAVITY, SHED_SECONDS, shed_fallen, shed_near, shed_texel};
+import package::shaders::tree::instance::Instance;
+import package::shaders::tree::shed::{ShedTrees, SHED_GRAVITY, SHED_NONE, SHED_SECONDS, shed_fallen, shed_slot};
 @if(TREE_SNOW) import package::shaders::tree::snow::card_amount;
 
 // Trees drawn by the GPU trees (crates/engine/src/trees/gpu.rs) rather than one mesh entity
@@ -17,7 +18,14 @@ import package::shaders::tree::shed::{ShedWindow, SHED_GRAVITY, SHED_SECONDS, sh
 @if(TREE_INSTANCED)
 @group(4) @binding(0) var<storage, read> tree_records: array<u32>;
 @if(TREE_INSTANCED)
+@group(4) @binding(1) var<storage, read> tree_instances: array<Instance>;
+@if(TREE_INSTANCED)
 @group(4) @binding(3) var<storage, read> tree_transforms: array<array<vec4<f32>, 3>>;
+// Each snowy tree's limbs' states and what reads them (crates/engine/src/trees/gpu/shed.rs).
+@if(TREE_INSTANCED)
+@group(4) @binding(4) var<storage, read> shed_states: array<vec4<f32>>;
+@if(TREE_INSTANCED)
+@group(4) @binding(5) var<storage, read> shed_trees: ShedTrees;
 
 fn world_from_local(instance_index: u32) -> mat4x4<f32> {
 @if(TREE_INSTANCED) {
@@ -185,11 +193,6 @@ var<storage, read> wind: WindFrames;
 @group(constants::MATERIAL_BIND_GROUP) @binding(108)
 var<storage, read> touch_window: TouchWindow;
 
-// Where characters shook snow off trees (crates/engine/src/trees/shed.rs) and where that lies.
-@group(constants::MATERIAL_BIND_GROUP) @binding(109) var shed_map: texture_2d<f32>;
-@group(constants::MATERIAL_BIND_GROUP) @binding(110)
-var<storage, read> shed_window: ShedWindow;
-
 // How characters push foliage resting at render-space `p` aside, in world metres; last frame's
 // push for `previous`, from the spring's velocity.
 fn touch_push(window: TouchWindow, p: vec3<f32>, previous: bool) -> vec3<f32> {
@@ -254,42 +257,28 @@ const TOUCH_SAMPLES: u32 = 4u;
 // Longest a limb reaches from its tree's trunk, metres.
 const TOUCH_LIMB: f32 = 6.0;
 
-// Seconds since characters shook snow off at render-space `p`; negative where none did.
-fn shed_since(window: ShedWindow, p: vec3<f32>) -> f32 {
-    let texel = shed_texel(window, p);
-    if texel.z == 0 {
-        return -1.0;
-    }
-    let shaken = textureLoad(shed_map, texel.xy, 0);
-    return select(-1.0, window.origin.z - shaken.z, p.y >= shaken.x && p.y <= shaken.y);
-}
-
-// How far the snow of this vertex has slid off, 0 to 1: a limb shaken anywhere between its root
-// and the vertex sheds it, as a pushed limb swings whole beyond the push. Read at rest.
-fn limb_shed(tree: TreeVertex, model: mat4x4<f32>) -> f32 {
-    let window = shed_window;
-    if !shed_near(window, model[3].xyz, TOUCH_LIMB) {
+// How far the snow of this vertex's limb has slid off, 0 to 1 (tree/shed.wesl): snowy trees
+// number each vertex's primary limb in uv_b.y (-1 the trunk). Only the GPU trees hold states.
+fn limb_shed(tree: TreeVertex, instance_index: u32) -> f32 {
+@if(TREE_INSTANCED && VERTEX_UVS_B) {
+    let pool = tree_records[instance_index] & 0xffffffu;
+    let batch = shed_trees.batches[tree_instances[pool].origin];
+    let limb = i32(round(tree.uv_b.y));
+    if batch.x == SHED_NONE || limb < 0 || u32(limb) >= batch.z {
         return 0.0;
     }
-    let point = (model * vec4(tree.position, 1.0)).xyz;
-    var since = shed_since(window, point);
-@if(TREE_HIERARCHY) {
-    if tree.wind_axis.w != 0.0 {
-        let root = (model * vec4(tree.wind_pivot.xyz, 1.0)).xyz;
-        for (var k = 1u; k < TOUCH_SAMPLES; k += 1u) {
-            since = max(since, shed_since(window, mix(root, point, f32(k) / f32(TOUCH_SAMPLES))));
-        }
-    }
+    return shed_fallen(shed_trees.now.x, shed_states[shed_slot(batch, pool, u32(limb))].x);
 }
-    return shed_fallen(since);
+@else
+    return 0.0;
 }
 
 // Where a snow load's vertex lies as its shaken bough sheds it: sinking into its card while it
 // drops, then gone (every vertex at the card's pivot).
 @if(TREE_SNOW_LOAD)
-fn shaken_load(tree: TreeVertex, model: mat4x4<f32>) -> vec3<f32> {
+fn shaken_load(tree: TreeVertex, model: mat4x4<f32>, instance_index: u32) -> vec3<f32> {
 @if(TREE_BRANCH_CARDS) {
-    let fallen = limb_shed(tree, model);
+    let fallen = limb_shed(tree, instance_index);
     if fallen <= 0.0 {
         return tree.position;
     }
@@ -339,8 +328,8 @@ fn tree_vertex(vertex: Vertex) -> TreeVertex {
 // side it faces up with; cards that turn toward the camera show their snow from the side, and
 // only their front. Snow characters shook off has gone (tree/shed.wesl).
 @if(TREE_SNOW)
-fn card_snow(tree: TreeVertex, model: mat4x4<f32>, sky: f32) -> vec2<f32> {
-    let held = 1.0 - limb_shed(tree, model);
+fn card_snow(tree: TreeVertex, model: mat4x4<f32>, sky: f32, instance_index: u32) -> vec2<f32> {
+    let held = 1.0 - limb_shed(tree, instance_index);
 @if(TREE_BRANCH_CARDS) {
     if dot(tree.card_axis, tree.card_axis) >= 0.25 {
         return vec2(card_amount(sky, 1.0) * held, 1.0);
@@ -360,7 +349,7 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     var tree = tree_vertex(vertex);
     let turn = touch_turn(tree, model, false);
 @if(TREE_SNOW_LOAD)
-    tree.position = shaken_load(tree, model);
+    tree.position = shaken_load(tree, model, vertex.instance_index);
     out.world_position = animated_position(tree, model, wind.current, profile(), view.lod_view_world_position, turn);
     out.position = position_world_to_clip(out.world_position.xyz);
 
@@ -377,7 +366,7 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     // Snowy foliage's vertex colour is its crown sky visibility (crown_sky_v2). Past the wind
     // nothing reads uv_b, so it carries the card's snow.
 @if(TREE_SNOW && VERTEX_UVS_B && VERTEX_COLORS)
-    out.uv_b = card_snow(tree, model, vertex.color.r);
+    out.uv_b = card_snow(tree, model, vertex.color.r, vertex.instance_index);
 
 // Depth, shadows and colour deliberately use the same wind pose. Damping the
 // entire prepass (as the old renderer did for shadows) breaks temporal depth.

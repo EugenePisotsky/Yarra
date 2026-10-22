@@ -3,9 +3,9 @@
 //! with hashed positions, analytic motion and a wind drift accumulated on the CPU, so nothing is
 //! simulated per particle. Motes and fluff are lit through the sun's shadow maps and show
 //! mostly in sunbeams and against the light; leaves exist only under crowns of the forest map
-//! and fall to the ground of the mist map. Snow shaken off branches ([`SnowFalls`]) falls the
-//! same way from where it lay, as powder and clumps. Drawn on the resolved HDR image with the
-//! rain.
+//! and fall to the ground of the mist map. Snow shaken off boughs falls the same way from where
+//! it lay, as powder and clumps, from bursts the trees write into a ring on the GPU
+//! ([`snow_falls_handle`], [`SnowFalls`]). Drawn on the resolved HDR image with the rain.
 use crate::{
     ApplyAtmosphere, AtmospherePresentation, AtmosphereState, WorldEnvironmentView,
     environment::{EnvironmentAssets, EnvironmentParams},
@@ -22,7 +22,7 @@ use bevy::{
         render_asset::RenderAssets,
         render_resource::{binding_types::*, *},
         renderer::{RenderContext, ViewQuery},
-        storage::GpuShaderBuffer,
+        storage::{GpuShaderBuffer, ShaderBuffer},
         texture::GpuImage,
         view::{ViewDepthStencilTexture, ViewTarget, ViewUniform, ViewUniformOffset, ViewUniforms},
     },
@@ -82,8 +82,11 @@ const DRIFT_SPEED: f32 = 2.5;
 /// never makes a particle jump.
 const MOTION_PERIOD: f64 = 3600.0;
 
-/// Bursts of shaken snow alive at once; the oldest gives way.
-pub const SNOW_FALL_CAPACITY: usize = 64;
+/// Bursts of shaken snow the ring holds (`SnowFall` in `shaders/weather/snow_fall.wesl`, four
+/// vec4s); the oldest gives way.
+pub const SNOW_FALL_CAPACITY: usize = 256;
+
+const SNOW_FALL_BYTES: usize = 64;
 
 /// Particles a whole burst holds (`SNOW_PARTICLES` in `shaders/weather/ambient.wesl`).
 const SNOW_FALL_PARTICLES: u32 = 64;
@@ -91,87 +94,42 @@ const SNOW_FALL_PARTICLES: u32 = 64;
 /// A burst's powder has settled by then, seconds (`SNOW_SECONDS`).
 const SNOW_FALL_SECONDS: f32 = 3.0;
 
-/// Snow shaken off a branch, from where it lay.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct SnowFall {
-    /// Render-space centre of the snow's lowest part, and how far it reaches round that and
-    /// up from it.
-    pub position: Vec3,
-    pub radius: f32,
-    pub height: f32,
-    /// Share of a whole burst's particles, 0..1.
-    pub amount: f32,
-    /// Horizontal velocity of what shook it, m/s: it flings the powder along.
-    pub velocity: Vec2,
-    /// Where the snow lands.
-    pub ground: f32,
-    /// When it fell, on the game clock (`Time`).
-    pub time: f32,
+/// The ring of shaken snow bursts, which what shakes the snow writes on the GPU and the ambient
+/// particles draw.
+pub fn snow_falls_handle() -> Handle<ShaderBuffer> {
+    bevy::asset::uuid_handle!("7c3e9a14-58d2-4b6f-a1e0-2f9b6c8d4e53")
 }
 
-/// Bursts of snow falling off branches (`SnowFall` in `shaders/weather/ambient.wesl`).
-#[derive(Resource, Clone, ExtractResource)]
-#[extract_app(bevy::render::RenderApp)]
+/// Whether bursts may be falling: whatever writes them says so each frame it might have.
+#[derive(Resource, Clone, Copy, Debug, Default)]
 pub struct SnowFalls {
-    falls: Vec<[f32; 12]>,
-    next: usize,
-    spawned: u32,
-}
-
-impl Default for SnowFalls {
-    fn default() -> Self {
-        Self {
-            falls: vec![
-                [
-                    0.0,
-                    0.0,
-                    0.0,
-                    f32::NEG_INFINITY,
-                    0.0,
-                    0.0,
-                    0.0,
-                    0.0,
-                    0.0,
-                    0.0,
-                    0.0,
-                    0.0
-                ];
-                SNOW_FALL_CAPACITY
-            ],
-            next: 0,
-            spawned: 0,
-        }
-    }
+    until: f32,
 }
 
 impl SnowFalls {
-    pub fn spawn(&mut self, fall: SnowFall) {
-        // A whole number below 2^24, exact in f32, seeds the burst's particles.
-        let seed = (self.spawned & 0xff_ffff) as f32;
-        self.spawned = self.spawned.wrapping_add(1);
-        let p = fall.position;
-        self.falls[self.next] = [
-            p.x,
-            p.y,
-            p.z,
-            fall.time,
-            fall.radius,
-            fall.height,
-            fall.amount.clamp(0.0, 1.0),
-            seed,
-            fall.velocity.x,
-            fall.velocity.y,
-            fall.ground,
-            0.0,
-        ];
-        self.next = (self.next + 1) % SNOW_FALL_CAPACITY;
+    /// Snow may have been shaken loose at `now`: the bursts draw for as long as one lasts.
+    pub fn shaking(&mut self, now: f32) {
+        self.until = now + SNOW_FALL_SECONDS;
     }
 
-    fn alive(&self, time: f32) -> bool {
-        self.falls
-            .iter()
-            .any(|f| (0.0..SNOW_FALL_SECONDS).contains(&(time - f[3])))
+    fn falling(&self, now: f32) -> bool {
+        now < self.until
     }
+}
+
+/// The ring, every burst long gone.
+fn setup_falls(mut buffers: ResMut<Assets<ShaderBuffer>>) {
+    let mut gone = [0.0_f32; SNOW_FALL_BYTES / 4];
+    gone[3] = -1.0e30;
+    buffers
+        .insert(
+            snow_falls_handle().id(),
+            ShaderBuffer::new(
+                vec![gone; SNOW_FALL_CAPACITY],
+                bevy::asset::RenderAssetUsages::RENDER_WORLD,
+            ),
+        )
+        .expect("the snow falls' handle is free");
 }
 
 #[derive(Clone, Copy, Default, Debug, Pod, Zeroable)]
@@ -210,9 +168,10 @@ impl Plugin for AmbientParticlesPlugin {
             return;
         }
 
+        app.add_systems(Startup, setup_falls);
+
         app.add_plugins((
             ExtractResourcePlugin::<AmbientFrame>::default(),
-            ExtractResourcePlugin::<SnowFalls>::default(),
             ExtractComponentPlugin::<AmbientParticlesView>::default(),
         ))
         .add_systems(PostUpdate, sync.after(ApplyAtmosphere));
@@ -331,7 +290,7 @@ fn sync(
         first += kind.count;
     }
 
-    let snow = enabled && falls.alive(time.elapsed_secs());
+    let snow = enabled && falls.falling(time.elapsed_secs());
     *frame = AmbientFrame {
         uniform,
         active,
@@ -394,7 +353,7 @@ fn init(
                     sampler(SamplerBindingType::Filtering),
                     storage_buffer_read_only_sized(
                         false,
-                        std::num::NonZeroU64::new((SNOW_FALL_CAPACITY * 48) as u64),
+                        std::num::NonZeroU64::new((SNOW_FALL_CAPACITY * SNOW_FALL_BYTES) as u64),
                     ),
                 ),
             ),
@@ -465,7 +424,6 @@ fn draw(
         &Msaa,
     )>,
     frame: Res<AmbientFrame>,
-    falls: Res<SnowFalls>,
     assets: Option<Res<EnvironmentAssets>>,
     buffers: Res<RenderAssets<GpuShaderBuffer>>,
     images: Res<RenderAssets<GpuImage>>,
@@ -491,11 +449,12 @@ fn draw(
     ) else {
         return;
     };
-    let (Some(clouds), Some(cloud_shadow), Some(forest), Some(mist)) = (
+    let (Some(clouds), Some(cloud_shadow), Some(forest), Some(mist), Some(falls)) = (
         buffers.get(&assets.parameters),
         images.get(&assets.shadows),
         images.get(&assets.forest_shadow),
         images.get(&assets.mist),
+        buffers.get(&snow_falls_handle()),
     ) else {
         return;
     };
@@ -505,13 +464,6 @@ fn draw(
             label: Some("ambient particle parameters"),
             contents: bytemuck::bytes_of(&frame.uniform),
             usage: BufferUsages::UNIFORM,
-        });
-    let falls_buffer = ctx
-        .render_device()
-        .create_buffer_with_data(&BufferInitDescriptor {
-            label: Some("shaken snow"),
-            contents: bytemuck::cast_slice(&falls.falls),
-            usage: BufferUsages::STORAGE,
         });
     let group = ctx.render_device().create_bind_group(
         "ambient particles",
@@ -529,7 +481,7 @@ fn draw(
             &forest.texture_view,
             &mist.texture_view,
             &pipelines.clamp,
-            falls_buffer.as_entire_binding(),
+            falls.buffer.as_entire_binding(),
         )),
     );
     let mut pass = ctx
@@ -602,28 +554,12 @@ mod tests {
     }
 
     #[test]
-    fn shaken_snow_falls_for_a_while_and_the_oldest_burst_gives_way() {
+    fn shaken_snow_draws_for_as_long_as_a_burst_lasts() {
         let mut falls = SnowFalls::default();
-        assert!(!falls.alive(0.0));
-        let fall = |x: f32| SnowFall {
-            position: Vec3::X * x,
-            radius: 0.4,
-            height: 1.0,
-            amount: 2.0,
-            velocity: Vec2::ZERO,
-            ground: 0.0,
-            time: 10.0,
-        };
-
-        for i in 0..SNOW_FALL_CAPACITY + 2 {
-            falls.spawn(fall(i as f32));
-        }
-
-        assert_eq!(falls.falls[1][0], (SNOW_FALL_CAPACITY + 1) as f32);
-        assert_eq!(falls.falls[1][6], 1.0, "a whole burst at most");
-        assert_eq!(falls.falls[1][7], (SNOW_FALL_CAPACITY + 1) as f32);
-        assert!(falls.alive(10.0 + SNOW_FALL_SECONDS - 0.1));
-        assert!(!falls.alive(10.0 + SNOW_FALL_SECONDS + 0.1));
+        assert!(!falls.falling(0.0));
+        falls.shaking(10.0);
+        assert!(falls.falling(10.0 + SNOW_FALL_SECONDS - 0.1));
+        assert!(!falls.falling(10.0 + SNOW_FALL_SECONDS + 0.1));
     }
 
     fn run(presentation: AtmospherePresentation, frames: u32) -> (AmbientFrame, bool) {

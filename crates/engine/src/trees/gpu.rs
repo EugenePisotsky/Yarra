@@ -13,7 +13,8 @@
 //! to the cells' residency, they reach as far as their thresholds say.
 //!
 //! Cells still spawn an entity per object for gameplay (rain shelter) and the editor, but no
-//! LOD scenes: hiding one hides its instance ([`DrawnOnGpu`]).
+//! LOD scenes: hiding one hides its instance ([`DrawnOnGpu`]). Snowy trees also hold a state per
+//! limb, which characters shake their snow off by ([`shed`]).
 use bevy::{
     prelude::*,
     render::{
@@ -30,6 +31,7 @@ mod frame;
 mod layout;
 mod pool;
 mod render;
+mod shed;
 
 #[cfg(test)]
 mod tests;
@@ -145,7 +147,8 @@ pub(super) struct GpuCamera {
 }
 
 /// The instance records, pool, origins and transforms the instanced tree and impostor
-/// pipelines read (group 4: `shaders/tree/material.wesl`, `shaders/tree/impostor.wesl`).
+/// pipelines read (group 4: `shaders/tree/material.wesl`, `shaders/tree/impostor.wesl`), and the
+/// snowy trees' limb states with what reads them ([`shed`]).
 pub(super) fn instance_layout() -> BindGroupLayoutDescriptor {
     use bevy::render::render_resource::binding_types::storage_buffer_read_only_sized;
     BindGroupLayoutDescriptor::new(
@@ -153,6 +156,8 @@ pub(super) fn instance_layout() -> BindGroupLayoutDescriptor {
         &BindGroupLayoutEntries::sequential(
             ShaderStages::VERTEX,
             (
+                storage_buffer_read_only_sized(false, None),
+                storage_buffer_read_only_sized(false, None),
                 storage_buffer_read_only_sized(false, None),
                 storage_buffer_read_only_sized(false, None),
                 storage_buffer_read_only_sized(false, None),
@@ -174,7 +179,10 @@ pub(super) fn plugin(app: &mut App) {
         .init_resource::<pool::HiddenTrees>()
         .init_resource::<layout::TreeDrawLayout>()
         .init_resource::<frame::TreeGpuFrame>()
+        .init_resource::<shed::SnowShed>()
+        .init_resource::<shed::ShedFrame>()
         .add_observer(pool::release)
+        .add_observer(shed::release)
         .add_systems(
             PostUpdate,
             (
@@ -184,6 +192,8 @@ pub(super) fn plugin(app: &mut App) {
                 pool::attach,
                 pool::follow,
                 pool::hide,
+                shed::assign,
+                shed::list,
                 layout::update,
             )
                 .chain()
@@ -210,13 +220,16 @@ pub(super) fn plugin(app: &mut App) {
         ExtractResourcePlugin::<TreeInstancing>::default(),
         ExtractResourcePlugin::<layout::TreeDrawLayout>::default(),
         ExtractResourcePlugin::<frame::TreeGpuFrame>::default(),
+        ExtractResourcePlugin::<shed::ShedFrame>::default(),
         bevy::render::extract_component::ExtractComponentPlugin::<render::TreeDraw>::default(),
     ));
     render::install(app.sub_app_mut(RenderApp), shared);
+    shed::install(app.sub_app_mut(RenderApp));
 }
 
 pub(super) fn finish(app: &mut App) {
     if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
+        shed::initialize(render_app.world_mut());
         render::initialize(render_app.world_mut());
     }
 }

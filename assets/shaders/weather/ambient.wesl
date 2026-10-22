@@ -6,6 +6,7 @@ import bevy_pbr::render::mesh_view_types::{Lights, DIRECTIONAL_LIGHT_FLAGS_SHADO
 import package::shaders::environment::maps::{cloud_beam, forest_sky_share};
 import package::shaders::sky::sun::cascade_visibility;
 import package::shaders::weather::particles::{environment, view, random3, scene_depth};
+import package::shaders::weather::snow_fall::SnowFall;
 
 struct Ambient {
     time: vec4<f32>, // x: fraction of the motion period, y: the period in seconds, z: the game clock
@@ -25,15 +26,7 @@ struct Ambient {
 @group(0) @binding(10) var mist_map: texture_2d<f32>;
 @group(0) @binding(11) var clamp_sampler: sampler;
 
-// A burst of snow shaken off a branch (SnowFall in ambient_particles.rs).
-struct SnowFall {
-    // xyz: render-space centre of the snow's lowest part; w: when it fell, on the game clock.
-    origin: vec4<f32>,
-    // How far it reaches round that and up from it, the share of a whole burst, a seed.
-    shape: vec4<f32>,
-    // xy: horizontal velocity of what shook it; z: the ground it lands on.
-    motion: vec4<f32>,
-}
+// Snow shaken off boughs, a ring the GPU trees write (weather/snow_fall.wesl).
 @group(0) @binding(12) var<storage, read> snow_falls: array<SnowFall>;
 
 const MOTES: u32 = 0u;
@@ -355,36 +348,37 @@ fn vertex_snow(@builtin(vertex_index) vertex: u32, @builtin(instance_index) inst
     out.shape = 0.0;
     let fall = snow_falls[instance / SNOW_PARTICLES];
     let index = instance % SNOW_PARTICLES;
-    let age = ambient.time.z - fall.origin.w;
+    let age = ambient.time.z - fall.start.w;
     let clump = index < SNOW_CLUMPS;
     // A smaller burst holds fewer of each.
     let rank = select((f32(index - SNOW_CLUMPS) + 0.5) / f32(SNOW_PARTICLES - SNOW_CLUMPS),
         (f32(index) + 0.5) / f32(SNOW_CLUMPS), clump);
-    if age < 0.0 || age > SNOW_SECONDS || rank > fall.shape.z {
+    if age < 0.0 || age > SNOW_SECONDS || rank > fall.shape.x {
         return out;
     }
 
-    let seed = u32(fall.shape.w) * SNOW_PARTICLES + index;
+    let seed = u32(fall.shape.y) * SNOW_PARTICLES + index;
     let a = random3(seed * 3u + 29u);
     let b = random3(seed * 5u + 611u);
     let c = random3(seed * 7u + 1307u);
+    // Anywhere along the bough's snow, and across it as far as it lay.
     let angle = TAU * a.x;
-    let across = sqrt(a.y) * fall.shape.x;
-    let start = fall.origin.xyz + vec3(cos(angle) * across, a.z * fall.shape.y, sin(angle) * across);
+    let across = sqrt(a.y) * fall.along.w;
+    let start = fall.start.xyz + fall.along.xyz * a.z + vec3(cos(angle) * across, 0.0, sin(angle) * across);
     // Falling against the air's drag: towards its terminal speed and the wind's drift, from the
     // fling it left with, over tau.
     let terminal = select(mix(0.3, 0.8, b.x), mix(2.5, 4.5, b.x), clump);
     let tau = terminal / GRAVITY;
     let drift = ambient.drift.xyz * select(0.5, 0.1, clump);
     let toss = (b - 0.5) * vec3(0.8, 0.4, 0.8) * select(1.0, 0.4, clump);
-    let fling = vec3(fall.motion.x, 0.0, fall.motion.y) * select(0.35, 0.15, clump) + toss;
+    let fling = fall.motion.xyz * select(0.35, 0.15, clump) + toss;
     let settled = vec3(drift.x, -terminal, drift.z);
     var p = start + settled * age + (fling - settled) * tau * (1.0 - exp(-age / tau));
     var radius: f32;
     var alpha: f32;
     if clump {
         // Gone where it lands.
-        if p.y < fall.motion.z {
+        if p.y < fall.motion.w {
             return out;
         }
         radius = mix(0.025, 0.06, c.y);
@@ -395,7 +389,7 @@ fn vertex_snow(@builtin(vertex_index) vertex: u32, @builtin(instance_index) inst
         let life = mix(1.2, SNOW_SECONDS, c.x);
         radius = mix(0.025, 0.06, c.y) * (1.0 + 1.2 * min(age, 1.5));
         alpha = 0.35 * smoothstep(0.0, 0.08, age) * (1.0 - smoothstep(0.35 * life, life, age))
-            * smoothstep(-0.1, 0.25, p.y - fall.motion.z);
+            * smoothstep(-0.1, 0.25, p.y - fall.motion.w);
     }
 
     let sun = environment.sun.xyz;
