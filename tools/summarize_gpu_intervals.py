@@ -6,9 +6,12 @@ Export the table first (docs/WORKFLOWS.md, Metal System Trace):
       --xpath '/trace-toc/run[@number="1"]/data/table[@schema="metal-gpu-intervals"]'
 
 then `python3 tools/summarize_gpu_intervals.py a-intervals.xml [b-intervals.xml]`. Each pass is
-an encoder label, summed over the vertex, fragment and compute channels and divided by the frames
-the trace holds (the passes run once a frame: `--frames-by`). The times follow the GPU's clock;
-compare two traces by each pass's share of a reference pass in the same trace (`--reference`).
+an encoder label over the vertex, fragment and compute channels, per frame (the passes run once a
+frame: `--frames-by`). The GPU runs passes side by side, so an interval lasts as long as whatever
+shares the GPU with it: a pass of a few rows beside the opaque pass spans the opaque pass. Each
+moment's time is split evenly among the intervals running then, and the GPU's busy time is the
+time anything runs, which is what a frame costs. The times follow the GPU's clock; compare two
+traces by busy time and each pass's share of a reference pass in the same trace (`--reference`).
 """
 
 import argparse
@@ -20,7 +23,7 @@ PROCESS = "yarra-app-game"
 
 
 def intervals(path):
-    """(pass label, channel, duration ns) of the game's intervals."""
+    """(start ns, end ns, pass label, channel) of the game's intervals."""
     seen = {}
 
     def value(element):
@@ -43,18 +46,37 @@ def intervals(path):
                 continue
             label = row.get("event-label", ("", ""))[0].split(":")[0].strip()
             label = re.sub(r"Command Buffer \d+", "Command Buffer", label)
-            yield label, row.get("channel-name", ("", ""))[0], int(row["duration"][1] or 0)
+            start = int(row["start"][1])
+            end = start + int(row["duration"][1] or 0)
+            yield start, end, label, row.get("channel-name", ("", ""))[0]
 
 
 def summarize(path, frames_by):
-    totals = collections.Counter()
-    counts = collections.Counter()
-    for label, channel, duration in intervals(path):
-        totals[label] += duration
-        if channel == "Fragment":
-            counts[label] += 1
-    frames = max(counts[frames_by], 1)
-    return {label: ns / frames / 1e6 for label, ns in totals.items()}, frames
+    """Each pass's even share of GPU time and the busy time, ms per frame, and the frames."""
+    spans = list(intervals(path))
+    events = sorted(
+        [(start, 1, i) for i, (start, _, _, _) in enumerate(spans)]
+        + [(end, -1, i) for i, (_, end, _, _) in enumerate(spans)]
+    )
+    shares = collections.Counter()
+    busy = 0
+    running = set()
+    last = None
+
+    for time, change, i in events:
+        if running and time > last:
+            busy += time - last
+            for j in running:
+                shares[spans[j][2]] += (time - last) / len(running)
+        if change > 0:
+            running.add(i)
+        else:
+            running.discard(i)
+        last = time
+
+    frames = max(sum(1 for s in spans if s[2] == frames_by and s[3] == "Fragment"), 1)
+    passes = {label: ns / frames / 1e6 for label, ns in shares.items()}
+    return passes, busy / frames / 1e6, frames
 
 
 def main():
@@ -66,15 +88,17 @@ def main():
     args = parser.parse_args()
 
     tables = [summarize(path, args.frames_by) for path in args.traces]
-    for path, (_, frames) in zip(args.traces, tables):
+
+    def cell(passes, ms):
+        share = ms / passes.get(args.reference, float("nan"))
+        return f"{ms:7.2f} ms {share:6.2f}x"
+
+    for path, (_, _, frames) in zip(args.traces, tables):
         print(f"{path}: {frames} frames")
+    print(f"{'GPU busy':48} " + "  ".join(cell(p, busy) for p, busy, _ in tables))
     order = sorted(tables[0][0], key=lambda label: -tables[0][0][label])
     for label in order[: args.top]:
-        cells = []
-        for passes, _ in tables:
-            ms = passes.get(label, 0.0)
-            share = ms / passes.get(args.reference, float("nan"))
-            cells.append(f"{ms:7.2f} ms {share:6.2f}x")
+        cells = [cell(passes, passes.get(label, 0.0)) for passes, _, _ in tables]
         print(f"{label[:48]:48} " + "  ".join(cells))
 
 
