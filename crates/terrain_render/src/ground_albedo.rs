@@ -1,8 +1,8 @@
 //! The ground albedo map's pass (`shaders/terrain/ground_albedo.wesl`): each frame it fills the
 //! environment's map (`atmosphere::ground_albedo`) where it now lies around the camera, from the
 //! streamed world's clipmap ([`GroundAlbedoSource`]: its control samples, surfaces, heights and
-//! normals) and the terrain's horizon towards the sun. Materials take the map once the pass has
-//! filled it.
+//! normals) and the terrain's horizon towards the sun, with the height of the ground it draws.
+//! Materials take the map once the pass has filled it.
 use crate::clipmap::ClipmapSettings;
 
 use atmosphere::{
@@ -50,6 +50,8 @@ struct PlacementGpu {
     corners: [f32; 4],
     /// Metres per texel of each layer, the open sea's level, 1 with a sea.
     texels: [f32; 4],
+    /// x: render height the ground's heights are stored above.
+    reference: [f32; 4],
 }
 
 /// The frame's source and where the map lies, and whether the last frame filled it.
@@ -211,6 +213,7 @@ fn fill(
             sea.unwrap_or(0.0),
             f32::from(u8::from(sea.is_some())),
         ],
+        reference: [frame.albedo.reference, 0.0, 0.0, 0.0],
     };
     queue.write_buffer(&pass.placement, 0, bytemuck::bytes_of(&placement));
 

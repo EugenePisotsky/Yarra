@@ -42,9 +42,6 @@ const LUMINANCE: Vec3 = Vec3::new(0.2126, 0.7152, 0.0722);
 /// blizzard ground and sky meet without a horizon.
 const SNOW_BOUNCE: f32 = 0.8;
 
-/// Blowing snow's light as a share of the weather fog's over snow ground.
-const DRIFT_GLOW: f32 = 1.4;
-
 /// Inputs for the low air and the sea: valley mist, the gusts, presentation switches, look
 /// tuning, the sea surface and its shore.
 type LowAir<'w> = (
@@ -191,12 +188,10 @@ pub(super) fn sync(
             .to_array();
     }
 
-    // Blowing snow over snow ground scatters as the weather fog there does, and a little more:
-    // lit from the ground below as well as from above, it shows brighter than the snow it
-    // blows over.
-    if let Some(fog) = fog.filter(|_| world && snow > 0.) {
-        let lit = even_light(&light, 1., sun.y) * DRIFT_GLOW;
-        params.drift = (Vec3::from_array(fog.tint_linear) * lit + light.flash)
+    // Blowing snow is the snow of the ground lifted: lit by the sky as the ground is
+    // (sky/drift.wesl).
+    if world && snow > 0. && state.weather.is_some() {
+        params.drift = crate::sky_radiance(&value, flash.map_or(0., |f| f.flash))
             .extend(snow)
             .to_array();
     }

@@ -333,8 +333,8 @@ fn init(
                     sampler(SamplerBindingType::Filtering),
                     // How waves come ashore (read with the mist map's sampler).
                     texture_2d(TextureSampleType::Float { filterable: true }),
-                    // The ground's albedo, for where snow blows (read with the mist map's
-                    // sampler).
+                    // The ground's albedo and height, for where snow blows and over what (read
+                    // with the mist map's sampler).
                     texture_2d_array(TextureSampleType::Float { filterable: true }),
                 ),
             ),

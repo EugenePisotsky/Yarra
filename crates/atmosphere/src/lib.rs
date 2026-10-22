@@ -642,12 +642,16 @@ fn light_ambient(
     ambient.brightness = value.ambient_lux + flash * lightning::FLASH_AMBIENT;
 
     if flash > 0.0 {
-        let base = Vec3::from_array(value.ambient_linear) * value.ambient_lux;
-        let lit = (base
-            + Vec3::from_array(lightning::FLASH_COLOR) * flash * lightning::FLASH_AMBIENT)
-            / ambient.brightness.max(1e-3);
+        let lit = sky_radiance(value, flash) / ambient.brightness.max(1e-3);
         ambient.color = Color::linear_rgb(lit.x, lit.y, lit.z);
     }
+}
+
+/// The sky's light as lit materials take it (the ambient light: what open ground of albedo 1
+/// reflects), unexposed, with a lightning flash's.
+pub(crate) fn sky_radiance(value: &world::atmosphere::EvaluatedAtmosphere, flash: f32) -> Vec3 {
+    Vec3::from_array(value.ambient_linear) * value.ambient_lux
+        + Vec3::from_array(lightning::FLASH_COLOR) * flash * lightning::FLASH_AMBIENT
 }
 
 /// Night desaturation and white balance, on the view's colour grading.

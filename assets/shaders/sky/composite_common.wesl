@@ -41,8 +41,8 @@ import package::shaders::environment::params::EnvironmentParams;
 // How waves come ashore (`atmosphere::shore`): depth below the sea level, seconds a crest takes
 // to get here from deep water and that time's gradient along X and Z. Read with `mist_sampler`.
 @group(1) @binding(16) var shore_map: texture_2d<f32>;
-// The ground around the camera seen from above (environment/maps.wesl `ground_texel`), for where
-// snow lies. Read with `mist_sampler`.
+// The ground around the camera seen from above (environment/maps.wesl `ground_texel`,
+// `ground_height`), for where snow lies and how high. Read with `mist_sampler`.
 @group(1) @binding(17) var ground_map: texture_2d_array<f32>;
 
 // Light added along part of a view ray, and how much of whatever lies beyond it shows through.

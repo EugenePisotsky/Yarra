@@ -138,7 +138,7 @@ pub(crate) struct EnvironmentParams {
     /// The compass direction its horizon looks towards, unit XZ.
     pub terrain_light: [f32; 4],
     /// Ground albedo map (`crate::ground_albedo`), near and far layers: first corner XZ in
-    /// render coordinates, metres per texel (0 off).
+    /// render coordinates, metres per texel (0 off), the render height its heights lie above.
     pub ground_near: [f32; 4],
     pub ground_far: [f32; 4],
     /// The gusts (`crate::wind`): the wind's unit direction in XZ, and where their pattern lies
@@ -147,8 +147,8 @@ pub(crate) struct EnvironmentParams {
     /// The air near the ground: mean speed in metres a second, the gusts' swell as a share of
     /// it, and the share of the gusts' period it has travelled downwind.
     pub wind: [f32; 4],
-    /// Blowing snow: unexposed light it scatters towards the eye where it is opaque, and the
-    /// share of snow ground around the camera (0: none blows).
+    /// Blowing snow: the sky's unexposed light as lit materials take it, and the share of snow
+    /// ground around the camera (0: none blows).
     pub drift: [f32; 4],
     /// The channel's segments, ends in pairs (xyz, width): `crate::lightning::channel`.
     pub lightning_segments: [[f32; 4]; 2 * crate::lightning::SEGMENTS],

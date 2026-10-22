@@ -245,11 +245,12 @@ SQLite. The renderers (Bevy) have no SQLite: `engine` is the only library joinin
   strength) and one pattern of gusts carried downwind with the air (`Gusts`, twinned on the GPU
   by `weather/gust.wesl`). Rain and the ambient particles move with the gust at the camera;
   blowing snow (`sky/drift.wesl`, a medium of the sky composite's fog) lifts where the gusts
-  pass its onset over snow ground, which it finds in the ground albedo map. Trees and grass
-  still sway to `vegetation_render::VegetationWind`.
+  pass its onset over snow ground, whose albedo, height and sky share it finds in the ground
+  albedo map. Trees and grass still sway to `vegetation_render::VegetationWind`.
 - Owns what all lit materials share (`environment::EnvironmentParams` and its maps), the
   terrain-derived maps (`valley_mist`, `shore`, `terrain_shadow`) and the place of the ground
-  albedo map around the camera (`ground_albedo`), which a terrain renderer fills.
+  albedo map around the camera (`ground_albedo`: albedo, sun, height and sky share of the drawn
+  ground), which a terrain renderer fills.
 - Invariants: profile evaluation is pure and lives in `world`; this crate is its Bevy adapter.
   Bevy's sky pass is replaced (`BevySkyPassReplaced`); recheck on Bevy upgrades. Isolated views
   get no clouds, weather or particles.

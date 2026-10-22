@@ -5,7 +5,8 @@
 //! renderer fills the map each frame from the ground it draws (`terrain_render`); ground no layer
 //! holds, or no renderer fills, is taken for open, sunlit grass and soil. Two layers, the near one
 //! finer, each snapped to its texels in world space so a texel holds the same ground while the
-//! camera moves.
+//! camera moves. Each also holds the height of the ground it draws, the top of the snow where
+//! there is some, which blowing snow lies over (`shaders/sky/drift.wesl`).
 use bevy::{
     asset::RenderAssetUsages,
     prelude::*,
@@ -32,6 +33,9 @@ pub struct GroundAlbedo {
     pub sea: Option<f32>,
     /// Whether the map holds the ground, as its renderer last filled it.
     pub filled: bool,
+    /// Render height the ground's heights are stored above: the camera's to whole metres, so the
+    /// half floats keep centimetres near it.
+    pub reference: f32,
 }
 
 impl GroundAlbedo {
@@ -47,22 +51,31 @@ impl GroundAlbedo {
         }
     }
 
-    /// Each layer's first corner and metres per texel; none while nothing fills the map.
+    /// Each layer's first corner, metres per texel and the height its heights are stored above;
+    /// none while nothing fills the map.
     pub(crate) fn parameters(&self) -> [[f32; 4]; 2] {
         if !self.filled {
             return [[0.0; 4]; 2];
         }
 
-        [0, 1].map(|l| [self.corners[l].x, self.corners[l].y, TEXELS[l], 0.0])
+        [0, 1].map(|l| {
+            [
+                self.corners[l].x,
+                self.corners[l].y,
+                TEXELS[l],
+                self.reference,
+            ]
+        })
     }
 
-    /// The map, written on the GPU alone.
+    /// The map, written on the GPU alone: albedo and the sun's cosine in array layers 0 (near) and
+    /// 1 (far), the ground's height above `reference` in 2 and 3.
     pub fn image() -> Image {
         let mut image = Image::new_uninit(
             Extent3d {
                 width: SIZE,
                 height: SIZE,
-                depth_or_array_layers: 2,
+                depth_or_array_layers: 4,
             },
             TextureDimension::D2,
             FORMAT,
@@ -87,6 +100,7 @@ pub(crate) fn follow_view(
 ) {
     if let Some(view) = views.iter().next() {
         albedo.follow(view.translation().xz(), origin.0);
+        albedo.reference = view.translation().y.round();
     }
 
     albedo.sea = sea.level;

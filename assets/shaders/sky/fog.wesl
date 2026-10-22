@@ -5,7 +5,7 @@ import package::shaders::sky::air::{
 import package::shaders::sky::composite_common::{
     environment, mist_map, mist_sampler, noise, noise_sampler, Path, in_front,
 };
-import package::shaders::sky::drift::drift_depth;
+import package::shaders::sky::drift::drift_along;
 @if(ATMOSPHERE)
 import bevy_pbr::atmosphere::bindings::view;
 @else
@@ -27,26 +27,24 @@ struct Fog {
 struct FogLight {
     haze: vec3<f32>,
     mist: vec3<f32>,
-    drift: vec3<f32>,
 }
 
 fn fog_light(ray: vec3<f32>) -> FogLight {
     let air = environment.air_light.rgb + environment.air_sun.rgb * scattering(dot(ray, environment.sun.xyz));
-    return FogLight(haze_light(ray, air) * view.exposure, air * view.exposure,
-        environment.drift.rgb * view.exposure);
+    return FogLight(haze_light(ray, air) * view.exposure, air * view.exposure);
 }
 
 fn fog_along(ray: vec3<f32>, distance: f32, lights: FogLight) -> Fog {
     let weather = environment.fog.w * distance;
     let haze = haze_depth(ray, distance);
     let mist = mist_depth(ray, distance);
-    let drift = drift_depth(ray, distance);
-    let depth = weather + haze + mist + drift;
+    let drift = drift_along(ray, distance);
+    let depth = weather + haze + mist + drift.depth;
     if depth <= 0.0 {
         return Fog(vec3(0.0), 0.0);
     }
-    let light = environment.fog.rgb * view.exposure * weather + lights.haze * haze + lights.mist * mist
-        + lights.drift * drift;
+    let light = (environment.fog.rgb * weather + drift.light) * view.exposure + lights.haze * haze
+        + lights.mist * mist;
     return Fog(light / depth, depth);
 }
 

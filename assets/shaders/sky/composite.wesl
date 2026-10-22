@@ -192,7 +192,7 @@ fn fragment(in: FullscreenVertexOutput) -> Output {
     let sea_t = NO_SEA;
 
     // The fog's light, once for every sample.
-    var fog_lights = FogLight(vec3(0.0), vec3(0.0), vec3(0.0));
+    var fog_lights = FogLight(vec3(0.0), vec3(0.0));
     if fog {
         fog_lights = fog_light(ray);
     }

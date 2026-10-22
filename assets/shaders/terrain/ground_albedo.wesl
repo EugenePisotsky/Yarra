@@ -5,16 +5,20 @@
 // terrain's horizon. A slope turned from the sun or in a ridge's shadow reflects only the sky's
 // light. Water lies where the ground is below the open sea. A texel takes four points across it
 // from the level whose control samples lie half a texel apart, so each averages the ground it
-// covers. Bound as the clipmap material binds the textures it shares (MATERIAL_BIND_GROUP=0).
+// covers. Two more layers hold the mean height of that ground, the top of the snow where there is
+// some, above a reference height near the camera's, and the share of the sky the terrain around
+// leaves it. Bound as the clipmap material binds the textures it shares (MATERIAL_BIND_GROUP=0).
 import package::shaders::terrain::clipmap_common::{ControlCell, base_color, control_cell, heights, leaf_spacing, level_normal, levels, origin_samples, render_xz, repeat_sampler, resident_level, surfaces, texel, unpack};
 import package::shaders::lighting::surface::environment;
-import package::shaders::lighting::terrain_shadow::terrain_sunlight;
+import package::shaders::lighting::terrain_shadow::{terrain_sky_visibility, terrain_sunlight};
 
 struct Placement {
     // Each layer's first corner in render XZ: near, far.
     corners: vec4<f32>,
     // Metres per texel of each layer, the open sea's level, 1 with a sea.
     texels: vec4<f32>,
+    // x: render height the ground's heights are stored above.
+    reference: vec4<f32>,
 }
 
 @group(0) @binding(16) var albedo_map: texture_storage_2d_array<rgba16float, write>;
@@ -69,13 +73,17 @@ fn fill(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
     let sea = placement.texels.w > 0.5;
     var albedo = vec3(0.0);
     var sunlit = 0.0;
+    var ground = 0.0;
+    var sky = 0.0;
     for (var i = 0u; i < 4u; i += 1u) {
         let at = (vec2(f32(i & 1u), f32(i >> 1u)) * 0.5 + 0.25) * f32(leaves);
         let leaf = first + vec2<i32>(floor(at));
         let fraction = fract(at);
         let height = textureLoad(heights, texel(leaf >> vec2(level)), level, 0).r;
+        ground += height;
         let xz = render_xz(leaf) + fraction * leaf_spacing();
         let past = terrain_sunlight(vec3(xz.x, height, xz.y), sun);
+        sky += terrain_sky_visibility(vec3(xz.x, height, xz.y));
         if sea && height < placement.texels.z {
             albedo += WATER_ALBEDO;
             sunlit += max(sun.y, 0.0) * past;
@@ -85,4 +93,6 @@ fn fill(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
         }
     }
     textureStore(albedo_map, vec2<i32>(id.xy), layer, vec4(albedo, sunlit) * 0.25);
+    textureStore(albedo_map, vec2<i32>(id.xy), layer + 2u,
+        vec4(ground * 0.25 - placement.reference.x, sky * 0.25, 0.0, 0.0));
 }

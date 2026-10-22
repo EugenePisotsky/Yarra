@@ -295,12 +295,17 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
 
 - **Blowing snow is a medium of the fog, driven by one pattern of gusts.** *Kept* (October 22,
   after the user's photo of a ground blizzard). Snow lifts off snow ground where the air near it
-  runs past 3.5 m/s and blows in full from 6: in a blizzard the gusts carried downwind lift it in
-  passing sheets, in steady snow only in the strongest gusts. It is integrated in the sky
-  composite with the haze, mist and weather fog: a layer 0.3 m deep under a thin veil, in
-  streaks drawn out along the wind, lit a little brighter than the weather fog over snow so it
-  shows over white ground. The gusts are one frozen pattern evaluated alike on the CPU and GPU,
-  so a sheet that passes the camera also hurries its snowflakes.
+  runs past 3 m/s and blows in full from 6.5: in a blizzard (wind 2.3, about 6 m/s) it always
+  blows and the gusts carried downwind thicken it in passing sheets; in steady snow it lifts only
+  in the strongest gusts. It is integrated in the sky composite with the haze, mist and weather
+  fog: a layer 0.4 m deep under a thin veil, over the snow's top as the ground albedo map holds it
+  (the mist map's 16 m ground floated it at chest height), in broad smooth sheets carried with
+  the wind, cut at the same distances on every ray. It is the snow lifted and lit as the snow
+  ground is (the materials' sky light, the sun past the terrain), so it matches the snow and
+  shows by hiding what lies in it. *Rejected*: fine streaks ("feels more like a noise", dark
+  stripes) and light taken from the weather fog, which greyed the snow. The gusts are one frozen
+  pattern evaluated alike on the CPU and GPU, so a sheet that passes the camera also hurries its
+  snowflakes.
 
 - **A moving moon, not a fixed giant planet.** *Planet rejected* (October 11, `feat/planet`,
   `5a35e8f`): "a moving moon is better". Fix flat dusks inside the moon model; measure key/fill

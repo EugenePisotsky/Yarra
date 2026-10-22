@@ -37,10 +37,10 @@ struct EnvironmentParams {
     night_sky: vec4<f32>, // unexposed moonless night sky light just above the horizon
     terrain_shadow: vec4<f32>, // terrain shadow map: first corner xz in render coordinates, metres per texel (0 off), published
     terrain_light: vec4<f32>, // the compass direction its horizon looks towards, unit xz
-    ground_near: vec4<f32>, // ground albedo map's near layer: first corner xz in render coordinates, metres per texel (0 off)
+    ground_near: vec4<f32>, // ground albedo map's near layer: first corner xz in render coordinates, metres per texel (0 off), height its heights lie above
     ground_far: vec4<f32>, // its far layer, as the near one
     gusts: vec4<f32>, // the wind's unit direction xz, the gusts' pattern offset along and across it, metres
     wind: vec4<f32>, // air near the ground: mean speed m/s, gust swell share, share of the gust period travelled
-    drift: vec4<f32>, // blowing snow: unexposed light scattered where opaque, snow ground share around the camera (0 none)
+    drift: vec4<f32>, // blowing snow: the sky's unexposed light as lit materials take it, snow ground share around the camera (0 none)
     lightning_segments: array<vec4<f32>, 32>, // channel segment ends in pairs: xyz, width
 }

@@ -80,17 +80,33 @@ fn forest_sky_share(map: texture_2d<f32>, map_sampler: sampler, placement: vec4<
 // neither holds is `open`.
 fn ground_texel(map: texture_2d_array<f32>, map_sampler: sampler, near: vec4<f32>,
     far: vec4<f32>, p: vec2<f32>, open: vec4<f32>) -> vec4<f32> {
+    return ground_layers(map, map_sampler, near, far, p, 0u, open);
+}
+
+// The ground the map draws at render XZ `p`: its height, the top of the snow where there is some,
+// and the share of the sky the terrain around leaves it; `open` and the whole sky where neither
+// layer holds it.
+fn ground_relief(map: texture_2d_array<f32>, map_sampler: sampler, near: vec4<f32>,
+    far: vec4<f32>, p: vec2<f32>, open: f32) -> vec2<f32> {
+    let relief = ground_layers(map, map_sampler, near, far, p, 2u, vec4(open - near.w, 1.0, 0.0,
+        0.0));
+    return vec2(relief.r + near.w, relief.g);
+}
+
+// The map's near and far texels at `p` from the layer pair starting at `first`.
+fn ground_layers(map: texture_2d_array<f32>, map_sampler: sampler, near: vec4<f32>,
+    far: vec4<f32>, p: vec2<f32>, first: u32, open: vec4<f32>) -> vec4<f32> {
     if near.z <= 0.0 {
         return open;
     }
     let size = f32(textureDimensions(map).x);
     let near_weight = ground_layer_weight(p, near, size, GROUND_NEAR_FADE);
-    let near_texel = ground_layer_texel(map, map_sampler, p, near, size, 0u, near_weight);
+    let near_texel = ground_layer_texel(map, map_sampler, p, near, size, first, near_weight);
     if near_weight >= 1.0 {
         return near_texel;
     }
     let far_weight = ground_layer_weight(p, far, size, 1.0);
-    let far_texel = ground_layer_texel(map, map_sampler, p, far, size, 1u, far_weight);
+    let far_texel = ground_layer_texel(map, map_sampler, p, far, size, first + 1u, far_weight);
     return mix(mix(open, far_texel, far_weight), near_texel, near_weight);
 }
 
