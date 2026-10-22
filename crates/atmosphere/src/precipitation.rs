@@ -256,10 +256,13 @@ fn sync(
     mut camera: Local<CameraMotion>,
 ) {
     let camera_velocity = camera.update(reference.0, time.delta_secs());
+
+    // Where it snows, the ambient particles draw it.
     let precipitation = state
         .weather
         .filter(|_| !state.isolated() && state.profile.outdoor)
-        .map_or(0.0, |w| w.precipitation.clamp(0.0, 1.0));
+        .map_or(0.0, |w| w.precipitation.clamp(0.0, 1.0))
+        * (1.0 - state.snow.clamp(0.0, 1.0));
     let wind = state.weather.map_or(1.0, |w| w.wind_strength);
     let direction = state.profile.clouds.wind_degrees.to_radians();
     let velocity = Vec3::new(

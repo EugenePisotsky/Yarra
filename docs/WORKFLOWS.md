@@ -191,7 +191,7 @@ Overview, Features (effects on/off), Quality, Weather (presets, clocks, time jum
 | For | Launch options |
 | --- | --- |
 | Where | `--start-view FILE`, `--world-db FILE` |
-| Time, weather | `--time HH:MM`, `--day-clock on\|off`, `--weather auto\|authored\|clear\|scattered\|overcast\|rain\|storm` |
+| Time, weather | `--time HH:MM`, `--day-clock on\|off`, `--weather auto\|authored\|clear\|scattered\|overcast\|rain\|storm` (on snow ground, overcast, rain and storm are light snow, snow and a blizzard) |
 | Presentation | `--fps 0\|15..240` (default 60, 0 follows the display), `--resolution-scale 1\|0.75\|0.5\|0.33`, `--upscaler auto\|linear\|metalfx-spatial\|metalfx-temporal`, `--cloud-quality off\|balanced\|high`, `--tree-shadow-lod 0..2` |
 | Panel, logs | `--diagnostics off\|panel\|full` (default full), `--performance-open`, `--timing-log` |
 | Gameplay | `--story DIR` |

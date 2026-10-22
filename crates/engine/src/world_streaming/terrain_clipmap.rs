@@ -500,6 +500,30 @@ impl ClipmapTerrain {
         Some(field.sample_height(local, self.cell_size))
     }
 
+    /// The share of the resident leaves within `radius` leaves of a render-space position
+    /// that lie under a soft layer (snow), once any is resident.
+    pub fn snow_share(&self, render: Vec3, origin: &WorldOrigin, radius: i32) -> Option<f32> {
+        let (centre, _) = self.leaf_under(render, origin)?;
+        let (mut resident, mut snowy) = (0_u32, 0_u32);
+
+        for dz in -radius..=radius {
+            for dx in -radius..=radius {
+                let key = TerrainNodeKey {
+                    x: centre.x + dx,
+                    z: centre.z + dz,
+                    ..centre
+                };
+
+                if self.resident.leaves.contains_key(&key) {
+                    resident += 1;
+                    snowy += u32::from(self.resident.soft.contains(&key));
+                }
+            }
+        }
+
+        (resident > 0).then(|| snowy as f32 / resident as f32)
+    }
+
     /// Whether the leaf under a render-space position is resident, so that within the leaf
     /// range the ground there is drawn from its full-detail samples.
     pub fn leaf_resident(&self, render: Vec3, origin: &WorldOrigin) -> bool {

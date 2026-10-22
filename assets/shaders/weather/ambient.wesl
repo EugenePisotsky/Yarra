@@ -1,4 +1,4 @@
-// Ambient particles: dust motes, seed fluff and falling leaves as instanced quads in
+// Ambient particles: dust motes, seed fluff, falling leaves and snowflakes as instanced quads in
 // camera-anchored boxes that wrap a world-fixed lattice (crates/atmosphere/src/ambient_particles.rs),
 // and snow shaken off branches falling from where it lay (vertex_snow). Drawn over the resolved
 // HDR scene with a soft depth test, like the rain.
@@ -11,9 +11,9 @@ import package::shaders::weather::snow_fall::SnowFall;
 struct Ambient {
     time: vec4<f32>, // x: fraction of the motion period, y: the period in seconds, z: the game clock
     drift: vec4<f32>, // xyz: wind drift velocity (m/s) at full share
-    kinds: array<vec4<f32>, 3>, // box size, box height, first instance, instance count
-    offsets: array<vec4<f32>, 3>, // accumulated drift (m), w: the kind's drift share
-    amounts: vec4<f32>, // share of each kind present
+    kinds: array<vec4<f32>, 5>, // box size, box height, first instance, instance count
+    offsets: array<vec4<f32>, 5>, // accumulated drift (m), w: the kind's drift share
+    amounts: array<vec4<f32>, 2>, // share of each kind present, four a vec4
 }
 @group(0) @binding(0) var<uniform> ambient: Ambient;
 // Bindings 1-3 (clouds, view, depth): weather/particles.wesl.
@@ -32,8 +32,12 @@ struct Ambient {
 const MOTES: u32 = 0u;
 const FLUFF: u32 = 1u;
 const LEAVES: u32 = 2u;
+// Kinds of the uniform, and the shapes the fragment draws beyond them.
+const NEAR_FLAKES: u32 = 3u;
+const FAR_FLAKES: u32 = 4u;
 const POWDER: u32 = 3u;
 const CLUMP: u32 = 4u;
+const FLAKE: u32 = 5u;
 const TAU: f32 = 6.2831853;
 const FOUR_PI: f32 = 12.566371;
 // Dust is flakes and fibres, not spheres: as they turn they glint far brighter than a sphere
@@ -49,7 +53,8 @@ const SNOW_PARTICLES: u32 = 64u;
 const SNOW_CLUMPS: u32 = 20u;
 const SNOW_SECONDS: f32 = 3.0;
 const GRAVITY: f32 = 9.81;
-// Snow lit by the sky also takes the light the snow ground under it throws back up.
+// Snow lit by the sky also takes the light the snow ground under it throws back up, as the
+// weather fog does over snow ground (`SNOW_BOUNCE` in crates/atmosphere/src/environment/sync.rs).
 const SNOW_BOUNCE: f32 = 0.8;
 // The snow breaks off the loads' chunks as they fall (tree/shed.wesl `chunk_fall`, whose middle
 // terminal speed and fling these take): powder over the first POWDER_BIRTH seconds, clumps as
@@ -198,12 +203,13 @@ fn vertex(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance:
     out.kind = MOTES;
     out.shape = 0.0;
     var kind = MOTES;
-    if f32(instance) >= ambient.kinds[1].z { kind = FLUFF; }
-    if f32(instance) >= ambient.kinds[2].z { kind = LEAVES; }
+    for (var k = 1u; k <= FAR_FLAKES; k += 1u) {
+        if f32(instance) >= ambient.kinds[k].z { kind = k; }
+    }
     let spec = ambient.kinds[kind];
     // The last instances of the present share fade, so amounts change smoothly.
     let rank = (f32(instance) - spec.z + 0.5) / spec.w;
-    let amount = ambient.amounts[kind];
+    let amount = ambient.amounts[kind / 4u][kind % 4u];
     var alpha = 1.0 - smoothstep(amount - 0.05, amount, rank);
     if alpha <= 0.0 { return out; }
 
@@ -271,12 +277,15 @@ fn vertex(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance:
         } else {
             alpha *= 1.0 - smoothstep(0.7, 1.0, edge.y);
         }
-        // Slow wander of a few tens of centimetres; fluff also bobs up and down.
-        let reach = select(0.15, 0.6, kind == FLUFF);
+        let flake = kind >= NEAR_FLAKES;
+        // Slow wander of a few tens of centimetres; fluff also bobs up and down. Flakes flutter
+        // about once a second as they fall.
+        let reach = select(select(0.15, 0.6, kind == FLUFF), 0.25, flake);
+        let pace = select(1.0, 20.0, flake);
         p += vec3(
-            wave(mix(90.0, 200.0, b.x), b.y),
-            wave(mix(60.0, 150.0, b.z), c.x) * 0.6,
-            wave(mix(90.0, 200.0, c.y), c.z),
+            wave(mix(90.0, 200.0, b.x) * pace, b.y),
+            wave(mix(60.0, 150.0, b.z) * pace, c.x) * 0.6,
+            wave(mix(90.0, 200.0, c.y) * pace, c.z),
         ) * reach;
         let ray = normalize(p - view.world_position);
         let mu = dot(sun, ray);
@@ -285,28 +294,36 @@ fn vertex(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance:
         let open = sky_visibility(p);
         let sky = environment.ambient.rgb * environment.ambient.w * open;
         // Motes read only as sunbeams in shade, so they keep to the woods; seeds blow over
-        // open ground.
-        alpha *= select(1.0 - smoothstep(0.7, 0.95, open), mix(0.25, 1.0, open), kind == FLUFF);
+        // open ground; crowns catch most of the snow falling on them.
+        alpha *= select(select(1.0 - smoothstep(0.7, 0.95, open), mix(0.25, 1.0, open), kind == FLUFF),
+            mix(0.3, 1.0, open), flake);
         let moon = environment.moon_color.rgb * environment.moon.w;
         let moon_mu = dot(environment.moon.xyz, ray);
-        // Motes scatter strongly forwards, so they show most against the light. Seed heads
-        // also reflect like a pale sphere, so lit from the front they show white against the
-        // sky rather than as dark specks.
-        let g = select(0.65, 0.45, kind == FLUFF);
-        let albedo = select(0.5, 0.85, kind == FLUFF);
+        // Motes scatter strongly forwards, so they show most against the light. Seed heads and
+        // snowflakes also reflect like a pale sphere, so lit from the front they show white
+        // against the sky rather than as dark specks.
+        let pale = kind == FLUFF || flake;
+        let g = select(0.65, 0.45, pale);
+        let albedo = select(select(0.5, 0.85, kind == FLUFF), 0.9, flake);
         let forward = select(0.75 * phase(mu, g) + 0.25 / FOUR_PI,
-            0.5 * phase(mu, g) + 0.5 * sphere_phase(mu), kind == FLUFF);
+            0.5 * phase(mu, g) + 0.5 * sphere_phase(mu), pale);
         let moon_forward = select(0.75 * phase(moon_mu, g) + 0.25 / FOUR_PI,
-            0.5 * phase(moon_mu, g) + 0.5 * sphere_phase(moon_mu), kind == FLUFF);
-        radiance = albedo * (sunlight * forward + moon * moon_forward + sky / (2.0 * 3.14159265));
+            0.5 * phase(moon_mu, g) + 0.5 * sphere_phase(moon_mu), pale);
+        // Snow takes the light the snow ground throws back up as well, as shaken snow does.
+        let skylight = select(sky / (2.0 * 3.14159265), sky * (1.0 + SNOW_BOUNCE) / 3.14159265, flake);
+        radiance = albedo * (sunlight * forward + moon * moon_forward + skylight);
         if kind == MOTES {
             let flash = 0.5 + 0.5 * wave(mix(1800.0, 5400.0, c.y), b.x);
             radiance *= MOTE_GLINT * (0.4 + 1.6 * pow(flash, 6.0));
         }
-        // Radius: motes of one to three millimetres, and seed heads of one to two and a half
-        // centimetres with an open, sparse pappus.
-        let radius = select(mix(0.0006, 0.0015, c.x), mix(0.005, 0.012, c.x), kind == FLUFF);
-        alpha *= select(1.0, 0.6, kind == FLUFF);
+        // Radius: motes of one to three millimetres, seed heads of one to two and a half
+        // centimetres with an open, sparse pappus, and snowflakes of one to two centimetres
+        // across, as large flakes clump, the far box's finer.
+        var radius = select(mix(0.0006, 0.0015, c.x), mix(0.005, 0.012, c.x), kind == FLUFF);
+        if flake {
+            radius = select(mix(0.004, 0.01, c.x), mix(0.003, 0.006, c.x), kind == FAR_FLAKES);
+        }
+        alpha *= select(select(1.0, 0.6, kind == FLUFF), 0.9, flake);
         let centre = view.unjittered_clip_from_world * vec4(p, 1.0);
         if centre.w < 0.2 { return out; }
         // Drawn at least three or four pixels across, as a soft dot holding the light of the
@@ -314,7 +331,7 @@ fn vertex(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance:
         let half_size = view.viewport.zw * 0.5;
         let focal = view.clip_from_view[1][1] * half_size.y;
         let true_radius = radius * focal / centre.w;
-        let drawn = max(true_radius, select(1.5, 2.0, kind == FLUFF));
+        let drawn = max(true_radius, select(1.5, 2.0, kind == FLUFF && !flake));
         alpha *= DOT_NORMAL * (true_radius / drawn) * (true_radius / drawn);
         // Particles brushing past the lens would fill the screen.
         alpha *= smoothstep(0.2, 0.6, centre.w) * exp(-environment.fog.w * centre.w);
@@ -325,7 +342,7 @@ fn vertex(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance:
         out.view_depth = centre.w;
         out.radiance = radiance * view.exposure;
         out.alpha = alpha;
-        out.kind = kind;
+        out.kind = select(kind, FLAKE, flake);
         return out;
     }
     let clip = view.unjittered_clip_from_world * vec4(world_corner, 1.0);
@@ -465,7 +482,7 @@ fn fragment(in: Particle) -> @location(0) vec4<f32> {
     } else {
         let r2 = dot(in.coords, in.coords);
         shape = exp(-3.0 * r2) * (1.0 - smoothstep(0.7, 1.0, r2));
-        softness = select(0.05, 0.1, in.kind == FLUFF);
+        softness = select(0.05, 0.1, in.kind == FLUFF || in.kind == FLAKE);
     }
     let soft = clamp((scene_depth(in.position.xy) - in.view_depth) / softness, 0.0, 1.0);
     let alpha = min(in.alpha * shape, 1.0) * soft;

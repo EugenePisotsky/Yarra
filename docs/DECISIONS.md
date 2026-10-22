@@ -280,6 +280,19 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
 
 ## Atmosphere & weather
 
+- **Snow is where the weather falls, not a weather of its own.** *Kept* (October 22). The island
+  keeps one sequence of clouds, wind and storminess; the mountains have their own, snowing about
+  four fifths of the time from flurries to a blizzard with clear spells, blended in by the share
+  of snow ground within three cells of the camera. There its precipitation falls as snow: flakes
+  as two boxes of ambient particles (lit by the sun's shadow maps and the sky, with the snow
+  ground's light thrown back up), no rain, splashes or wet ground, and hardly any lightning. The
+  weather fog over snow takes the ground's light too, so in a blizzard ground and sky meet
+  without a horizon. A sunny valley can lie under a snowing mountain. Held weather
+  (`--weather`, F1) holds in both. A blizzard is about 120 m of visibility, the nearest trees
+  faint shapes (user: 480 m did not feel like one, 50 m hid every tree). No Houdini: falling snow
+  is endless and wind-driven, which particles and fog do at runtime; baked effects wait for
+  one-off set pieces.
+
 - **A moving moon, not a fixed giant planet.** *Planet rejected* (October 11, `feat/planet`,
   `5a35e8f`): "a moving moon is better". Fix flat dusks inside the moon model; measure key/fill
   (liked 0.5–10, flat 0–0.1).

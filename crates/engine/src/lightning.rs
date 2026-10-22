@@ -102,9 +102,11 @@ fn strike(
         state.clock += f64::from(time.delta_secs().min(0.1));
     }
 
+    // Storms over the island; where it snows around the camera, hardly any.
     let rate = weather
         .runtime()
-        .map_or(0.0, |r| r.current().lightning_per_minute());
+        .map_or(0.0, |r| r.current().lightning_per_minute())
+        * (1.0 - atmosphere.snow.clamp(0.0, 1.0));
     let base = atmosphere.effective_profile().clouds.base_metres;
     let ground_level = sea.and_then(|s| s.level).unwrap_or(0.0);
     let start = |state: &mut GameLightning, ahead: bool| {

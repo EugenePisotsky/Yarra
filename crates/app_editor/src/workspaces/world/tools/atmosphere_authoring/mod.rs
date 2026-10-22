@@ -793,9 +793,12 @@ fn weather_editor(ui: &mut egui::Ui, weather: &mut WeatherSettings, controls: &m
     ui.add(egui::Slider::new(&mut p.cloud_thickness_scale, 0.1..=4.0).text("Cloud thickness ×"));
     ui.add(egui::Slider::new(&mut p.cloud_erosion, 0.0..=1.0).text("Cloud edge detail"));
     ui.add(
-        egui::Slider::new(&mut p.visibility_scale, 0.01..=1.0)
-            .logarithmic(true)
-            .text("Visibility ×"),
+        egui::Slider::new(
+            &mut p.visibility_scale,
+            world::weather::MIN_VISIBILITY_SCALE..=1.0,
+        )
+        .logarithmic(true)
+        .text("Visibility ×"),
     )
     .on_hover_text("Fraction of the clear-weather visibility below; the rest becomes fog.");
     ui.add(egui::Slider::new(&mut p.haze_grey, 0.0..=1.0).text("Fog and skylight grey"));

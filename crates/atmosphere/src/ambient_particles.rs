@@ -1,5 +1,5 @@
-//! Ambient particles near the camera: dust motes, drifting seed fluff and leaves falling from
-//! the crowns. Like the rain they live in camera-anchored boxes that wrap a world-fixed lattice,
+//! Ambient particles near the camera: dust motes, drifting seed fluff, leaves falling from the
+//! crowns and, where it snows, falling snowflakes. Like the rain they live in camera-anchored boxes that wrap a world-fixed lattice,
 //! with hashed positions, analytic motion and a wind drift accumulated on the CPU, so nothing is
 //! simulated per particle. Motes and fluff are lit through the sun's shadow maps and show
 //! mostly in sunbeams and against the light; leaves exist only under crowns of the forest map
@@ -38,7 +38,7 @@ pub(crate) struct AmbientParticlesView;
 
 struct Kind {
     /// Horizontal box edge and height in metres. Fluff fills a layer of that height over the
-    /// ground; leaves take their height from the crowns.
+    /// ground; leaves take their height from the crowns; snowflakes fall through the box.
     size: f32,
     height: f32,
     count: u32,
@@ -50,8 +50,12 @@ struct Kind {
 const MOTES: usize = 0;
 const FLUFF: usize = 1;
 const LEAVES: usize = 2;
+const NEAR_FLAKES: usize = 3;
+const FAR_FLAKES: usize = 4;
 
-const KINDS: [Kind; 3] = [
+/// Near flakes carry the detail; a wider, sparser box fills the middle distance, past which the
+/// weather's fog takes over.
+const KINDS: [Kind; 5] = [
     Kind {
         size: 6.0,
         height: 3.5,
@@ -72,6 +76,20 @@ const KINDS: [Kind; 3] = [
         count: 1600,
         drift: 0.6,
         rise: 0.0,
+    },
+    Kind {
+        size: 10.0,
+        height: 8.0,
+        count: 8000,
+        drift: 0.9,
+        rise: -1.0,
+    },
+    Kind {
+        size: 40.0,
+        height: 24.0,
+        count: 12000,
+        drift: 0.9,
+        rise: -1.2,
     },
 ];
 
@@ -141,11 +159,11 @@ struct AmbientUniform {
     /// xyz: wind drift velocity (m/s) at full share.
     drift: [f32; 4],
     /// Per kind: horizontal box size, box height, first instance, instance count.
-    kinds: [[f32; 4]; 3],
+    kinds: [[f32; 4]; 5],
     /// Per kind: accumulated drift (m), wrapped by its box; w the kind's drift share.
-    offsets: [[f32; 4]; 3],
+    offsets: [[f32; 4]; 5],
     /// Per kind: share of the instances present, 0..1.
-    amounts: [f32; 4],
+    amounts: [[f32; 4]; 2],
 }
 
 #[derive(Resource, Clone, Copy, Default, ExtractResource)]
@@ -153,7 +171,7 @@ struct AmbientUniform {
 struct AmbientFrame {
     uniform: AmbientUniform,
     /// Instances to draw per kind; the last few fade with the amount.
-    active: [u32; 3],
+    active: [u32; 5],
     /// Whether any burst of shaken snow is falling.
     snow: bool,
 }
@@ -187,10 +205,11 @@ impl Plugin for AmbientParticlesPlugin {
 }
 
 /// Share of each kind present: motes and fluff need a dry day, and wind stirs up fluff and
-/// shakes leaves loose while it scatters the motes.
-fn amounts(state: &AtmosphereState) -> [f32; 3] {
+/// shakes leaves loose while it scatters the motes. Snowflakes fall as the weather's snow does,
+/// by day and night; where it snows no leaves fall.
+fn amounts(state: &AtmosphereState) -> [f32; 5] {
     if state.isolated() || !state.profile.outdoor {
-        return [0.0; 3];
+        return [0.0; 5];
     }
 
     let sun = evaluate(&state.profile, state.phase).direction_to_sun[1];
@@ -201,10 +220,13 @@ fn amounts(state: &AtmosphereState) -> [f32; 3] {
 
     // Rain washes the air; wet ground raises less.
     let dry = (1.0 - smoothstep(0.0, 0.3, rain)) * (1.0 - 0.7 * state.wetness.clamp(0.0, 1.0));
-    let mut share = [0.0; 3];
+    let snow = state.snow.clamp(0.0, 1.0);
+    let mut share = [0.0; 5];
     share[MOTES] = day * dry * (1.3 - 0.4 * stir).clamp(0.2, 1.0);
     share[FLUFF] = day * dry * (0.4 + 0.3 * stir).clamp(0.2, 1.0);
-    share[LEAVES] = (0.2 + 0.3 * stir).clamp(0.1, 1.0);
+    share[LEAVES] = (0.2 + 0.3 * stir).clamp(0.1, 1.0) * (1.0 - snow);
+    share[NEAR_FLAKES] = rain * snow;
+    share[FAR_FLAKES] = rain * snow;
     share
 }
 
@@ -236,7 +258,7 @@ fn sync(
     inputs: ParticleInputs,
     views: ParticleViews,
     mut frame: ResMut<AmbientFrame>,
-    mut offsets: Local<[[f64; 3]; 3]>,
+    mut offsets: Local<[[f64; 3]; 5]>,
 ) {
     let ParticleInputs {
         state,
@@ -245,7 +267,7 @@ fn sync(
         falls,
     } = inputs;
     let enabled = presentation.is_none_or(|p| p.particles);
-    let amounts = if enabled { amounts(&state) } else { [0.0; 3] };
+    let amounts = if enabled { amounts(&state) } else { [0.0; 5] };
     let wind = state.weather.map_or(1.0, |w| w.wind_strength);
     let direction = state.profile.clouds.wind_degrees.to_radians();
     let elapsed = time.elapsed_secs_f64();
@@ -271,11 +293,14 @@ fn sync(
             0.0,
         ],
         drift: velocity.extend(0.0).to_array(),
-        amounts: [amounts[0], amounts[1], amounts[2], 0.0],
+        amounts: [
+            [amounts[0], amounts[1], amounts[2], amounts[3]],
+            [amounts[4], 0.0, 0.0, 0.0],
+        ],
         ..default()
     };
     let mut first = 0;
-    let mut active = [0; 3];
+    let mut active = [0; 5];
 
     for (i, kind) in KINDS.iter().enumerate() {
         let o = offsets[i];
@@ -539,7 +564,10 @@ mod tests {
     #[test]
     fn motes_and_fluff_need_a_dry_day_and_leaves_fall_in_any_weather() {
         let morning = amounts(&state(None, AtmosphereState::default().phase));
-        assert!(morning.iter().all(|&a| a > 0.1 && a <= 1.0), "{morning:?}");
+        assert!(
+            morning[..NEAR_FLAKES].iter().all(|&a| a > 0.1 && a <= 1.0),
+            "{morning:?}"
+        );
         let night = amounts(&state(None, 0.0));
         assert_eq!(night[MOTES], 0.0);
         assert_eq!(night[FLUFF], 0.0);
@@ -551,7 +579,7 @@ mod tests {
             owner: AtmosphereOwner::Isolated,
             ..state(None, 0.34)
         };
-        assert_eq!(amounts(&isolated), [0.0; 3]);
+        assert_eq!(amounts(&isolated), [0.0; 5]);
     }
 
     #[test]
@@ -593,7 +621,12 @@ mod tests {
             assert!((0.0..kind.size).contains(&offset[0]));
             assert!((0.0..kind.height).contains(&offset[1]));
             assert!((0.0..kind.size).contains(&offset[2]));
-            assert!(frame.active[i] > 0 && frame.active[i] <= kind.count);
+            assert!(frame.active[i] <= kind.count);
+            assert_eq!(
+                frame.active[i] > 0,
+                i < NEAR_FLAKES,
+                "no snow on a clear day"
+            );
         }
 
         assert_eq!(frame.uniform.kinds[LEAVES][2], (8000 + 800) as f32);
@@ -605,6 +638,32 @@ mod tests {
             2,
         );
         assert!(!visible);
-        assert_eq!(frame.active, [0; 3]);
+        assert_eq!(frame.active, [0; 5]);
+    }
+
+    #[test]
+    fn snowflakes_fall_where_the_precipitation_is_snow_and_leaves_stop() {
+        let snowing = |snow| {
+            amounts(&AtmosphereState {
+                snow,
+                ..state(Some(WeatherKind::Rain), 0.34)
+            })
+        };
+        let rain = snowing(0.0);
+        assert_eq!((rain[NEAR_FLAKES], rain[FAR_FLAKES]), (0.0, 0.0));
+        let snow = snowing(1.0);
+        assert!(
+            snow[NEAR_FLAKES] > 0.5 && snow[FAR_FLAKES] > 0.5,
+            "{snow:?}"
+        );
+        assert_eq!(snow[LEAVES], 0.0);
+        let night = amounts(&AtmosphereState {
+            snow: 1.0,
+            ..state(Some(WeatherKind::Rain), 0.0)
+        });
+        assert_eq!(
+            night[NEAR_FLAKES], snow[NEAR_FLAKES],
+            "snow falls at night too"
+        );
     }
 }

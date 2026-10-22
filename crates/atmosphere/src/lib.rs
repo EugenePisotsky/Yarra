@@ -149,6 +149,9 @@ pub struct AtmosphereState {
     pub weather_transition: Option<WeatherTransition>,
     /// 0..1 surface wetness accumulated by game rain; lags precipitation.
     pub wetness: f32,
+    /// 0..1 share of the weather's precipitation falling as snow where the camera is: the game
+    /// blends the mountains' weather in where snow lies.
+    pub snow: f32,
     /// A lightning strike in progress, set by the game's weather.
     pub lightning: Option<lightning::LightningFlash>,
 }
@@ -165,6 +168,7 @@ impl Default for AtmosphereState {
             exposure_override: None,
             weather: None,
             weather_transition: None,
+            snow: 0.0,
             lightning: None,
             wetness: 0.0,
         }

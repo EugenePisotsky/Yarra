@@ -1,15 +1,31 @@
 //! Game weather: advances the shared sequence and overlays it on the authored atmosphere and
-//! vegetation wind. Editor workspaces own the authored profile and never see it.
+//! vegetation wind. The mountains have a sequence of their own (`WeatherSettings::mountains`),
+//! blended in by the share of snow ground around the camera, where their precipitation falls as
+//! snow: a sunny valley can lie under a snowing mountain. Editor workspaces own the authored
+//! profile and never see it.
 mod rain;
 
-use crate::{ActiveWorldSpace, ApplyAtmosphere, AtmosphereOwner, AtmosphereState, TreeWindSystems};
+use crate::{
+    ActiveWorldSpace, ActiveWorldView, ApplyAtmosphere, AtmosphereOwner, AtmosphereState,
+    ClipmapTerrain, TreeWindSystems, WorldOrigin,
+};
 use bevy::prelude::*;
 use vegetation_render::{VegetationAmbientGain, VegetationWind};
 
 use world::{
     atmosphere::{AtmosphereProfile, evaluate},
-    weather::{WeatherKind, WeatherRuntime},
+    weather::{WeatherKind, WeatherRuntime, WeatherSettings, WeatherTransition},
 };
+
+/// Snow ground counts this many leaves (cells) round the camera, so the weather changes over a
+/// few hundred metres of the way up rather than at the snow's edge.
+const SNOW_GROUND_RADIUS: i32 = 3;
+
+/// Seconds over which the sensed snow ground follows the camera.
+const SNOW_GROUND_SECONDS: f32 = 8.0;
+
+/// The mountains' sequence runs from its own seed.
+const MOUNTAIN_SEED: u64 = 0x6d6f_756e_7461_696e;
 
 /// How weather starts once the first world space is active.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -28,6 +44,8 @@ pub struct GameWeather {
     start: WeatherStart,
     seed: u64,
     runtime: Option<WeatherRuntime>,
+    /// The mountains' sequence, beside the island's.
+    mountains: Option<WeatherRuntime>,
     /// Freeze the weather clock, e.g. during an A/B capture.
     pub paused: bool,
     /// Weather clock multiplier for testing transitions.
@@ -43,6 +61,7 @@ impl GameWeather {
             start,
             seed,
             runtime: None,
+            mountains: None,
             paused: false,
             time_scale: 1.0,
             wetness_override: None,
@@ -62,38 +81,54 @@ impl GameWeather {
         self.runtime.as_ref()
     }
 
-    /// The running weather, starting settled near the authored cloud layer if needed.
-    fn running(&mut self, profile: &AtmosphereProfile) -> &mut WeatherRuntime {
-        self.runtime.get_or_insert_with(|| {
+    /// The running weather of the island and the mountains, starting settled near the authored
+    /// cloud layer if needed.
+    fn running(&mut self, profile: &AtmosphereProfile) -> [&mut WeatherRuntime; 2] {
+        let seed = self.seed;
+        let island = self.runtime.get_or_insert_with(|| {
             WeatherRuntime::new(
                 profile.weather.clone(),
-                self.seed,
+                seed,
                 WeatherKind::nearest_to(profile),
                 false,
             )
-        })
+        });
+        let (initial, automatic) = (island.target(), island.automatic);
+        let mountains = self
+            .mountains
+            .get_or_insert_with(|| mountains(seed, initial, automatic));
+        [island, mountains]
     }
 
-    /// Blend to `kind` and hold it, starting weather from the authored profile if needed.
+    /// Blend to `kind` and hold it, starting weather from the authored profile if needed. The
+    /// mountains take it too, as their snow.
     pub fn request(&mut self, profile: &AtmosphereProfile, kind: WeatherKind, seconds: f32) {
-        let runtime = self.running(profile);
-        runtime.automatic = false;
-        runtime.request(kind, seconds);
+        for runtime in self.running(profile) {
+            runtime.automatic = false;
+            runtime.request(kind, seconds);
+        }
     }
 
-    /// Follow or stop the random sequence, starting weather from the authored profile if needed.
+    /// Follow or stop the random sequences, starting weather from the authored profile if
+    /// needed.
     pub fn set_automatic(&mut self, profile: &AtmosphereProfile, automatic: bool) {
-        self.running(profile).automatic = automatic;
+        for runtime in self.running(profile) {
+            runtime.automatic = automatic;
+        }
     }
 
-    /// Start the next scheduled change now, keeping the automatic setting.
+    /// Start the next scheduled changes now, keeping the automatic setting; the island's next
+    /// state.
     pub fn next_random(&mut self, profile: &AtmosphereProfile) -> WeatherKind {
-        self.running(profile).next_random()
+        let [island, mountains] = self.running(profile);
+        mountains.next_random();
+        island.next_random()
     }
 
     /// Return to the authored profile.
     pub fn clear(&mut self) {
         self.runtime = None;
+        self.mountains = None;
         self.start = WeatherStart::Authored;
     }
 
@@ -119,6 +154,12 @@ impl GameWeather {
         };
 
         if let Some(runtime) = &self.runtime {
+            // Held weather holds in the mountains too; a running sequence starts them in snow.
+            let initial = match self.start {
+                WeatherStart::Manual(kind) => kind,
+                _ => WeatherKind::Overcast,
+            };
+            self.mountains = Some(mountains(self.seed, initial, runtime.automatic));
             info!(
                 "WEATHER start={:?} seed={} initial={:?}",
                 self.start,
@@ -127,6 +168,51 @@ impl GameWeather {
             );
         }
     }
+
+    /// The weather where the camera is: the island's, with the mountains' blended in by the snow
+    /// ground share; both ends of the change; and the wetness rain has left.
+    fn local(&self, snow: f32) -> Option<(world::weather::WeatherParams, WeatherTransition, f32)> {
+        let island = self.runtime.as_ref()?;
+        let Some(mountains) = self.mountains.as_ref().filter(|_| snow > 0.0) else {
+            return Some((island.current(), island.transition(), island.wetness()));
+        };
+
+        // Snow ground stays dry: the rain fell below it.
+        if snow >= 1.0 {
+            return Some((mountains.current(), mountains.transition(), 0.0));
+        }
+
+        let (a, b) = (island.transition(), mountains.transition());
+        let transition = WeatherTransition {
+            from: a.from.lerp(b.from, snow),
+            to: a.to.lerp(b.to, snow),
+            progress: a.progress + (b.progress - a.progress) * snow,
+        };
+
+        let wetness = island.wetness() * (1.0 - snow);
+        Some((
+            island.current().lerp(mountains.current(), snow),
+            transition,
+            wetness,
+        ))
+    }
+}
+
+/// The mountains' sequence from `initial`.
+fn mountains(seed: u64, initial: WeatherKind, automatic: bool) -> WeatherRuntime {
+    WeatherRuntime::new(
+        WeatherSettings::mountains(),
+        seed ^ MOUNTAIN_SEED,
+        initial,
+        automatic,
+    )
+}
+
+/// How much of the ground around the camera lies under snow, followed smoothly: where the
+/// mountains' weather is.
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
+pub struct SnowGround {
+    pub share: f32,
 }
 
 pub struct GameWeatherPlugin;
@@ -138,9 +224,10 @@ impl Plugin for GameWeatherPlugin {
         }
 
         crate::lightning::plugin(app);
-        app.add_systems(
+        app.init_resource::<SnowGround>().add_systems(
             PostUpdate,
             (
+                sense_snow_ground,
                 advance_weather
                     .after(crate::world_streaming::sync_world_atmosphere)
                     .before(ApplyAtmosphere),
@@ -157,9 +244,45 @@ impl Plugin for GameWeatherPlugin {
     }
 }
 
+/// Follows the share of snow ground around the camera.
+fn sense_snow_ground(
+    time: Res<Time>,
+    view: ActiveWorldView,
+    origin: Option<Res<WorldOrigin>>,
+    terrain: Res<ClipmapTerrain>,
+    mut ground: ResMut<SnowGround>,
+    mut sensed: Local<bool>,
+) {
+    let (Some(camera), Some(origin)) = (view.current().map(|v| v.transform), origin) else {
+        return;
+    };
+    let Some(share) = terrain.snow_share(camera.translation(), &origin, SNOW_GROUND_RADIUS) else {
+        return;
+    };
+
+    // The first reading holds at once: a game starting in the mountains starts in their weather.
+    if !std::mem::replace(&mut *sensed, true) {
+        ground.share = share;
+    } else if ground.share != share {
+        let follow = 1.0 - (-time.delta_secs() / SNOW_GROUND_SECONDS).exp();
+        let next = ground.share + (share - ground.share) * follow;
+
+        if (next * 10.0).round() != (ground.share * 10.0).round() {
+            debug!("WEATHER_SNOW_GROUND share={next:.2} around={share:.2}");
+        }
+
+        ground.share = if (share - next).abs() < 1e-4 {
+            share
+        } else {
+            next
+        };
+    }
+}
+
 pub(crate) fn advance_weather(
     time: Res<Time>,
     active: Option<Res<ActiveWorldSpace>>,
+    ground: Res<SnowGround>,
     mut weather: ResMut<GameWeather>,
     mut atmosphere: ResMut<AtmosphereState>,
     mut previous_target: Local<Option<WeatherKind>>,
@@ -169,6 +292,7 @@ pub(crate) fn advance_weather(
             atmosphere.weather = None;
             atmosphere.weather_transition = None;
             atmosphere.wetness = 0.0;
+            atmosphere.snow = 0.0;
         }
         return;
     }
@@ -184,18 +308,27 @@ pub(crate) fn advance_weather(
     } else {
         1.0
     };
-    let current = weather.runtime.as_mut().map(|runtime| {
+
+    if let Some(runtime) = weather.runtime.as_mut() {
         // Published or previewed edits apply live, without restarting the sequence.
         if runtime.settings() != &atmosphere.profile.weather {
             runtime.set_settings(atmosphere.profile.weather.clone());
         }
+    }
 
-        if !paused {
+    if !paused {
+        let GameWeather {
+            runtime, mountains, ..
+        } = &mut *weather;
+
+        for runtime in runtime.iter_mut().chain(mountains.iter_mut()) {
             runtime.advance(time.delta_secs() * scale);
         }
+    }
 
-        runtime.current()
-    });
+    let snow = ground.share.clamp(0.0, 1.0);
+    let local = weather.local(snow);
+    let current = local.map(|(params, ..)| params);
     let target = weather.runtime.as_ref().map(WeatherRuntime::target);
 
     if target != *previous_target {
@@ -209,21 +342,20 @@ pub(crate) fn advance_weather(
         *previous_target = target;
     }
 
-    let transition = weather.runtime.as_ref().map(WeatherRuntime::transition);
-    let wetness = weather.wetness_override.unwrap_or_else(|| {
-        weather
-            .runtime
-            .as_ref()
-            .map_or(0.0, WeatherRuntime::wetness)
-    });
+    let transition = local.map(|(_, transition, _)| transition);
+    let wetness = weather
+        .wetness_override
+        .unwrap_or_else(|| local.map_or(0.0, |(.., wetness)| wetness));
 
     if atmosphere.weather != current
         || atmosphere.weather_transition != transition
         || atmosphere.wetness != wetness
+        || atmosphere.snow != snow
     {
         atmosphere.weather = current;
         atmosphere.weather_transition = transition;
         atmosphere.wetness = wetness;
+        atmosphere.snow = snow;
     }
 }
 
@@ -331,6 +463,7 @@ mod tests {
         time.advance_by(std::time::Duration::from_secs(1));
         app.insert_resource(time)
             .insert_resource(GameWeather::new(start, 3))
+            .init_resource::<SnowGround>()
             .init_resource::<AtmosphereState>()
             .init_resource::<VegetationWind>()
             .init_resource::<VegetationAmbientGain>()
@@ -344,6 +477,30 @@ mod tests {
                     .chain(),
             );
         app
+    }
+
+    #[test]
+    fn snow_ground_brings_the_mountains_weather_and_keeps_the_ground_dry() {
+        let mut app = test_app(WeatherStart::Authored);
+        let profile = app.world().resource::<AtmosphereState>().profile.clone();
+        app.world_mut()
+            .resource_mut::<GameWeather>()
+            .request(&profile, WeatherKind::Rain, 0.);
+        app.update();
+        let island = app.world().resource::<AtmosphereState>();
+        assert_eq!(island.snow, 0.0);
+        assert_eq!(island.weather, Some(WeatherKind::Rain.preset()));
+
+        app.world_mut().resource_mut::<SnowGround>().share = 1.0;
+        app.update();
+        let mountains = app.world().resource::<AtmosphereState>();
+        assert_eq!(mountains.snow, 1.0);
+        assert_eq!(
+            mountains.weather,
+            Some(WeatherSettings::mountains().preset(WeatherKind::Rain)),
+            "held weather holds in the mountains, as snow"
+        );
+        assert_eq!(mountains.wetness, 0.0);
     }
 
     #[test]

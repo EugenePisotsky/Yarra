@@ -37,6 +37,11 @@ const MIST_FADE_SECONDS: f32 = 3.;
 
 const LUMINANCE: Vec3 = Vec3::new(0.2126, 0.7152, 0.0722);
 
+/// Falling snow over snow ground also takes the light the ground throws back up, as the flakes
+/// do (`SNOW_BOUNCE` in weather/ambient.wesl): it makes the air as bright as the snow, so in a
+/// blizzard ground and sky meet without a horizon.
+const SNOW_BOUNCE: f32 = 0.8;
+
 /// Inputs for the low air and the sea: valley mist, presentation switches, look tuning, the
 /// sea surface and its shore.
 type LowAir<'w> = (
@@ -176,7 +181,8 @@ pub(super) fn sync(
         .weather_fog()
         .filter(|f| profile.outdoor && f.extinction > 0.)
     {
-        let lit = light.ambient + (light.sun + light.moon) * 0.025;
+        let lit = light.ambient * (1. + SNOW_BOUNCE * state.snow.clamp(0., 1.))
+            + (light.sun + light.moon) * 0.025;
         params.fog = (Vec3::from_array(fog.tint_linear) * lit + light.flash)
             .extend(fog.extinction)
             .to_array();

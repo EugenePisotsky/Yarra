@@ -88,10 +88,13 @@ pub(super) fn spawn_rain_splashes(
     let (Some(mut splashes), Some(origin), Some(camera)) = (splashes, origin, camera) else {
         return;
     };
+
+    // Snow lands without a splash.
     let precipitation = atmosphere
         .weather
         .filter(|_| atmosphere.owner == AtmosphereOwner::Game && atmosphere.profile.outdoor)
-        .map_or(0.0, |w| w.precipitation.clamp(0.0, 1.0));
+        .map_or(0.0, |w| w.precipitation.clamp(0.0, 1.0))
+        * (1.0 - atmosphere.snow.clamp(0.0, 1.0));
     let (random, due) = &mut *state;
 
     if precipitation <= 0.0 {

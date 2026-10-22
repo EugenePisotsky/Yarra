@@ -38,27 +38,7 @@ impl WeatherKind {
 
     /// Built-in default for this state; worlds author their own in `WeatherSettings`.
     pub fn preset(self) -> WeatherParams {
-        let p = |cloud_coverage,
-                 cloud_density,
-                 cloud_thickness_scale,
-                 cloud_erosion,
-                 visibility_scale,
-                 haze_grey,
-                 exposure_offset_ev,
-                 [wind_strength, wind_gustiness, wind_rate]: [f32; 3],
-                 precipitation| WeatherParams {
-            cloud_coverage,
-            cloud_density,
-            cloud_thickness_scale,
-            cloud_erosion,
-            visibility_scale,
-            haze_grey,
-            exposure_offset_ev,
-            wind_strength,
-            wind_gustiness,
-            wind_rate,
-            precipitation,
-        };
+        let p = params;
         // Scattered matches the default authored cloud layer and unscaled wind, so the
         // existing look is one point of the sequence. Negative EV offsets approximate the
         // exposure a photographer would open under cloud; there is no automatic exposure.
@@ -102,6 +82,36 @@ impl WeatherKind {
     }
 }
 
+/// Weather values in the order the presets list them: clouds (coverage, density, thickness scale,
+/// erosion), visibility scale, haze grey, exposure offset, wind (strength, gustiness, rate) and
+/// precipitation.
+#[allow(clippy::too_many_arguments)] // One preset row each.
+fn params(
+    cloud_coverage: f32,
+    cloud_density: f32,
+    cloud_thickness_scale: f32,
+    cloud_erosion: f32,
+    visibility_scale: f32,
+    haze_grey: f32,
+    exposure_offset_ev: f32,
+    [wind_strength, wind_gustiness, wind_rate]: [f32; 3],
+    precipitation: f32,
+) -> WeatherParams {
+    WeatherParams {
+        cloud_coverage,
+        cloud_density,
+        cloud_thickness_scale,
+        cloud_erosion,
+        visibility_scale,
+        haze_grey,
+        exposure_offset_ev,
+        wind_strength,
+        wind_gustiness,
+        wind_rate,
+        precipitation,
+    }
+}
+
 /// Continuous weather values. Scales are relative to the authored profile; the rest are absolute.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct WeatherParams {
@@ -124,6 +134,9 @@ pub struct WeatherParams {
 }
 
 const NEUTRAL_HAZE_SRGB: [f32; 3] = [0.78, 0.80, 0.82];
+
+/// Least visibility relative to the authored: a blizzard's 120 m of a 60 km clear day, with room.
+pub const MIN_VISIBILITY_SCALE: f32 = 0.0005;
 
 /// Keep one frame's wave advance below the grass history-reset threshold at the 0.1 s hitch clamp.
 pub const MAX_WIND_RATE: f32 = 2.0;
@@ -161,7 +174,7 @@ impl WeatherParams {
             (self.cloud_density, 0., 3.),
             (self.cloud_thickness_scale, 0.1, 4.),
             (self.cloud_erosion, 0., 1.),
-            (self.visibility_scale, 0.01, 1.),
+            (self.visibility_scale, MIN_VISIBILITY_SCALE, 1.),
             (self.haze_grey, 0., 1.),
             (self.exposure_offset_ev, -6., 6.),
             (self.wind_strength, 0., 3.),
@@ -212,7 +225,8 @@ impl WeatherParams {
     /// visibility drops to a few kilometres; weather supplies only the extra extinction.
     pub fn fog(&self, profile: &AtmosphereProfile) -> WeatherFog {
         let authored = profile.visibility_metres.clamp(50., 100_000.);
-        let visibility = (authored * self.visibility_scale.clamp(0.01, 1.)).max(50.);
+        let visibility =
+            (authored * self.visibility_scale.clamp(MIN_VISIBILITY_SCALE, 1.)).max(50.);
         let grey = self.haze_grey.clamp(0., 1.);
         let haze = crate::atmosphere::linear_rgb(profile.haze_srgb);
         let neutral = crate::atmosphere::linear_rgb(NEUTRAL_HAZE_SRGB);
@@ -317,6 +331,52 @@ impl Default for WeatherSettings {
 }
 
 impl WeatherSettings {
+    /// The mountains' own weather, which the game blends in where snow lies around the player:
+    /// snow most of the time, from flurries under broken cloud to a blizzard, with short clear
+    /// spells. Each state's precipitation falls there as snow, which hides the far land sooner
+    /// than rain of the same intensity: at the default 60 km clear-air visibility, about 1.5 km in
+    /// light snow, 500 m in snow and 120 m in a blizzard, where the nearest trees are faint
+    /// shapes and the next ones gone. Snow clouds are thinner than rain's, so their sky stays a light grey.
+    pub fn mountains() -> Self {
+        let p = params;
+        Self {
+            presets: [
+                p(0.35, 0.7, 1.0, 0.3, 0.8, 0.2, 0.0, [1.1, 0.9, 1.0], 0.0),
+                p(0.7, 0.9, 0.9, 0.2, 0.15, 0.4, -0.3, [1.2, 1.0, 1.1], 0.15),
+                p(0.94, 1.0, 0.8, 0.1, 0.025, 0.7, -0.6, [1.3, 1.0, 1.15], 0.4),
+                p(
+                    0.98,
+                    1.2,
+                    0.8,
+                    0.08,
+                    0.008,
+                    0.85,
+                    -0.7,
+                    [1.5, 1.0, 1.25],
+                    0.7,
+                ),
+                p(1.0, 1.5, 0.8, 0.05, 0.002, 0.9, -0.8, [1.9, 1.0, 1.5], 1.0),
+            ],
+            schedule: WeatherSchedule {
+                hold_seconds: [
+                    [300., 720.],
+                    [180., 420.],
+                    [240., 600.],
+                    [240., 600.],
+                    [120., 300.],
+                ],
+                next_weights: [
+                    [0.0, 0.8, 0.2, 0.0, 0.0],
+                    [0.5, 0.0, 0.4, 0.1, 0.0],
+                    [0.0, 0.45, 0.0, 0.4, 0.15],
+                    [0.0, 0.2, 0.5, 0.0, 0.3],
+                    [0.0, 0.0, 0.3, 0.7, 0.0],
+                ],
+                transition_seconds: [60., 150.],
+            },
+        }
+    }
+
     pub fn preset(&self, kind: WeatherKind) -> WeatherParams {
         self.presets[kind.index()]
     }
@@ -573,6 +633,23 @@ mod tests {
             .collect();
         assert!(coverage.windows(2).all(|w| w[0] < w[1]));
         assert!(WeatherSchedule::default().validate().is_ok());
+    }
+
+    #[test]
+    fn the_mountains_snow_most_of_the_time() {
+        let settings = WeatherSettings::mountains();
+        assert!(settings.validate().is_ok());
+        let mut runtime = WeatherRuntime::new(settings, 7, WeatherKind::Overcast, true);
+        let mut snowing = 0;
+        let steps = 10_000;
+
+        for _ in 0..steps {
+            runtime.advance(10.0);
+            snowing += usize::from(runtime.current().precipitation > 0.05);
+        }
+
+        let share = snowing as f32 / steps as f32;
+        assert!((0.7..0.9).contains(&share), "{share}");
     }
 
     #[test]
