@@ -14,6 +14,16 @@ use bevy::{
 
 use binding_types::*;
 
+/// Below this transmittance of the weather's fog up to the cloud base the clouds show nowhere:
+/// the cloud tracer's own opacity cut (`shaders/clouds/render.wesl`).
+const HIDDEN_BEHIND_FOG: f32 = 0.003;
+
+/// Whether the weather's fog, `extinction` per metre, hides a cloud base `above` metres
+/// overhead: the shortest way to it, so then every cloud.
+fn hidden_behind_fog(extinction: f32, above: f32) -> bool {
+    (-extinction * above.max(0.)).exp() < HIDDEN_BEHIND_FOG
+}
+
 #[derive(Resource)]
 pub(crate) struct Pipelines {
     compute_layout: BindGroupLayoutDescriptor,
@@ -268,6 +278,17 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_blizzards_fog_hides_the_clouds_and_light_snows_does_not() {
+        let fog = |visibility: f32| world::weather::VISIBILITY_EXTINCTION / visibility;
+        assert!(hidden_behind_fog(fog(120.), 800.));
+        assert!(!hidden_behind_fog(fog(1500.), 800.));
+        assert!(
+            !hidden_behind_fog(fog(120.), -50.),
+            "nothing hides clouds around the camera"
+        );
+    }
+
+    #[test]
     fn finished_sweeps_rotate_without_ever_refreshing_a_displayed_image() {
         let mut target = CloudTarget {
             older: 0,
@@ -500,6 +521,22 @@ pub(crate) fn refresh(
     );
     let position =
         extracted.world_from_view.translation() + Vec3::new(params.offset[0], 0., params.offset[1]);
+
+    // Clouds the weather's fog hides even straight up show nowhere: the sweep keeps its schedule
+    // and key without tracing, and resumes long before the fog thins enough to show them. New
+    // images are traced whole, hidden or not.
+    if !resized && hidden_behind_fog(params.fog[3], params.layer[0] - position.y) {
+        if cached {
+            target
+                .sky_refresh
+                .next(now, position, params.layer[2] * 4., false);
+            target.sky_key = Some(key);
+        }
+
+        target.composites += 1;
+        return;
+    }
+
     let region = if cached {
         let invalid = resized || target.sky_key.as_ref() != Some(&key);
         target

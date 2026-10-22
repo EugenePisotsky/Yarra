@@ -523,8 +523,10 @@ xcrun xctrace export --input tmp/trace/a.trace --output tmp/trace/a-intervals.xm
 rm -rf tmp/trace/a.trace; rm -f $TMPDIR/instruments*.ktrace; pkill -x yarra-app-game
 ```
 
-Keep recordings to 3–11 s; `export --toc` lists tables, `--instrument 'Metal GPU Counters'` adds
-limiters. Each recording leaves about 1 GB of `instruments*.ktrace` in `$TMPDIR`: delete them.
+`python3 tools/summarize_gpu_intervals.py a-intervals.xml [b-intervals.xml]` gives each pass's
+GPU time per frame and its share of a reference pass in the same trace (`--reference`), which is
+what to compare between traces. Keep recordings to 3–11 s; `export --toc` lists tables,
+`--instrument 'Metal GPU Counters'` adds limiters. Each recording leaves about 1 GB of `instruments*.ktrace` in `$TMPDIR`: delete them.
 `tools/summarize_gpu_counters.py reference.csv candidate.csv --output result.json` compares
 Xcode's exported encoder counters (replay work, not live time).
 

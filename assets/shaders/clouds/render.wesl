@@ -12,6 +12,9 @@ const MULTIPLE: f32 = 0.35;
 // Sunlit land and sea below light the clouds from beneath (albedo about 0.1 over the island): at
 // midday as much as the sky lights their bases from above.
 const GROUND_BOUNCE: f32 = 0.02;
+// The moon lights the clouds only while the sun's light on them is less than this many times its
+// own: by day it adds nothing a sample could hold, and tracing its beam would double the work.
+const MOON_SEEN: f32 = 1000.0;
 // Clouds above the ground's horizon still see a sun that has set below it; `light.w` already
 // holds what reaches the cloud layer (none once the sun is below the layer's own horizon), so
 // afterglow lights them from below.
@@ -54,6 +57,7 @@ fn light_at(p:vec3<f32>, ray:vec3<f32>, light:vec4<f32>, color:vec3<f32>) -> vec
     let most=80u;
     let steps=clamp(u32((end-start)/25.0),48u,most);
     let ds=(end-start)/f32(steps);
+    let moon=select(vec4(0.0),environment.moon,environment.moon.w*MOON_SEEN>environment.sun.w);
     var t=1.0;var color=vec3(0.0);
     for(var i=0u;i<steps;i+=1u) {
         let p=camera+ray*(start+(f32(i)+0.5)*ds);
@@ -64,7 +68,7 @@ fn light_at(p:vec3<f32>, ray:vec3<f32>, light:vec4<f32>, color:vec3<f32>) -> vec
             let sky=environment.ambient.rgb*environment.ambient.w;
             let ground=environment.near_sun.rgb*max(environment.sun.y,0.0)*(1.0-environment.weather.z)+sky;
             let ambient=sky*mix(0.06,0.22,h)+ground*GROUND_BOUNCE*(1.0-h);
-            let illumination=ambient+light_at(p,ray,environment.sun,environment.sun_color.rgb)+light_at(p,ray,environment.moon,environment.moon_color.rgb);
+            let illumination=ambient+light_at(p,ray,environment.sun,environment.sun_color.rgb)+light_at(p,ray,moon,environment.moon_color.rgb);
             color += t*a*illumination;
             t *= 1.0-a;
             // Once opaque, discard the tiny residual transmission too. Leaving a
