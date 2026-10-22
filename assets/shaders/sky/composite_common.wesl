@@ -17,9 +17,15 @@ import package::shaders::environment::params::EnvironmentParams;
 @group(1) @binding(2) var cloud_newer: texture_2d<f32>;
 @group(1) @binding(3) var cloud_older: texture_2d<f32>;
 @group(1) @binding(4) var cloud_sampler: sampler;
-// x: cloud cross-fade progress; y: light shafts drawn; z: main-pass pixels per shaft texel; w: sun
-// rays drawn.
-@group(1) @binding(5) var<uniform> composite_settings: vec4<f32>;
+struct CompositeSettings {
+    // x: cloud cross-fade progress; y: light shafts drawn; z: main-pass pixels per shaft texel;
+    // w: sun rays drawn.
+    flags: vec4<f32>,
+    // How far the camera has moved through the drifting cloud field (xyz, metres) since the newest
+    // cloud image traced its first and its last row, then the previous image (sky/cloud_layer.wesl).
+    cloud_shift: array<vec4<f32>, 4>,
+}
+@group(1) @binding(5) var<uniform> composite_settings: CompositeSettings;
 // Where mist pools (`atmosphere::valley_mist`): floor height, valley share, ground height, land
 // share.
 @group(1) @binding(6) var mist_map: texture_2d<f32>;
@@ -34,7 +40,7 @@ import package::shaders::environment::params::EnvironmentParams;
 // lets through, zw its main-pass uv.
 @group(1) @binding(12) var<storage, read> sun_state: vec4<f32>;
 // Share of the glare veil reaching each texel (sky/sun_rays.wesl), at the light shafts' scale;
-// drawn when composite_settings.w is 1.
+// drawn when composite_settings.flags.w is 1.
 @group(1) @binding(13) var sun_rays: texture_2d<f32>;
 @group(1) @binding(14) var cloud_shadow: texture_2d<f32>;
 @group(1) @binding(15) var cloud_shadow_sampler: sampler;

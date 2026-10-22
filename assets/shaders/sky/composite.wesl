@@ -83,10 +83,10 @@ const SHAFT_SKY: f32 = 6.0e4;
 // distance (nearly everywhere) the plain bilinear sample is the same; the four distances come
 // in one gather. Sky pixels use 1e6.
 fn light_shafts(position: vec2<f32>, distance: f32) -> vec4<f32> {
-    if composite_settings.y < 0.5 {
+    if composite_settings.flags.y < 0.5 {
         return vec4(0.0, 0.0, 0.0, 1.0);
     }
-    let uv = (position - view.main_pass_viewport.xy) / composite_settings.z
+    let uv = (position - view.main_pass_viewport.xy) / composite_settings.flags.z
         / vec2<f32>(textureDimensions(shaft_light));
     let here = min(distance, SHAFT_SKY);
     // Texels (0, 0), (1, 0), (0, 1), (1, 1) of the footprint, as gather orders them w, z, x, y.
@@ -99,7 +99,7 @@ fn light_shafts(position: vec2<f32>, distance: f32) -> vec4<f32> {
         return textureSampleLevel(shaft_light, mist_sampler, uv, 0.0);
     }
     let size = vec2<i32>(textureDimensions(shaft_light));
-    let q = (position - view.main_pass_viewport.xy) / composite_settings.z - 0.5;
+    let q = (position - view.main_pass_viewport.xy) / composite_settings.flags.z - 0.5;
     let base = vec2<i32>(floor(q));
     let f = q - floor(q);
     let near_weight = exp(-gap / falloff);

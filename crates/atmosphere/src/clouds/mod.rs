@@ -103,7 +103,7 @@ mod tests {
     fn cached_sky_has_a_fixed_budget_and_high_handles_odd_or_tiny_views() {
         assert_eq!(
             CloudQuality::Balanced.target_size(UVec2::new(2592, 1456)),
-            UVec2::new(2048, 512)
+            UVec2::new(3072, 768)
         );
         assert_eq!(
             CloudQuality::High.target_size(UVec2::new(2592, 1456)),
@@ -111,7 +111,7 @@ mod tests {
         );
         assert_eq!(
             CloudQuality::Balanced.target_size(UVec2::new(5, 3)),
-            UVec2::new(2048, 512)
+            UVec2::new(3072, 768)
         );
         assert_eq!(CloudQuality::High.target_size(UVec2::ONE), UVec2::ONE);
     }

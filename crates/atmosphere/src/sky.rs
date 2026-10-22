@@ -51,6 +51,10 @@ use bevy::{
     },
 };
 
+/// Bytes of the composite's settings uniform: flags and the cloud images' four shifts
+/// (`CompositeSettings` in sky/composite_common.wesl).
+const COMPOSITE_SETTINGS_SIZE: u64 = 5 * 16;
+
 /// The sky composite's draw in the `Core3d` schedule, for passes that feed it.
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct SkyCompositeDraw;
@@ -316,7 +320,7 @@ fn init(
                     texture_2d(TextureSampleType::Float { filterable: true }),
                     texture_2d(TextureSampleType::Float { filterable: true }),
                     sampler(SamplerBindingType::Filtering),
-                    uniform_buffer_sized(false, std::num::NonZeroU64::new(16)),
+                    uniform_buffer_sized(false, std::num::NonZeroU64::new(COMPOSITE_SETTINGS_SIZE)),
                     // Mist map and the cloud noise that shapes the mist.
                     texture_2d(TextureSampleType::Float { filterable: true }),
                     sampler(SamplerBindingType::Filtering),
@@ -483,31 +487,34 @@ fn draw(
         return;
     };
     let cached = key.clouds == Clouds::Cached;
-    let (newer, older, blend) = match clouds.display() {
-        Some(display) if key.clouds != Clouds::None => display,
-        _ => (&fallback.d2.texture_view, &fallback.d2.texture_view, 0.0),
+    let ((newer, older, blend), shifts) = match clouds.display() {
+        Some(display) if key.clouds != Clouds::None => (display, clouds.shifts()),
+        _ => (
+            (&fallback.d2.texture_view, &fallback.d2.texture_view, 0.0),
+            [Vec4::ZERO; 4],
+        ),
     };
 
-    // x: cloud cross-fade; y: light shafts drawn; z: main-pass pixels per shaft texel; w: sun
-    // rays drawn.
-    // One small buffer per view, kept across frames.
+    // One small buffer per view, kept across frames: `CompositeSettings` in
+    // sky/composite_common.wesl.
     let settings = settings_buffers.entry(entity).or_insert_with(|| {
         device.create_buffer(&BufferDescriptor {
             label: Some("sky composite settings"),
-            size: 16,
+            size: COMPOSITE_SETTINGS_SIZE,
             usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         })
     });
+    let flags = Vec4::new(
+        blend,
+        if shafts.is_some() { 1.0 } else { 0.0 },
+        crate::light_shafts::SCALE as f32,
+        if rays.is_some() { 1.0 } else { 0.0 },
+    );
     queue.write_buffer(
         settings,
         0,
-        bytemuck::bytes_of(&[
-            blend,
-            if shafts.is_some() { 1.0 } else { 0.0 },
-            crate::light_shafts::SCALE as f32,
-            if rays.is_some() { 1.0 } else { 0.0 },
-        ]),
+        bytemuck::cast_slice(&[flags, shifts[0], shifts[1], shifts[2], shifts[3]]),
     );
     let (shaft_light, shaft_distance) = shafts.map_or(
         (&fallback.d2.texture_view, &fallback.d2.texture_view),

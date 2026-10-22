@@ -3,16 +3,19 @@ use bevy::prelude::*;
 use std::time::Duration;
 
 /// Azimuth × elevation panorama. Its rows follow the horizon, so thin distant clouds run along
-/// texels instead of crossing a square grid, which filtering drew as staircases. About 5.7 texels
-/// per degree of azimuth, and 4 to 5 per degree of elevation where the eye looks up at the
-/// clouds' billows, which half as many rows blur into smooth blobs.
-pub(crate) const WIDTH: u32 = 2048;
+/// texels instead of crossing a square grid, which filtering drew as staircases. About 8.5
+/// texels per degree of azimuth and 7 per degree of elevation where the eye looks up at the
+/// clouds' billows, about three main-pass pixels each: a third as many rows blurred the billows
+/// into smooth blobs.
+pub(crate) const WIDTH: u32 = 3072;
 
-pub(crate) const HEIGHT: u32 = 512;
+pub(crate) const HEIGHT: u32 = 768;
 
 /// Complete atlas refreshes per second, spread evenly over frames. The per-frame share
-/// varies with frame rate; total work per second does not.
-const REFRESH_HZ: f64 = 2.0;
+/// varies with frame rate; total work per second does not. The composite carries each image's
+/// clouds along with the wind between refreshes (`CloudTarget::shifts`), so a refresh only has
+/// to catch up with light and weather.
+const REFRESH_HZ: f64 = 1.0;
 
 /// After a hitch, refresh at most this many rows instead of catching up.
 const MAX_ROWS: u32 = HEIGHT / 8;
@@ -35,6 +38,19 @@ impl Region {
             .into_iter()
             .filter(|(_, rows)| *rows > 0)
     }
+}
+
+/// `now - then` across the cloud field's wrapping `period` on X and Z: a floating-origin rebase or
+/// crossing the seam moves nothing.
+pub(crate) fn field_delta(now: Vec3, then: Vec3, period: f32) -> Vec3 {
+    let mut delta = now - then;
+
+    if period > 0. {
+        delta.x = (delta.x + period * 0.5).rem_euclid(period) - period * 0.5;
+        delta.z = (delta.z + period * 0.5).rem_euclid(period) - period * 0.5;
+    }
+
+    delta
 }
 
 #[derive(Default)]

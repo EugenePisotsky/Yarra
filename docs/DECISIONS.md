@@ -339,11 +339,19 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
   night.
 - **Haze 30 km thinning every 250 m, 60 km visibility, valley mist, no sea mist.** *Kept.* Thicker
   haze greyed the sea, 20 km left sunsets grey, and sea mist drew bright bands along shores.
-- **Clouds from a 2048×256 horizon panorama.** *Kept.* A 512² stereographic cache made a diagonal
-  sawtooth; refreshes cross-fade, shapes change by region, High quality stops at 80 steps.
-- **Cloud shape and light.** *Kept.* Half-rate vertical noise (no lenses), two-stream diffusion
-  (grey, not black, bases). Cloud-passed light is diffuse and shadowless; the beam fades with
-  (1 − overcast)².
+- **Clouds from a 3072×768 horizon panorama, refreshed once a second.** *Kept.* A 512²
+  stereographic cache made a diagonal sawtooth, and 256 rows blurred billows into blobs.
+  Refreshes cross-fade, and the composite carries each image with the wind by the clouds' stored
+  distance, so a slow refresh still moves smoothly; shapes change by region; High quality stops
+  at 80 steps.
+- **Cloud shape and light, after Nubis.** *Kept* (`b1bc9cf`). GPU noise volumes cut by a
+  cumulus or deck height profile, the detail eroding only the outline (billows above, wisps
+  below). Multiple scattering carries most of the light (white sides, grey bases). Texels keep
+  light per unit of sun and moon, which the composite colours, so dusk tints clouds as fast as
+  the sky. Cloud-passed light is diffuse and shadowless; the beam fades with (1 − overcast)².
+  *Rejected:* skyboxes and cards (no moon, lightning, regional weather or matching shadows); the
+  slab clouds (flat grey, hard-halved at sunset); distance LODs of light steps and detail (rings
+  in the overcast deck, no measurable saving).
 - **Shafts from air under crowns; screen-space sun rays.** *Kept.* Haze alone was too faint; rays
   add ≤0.3 ms.
 - **Ambient particles keep to shade.** *Kept.* Real-size motes were invisible; in open sky they read

@@ -1,8 +1,9 @@
 // The cloud layer traced along view rays (crates/atmosphere/src/clouds): into the cached sky's
 // panorama (CACHED_SKY) or into a screen image. A texel keeps the light its clouds scatter towards
-// the eye per unit of sun, moon and sky light (rgb), and the share of the sky behind they let
-// through (a). The sky composite colours them with this frame's lights (sky/cloud_layer.wesl), so
-// dawn and dusk colour the clouds as fast as the sky, not as fast as the cache refreshes.
+// the eye per unit of sun and moon light (rg), their distance along the ray weighted by opacity
+// (b), and the share of the sky behind they let through (a). The sky composite colours them with
+// this frame's lights and adds the sky's by the clouds' height (sky/cloud_layer.wesl), so dawn and
+// dusk colour the clouds as fast as the sky; and it carries them with the wind between refreshes.
 import bevy_render::view::View;
 import bevy_core_pipeline::fullscreen_vertex_shader::FullscreenVertexOutput;
 import package::shaders::environment::params::EnvironmentParams;
@@ -114,7 +115,6 @@ fn jitter(position: vec2<f32>) -> f32 {
         let density = density_at(p, environment, noise, shape, detail, repeat, true);
         if density > 0.001 {
             let a = 1.0 - exp(-density * environment.shape.y * ds);
-            let h = clamp((p.y - environment.layer.x) / environment.layer.y, 0.0, 1.0);
             var sunlit = 0.0;
             var moonlit = 0.0;
             if sun.w > 0.0 {
@@ -125,8 +125,7 @@ fn jitter(position: vec2<f32>) -> f32 {
                 moonlit = scattered(light_depth(p, moon.xyz, environment, noise, shape, detail,
                     repeat, LIGHT_STEPS), moon_mu);
             }
-            // The sky lights a cloud's top more than its base.
-            light += transmittance * a * vec3(sunlit, moonlit, mix(0.15, 0.6, h));
+            light += transmittance * a * vec3(sunlit, moonlit, t);
             transmittance *= 1.0 - a;
             empty = 0u;
             // Once opaque, discard the tiny residual transmission too. Leaving a

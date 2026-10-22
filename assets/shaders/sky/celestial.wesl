@@ -211,7 +211,7 @@ fn sun_in_view() -> f32 {
 }
 fn sun_glare(ray: vec3<f32>, pixel: vec2<f32>, air: f32) -> vec3<f32> {
     let visible = sun_state.x;
-    let drawn = composite_settings.w > 0.5;
+    let drawn = composite_settings.flags.w > 0.5;
     let rays = select(visible, sun_rays_at(pixel), drawn);
     let glow = select(0.0, AIR_GLOW_SHARE * sun_in_view() * air, drawn);
     if visible <= 0.0 && rays <= 0.0 {
@@ -244,7 +244,7 @@ fn sun_glare(ray: vec3<f32>, pixel: vec2<f32>, air: f32) -> vec3<f32> {
 // Sun rays at a pixel, bilinear between the four nearest texels.
 fn sun_rays_at(position: vec2<f32>) -> f32 {
     let size = vec2<f32>(textureDimensions(sun_rays));
-    let uv = (position - view.main_pass_viewport.xy) / composite_settings.z / size;
+    let uv = (position - view.main_pass_viewport.xy) / composite_settings.flags.z / size;
     return textureSampleLevel(sun_rays, mist_sampler, uv, 0.0).r;
 }
 

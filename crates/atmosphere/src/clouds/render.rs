@@ -380,6 +380,38 @@ mod tests {
     }
 
     #[test]
+    fn traced_clouds_move_with_the_wind_and_the_camera_across_the_field_seam() {
+        let period = 28800.;
+        let at = |camera: Vec3, wind: f32| {
+            field_eye(
+                camera,
+                &EnvironmentParams {
+                    offset: [0., 0., wind, 0.],
+                    ..default()
+                },
+            )
+        };
+        let traced = at(Vec3::new(10., 300., 20.), period - 6.);
+        let mut target = CloudTarget {
+            older: 0,
+            newer: 1,
+            building: 2,
+            eyes: vec![[traced; 2]; 3],
+            eye: at(Vec3::new(10., 300., 23.), 6.),
+            period,
+            ..default()
+        };
+        target.eyes[0] = [at(Vec3::new(10., 300., 20.), 6.); 2];
+
+        // The wind carried the clouds 12 m along X past the seam while the camera stepped 3 m
+        // along Z: relative to the clouds the camera moved 12 m back along X.
+        let shifts = target.shifts();
+        assert!(shifts[0].abs_diff_eq(Vec4::new(-12., 0., 3., 0.), 1e-3));
+        assert_eq!(shifts[0], shifts[1]);
+        assert!(shifts[2].abs_diff_eq(Vec4::new(0., 0., 3., 0.), 1e-3));
+    }
+
+    #[test]
     fn weather_evolution_refreshes_the_sky_progressively_but_field_changes_do_not() {
         let mut p = EnvironmentParams {
             layer: [1200., 650., 7200., 1.],
@@ -433,8 +465,10 @@ mod tests {
 
 /// Balanced keeps three cache images: the previous and newest complete refreshes, which the
 /// sky composite cross-fades by sweep progress, and one being refreshed row by row. Displaying
-/// only complete images turns 4 Hz texel updates into continuous change: no stepping, and no
-/// seam where the refresh cursor passes. High keeps a single per-frame image.
+/// only complete images turns once-a-second texel updates into continuous change: no stepping,
+/// and no seam where the refresh cursor passes. Between refreshes the composite carries each
+/// image's clouds along with the wind and the camera's own moves. High keeps a single per-frame
+/// image.
 #[derive(Resource, Default)]
 pub(crate) struct CloudTarget {
     size: UVec2,
@@ -451,6 +485,11 @@ pub(crate) struct CloudTarget {
     composites: u64,
     /// Cross-fade from the previous to the newest complete image.
     blend: f32,
+    /// Where the camera stood in the drifting cloud field (`field_eye`) as each slot's first and
+    /// last rows were traced, and now; and the field's wrapping period.
+    eyes: Vec<[Vec3; 2]>,
+    eye: Vec3,
+    period: f32,
 }
 
 impl CloudTarget {
@@ -459,6 +498,24 @@ impl CloudTarget {
         let newer = self.slots.get(self.newer)?;
         let older = self.slots.get(self.older)?;
         Some((&newer.1, &older.1, self.blend))
+    }
+
+    /// How far the camera has moved through the drifting field since the newest image traced its
+    /// first and its last row, then the previous image: the composite re-aims its lookups by
+    /// them, so the clouds keep moving between refreshes.
+    pub(crate) fn shifts(&self) -> [Vec4; 4] {
+        let shift = |slot: usize, row: usize| {
+            self.eyes.get(slot).map_or(Vec4::ZERO, |eyes| {
+                sky_cache::field_delta(self.eye, eyes[row], self.period).extend(0.)
+            })
+        };
+
+        [
+            shift(self.newer, 0),
+            shift(self.newer, 1),
+            shift(self.older, 0),
+            shift(self.older, 1),
+        ]
     }
 
     /// A finished sweep becomes the newest image; the oldest slot is refreshed next.
@@ -502,6 +559,12 @@ fn trace(
     pass.set_bind_group(0, group, &[view_offset]);
     pass.set_scissor_rect(0, rows.0, width, rows.1);
     pass.draw(0..3, 0..1);
+}
+
+/// The camera's position in the cloud field, which the wind carries along: a traced cloud stays
+/// where the image saw it relative to this.
+fn field_eye(position: Vec3, params: &EnvironmentParams) -> Vec3 {
+    position - Vec3::new(params.offset[2], 0., params.offset[3])
 }
 
 /// Trace this frame's share of the cloud images. The sky composite displays them.
@@ -578,6 +641,7 @@ pub(crate) fn refresh(
             })
             .collect();
         (target.older, target.newer, target.building) = if cached { (0, 1, 2) } else { (0, 0, 0) };
+        target.eyes = vec![[Vec3::ZERO; 2]; slot_count];
         target.size = size;
     }
 
@@ -592,6 +656,8 @@ pub(crate) fn refresh(
     );
     let position =
         extracted.world_from_view.translation() + Vec3::new(params.offset[0], 0., params.offset[1]);
+    target.eye = field_eye(position, &params);
+    target.period = params.layer[2] * 4.;
 
     // Clouds the weather's fog hides even straight up show nowhere: the sweep keeps its schedule
     // and key without tracing, and resumes long before the fog thins enough to show them. New
@@ -633,7 +699,17 @@ pub(crate) fn refresh(
         let full = region == sky_cache::Region::Full;
 
         for rows in region.ranges(size.y) {
-            let building = target.slots[target.building].1.clone();
+            let slot = target.building;
+
+            if rows.0 == 0 {
+                target.eyes[slot][0] = target.eye;
+            }
+
+            if rows.0 + rows.1 == size.y {
+                target.eyes[slot][1] = target.eye;
+            }
+
+            let building = target.slots[slot].1.clone();
             trace(
                 ctx.command_encoder(),
                 &building,
@@ -654,7 +730,10 @@ pub(crate) fn refresh(
         if cached && full {
             // Restart: both displayed images show the new field until the next sweep.
             let source = target.slots[target.building].0.clone();
+            let eyes = target.eyes[target.building];
+
             for destination in [target.older, target.newer] {
+                target.eyes[destination] = eyes;
                 ctx.command_encoder().copy_texture_to_texture(
                     source.as_image_copy(),
                     target.slots[destination].0.as_image_copy(),
