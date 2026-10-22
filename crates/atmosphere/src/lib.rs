@@ -153,8 +153,8 @@ pub struct AtmosphereState {
     /// 0..1 share of the weather's precipitation falling as snow where the camera is: the game
     /// blends the mountains' weather in where snow lies.
     pub snow: f32,
-    /// 0..1 share of snowy country's bare ground fresh snow covers: it settles while the
-    /// mountains snow and thaws after, wherever the camera is.
+    /// 0..1 how far the mountains' blizzards have frosted snow country's bare ground, wherever
+    /// the camera is: it settles in a blizzard and blows off after.
     pub fresh_snow: f32,
     /// A lightning strike in progress, set by the game's weather.
     pub lightning: Option<lightning::LightningFlash>,

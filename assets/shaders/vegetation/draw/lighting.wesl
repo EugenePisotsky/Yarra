@@ -2,12 +2,12 @@
 // clouds, shadows and the atmosphere, and bounded sky fill. Distant blades take their sheen from
 // their clump's stable normal, so the field glitters as broad sweeps instead of noise.
 @if(ENVIRONMENT_SURFACE)
-import package::shaders::lighting::surface::{cloud_light, surface_wetness};
+import package::shaders::lighting::surface::{cloud_light, surface_origin, surface_wetness};
 @if(ENVIRONMENT_SURFACE)
 import package::shaders::lighting::forest_shadow::{forest_sky_light, forest_sky_visibility};
 @if(ENVIRONMENT_SURFACE)
 import package::shaders::lighting::ground::fresh_snow_at;
-import package::shaders::environment::maps::{FRESH_SNOW, fresh_snow_cover};
+import package::shaders::environment::maps::{FRESH_SNOW, fresh_snow_frost};
 @if(ATMOSPHERE)
 import bevy_pbr::atmosphere::functions::{clamp_to_surface, calculate_visible_sun_ratio};
 
@@ -173,11 +173,12 @@ fn shade(input: VertexOutput) -> vec4<f32> {
     var albedo = input.color;
     @if(ENVIRONMENT_SURFACE)
     albedo *= mix(1.0, 0.7, surface_wetness(input.world_position, vec3<f32>(0.0, 1.0, 0.0)));
-    // Fresh snow settles on the blades' upper halves, most at their tips, in patches.
+    // Fresh snow frosts the blades' upper halves, most at their tips.
     @if(ENVIRONMENT_SURFACE) {
-        let patches = value_noise(input.world_position.xz * 0.8);
-        let settled = fresh_snow_cover(fresh_snow_at(input.world_position.xz), patches, 1.0);
-        albedo = mix(albedo, FRESH_SNOW, 0.85 * settled * smoothstep(0.35, 1.0, t));
+        let breakup = value_noise((input.world_position.xz + surface_origin()) / 3.0);
+        let frost = fresh_snow_frost(fresh_snow_at(input.world_position.xz), breakup, 1.0,
+            camera_distance);
+        albedo = mix(albedo, FRESH_SNOW, frost * smoothstep(0.35, 1.0, t));
     }
 
     // Diffuse: a thin sheet, its normal halfway to the clump's ground so a field lit from above

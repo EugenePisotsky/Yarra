@@ -1,9 +1,9 @@
 //! Game weather: advances the shared sequence and overlays it on the authored atmosphere and
 //! vegetation wind. The mountains have a sequence of their own (`WeatherSettings::mountains`),
 //! blended in by the share of snow ground around the camera, where their precipitation falls as
-//! snow: a sunny valley can lie under a snowing mountain. Fresh snow from them settles over snowy
-//! country's bare ground wherever the camera is, and thaws after. Editor workspaces own the
-//! authored profile and never see it.
+//! snow: a sunny valley can lie under a snowing mountain. In their blizzards fresh snow frosts
+//! snow country's bare ground wherever the camera is, and blows off after. Editor workspaces own
+//! the authored profile and never see it.
 mod rain;
 
 use crate::{
@@ -28,11 +28,14 @@ const SNOW_GROUND_SECONDS: f32 = 8.0;
 /// The mountains' sequence runs from its own seed.
 const MOUNTAIN_SEED: u64 = 0x6d6f_756e_7461_696e;
 
-/// Fresh snow settles over bare ground with this time constant in heavy snow, slower in lighter,
-/// and thaws with this one once it stops.
-const SNOW_SETTLING_SECONDS: f32 = 120.0;
+/// Fresh snow frosts bare ground only in snowfall this heavy (from a share of a blizzard's to all
+/// of it), with this time constant, and blows off with this one once the blizzard eases: steadier
+/// snow leaves the authored ground as it is.
+const BLIZZARD_SNOWFALL: [f32; 2] = [0.85, 1.0];
 
-const SNOW_THAW_SECONDS: f32 = 600.0;
+const FROST_SETTLING_SECONDS: f32 = 90.0;
+
+const FROST_CLEARING_SECONDS: f32 = 240.0;
 
 /// How weather starts once the first world space is active.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -53,7 +56,7 @@ pub struct GameWeather {
     runtime: Option<WeatherRuntime>,
     /// The mountains' sequence, beside the island's.
     mountains: Option<WeatherRuntime>,
-    /// Share of snowy country's bare ground the mountains' snowfall has covered, 0..1.
+    /// How far the mountains' blizzards have frosted snow country's bare ground, 0..1.
     fresh_snow: f32,
     /// Freeze the weather clock, e.g. during an A/B capture.
     pub paused: bool,
@@ -172,8 +175,8 @@ impl GameWeather {
             };
             let mountains = mountains(self.seed, initial, runtime.automatic);
 
-            // Weather that starts in snow finds it lying.
-            self.fresh_snow = if mountains.current().precipitation > 0.01 {
+            // Weather that starts in a blizzard finds its frost lying.
+            self.fresh_snow = if blizzard_snowfall(&mountains) > 0.01 {
                 1.0
             } else {
                 0.0
@@ -298,6 +301,13 @@ fn sense_snow_ground(
     }
 }
 
+/// How hard the mountains' snowfall comes as a blizzard's, 0..1: what frosts bare ground.
+fn blizzard_snowfall(mountains: &WeatherRuntime) -> f32 {
+    let [low, high] = BLIZZARD_SNOWFALL;
+    let t = ((mountains.current().precipitation - low) / (high - low)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
 pub(crate) fn advance_weather(
     time: Res<Time>,
     active: Option<Res<ActiveWorldSpace>>,
@@ -353,10 +363,10 @@ pub(crate) fn advance_weather(
         if let Some(mountains) = mountains {
             *fresh_snow = world::weather::lying(
                 *fresh_snow,
-                mountains.current().precipitation,
+                blizzard_snowfall(mountains),
                 seconds,
-                SNOW_SETTLING_SECONDS,
-                SNOW_THAW_SECONDS,
+                FROST_SETTLING_SECONDS,
+                FROST_CLEARING_SECONDS,
             );
         }
     }
@@ -541,7 +551,7 @@ mod tests {
     }
 
     #[test]
-    fn fresh_snow_settles_while_the_mountains_snow_wherever_the_camera_is_and_thaws_after() {
+    fn blizzards_frost_bare_ground_wherever_the_camera_is_and_steady_snow_clears_it() {
         let mut app = test_app(WeatherStart::Authored);
         let profile = app.world().resource::<AtmosphereState>().profile.clone();
         app.world_mut()
@@ -549,28 +559,29 @@ mod tests {
             .request(&profile, WeatherKind::Storm, 0.);
 
         // The test clock steps a second an update; the camera stays off the snow.
-        for _ in 0..300 {
+        for _ in 0..180 {
             app.update();
         }
 
         let settled = app.world().resource::<AtmosphereState>().fresh_snow;
         assert!(
-            (settled - (1.0 - (-300.0_f32 / 120.0).exp())).abs() < 0.01,
+            (settled - (1.0 - (-2.0_f32).exp())).abs() < 0.01,
             "{settled}"
         );
 
+        // In the mountains rain is steady snow: it lets the frost blow off.
         app.world_mut()
             .resource_mut::<GameWeather>()
-            .request(&profile, WeatherKind::Clear, 0.);
+            .request(&profile, WeatherKind::Rain, 0.);
 
-        for _ in 0..600 {
+        for _ in 0..240 {
             app.update();
         }
 
-        let thawed = app.world().resource::<AtmosphereState>().fresh_snow;
+        let cleared = app.world().resource::<AtmosphereState>().fresh_snow;
         assert!(
-            (thawed - settled * (-1.0_f32).exp()).abs() < 0.01,
-            "{thawed}"
+            (cleared - settled * (-1.0_f32).exp()).abs() < 0.01,
+            "{cleared}"
         );
     }
 

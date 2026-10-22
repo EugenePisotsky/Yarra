@@ -307,13 +307,16 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
   pattern evaluated alike on the CPU and GPU, so a sheet that passes the camera also hurries its
   snowflakes.
 
-- **Fresh snow dusts snow country's bare ground.** *Kept* (October 22, user: bare patches
-  "during the strong storm" looked unrealistic). The mountains' snowfall lays fresh snow wherever
-  the camera is (settling over about two minutes of heavy snow, thawing over ten), one weather
-  value the shaders read. It covers the bare ground of snow country, where the ground map's 32 m
-  layer is mostly snow, so patches within snowfields whiten and broad meadows do not: terrain in
-  its surfaces' hollows first with the highest stones bare, grass at its tips, and the ground's
-  light from below. The drift blows over those patches too. Authored surfaces stay as they are.
+- **Blizzards frost snow country's bare ground, near the camera only.** *Kept* (October 22,
+  user: bare patches "during the strong storm" looked unrealistic). In the mountains' blizzards
+  (snowfall past 0.85 of theirs) fresh snow settles over about 90 s wherever the camera is and
+  blows off over about 4 minutes after, one weather value the shaders read. It frosts the bare
+  ground of snow country, where the ground map's 32 m layer is mostly snow: a whitening of 45 to
+  85% over metres that the ground's texture shows through, grass at its tips, fading out from 60
+  to 140 m so the land seen from afar keeps its look. The drift blows over those patches too.
+  *Rejected* (`c9c1a61`): fresh snow in any snowfall, thawing over ten minutes, covering the
+  ground from its hollows up with the highest stones bare: the mountains, snowing most of the
+  time, lost their texture from afar, and the stones at patch edges drew dark outlines.
 
 - **A moving moon, not a fixed giant planet.** *Planet rejected* (October 11, `feat/planet`,
   `5a35e8f`): "a moving moon is better". Fix flat dusks inside the moon model; measure key/fill

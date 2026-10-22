@@ -4,7 +4,9 @@
 // pass, and flows in broad sheets carried with the wind, over the bare patches of snow country
 // as well. It is the ground's snow lifted, lit by
 // the sky above and by that snow below, and by the sun.
-import package::shaders::environment::maps::{FRESH_SNOW, ground_relief, ground_texel, snow_country};
+import package::shaders::environment::maps::{
+    FRESH_SNOW, FROST_MEAN, ground_relief, ground_texel, snow_country,
+};
 import package::shaders::sky::air::scattering;
 import package::shaders::sky::composite_common::{
     environment, ground_map, mist_sampler, noise, noise_sampler,
@@ -117,7 +119,7 @@ fn drift_along(ray: vec3<f32>, distance: f32) -> Drift {
         let depth = DRIFT_EXTINCTION * blowing * cover * sheets(frame, turn) * profile * stretch;
         let lights = SnowLights(environment.drift.rgb * AMBIENT_DIFFUSE * relief.y, sun * below.a,
             towards_eye);
-        let albedo = mix(below.rgb, FRESH_SNOW, environment.weather.w * country);
+        let albedo = mix(below.rgb, FRESH_SNOW, FROST_MEAN * environment.weather.w * country);
         drift.light += snow_light(lights, albedo) * depth;
         drift.depth += depth;
     }

@@ -79,8 +79,8 @@ pub(crate) struct EnvironmentParams {
     /// the field blends from these to `shape` at its own time within the change.
     pub transition: [f32; 4],
     /// Game weather for surfaces and precipitation: wetness, precipitation intensity; how
-    /// closed the cloud deck is (0 open, 1 overcast); and the share of snowy country's bare ground
-    /// fresh snow covers.
+    /// closed the cloud deck is (0 open, 1 overcast); and how far blizzards have frosted snow
+    /// country's bare ground.
     pub weather: [f32; 4],
     /// Rain shelter map: origin XZ, metres per texel, enabled.
     pub shelter: [f32; 4],

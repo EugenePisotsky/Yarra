@@ -114,8 +114,7 @@ const SNOW_COUNTRY: vec2<f32> = vec2(0.3, 0.55);
 // Fresh snow's albedo.
 const FRESH_SNOW: vec3<f32> = vec3(0.8, 0.82, 0.86);
 
-// Share of the ground at render XZ `p` fresh snow covers on average: `fresh` (the environment's
-// weather.w) in snow country.
+// Fresh snow at render XZ `p`: `fresh` (the environment's weather.w) in snow country.
 fn fresh_snow_share(map: texture_2d_array<f32>, map_sampler: sampler, near: vec4<f32>,
     far: vec4<f32>, p: vec2<f32>, fresh: f32) -> f32 {
     if fresh <= 0.0 {
@@ -124,14 +123,20 @@ fn fresh_snow_share(map: texture_2d_array<f32>, map_sampler: sampler, near: vec4
     return fresh * snow_country(map, map_sampler, near, far, p);
 }
 
-// Where fresh snow covering `share` of the ground lies on a surface: first in its hollows, where
-// its `rise` (0 lowest, 1 highest) is low, and less on slopes (`up`, its normal's height); the
-// highest tufts and stones stay bare. 0 bare, 1 white.
-fn fresh_snow_cover(share: f32, rise: f32, up: f32) -> f32 {
-    let level = 1.05 * share;
-    return (1.0 - smoothstep(level - 0.1, level + 0.1, rise)) * smoothstep(0.3, 0.8, up)
-        * min(4.0 * share, 1.0);
+// How far fresh snow at `share` whitens a surface: a frosting its texture shows through, heavier
+// or lighter over metres by `breakup` (a smooth 0..1 noise), thinner on slopes (`up`, its normal's
+// height), and only near the camera (`distance`), so the land seen from afar keeps its look.
+fn fresh_snow_frost(share: f32, breakup: f32, up: f32, distance: f32) -> f32 {
+    return share * mix(0.45, 0.85, breakup) * smoothstep(0.3, 0.8, up)
+        * (1.0 - smoothstep(FROST_RANGE.x, FROST_RANGE.y, distance));
 }
+
+// Frost fades out over these distances from the camera, metres: within a blizzard's visibility.
+const FROST_RANGE: vec2<f32> = vec2(60.0, 140.0);
+
+// The mean whitening of fresh_snow_frost over its breakup on open level ground, for light the
+// frosted ground reflects.
+const FROST_MEAN: f32 = 0.65;
 
 // The map's near and far texels at `p` from the layer pair starting at `first`.
 fn ground_layers(map: texture_2d_array<f32>, map_sampler: sampler, near: vec4<f32>,
