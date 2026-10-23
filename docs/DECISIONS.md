@@ -37,9 +37,16 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
   it follows half a metered change within +1.5/−1 stop, and `NIGHT_BRIGHTEN` eases off at night.
 - **One sky composite instead of Bevy's sky pass.** *Kept.* Sky, air, clouds, weather fog, sea and
   glare in one pass that integrates extinction itself: Bevy's half-float LUT and aerosol medium gave
-  NaN streaks. Splitting it into smaller passes is open.
+  NaN streaks.
+- **The composite draws the sea, the air, then the fog.** *Kept* (October 23). As one shader it held
+  the GPU's most registers (12.9% occupancy) and spilled 400 B a pixel, the water and blowing snow
+  taxing pixels that showed neither. Three draws in the same pass, each in front of the last,
+  need only their own: 1.91 to 0.99 ms at the meadow, 2.15 to 1.29 ms at brook-mouth, the images
+  within noise. At silhouettes each draw multiplies the mean transmittance, as the composite always
+  did for the scene behind it.
 - **Composite shortcuts.** *Kept* (`f83773f`, `189488a`). Air at a silhouette pixel's nearest and
-  farthest samples, interpolated; fog light once per pixel; dark lights skipped (~1 ms). A froxel
+  farthest samples, interpolated, or by side where the sea's surface or the cloud base lies
+  between; fog light once per pixel; dark lights skipped (~1 ms). A froxel
   mist grid was reverted (mist 0.4 ms, the pass up to 0.45 ms).
 - **Light from below takes the ground's colour.** *Kept* (October 21). Every lit material's lower
   half took light reflected by grass (albedo 0.09, 0.12, 0.05), so a figure on a snowfield stayed
@@ -444,6 +451,10 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
   binary needs its own assets root and database; no traces while Houdini runs.
 - **Measure the play setup.** *Kept.* Day clock and weather on, fullscreen 50% + Temporal
   (1728×1084): frozen-clock routes missed the terrain-shadow drops.
+- **A big shader's registers decide its speed.** *Kept* (October 23). Each call site of a function
+  is inlined, so a heavy one called from five places costs five copies' registers. Look for spills
+  first (`--spills` in `tools/summarize_gpu_intervals.py`), then give heavy work one call site in a
+  loop, or a draw or pass of its own.
 - **Markers and stubs mislead.** *Caveat.* GPU markers undercount Temporal; stubbing part of a big
   shader shrinks it, so stubs overstate (the shaft readback rewrite won 3.5%).
 - **Name slow frames first.** *Kept.* `YARRA_SPIKE_LOG` names systems and pipelines; never run

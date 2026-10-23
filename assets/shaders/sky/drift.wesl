@@ -35,6 +35,7 @@ const DRIFT_VEIL: vec2<f32> = vec2(0.03, 2.0);
 // that blows snow hides the land anyway.
 const DRIFT_TOP: f32 = 10.0;
 const DRIFT_CUTS: u32 = 8u;
+const DRIFT_CUT: array<f32, DRIFT_CUTS> = array(0.0, 3.0, 8.0, 20.0, 50.0, 120.0, 250.0, 500.0);
 
 // The sheets: the noise volume's tile spans these metres along the wind and across it (whole
 // tiles in the gusts' period) and turns over this many times while the air travels one period,
@@ -68,9 +69,8 @@ fn drift_along(ray: vec3<f32>, distance: f32) -> Drift {
         || speed * (1.0 + swell) <= DRIFT_ONSET {
         return Drift(vec3(0.0), 0.0);
     }
-    var cuts = array<f32, DRIFT_CUTS>(0.0, 3.0, 8.0, 20.0, 50.0, 120.0, 250.0, 500.0);
     let origin = view.world_position;
-    let length = min(distance, cuts[DRIFT_CUTS - 1u]);
+    let length = min(distance, DRIFT_CUT[DRIFT_CUTS - 1u]);
     let ceiling = max(ground_at(origin.xz).x, ground_at(origin.xz + ray.xz * length).x) + DRIFT_TOP;
     var t0 = 0.0;
     var t1 = length;
@@ -90,8 +90,8 @@ fn drift_along(ray: vec3<f32>, distance: f32) -> Drift {
     var start_ground = ground_at(origin.xz + ray.xz * t0).x;
     var drift = Drift(vec3(0.0), 0.0);
     for (var i = 0u; i + 1u < DRIFT_CUTS; i += 1u) {
-        let start = max(cuts[i], t0);
-        let end = min(cuts[i + 1u], t1);
+        let start = max(DRIFT_CUT[i], t0);
+        let end = min(DRIFT_CUT[i + 1u], t1);
         if start >= t1 {
             break;
         }

@@ -178,6 +178,26 @@ struct SkyKey {
     multisampled: bool,
     atmosphere: bool,
     clouds: Clouds,
+    draw: SkyDraw,
+}
+
+/// The composite's draws, in their order (sky/composite.wesl): each lies in front of the last.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum SkyDraw {
+    /// The sea, with the atmosphere only.
+    Sea,
+    Air,
+    Fog,
+}
+
+impl SkyDraw {
+    fn entry_point(self) -> &'static str {
+        match self {
+            Self::Sea => "sea",
+            Self::Air => "air",
+            Self::Fog => "fog",
+        }
+    }
 }
 
 #[derive(Resource)]
@@ -221,7 +241,7 @@ impl SpecializedRenderPipeline for SkyPipelines {
         }
 
         RenderPipelineDescriptor {
-            label: Some("sky composite".into()),
+            label: Some(format!("sky composite {}", key.draw.entry_point()).into()),
             layout: vec![
                 if key.atmosphere {
                     self.atmosphere_layout.clone()
@@ -234,6 +254,7 @@ impl SpecializedRenderPipeline for SkyPipelines {
             fragment: Some(FragmentState {
                 shader: self.shader.clone(),
                 shader_defs,
+                entry_point: Some(key.draw.entry_point().into()),
                 targets: vec![Some(ColorTargetState {
                     format: TextureFormat::Rgba16Float,
                     // Added light plus the scene times transmittance, per channel when the GPU
@@ -363,7 +384,8 @@ fn init(
 
 #[derive(Component)]
 struct SkyPipeline {
-    id: CachedRenderPipelineId,
+    /// The draws in order.
+    draws: Vec<CachedRenderPipelineId>,
     key: SkyKey,
 }
 
@@ -398,9 +420,14 @@ fn queue(
                 (true, CloudQuality::Balanced) => Clouds::Cached,
                 (true, CloudQuality::High) => Clouds::PerFrame,
             },
+            draw: SkyDraw::Air,
         };
-        let id = specialized.specialize(&cache, &pipelines, key);
-        commands.entity(entity).insert(SkyPipeline { id, key });
+        let draws = [SkyDraw::Sea, SkyDraw::Air, SkyDraw::Fog]
+            .into_iter()
+            .filter(|&draw| draw != SkyDraw::Sea || key.atmosphere)
+            .map(|draw| specialized.specialize(&cache, &pipelines, SkyKey { draw, ..key }))
+            .collect();
+        commands.entity(entity).insert(SkyPipeline { draws, key });
     }
 }
 
@@ -462,11 +489,15 @@ fn draw(
         return;
     }
 
-    let (Some(render), Some(view_binding), Some(assets)) = (
-        cache.get_render_pipeline(pipeline.id),
-        uniforms.uniforms.binding(),
-        assets,
-    ) else {
+    // Each draw lies in front of the last: all of them or none.
+    let renders: Option<Vec<_>> = pipeline
+        .draws
+        .iter()
+        .map(|&id| cache.get_render_pipeline(id))
+        .collect();
+    let (Some(renders), Some(view_binding), Some(assets)) =
+        (renders, uniforms.uniforms.binding(), assets)
+    else {
         return;
     };
     let Some(parameters) = buffers.get(&assets.parameters) else {
@@ -578,10 +609,13 @@ fn draw(
             multiview_mask: None,
         });
     pass.set_viewport(0., 0., size.x as f32, size.y as f32, 0., 1.);
-    pass.set_pipeline(render);
     pass.set_bind_group(0, &view_group, &offsets);
     pass.set_bind_group(1, &composite_group, &[]);
-    pass.draw(0..3, 0..1);
+
+    for render in renders {
+        pass.set_pipeline(render);
+        pass.draw(0..3, 0..1);
+    }
 }
 
 /// Group 0: Bevy's atmosphere bindings with the view, or the view alone; None until Bevy has

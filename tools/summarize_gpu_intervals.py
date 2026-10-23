@@ -15,6 +15,11 @@ traces by busy time and each pass's share of a reference pass in the same trace 
 macOS lowers the GPU's performance state under sustained load, which slows every pass alike:
 `--states` takes each trace's exported gpu-performance-state-intervals table and prints the share
 of its time in each state.
+
+A shader that needs more registers than the GPU has spills them to memory, and its pass runs few
+threads at once: `--spills EVENTS ENCODERS` takes a recording's graphics-compiler-spill-events and
+metal-application-encoders-list tables (recorded with `--instrument 'Metal GPU Counters'`) and
+prints the bytes each pass spills.
 """
 
 import argparse
@@ -53,7 +58,12 @@ def intervals(path):
     for row in rows(path):
         if PROCESS not in row.get("process", ("", ""))[0]:
             continue
-        label = row.get("event-label", ("", ""))[0].split(":")[0].strip()
+        # "encoder:command buffer ( process )"; work without an encoder label (MetalFX's) shows
+        # its command buffer's name first and its own label second.
+        parts = row.get("event-label", ("", ""))[0].split("(")[0].split(":")
+        label = parts[0].strip()
+        if re.fullmatch(r"Command Buffer \d+", label) and len(parts) > 1 and parts[1].strip():
+            label = parts[1].strip()
         label = re.sub(r"Command Buffer \d+", "Command Buffer", label)
         start = int(row["start"][1])
         end = start + int(row["duration"][1] or 0)
@@ -67,6 +77,15 @@ def performance_states(path):
         time[row.get("gpu-performance-state", ("?", ""))[0]] += int(row["duration"][1] or 0)
     total = max(sum(time.values()), 1)
     return [(state, ns / total) for state, ns in time.most_common()]
+
+
+def spills(events, encoders):
+    """(pass label, spilled bytes as formatted, recordings) of each pass that spills."""
+    label = {row["encoder-id"][1]: row["encoder-label"][0] for row in rows(encoders)}
+    count = collections.Counter()
+    for row in rows(events):
+        count[(label.get(row["encoder-id"][1], "?"), row["spilled-bytes"][0])] += 1
+    return [(name, size, n) for (name, size), n in sorted(count.items())]
 
 
 def summarize(path, frames_by):
@@ -104,7 +123,12 @@ def main():
     parser.add_argument("--reference", default="main_opaque_pass_3d")
     parser.add_argument("--top", type=int, default=30)
     parser.add_argument("--states", nargs="*", default=[])
+    parser.add_argument("--spills", nargs=2, metavar=("EVENTS", "ENCODERS"))
     args = parser.parse_args()
+
+    if args.spills:
+        for name, size, n in spills(*args.spills):
+            print(f"{name[:48]:48} spills {size} ({n} recorded)")
 
     tables = [summarize(path, args.frames_by) for path in args.traces]
 

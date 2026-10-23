@@ -374,9 +374,10 @@ MetalFX Temporal, MSAA is off and the backend reconstructs at output size. In or
 2. Main passes: terrain v2 patches (one shared grid mesh and `ClipmapTerrainMaterial`; heights
    come from the clipmap), grass as indirect opaque draws (no shadows), trees and impostors as
    indirect draws per form and representation in the main, prepass and shadow phases, meshes.
-3. After the main pass: the sky composite, one full-screen pass over the resolved image (sky, sun
-   and moon, aerial perspective, clouds, haze, mist, fog, the sea), fed by quarter-resolution
-   light shafts, sun occlusion and sun rays.
+3. After the main pass: the sky composite, one pass over the resolved image with three full-screen
+   draws, each in front of the last: the sea; the sky, sun and moon, aerial perspective and clouds;
+   haze, mist, fog, blowing snow, light shafts and the sun's glare. Quarter-resolution light shafts,
+   sun occlusion and sun rays feed it.
 4. Temporal resolve (MetalFX Temporal only); rain and ambient particles between
    `EarlyPostProcess` and `PostProcess`; bloom, eye adaptation and tone mapping.
 5. Upscaling to the window (MetalFX Spatial, or Linear during UI composition) under a UI camera

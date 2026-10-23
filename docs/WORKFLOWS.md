@@ -545,7 +545,9 @@ at the same state. The GPU runs passes side by side, so a
 pass's own interval is not its cost: a few rows of clouds traced beside the opaque pass last as
 long as the opaque pass. The tool splits each moment among the passes running then; a pass's
 true cost is clearest as the busy time it adds, between builds with and without it. Keep recordings to 3–11 s; `export --toc` lists tables,
-`--instrument 'Metal GPU Counters'` adds limiters. Each recording leaves about 1 GB of `instruments*.ktrace` in `$TMPDIR`: delete them.
+`--instrument 'Metal GPU Counters'` adds limiters, occupancy and the shader compiler's spills: export
+the `graphics-compiler-spill-events` and `metal-application-encoders-list` tables and pass them to
+`--spills`. A pass that spills, or sits near 13% fragment occupancy, is short of registers. Each recording leaves about 1 GB of `instruments*.ktrace` in `$TMPDIR`: delete them.
 `tools/summarize_gpu_counters.py reference.csv candidate.csv --output result.json` compares
 Xcode's exported encoder counters (replay work, not live time).
 
