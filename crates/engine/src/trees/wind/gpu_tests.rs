@@ -228,7 +228,7 @@ fn structural_cards_follow_wood_and_keep_roots_and_history() {
     // The production card path, with a fixed profile and viewer in place of their bindings.
     let shader = harness(
         r#"
-import package::shaders::tree::wind::{TreeVertex, WindFrames, animated_position, structural_frame, sway_point};
+import package::shaders::tree::wind::{TreeVertex, WindFrames, animated_position, strength_at, structural_frame, sway_point};
 const PROFILE = vec4(1., 3., 1., 1.);
 const VIEWER = vec3(0., 4., 20.);
 struct Case { frames: WindFrames, model: mat4x4<f32>, previous_model: mat4x4<f32>, weights: vec4<f32> }
@@ -247,11 +247,13 @@ fn evaluate(@builtin(global_invocation_id) id: vec3<u32>) {
     card.card_normal = vec3(0., 0., 1.);
     card.card_facing = vec2(1., 1.);
     card.uv_b = vec2(1.);
-    results[id.x].card = animated_position(card, c.model, c.frames.current, PROFILE, VIEWER, vec3(0.));
-    results[id.x].previous = animated_position(card, c.previous_model, c.frames.previous, PROFILE, VIEWER, vec3(0.));
-    let limb = structural_frame(card.wind_pivot.xyz, card.wind_axis, 14., c.model, c.frames.current, PROFILE);
+    let strength = strength_at(c.model[3].xz, c.frames.current);
+    let previous = strength_at(c.previous_model[3].xz, c.frames.previous);
+    results[id.x].card = animated_position(card, c.model, c.frames.current, strength, PROFILE, VIEWER, vec3(0.));
+    results[id.x].previous = animated_position(card, c.previous_model, c.frames.previous, previous, PROFILE, VIEWER, vec3(0.));
+    let limb = structural_frame(card.wind_pivot.xyz, card.wind_axis, 14., c.model, c.frames.current, strength, PROFILE);
     results[id.x].wood = vec4(sway_point((c.model * vec4(card.position, 1.)).xyz, limb), 1.);
-    let root = structural_frame(vec3(0.), vec4(0.), 14., c.model, c.frames.current, PROFILE);
+    let root = structural_frame(vec3(0.), vec4(0.), 14., c.model, c.frames.current, strength, PROFILE);
     results[id.x].root = vec4(sway_point(c.model[3].xyz, root), 1.);
 }
 "#,
@@ -350,7 +352,7 @@ fn evaluate(@builtin(global_invocation_id) id: vec3<u32>) {
 fn impostors_lean_as_the_mesh_trunk_does() {
     let shader = harness(
         r#"
-import package::shaders::tree::wind::{WindFrames, structural_frame, sway_point, sway_point_of_trunk};
+import package::shaders::tree::wind::{WindFrames, strength_at, structural_frame, sway_point, sway_point_of_trunk};
 struct Case { frames: WindFrames, model: mat4x4<f32>, previous_model: mat4x4<f32>, weights: vec4<f32> }
 @group(0) @binding(0) var<storage, read> inputs: array<Case>;
 @group(0) @binding(1) var<storage, read_write> results: array<array<vec4<f32>, 4>>;
@@ -361,9 +363,10 @@ fn evaluate(@builtin(global_invocation_id) id: vec3<u32>) {
     let scale = length(c.model[1].xyz);
     // Along the stem, beside it in the crown, above its top and below the root.
     let points = array<vec3<f32>, 4>(vec3(0., 7., 0.), vec3(1.5, 10., -.8), vec3(.3, 16., .2), vec3(.5, -.5, .2));
+    let strength = strength_at(c.model[3].xz, c.frames.current);
     for (var i = 0; i < 4; i += 1) {
         let rest = (c.model * vec4(points[i], 1.)).xyz;
-        let mesh = sway_point(rest, structural_frame(points[i], vec4(0.), 14., c.model, c.frames.current, profile));
+        let mesh = sway_point(rest, structural_frame(points[i], vec4(0.), 14., c.model, c.frames.current, strength, profile));
         let quad = sway_point_of_trunk(rest, c.model[3].xyz, 14. * scale, profile, c.frames.current, 1.);
         results[id.x][i] = vec4(mesh - quad, length(mesh - rest));
     }

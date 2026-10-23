@@ -623,7 +623,7 @@ pub(super) fn shake(
         return;
     }
 
-    let (Some(pipeline), Some((instances, transforms)), Some(field), Some(window), Some(falls)) = (
+    let (Some(pipeline), Some((instances, frames)), Some(field), Some(window), Some(falls)) = (
         cache.get_compute_pipeline(shed.pipeline),
         trees.pool_buffers(),
         images.get(&touch::field_handle()),
@@ -639,7 +639,7 @@ pub(super) fn shake(
             shed.uniform.as_entire_binding(),
             shed.listed.get().as_entire_binding(),
             instances.as_entire_binding(),
-            transforms.as_entire_binding(),
+            frames.as_entire_binding(),
             shed.trees.get().as_entire_binding(),
             shed.forms.get().as_entire_binding(),
             shed.limbs.get().as_entire_binding(),

@@ -81,7 +81,7 @@ fn evaluate(@builtin(global_invocation_id) id: vec3<u32>) {
 fn a_pushed_limb_turns_about_its_root_and_the_trunk_stands() {
     let shader = harness(
         r#"
-import package::shaders::tree::wind::{TreeVertex, WindPose, animated_position};
+import package::shaders::tree::wind::{TreeVertex, WindPose, animated_position, strength_at};
 const PROFILE = vec4(1., 3., 1., 1.);
 const VIEWER = vec3(0., 4., 20.);
 @group(0) @binding(0) var<storage, read> inputs: array<vec4<f32>>;
@@ -97,10 +97,11 @@ fn evaluate(@builtin(global_invocation_id) id: vec3<u32>) {
     limb.wind_axis = vec4(normalize(vec3(1.0, 0.5, 0.0)), 1.0);
     var trunk = limb;
     trunk.wind_axis.w = 0.0;
-    results[0][0] = animated_position(limb, model, calm, PROFILE, VIEWER, vec3(0.0, 0.0, 0.3));
-    results[0][1] = animated_position(limb, model, calm, PROFILE, VIEWER, vec3(0.0, 0.0, 2.0));
-    results[0][2] = animated_position(trunk, model, calm, PROFILE, VIEWER, vec3(0.0, 0.0, 0.3));
-    results[0][3] = animated_position(limb, model, calm, PROFILE, VIEWER, vec3(0.0));
+    let strength = strength_at(model[3].xz, calm);
+    results[0][0] = animated_position(limb, model, calm, strength, PROFILE, VIEWER, vec3(0.0, 0.0, 0.3));
+    results[0][1] = animated_position(limb, model, calm, strength, PROFILE, VIEWER, vec3(0.0, 0.0, 2.0));
+    results[0][2] = animated_position(trunk, model, calm, strength, PROFILE, VIEWER, vec3(0.0, 0.0, 0.3));
+    results[0][3] = animated_position(limb, model, calm, strength, PROFILE, VIEWER, vec3(0.0));
 }
 "#,
         "TREE_HIERARCHY",

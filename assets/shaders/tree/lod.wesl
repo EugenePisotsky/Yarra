@@ -6,7 +6,8 @@
 // draw entry in each view. `finalize` then writes each bucket's count into its entry's
 // indirect draw.
 
-import package::shaders::tree::instance::Instance;
+import package::shaders::tree::instance::{Instance, InstanceFrame};
+import package::shaders::tree::wind::{WindFrames, strength_at};
 
 // A form's representations (mesh LODs, then its impostor) at unit scale.
 struct Form {
@@ -68,9 +69,10 @@ struct Camera {
 @group(0) @binding(6) var<storage, read_write> records: array<u32>;
 @group(0) @binding(7) var<storage, read> buckets: array<Bucket>;
 @group(0) @binding(8) var<storage, read_write> args: array<u32>;
-// Each instance's world-from-local transform (rows; render space), which the tree vertex
-// shaders read through the records instead of turning every vertex themselves.
-@group(0) @binding(9) var<storage, read_write> transforms: array<array<vec4<f32>, 3>>;
+// Each instance's frame, which the tree vertex shaders read through the records instead of
+// turning every vertex and sampling the gusts at every vertex themselves.
+@group(0) @binding(9) var<storage, read_write> frames: array<InstanceFrame>;
+@group(0) @binding(10) var<storage, read> wind: WindFrames;
 
 const MAX_SHADOW_VIEWS: u32 = 8u;
 const FAR_PLANE: u32 = 5u;
@@ -268,10 +270,13 @@ fn lod(@builtin(global_invocation_id) id: vec3<u32>) {
     // Bevy's Quat::from_rotation_y, then a uniform scale.
     let c = cos(yaw) * scale;
     let s = sin(yaw) * scale;
-    transforms[index] = array<vec4<f32>, 3>(
-        vec4(c, 0.0, s, root.x),
-        vec4(0.0, scale, 0.0, root.y),
-        vec4(-s, 0.0, c, root.z),
+    frames[index] = InstanceFrame(
+        array<vec4<f32>, 3>(
+            vec4(c, 0.0, s, root.x),
+            vec4(0.0, scale, 0.0, root.y),
+            vec4(-s, 0.0, c, root.z),
+        ),
+        vec4(strength_at(root.xz, wind.current), strength_at(root.xz, wind.previous), 0.0, 0.0),
     );
     // Bands are at unit scale: switch distances grow with the object's height.
     let distance = length(root - camera.eye_dt.xyz) / scale;

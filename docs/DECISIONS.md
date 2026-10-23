@@ -228,6 +228,13 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
   primitives with nothing on screen. Each primitive keeps its sweep (anchor height, offset, reach)
   and the frame's wind bounds the lean and turns: 164 primitives, GPU busy 13.8 → 12.1 ms; facing
   the trees 15.8 → 15.3 ms. Entities still grow by the strongest wind.
+- **The wind's per-tree work runs once per tree.** *Kept* (October 24). On the snowy spruce road
+  in a storm (~1,000 primitives, 1.3 M triangles in view) the prepass was vertex-bound, 5.75 ms
+  of vertex work against 0.5 of fragment. Every vertex sampled the gust noise at its tree's root,
+  twice per pose, and turned each point and direction by three rotations in turn. The LOD pass
+  now writes each tree's gust strength for both poses into its frame. A vertex composes its turns
+  into one matrix and expands the sway's lag without `atan2`, and the main pass poses it once for
+  its position, normal and tangent. GPU busy 23.0 → 20.7 ms; with no wind at all it is 18.4.
 - **Timed dissolves, not distance crossfades.** *Kept.* Switch 4% past the band, dissolve over
   0.6 s, MSAA samples split (`crossfade.wesl`), shadows doubled mid-fade. Distance crossfades drew
   two LODs across a band and popped shadows.

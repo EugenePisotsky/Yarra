@@ -3,6 +3,7 @@
 //! prepass and shadow phases, through the tree and impostor materials' own pipelines.
 use super::super::impostor::ImpostorMaterial;
 use super::super::material::TreeWindMaterial;
+use super::super::wind::WindBuffer;
 use super::frame::TreeGpuFrame;
 use super::layout::{DrawEntry, Drawn, TreeDrawLayout};
 use super::pool::PoolData;
@@ -58,6 +59,7 @@ use bevy::{
             *,
         },
         renderer::{RenderContext, RenderDevice, RenderGraph, RenderQueue},
+        storage::GpuShaderBuffer,
         sync_world::MainEntity,
         view::{ExtractedView, RetainedViewEntity},
     },
@@ -103,7 +105,7 @@ pub(super) fn install(render_app: &mut SubApp, shared: Arc<Mutex<PoolData>>) {
                 prepare.in_set(RenderSystems::PrepareBindGroups),
             ),
         )
-        // The shed pass reads the transforms the LOD pass writes.
+        // The shed pass reads the frames the LOD pass writes.
         .add_systems(
             RenderGraph,
             (cull, super::shed::shake).chain().before(camera_driver),
@@ -140,6 +142,7 @@ impl FromWorld for TreeGpuPipelines {
                     storage_buffer_read_only_sized(false, None),
                     storage_buffer_sized(false, None),
                     storage_buffer_sized(false, None),
+                    storage_buffer_read_only_sized(false, None),
                 ),
             ),
         );
@@ -230,7 +233,7 @@ impl Growing {
 pub(super) struct TreeGpu {
     instances: Growing,
     states: Growing,
-    transforms: Growing,
+    frames: Growing,
     origins: Growing,
     forms: Growing,
     buckets: Growing,
@@ -241,6 +244,8 @@ pub(super) struct TreeGpu {
     /// The layout the buffers hold, and the draws' fixed arguments written for it.
     layout: Option<Arc<super::layout::Layout>>,
     args_written: Vec<[u32; 5]>,
+    /// The wind's poses (`super::super::wind::WindBuffer`), whose gusts the compute pass samples.
+    wind: Option<Buffer>,
     compute_group: Option<BindGroup>,
     draw_group: Option<BindGroup>,
     /// Instances the compute pass visits, and draw entries per view.
@@ -269,11 +274,10 @@ struct Readback {
 }
 
 impl TreeGpu {
-    /// The pool's instances and this frame's transforms, once the compute pass has run with
-    /// them.
+    /// The pool's instances and their frames, once the compute pass has run with them.
     pub(super) fn pool_buffers(&self) -> Option<(&Buffer, &Buffer)> {
         self.active
-            .then(|| (self.instances.get(), self.transforms.get()))
+            .then(|| (self.instances.get(), self.frames.get()))
     }
 
     /// The view a phase draws for: a shadow view's own number, else the main view's.
@@ -365,11 +369,12 @@ fn log_counts(gpu: &mut TreeGpu, layout: &super::layout::Layout) {
     }
 }
 
-/// Bytes per instance of the fade states (one u32) and of the transforms the compute pass
-/// writes for the draws (three vec4 rows, `shaders/tree/lod.wesl`).
+/// Bytes per instance of the fade states (one u32) and of the frames the compute pass writes
+/// for the draws (`InstanceFrame` in `shaders/tree/instance.wesl`: three transform rows and the
+/// wind).
 const STATE_BYTES: u64 = std::mem::size_of::<u32>() as u64;
 
-const TRANSFORM_BYTES: u64 = 3 * std::mem::size_of::<[f32; 4]>() as u64;
+const FRAME_BYTES: u64 = 4 * std::mem::size_of::<[f32; 4]>() as u64;
 
 #[allow(clippy::too_many_arguments)] // The pool, layout, frame and GPU resources it writes.
 fn prepare(
@@ -383,12 +388,18 @@ fn prepare(
     cache: Res<PipelineCache>,
     (meshes, allocator): (Res<RenderAssets<RenderMesh>>, Res<MeshAllocator>),
     shed: Res<super::shed::ShedGpu>,
+    (wind, buffers): (Option<Res<WindBuffer>>, Res<RenderAssets<GpuShaderBuffer>>),
 ) {
     let gpu = gpu.as_mut();
     let next = layout.layout.clone();
     let mut regroup = gpu.upload_pool(&shared, &device, &queue);
     regroup |= gpu.upload_layout(&next, &device, &queue);
     regroup |= gpu.shed_generation != Some(shed.generation());
+    let wind = wind
+        .and_then(|w| buffers.get(&w.0))
+        .map(|b| b.buffer.clone());
+    regroup |= gpu.wind.as_ref().map(Buffer::id) != wind.as_ref().map(Buffer::id);
+    gpu.wind = wind;
 
     if bevy::log::tracing::enabled!(bevy::log::Level::DEBUG) {
         log_counts(gpu, &next);
@@ -402,6 +413,7 @@ fn prepare(
     }
 
     gpu.active = frame.view.is_some()
+        && gpu.compute_group.is_some()
         && gpu.entries_len > 0
         && cache.get_compute_pipeline(pipelines.lod).is_some()
         && cache.get_compute_pipeline(pipelines.finalize).is_some();
@@ -426,9 +438,9 @@ impl TreeGpu {
         let states_grown =
             self.states
                 .reserve(device, "tree fade states", usage, count * STATE_BYTES);
-        let transforms_grown =
-            self.transforms
-                .reserve(device, "tree transforms", usage, count * TRANSFORM_BYTES);
+        let frames_grown = self
+            .frames
+            .reserve(device, "tree frames", usage, count * FRAME_BYTES);
         let origin_bytes = std::mem::size_of_val(data.origins.as_slice()) as u64;
         let origins_grown = self
             .origins
@@ -459,7 +471,7 @@ impl TreeGpu {
         }
 
         self.instances_len = uploads.len;
-        everything || transforms_grown
+        everything || frames_grown
     }
 
     /// A new layout's forms and buckets, and room for every view's records, counters and
@@ -623,22 +635,25 @@ impl TreeGpu {
         shed: &super::shed::ShedGpu,
     ) {
         let layout = cache.get_bind_group_layout(&pipelines.compute_layout);
-        self.compute_group = Some(device.create_bind_group(
-            "tree LOD",
-            &layout,
-            &BindGroupEntries::sequential((
-                self.camera.get().as_entire_binding(),
-                self.instances.get().as_entire_binding(),
-                self.origins.get().as_entire_binding(),
-                self.forms.get().as_entire_binding(),
-                self.states.get().as_entire_binding(),
-                self.counters.get().as_entire_binding(),
-                self.records.get().as_entire_binding(),
-                self.buckets.get().as_entire_binding(),
-                self.args.get().as_entire_binding(),
-                self.transforms.get().as_entire_binding(),
-            )),
-        ));
+        self.compute_group = self.wind.as_ref().map(|wind| {
+            device.create_bind_group(
+                "tree LOD",
+                &layout,
+                &BindGroupEntries::sequential((
+                    self.camera.get().as_entire_binding(),
+                    self.instances.get().as_entire_binding(),
+                    self.origins.get().as_entire_binding(),
+                    self.forms.get().as_entire_binding(),
+                    self.states.get().as_entire_binding(),
+                    self.counters.get().as_entire_binding(),
+                    self.records.get().as_entire_binding(),
+                    self.buckets.get().as_entire_binding(),
+                    self.args.get().as_entire_binding(),
+                    self.frames.get().as_entire_binding(),
+                    wind.as_entire_binding(),
+                )),
+            )
+        });
         self.draw_group = Some(device.create_bind_group(
             "tree instances",
             &cache.get_bind_group_layout(&instance_layout()),
@@ -646,7 +661,7 @@ impl TreeGpu {
                 self.records.get().as_entire_binding(),
                 self.instances.get().as_entire_binding(),
                 self.origins.get().as_entire_binding(),
-                self.transforms.get().as_entire_binding(),
+                self.frames.get().as_entire_binding(),
                 shed.states().as_entire_binding(),
                 shed.trees().as_entire_binding(),
             )),

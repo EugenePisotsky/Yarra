@@ -5,7 +5,7 @@
 // moved, the snow fallen then and its share of the snow, and its snow falls from where it lay as a
 // burst in the ambient particles' ring (weather/ambient.wesl). A limb that shed holds snow again
 // once enough has settled back on it (SHAKEN_AGAIN), and sheds what has.
-import package::shaders::tree::instance::Instance;
+import package::shaders::tree::instance::{Instance, InstanceFrame};
 import package::shaders::tree::shed::{Limb, SHED_NONE, ShedTrees, limb_shed, shed_slot, shed_state};
 import package::shaders::tree::touch::{TouchWindow, touch_canonical, touch_inside, touch_uv};
 import package::shaders::weather::snow_fall::SnowFall;
@@ -19,8 +19,8 @@ struct Shake {
 // The listed trees' pool instances.
 @group(0) @binding(1) var<storage, read> trees: array<u32>;
 @group(0) @binding(2) var<storage, read> instances: array<Instance>;
-// Each pool instance's transform this frame (tree/lod.wesl).
-@group(0) @binding(3) var<storage, read> transforms: array<array<vec4<f32>, 3>>;
+// Each pool instance's frame (tree/lod.wesl).
+@group(0) @binding(3) var<storage, read> frames: array<InstanceFrame>;
 @group(0) @binding(4) var<storage, read> shed: ShedTrees;
 // Per form: its first limb in `limbs` and how many it has.
 @group(0) @binding(5) var<storage, read> forms: array<vec4<u32>>;
@@ -90,7 +90,7 @@ fn shake_limbs(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
 
-    let r = transforms[pool];
+    let r = frames[pool].transform;
     let start = world_point(r, l.snow.xyz);
     let along = world_vector(r, l.along.xyz);
     let root = world_point(r, l.root.xyz);

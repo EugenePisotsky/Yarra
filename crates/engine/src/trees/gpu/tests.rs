@@ -131,7 +131,9 @@ struct Harness {
     records: Buffer,
     entries: Buffer,
     args: Buffer,
-    transforms: Buffer,
+    frames: Buffer,
+    /// The wind's two poses (`trees::wind::WindBuffer`), calm.
+    wind: Buffer,
     form: GpuForm,
     /// Records per bucket.
     capacity: u32,
@@ -217,7 +219,8 @@ impl Harness {
             ),
             entries: with(bytemuck::cast_slice(buckets), BufferUsages::STORAGE),
             args: storage("args", VIEWS as u64 * u64::from(representations) * 20),
-            transforms: storage("transforms", instances.len() as u64 * 48),
+            frames: storage("frames", instances.len() as u64 * 64),
+            wind: storage("wind", 2 * 7 * 16),
             form,
             capacity,
             count: instances.len() as u32,
@@ -283,7 +286,8 @@ impl Harness {
                 (5, &self.counters),
                 (6, &self.records),
                 (7, &self.entries),
-                (9, &self.transforms),
+                (9, &self.frames),
+                (10, &self.wind),
             ],
         );
         let finalize = group(
@@ -528,6 +532,33 @@ fn gpu_trees_beside_the_view_draw_as_far_as_the_wind_moves_them() {
     };
     assert_eq!(drawn(0.0), 0);
     assert_eq!(drawn(10.0), 1);
+}
+
+#[test]
+#[ignore = "requires native GPU access; runs the trees' LOD and fade pass"]
+fn gpu_trees_frames_hold_the_wind_strength_at_each_tree() {
+    // The two poses' strengths, without gusts to swell them: `WindPose`'s field.w is its
+    // fourth float, the response's swell its twelfth, and the previous pose follows seven
+    // vec4s on.
+    let (form, buckets) = spruce_form(1);
+    let harness = Harness::new(
+        &[instance(Vec3::new(3.0, 0.0, -30.0), None)],
+        form,
+        &buckets,
+    );
+    let mut wind = [0.0f32; 56];
+    wind[3] = 1.3;
+    wind[28 + 3] = 0.9;
+    harness
+        .queue
+        .write_buffer(&harness.wind, 0, bytemuck::cast_slice(&wind));
+    harness.frame(&camera(Vec3::new(0.0, 7.0, 0.0), 0.016, 0, 1, &form, 1));
+    let frame: Vec<f32> = harness
+        .read(&harness.frames)
+        .into_iter()
+        .map(f32::from_bits)
+        .collect();
+    assert_eq!(frame[12..14], [1.3, 0.9]);
 }
 
 #[test]

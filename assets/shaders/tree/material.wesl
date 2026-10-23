@@ -5,22 +5,22 @@
 // compressed (VERTEX_*_COMPRESSED), so only Bevy's plain attributes are read.
 import bevy_pbr::{render::mesh_functions, render::view_transformations::position_world_to_clip};
 import bevy_pbr::render::mesh_view_bindings::view;
-import package::shaders::tree::wind::{TreeVertex, WindFrames, WindPose, animated_position, animated_vector, turn_axis};
+import package::shaders::tree::wind::{TreeVertex, WindFrames, WindPose, animated_position, strength_at, tree_pose, turn_axis};
 import package::shaders::tree::touch::{TouchWindow, touch_canonical, touch_inside, touch_moving, touch_uv, within};
-import package::shaders::tree::instance::Instance;
+import package::shaders::tree::instance::{Instance, InstanceFrame};
 import package::shaders::tree::shed::{ChunkFall, CHUNK_CRUMBLE, LimbShed, ShedTrees, SHED_NONE, UNLOAD_LIFT, chunk_fall, limb_shed, shed_fallen, shed_slot, unload_rise};
 @if(TREE_SNOW) import package::shaders::tree::snow::{card_amount, seen_from_above};
 
 // Trees drawn by the GPU trees (crates/engine/src/trees/gpu.rs) rather than one mesh entity
 // each: `instance_index` picks this draw's record (the instance and its dither level), and
-// the instance's transform comes from the frame's transforms (shaders/tree/lod.wesl), not
+// the instance's transform and wind strength come from its frame (shaders/tree/lod.wesl), not
 // from the mesh uniforms.
 @if(TREE_INSTANCED)
 @group(4) @binding(0) var<storage, read> tree_records: array<u32>;
 @if(TREE_INSTANCED)
 @group(4) @binding(1) var<storage, read> tree_instances: array<Instance>;
 @if(TREE_INSTANCED)
-@group(4) @binding(3) var<storage, read> tree_transforms: array<array<vec4<f32>, 3>>;
+@group(4) @binding(3) var<storage, read> tree_frames: array<InstanceFrame>;
 // Each snowy tree's limbs' states and what reads them (crates/engine/src/trees/gpu/shed.rs).
 @if(TREE_INSTANCED)
 @group(4) @binding(4) var<storage, read> shed_states: array<vec4<f32>>;
@@ -29,11 +29,22 @@ import package::shaders::tree::shed::{ChunkFall, CHUNK_CRUMBLE, LimbShed, ShedTr
 
 fn world_from_local(instance_index: u32) -> mat4x4<f32> {
 @if(TREE_INSTANCED) {
-    let r = tree_transforms[tree_records[instance_index] & 0xffffffu];
+    let r = tree_frames[tree_records[instance_index] & 0xffffffu].transform;
     return transpose(mat4x4(r[0], r[1], r[2], vec4(0.0, 0.0, 0.0, 1.0)));
 }
 @else
     return mesh_functions::get_world_from_local(instance_index);
+}
+
+// The wind's strength at this vertex's tree (tree/wind.wesl strength_at) in `pose`, this frame's or
+// the `previous` one: an instanced tree's from its frame, which all its vertices share.
+fn tree_strength(instance_index: u32, model: mat4x4<f32>, pose: WindPose, previous: bool) -> f32 {
+@if(TREE_INSTANCED) {
+    let strength = tree_frames[tree_records[instance_index] & 0xffffffu].wind;
+    return select(strength.x, strength.y, previous);
+}
+@else
+    return strength_at(model[3].xz, pose);
 }
 
 // Instanced trees are only turned and scaled uniformly, so their model matrix turns normals as
@@ -314,11 +325,11 @@ struct Dropping {
 }
 
 // How the chunk `chunk` (middle xyz, seed w) of a limb drops, `back` seconds ago, with the limb's
-// pose `pose` and turn `turn`. It crumbles at once on reaching the ground beneath its tree; once
+// pose `pose`, wind `strength` and turn `turn`. It crumbles at once on reaching the ground beneath its tree; once
 // crumbled, the snow settling back builds it up again where it lay.
 @if(TREE_SNOW_CHUNKS)
 fn dropping(tree: TreeVertex, chunk: vec4<f32>, model: mat4x4<f32>, shed: LimbShed, pose: WindPose,
-            turn: vec3<f32>, back: f32) -> Dropping {
+            strength: f32, turn: vec3<f32>, back: f32) -> Dropping {
     var out: Dropping;
     out.anchor = vec3(0.0);
     out.fall = ChunkFall(vec3(0.0), vec3(0.0, 0.0, 1.0), 0.0, 1.0);
@@ -328,7 +339,7 @@ fn dropping(tree: TreeVertex, chunk: vec4<f32>, model: mat4x4<f32>, shed: LimbSh
     }
     var middle = tree;
     middle.position = chunk.xyz;
-    out.anchor = animated_position(middle, model, pose, profile(), view.lod_view_world_position, turn).xyz;
+    out.anchor = animated_position(middle, model, pose, strength, profile(), view.lod_view_world_position, turn).xyz;
     if t >= CHUNK_CRUMBLE.y {
         out.fall.scale = shed.regrown;
         return out;
@@ -408,9 +419,11 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     // Snow shaken off (tree/shed.wesl): the limb, unloaded, springs up; its loads' chunks fall.
     let state = limb_state(tree, vertex.instance_index);
     let turn = touch_turn(tree, model, false) + unload_turn(tree, model, state, 0.0);
-    out.world_position = animated_position(tree, model, wind.current, profile(), view.lod_view_world_position, turn);
+    let strength = tree_strength(vertex.instance_index, model, wind.current, false);
+    let posed = tree_pose(tree, model, wind.current, strength, profile(), view.lod_view_world_position, turn);
+    out.world_position = posed.position;
 @if(TREE_SNOW_CHUNKS) {
-    let drop = dropping(tree, vertex.snow_chunk, model, state, wind.current, turn, 0.0);
+    let drop = dropping(tree, vertex.snow_chunk, model, state, wind.current, strength, turn, 0.0);
     out.world_position = vec4(dropped(drop, out.world_position.xyz), 1.0);
 }
     out.position = position_world_to_clip(out.world_position.xyz);
@@ -434,10 +447,10 @@ fn vertex(vertex: Vertex) -> VertexOutput {
 // entire prepass (as the old renderer did for shadows) breaks temporal depth.
 @if(PREPASS_PIPELINE) {
 @if(NORMAL_PREPASS_OR_DEFERRED_PREPASS && VERTEX_NORMALS)
-    out.world_normal = snow_vector(animated_vector(normal_to_world(vertex.normal, model, vertex.instance_index), tree, model, wind.current, profile(), turn), vertex, model, state, turn);
+    out.world_normal = snow_vector(posed.turn * normal_to_world(vertex.normal, model, vertex.instance_index), vertex, model, state, turn);
 @if(NORMAL_PREPASS_OR_DEFERRED_PREPASS && VERTEX_TANGENTS) {
     let tangent = tangent_to_world(vertex.tangent, model, vertex.instance_index);
-    out.world_tangent = vec4(snow_vector(animated_vector(tangent.xyz, tree, model, wind.current, profile(), turn), vertex, model, state, turn), tangent.w);
+    out.world_tangent = vec4(snow_vector(posed.turn * tangent.xyz, vertex, model, state, turn), tangent.w);
 }
 @if(MOTION_VECTOR_PREPASS) {
 @if(TREE_INSTANCED)
@@ -446,19 +459,20 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     let previous_model = mesh_functions::get_previous_world_from_local(vertex.instance_index);
     let step = shed_step();
     let previous_turn = touch_turn(tree, previous_model, true) + unload_turn(tree, previous_model, state, step);
-    out.previous_world_position = animated_position(tree, previous_model, wind.previous, profile(), view.lod_view_world_position, previous_turn);
+    let previous_strength = tree_strength(vertex.instance_index, previous_model, wind.previous, true);
+    out.previous_world_position = animated_position(tree, previous_model, wind.previous, previous_strength, profile(), view.lod_view_world_position, previous_turn);
 @if(TREE_SNOW_CHUNKS) {
-    let previous_drop = dropping(tree, vertex.snow_chunk, previous_model, state, wind.previous, previous_turn, step);
+    let previous_drop = dropping(tree, vertex.snow_chunk, previous_model, state, wind.previous, previous_strength, previous_turn, step);
     out.previous_world_position = vec4(dropped(previous_drop, out.previous_world_position.xyz), 1.0);
 }
 }
 }
 @else {
 @if(VERTEX_NORMALS)
-    out.world_normal = snow_vector(animated_vector(normal_to_world(vertex.normal, model, vertex.instance_index), tree, model, wind.current, profile(), turn), vertex, model, state, turn);
+    out.world_normal = snow_vector(posed.turn * normal_to_world(vertex.normal, model, vertex.instance_index), vertex, model, state, turn);
 @if(VERTEX_TANGENTS) {
     let tangent = tangent_to_world(vertex.tangent, model, vertex.instance_index);
-    out.world_tangent = vec4(snow_vector(animated_vector(tangent.xyz, tree, model, wind.current, profile(), turn), vertex, model, state, turn), tangent.w);
+    out.world_tangent = vec4(snow_vector(posed.turn * tangent.xyz, vertex, model, state, turn), tangent.w);
 }
 }
 

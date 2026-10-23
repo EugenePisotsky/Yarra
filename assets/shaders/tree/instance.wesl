@@ -9,3 +9,12 @@ struct Instance {
     // representation n, FORCED_NOTHING none).
     flags: u32,
 }
+
+// What the LOD pass (tree/lod.wesl) finds for an instance each frame, for the draws and the shed
+// pass: its world-from-local transform (rows; render space), and the wind's strength at it this
+// frame and the previous one in x and y (tree/wind.wesl strength_at), which every vertex of the
+// tree shares.
+struct InstanceFrame {
+    transform: array<vec4<f32>, 3>,
+    wind: vec4<f32>,
+}

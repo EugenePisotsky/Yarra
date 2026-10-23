@@ -153,7 +153,7 @@ pub(super) struct GpuCamera {
     wind: [f32; 4],
 }
 
-/// The instance records, pool, origins and transforms the instanced tree and impostor
+/// The instance records, pool, origins and frames the instanced tree and impostor
 /// pipelines read (group 4: `shaders/tree/material.wesl`, `shaders/tree/impostor.wesl`), and the
 /// snowy trees' limb states with what reads them ([`shed`]).
 pub(super) fn instance_layout() -> BindGroupLayoutDescriptor {
