@@ -74,7 +74,12 @@ fn turn_by(v: vec3<f32>, axis: vec3<f32>, c: f32, s: f32) -> vec3<f32> {
 // Yaw preserves the authored in-plane roll; elevation follow optionally tilts
 // the surface to face elevated cameras. Full follow works at overhead angles too.
 fn turn_camera(v: vec3<f32>, normal: vec3<f32>, to_view: vec3<f32>, follow: f32) -> vec3<f32> {
-    if dot(to_view, to_view) < 1e-8 { return v; }
+    return camera_turn(normal, to_view, follow) * v;
+}
+
+// turn_camera's turn, as a matrix.
+fn camera_turn(normal: vec3<f32>, to_view: vec3<f32>, follow: f32) -> mat3x3<f32> {
+    if dot(to_view, to_view) < 1e-8 { return STILL; }
     let n = normalize(normal);
     let d = normalize(to_view);
     let up = vec3(0.0, 1.0, 0.0);
@@ -84,9 +89,10 @@ fn turn_camera(v: vec3<f32>, normal: vec3<f32>, to_view: vec3<f32>, follow: f32)
     var dh = vec3(d.x, 0.0, d.z);
     if dot(dh, dh) < 1e-12 { dh = nh; }
     dh = normalize(dh);
-    let yaw = atan2(dot(up, cross(nh, dh)), dot(nh, dh));
+    // Both level and unit: their dot and cross are the yaw's cosine and sine.
+    let yaw = rotation(up, dot(nh, dh), dot(up, cross(nh, dh)));
     let pitch = (atan2(n.y, length(n.xz)) - atan2(d.y, length(d.xz))) * clamp(follow, 0.0, 1.0);
-    return turn_axis(turn_axis(v, up, yaw), normalize(cross(up, dh)), pitch);
+    return rotation(normalize(cross(up, dh)), cos(pitch), sin(pitch)) * yaw;
 }
 
 // Use the main camera in shadows, and its previous pose for temporal motion; `viewer` is the
@@ -313,6 +319,10 @@ fn vertex_frame(vertex: TreeVertex, model: mat4x4<f32>, pose: WindPose, wind: Tr
 struct TreePose {
     position: vec4<f32>,
     turn: mat3x3<f32>,
+    // How every point of the vertex's card turned: another point of it, `offset` from the vertex
+    // unposed (world metres), stands at position + points * offset. The wind and the card's own
+    // turns move a card rigidly.
+    points: mat3x3<f32>,
 }
 
 fn tree_pose(vertex: TreeVertex, model: mat4x4<f32>, pose: WindPose, wind: TreeWind,
@@ -321,6 +331,7 @@ fn tree_pose(vertex: TreeVertex, model: mat4x4<f32>, pose: WindPose, wind: TreeW
 @if(TREE_HIERARCHY) {
     let frame = vertex_frame(vertex, model, pose, wind, profile, turn);
     p = vec4(sway_point(p.xyz, frame), 1.0);
+    var points = frame.turn;
 @if(TREE_BRANCH_CARDS) {
     let pivot = sway_point((model * vec4(vertex.card_pivot, 1.0)).xyz, frame);
     let axis = frame.turn * (model * vec4(vertex.card_axis, 0.0)).xyz;
@@ -333,8 +344,11 @@ fn tree_pose(vertex: TreeVertex, model: mat4x4<f32>, pose: WindPose, wind: TreeW
 @else
         let turns_to_camera = false;
         if turns_to_camera {
-@if(TREE_CARD_FACING)
-            p = vec4(pivot + turn_camera(p.xyz - pivot, normal, to_view, vertex.card_facing.y), 1.0);
+@if(TREE_CARD_FACING) {
+            let facing = camera_turn(normal, to_view, vertex.card_facing.y);
+            p = vec4(pivot + facing * (p.xyz - pivot), 1.0);
+            points = facing * points;
+}
         } else {
             let a = normalize(axis);
             let rest = normal - a * dot(normal, a);
@@ -343,7 +357,10 @@ fn tree_pose(vertex: TreeVertex, model: mat4x4<f32>, pose: WindPose, wind: TreeW
                 // Both are square to the axis, so their dot and cross are the turn's cosine and sine.
                 let resting = normalize(rest);
                 let seen = normalize(facing);
-                p = vec4(pivot + turn_by(p.xyz - pivot, a, dot(resting, seen), dot(a, cross(resting, seen))), 1.0);
+                let c = dot(resting, seen);
+                let s = dot(a, cross(resting, seen));
+                p = vec4(pivot + turn_by(p.xyz - pivot, a, c, s), 1.0);
+                points = rotation(a, c, s) * points;
             }
         }
     }
@@ -355,15 +372,16 @@ fn tree_pose(vertex: TreeVertex, model: mat4x4<f32>, pose: WindPose, wind: TreeW
                       + dot(model[3].xz, vec2(1.91, -1.37)))
                   * 0.035 * wind.strength * pose.hierarchy.z * profile.z * leaf;
     p = vec4(pivot + turn_axis(p.xyz - pivot, frame.trunk_axis, flutter), 1.0);
+    points = rotation(frame.trunk_axis, cos(flutter), sin(flutter)) * points;
 }
 }
-    return TreePose(p, frame.turn);
+    return TreePose(p, frame.turn, points);
 }
 @else {
     var weights = vec2(0.0);
 @if(VERTEX_UVS_B)
     weights = vertex.uv_b;
-    return TreePose(displaced_position(facing_camera(p, model, vertex, pose.camera, viewer), model, weights, pose), STILL);
+    return TreePose(displaced_position(facing_camera(p, model, vertex, pose.camera, viewer), model, weights, pose), STILL, STILL);
 }
 }
 

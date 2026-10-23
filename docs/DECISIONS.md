@@ -237,6 +237,12 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
   sway's lag without `atan2`, and turns its cards by sine and cosine, not by angle. The main pass
   poses a vertex once for its position, normal and tangent. GPU busy 23.0 → 20.2 ms; with no wind
   at all it is 18.4.
+- **A snow chunk moves with its vertex's card, not by a pose of its own.** *Kept* (October 24).
+  The snowy spruces' prepass posed each vertex and its chunk's middle, now and a frame earlier:
+  four inlined poses, a 720-byte register spill, and 6% vertex occupancy for every vertex,
+  shedding or not. The wind and a card's own turns move a card rigidly, so the pose carries how
+  the card's points turned. The chunk stands at the vertex plus that turn of their offset. Prepass
+  4.5 → 2.6 ms, GPU busy 20.2 → 18.4 ms on the storm road.
 - **Timed dissolves, not distance crossfades.** *Kept.* Switch 4% past the band, dissolve over
   0.6 s, MSAA samples split (`crossfade.wesl`), shadows doubled mid-fade. Distance crossfades drew
   two LODs across a band and popped shadows.

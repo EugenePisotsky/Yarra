@@ -5,7 +5,7 @@
 // compressed (VERTEX_*_COMPRESSED), so only Bevy's plain attributes are read.
 import bevy_pbr::{render::mesh_functions, render::view_transformations::position_world_to_clip};
 import bevy_pbr::render::mesh_view_bindings::view;
-import package::shaders::tree::wind::{TreeVertex, TreeWind, WindFrames, WindPose, animated_position, tree_pose, tree_wind, turn_axis};
+import package::shaders::tree::wind::{TreePose, TreeVertex, TreeWind, WindFrames, WindPose, tree_pose, tree_wind, turn_axis};
 import package::shaders::tree::touch::{TouchWindow, touch_canonical, touch_inside, touch_moving, touch_uv, within};
 import package::shaders::tree::instance::{Instance, InstanceFrame};
 import package::shaders::tree::shed::{ChunkFall, CHUNK_CRUMBLE, LimbShed, ShedTrees, SHED_NONE, UNLOAD_LIFT, chunk_fall, limb_shed, shed_fallen, shed_slot, unload_rise};
@@ -322,12 +322,12 @@ struct Dropping {
     fall: ChunkFall,
 }
 
-// How the chunk `chunk` (middle xyz, seed w) of a limb drops, `back` seconds ago, with the limb's
-// pose `pose`, the `wind` at its tree and turn `turn`. It crumbles at once on reaching the ground beneath its tree; once
-// crumbled, the snow settling back builds it up again where it lay.
+// How the chunk `chunk` (middle xyz, seed w) of a limb drops, `back` seconds ago, its card posed
+// as `posed` holds the vertex `tree`. It crumbles at once on reaching the ground beneath its tree;
+// once crumbled, the snow settling back builds it up again where it lay.
 @if(TREE_SNOW_CHUNKS)
-fn dropping(tree: TreeVertex, chunk: vec4<f32>, model: mat4x4<f32>, shed: LimbShed, pose: WindPose,
-            wind: TreeWind, turn: vec3<f32>, back: f32) -> Dropping {
+fn dropping(tree: TreeVertex, chunk: vec4<f32>, model: mat4x4<f32>, posed: TreePose, shed: LimbShed,
+            back: f32) -> Dropping {
     var out: Dropping;
     out.anchor = vec3(0.0);
     out.fall = ChunkFall(vec3(0.0), vec3(0.0, 0.0, 1.0), 0.0, 1.0);
@@ -335,9 +335,8 @@ fn dropping(tree: TreeVertex, chunk: vec4<f32>, model: mat4x4<f32>, shed: LimbSh
     if t < 0.0 {
         return out;
     }
-    var middle = tree;
-    middle.position = chunk.xyz;
-    out.anchor = animated_position(middle, model, pose, wind, profile(), view.lod_view_world_position, turn).xyz;
+    // The chunk's middle is a point of the vertex's card.
+    out.anchor = posed.position.xyz + posed.points * (model * vec4(chunk.xyz - tree.position, 0.0)).xyz;
     if t >= CHUNK_CRUMBLE.y {
         out.fall.scale = shed.regrown;
         return out;
@@ -421,7 +420,7 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     let posed = tree_pose(tree, model, wind.current, at_tree, profile(), view.lod_view_world_position, turn);
     out.world_position = posed.position;
 @if(TREE_SNOW_CHUNKS) {
-    let drop = dropping(tree, vertex.snow_chunk, model, state, wind.current, at_tree, turn, 0.0);
+    let drop = dropping(tree, vertex.snow_chunk, model, posed, state, 0.0);
     out.world_position = vec4(dropped(drop, out.world_position.xyz), 1.0);
 }
     out.position = position_world_to_clip(out.world_position.xyz);
@@ -458,9 +457,10 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     let step = shed_step();
     let previous_turn = touch_turn(tree, previous_model, true) + unload_turn(tree, previous_model, state, step);
     let previous_at_tree = instance_wind(vertex.instance_index, previous_model, wind.previous, true);
-    out.previous_world_position = animated_position(tree, previous_model, wind.previous, previous_at_tree, profile(), view.lod_view_world_position, previous_turn);
+    let previous_posed = tree_pose(tree, previous_model, wind.previous, previous_at_tree, profile(), view.lod_view_world_position, previous_turn);
+    out.previous_world_position = previous_posed.position;
 @if(TREE_SNOW_CHUNKS) {
-    let previous_drop = dropping(tree, vertex.snow_chunk, previous_model, state, wind.previous, previous_at_tree, previous_turn, step);
+    let previous_drop = dropping(tree, vertex.snow_chunk, previous_model, previous_posed, state, step);
     out.previous_world_position = vec4(dropped(previous_drop, out.previous_world_position.xyz), 1.0);
 }
 }
