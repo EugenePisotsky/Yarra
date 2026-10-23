@@ -14,6 +14,7 @@ use bevy::{
         pipelined_rendering::PipelinedRenderingPlugin,
         render_resource::{CachedPipelineState, PipelineCache, TextureFormat, TextureUsages},
     },
+    shader::ShaderCacheError,
     window::ExitCondition,
     winit::WinitPlugin,
 };
@@ -130,8 +131,15 @@ fn wind_depth_prepass_preserves_colour_coverage() {
                 app.update();
                 let pipeline_ready = app.sub_app(RenderApp).world().resource::<PipelineCache>();
 
+                // A pipeline whose shader or imports are still loading is retried.
                 for p in pipeline_ready.pipelines() {
-                    if let CachedPipelineState::Err(error) = &p.state {
+                    if let CachedPipelineState::Err(error) = &p.state
+                        && !matches!(
+                            error,
+                            ShaderCacheError::ShaderNotLoaded(_)
+                                | ShaderCacheError::ShaderImportNotYetAvailable
+                        )
+                    {
                         panic!("tree pipeline error: {error}");
                     }
                 }
