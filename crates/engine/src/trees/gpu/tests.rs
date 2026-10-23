@@ -388,6 +388,7 @@ fn camera(
         shadow_receivers: [[0.0; 4]; 3 * MAX_SHADOW_VIEWS],
         counts: [count, 1, shadow_lod, form.representations * capacity],
         sizes: [form.representations, 0, 0, 0],
+        wind: [0.0; 4],
     };
     receive(&mut camera, eye, 0.0..1000.0, Vec3::NEG_Y);
     camera
@@ -501,6 +502,32 @@ fn gpu_fades_match_the_cpu_timed_lod() {
             assert_eq!(drawn.counts[r] as usize, drawn.views[0][r].len());
         }
     }
+}
+
+#[test]
+#[ignore = "requires native GPU access; runs the trees' LOD and fade pass"]
+fn gpu_trees_beside_the_view_draw_as_far_as_the_wind_moves_them() {
+    // A spruce beside the view whose trunk bends from 14 m up and whose limbs reach 3 m: its
+    // own bounds and a push miss the frustum, the lean a gale gives it does not.
+    let (form, mut buckets) = spruce_form(1);
+
+    for bucket in &mut buckets[..3] {
+        bucket.sweep = [14.0, 0.0, 3.0, 3.0];
+        bucket.response = [1.0, 1.0, 0.0, 0.0];
+    }
+
+    let harness = Harness::new(
+        &[instance(Vec3::new(34.0, 0.0, -30.0), Some(0))],
+        form,
+        &buckets,
+    );
+    let drawn = |turns: f32| {
+        let mut camera = camera(Vec3::new(0.0, 7.0, 0.0), 0.016, 0, 1, &form, 1);
+        camera.wind = [turns, turns, 0.0, 0.0];
+        harness.frame(&camera).views[0].iter().flatten().count()
+    };
+    assert_eq!(drawn(0.0), 0);
+    assert_eq!(drawn(10.0), 1);
 }
 
 #[test]

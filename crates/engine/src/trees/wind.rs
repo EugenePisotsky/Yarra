@@ -70,7 +70,40 @@ fn finite(value: f32, fallback: f32) -> f32 {
     if value.is_finite() { value } else { fallback }
 }
 
+/// The furthest `sway_signal` reaches (`shaders/tree/wind.wesl`): its bands' weights, each band's
+/// damped gain at most 1.
+const SWAY_PEAK: f32 = 0.65 + 0.38 + 0.19 + 0.09;
+
+/// Bounds on the turns `shaders/tree/wind.wesl` makes anywhere in wind of `strength` (gusts
+/// included), `gustiness` and hierarchy gains `hierarchy` (trunk, limbs, flutter): the trunk's
+/// lean per unit of a material's profile x times w, a limb's turn per unit of profile w and of
+/// the limb's weight, and a card's per unit of profile z (`super::cards::WindSweep`).
+pub(super) fn turn_bounds(strength: f32, gustiness: f32, hierarchy: [f32; 3]) -> Vec3 {
+    let pressure = strength * strength;
+    let gusts = gustiness * SWAY_PEAK;
+    Vec3::new(
+        0.11 * pressure * hierarchy[0] * (1. + gusts),
+        0.10 * pressure * hierarchy[1] * (0.6 + gusts),
+        0.035 * strength * hierarchy[2],
+    )
+}
+
+/// [`turn_bounds`] in the strongest wind a pose can hold: strength 2 swollen by gusts of 1,
+/// gustiness 1, hierarchy gains of 3.
+pub(super) fn strongest_turns() -> Vec3 {
+    turn_bounds(4., 1., [3.; 3])
+}
+
 impl WindPose {
+    /// [`turn_bounds`] for this frame's wind: its strength swollen by the gusts' most.
+    pub(super) fn turns(&self) -> Vec3 {
+        turn_bounds(
+            self.field[3] * (1. + self.response[3]),
+            self.response[0],
+            [self.hierarchy[0], self.hierarchy[1], self.hierarchy[2]],
+        )
+    }
+
     fn sample(wind: &VegetationWind, response: TreeWindResponse, origin: [f64; 2]) -> Self {
         let direction = if wind.direction.is_finite() {
             wind.direction.normalize_or(Vec2::X)

@@ -222,6 +222,12 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
 - **GPU-driven trees in game and editor.** *Kept* (`2f52071`, `9cf8c56`). One pool from far-object
   blocks; compute picks LODs, fades and culls into indirect draws. Main thread −1.5–2 ms in forests
   at GPU parity. Culling bounds must match per primitive: a looser sphere cost up to 1 ms.
+- **Culling bounds grow with this frame's wind.** *Kept* (October 23). Bounds padded for the
+  shader's hardest lean (0.8 rad) on every axis culled a 19 m pine as a box up to 90 m wide, so
+  trees well off screen drew in the prepass and main pass: looking down in a dense forest, 922
+  primitives with nothing on screen. Each primitive keeps its sweep (anchor height, offset, reach)
+  and the frame's wind bounds the lean and turns: 164 primitives, GPU busy 13.8 → 12.1 ms; facing
+  the trees 15.8 → 15.3 ms. Entities still grow by the strongest wind.
 - **Timed dissolves, not distance crossfades.** *Kept.* Switch 4% past the band, dissolve over
   0.6 s, MSAA samples split (`crossfade.wesl`), shadows doubled mid-fade. Distance crossfades drew
   two LODs across a band and popped shadows.

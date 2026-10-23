@@ -171,31 +171,30 @@ pub(super) fn build(forms: &TreeForms, counts: &[u32], projection: &LodProjectio
         }
 
         if gpu.ready == 1 {
-            let mut add =
-                |layout: &mut Layout, r: usize, drawn: Drawn, centre: Vec4, extent: Vec3| {
-                    if gpu.buckets[r / 4][r % 4] == 0 {
-                        gpu.first_bucket[r / 4][r % 4] = layout.buckets.len() as u32;
-                    }
+            let mut add = |layout: &mut Layout, r: usize, drawn: Drawn, bucket: GpuBucket| {
+                if gpu.buckets[r / 4][r % 4] == 0 {
+                    gpu.first_bucket[r / 4][r % 4] = layout.buckets.len() as u32;
+                }
 
-                    gpu.buckets[r / 4][r % 4] += 1;
-                    layout.buckets.push(GpuBucket {
-                        centre: centre.to_array(),
-                        extent: extent.extend(0.0).to_array(),
-                        records: layout.records_per_view,
-                        capacity,
-                        ..default()
-                    });
-                    layout.records_per_view += capacity;
-                    layout.entries.push(DrawEntry {
-                        drawn,
-                        form: index as u32,
-                        representation: r as u32,
-                    });
-                };
+                gpu.buckets[r / 4][r % 4] += 1;
+                layout.buckets.push(GpuBucket {
+                    records: layout.records_per_view,
+                    capacity,
+                    ..bucket
+                });
+                layout.records_per_view += capacity;
+                layout.entries.push(DrawEntry {
+                    drawn,
+                    form: index as u32,
+                    representation: r as u32,
+                });
+            };
 
             for (lod, parts) in form.lods.iter().enumerate() {
                 for part in parts.iter().flatten() {
-                    let (lo, hi) = part.bounds;
+                    let reach = &part.reach;
+                    let (lo, hi) = reach.bounds;
+                    let sweep = reach.sweep;
                     add(
                         &mut layout,
                         lod,
@@ -203,8 +202,13 @@ pub(super) fn build(forms: &TreeForms, counts: &[u32], projection: &LodProjectio
                             mesh: part.mesh.id(),
                             material: part.material.id(),
                         },
-                        ((lo + hi) * 0.5).extend(0.0),
-                        (hi - lo) * 0.5,
+                        GpuBucket {
+                            centre: ((lo + hi) * 0.5).extend(0.0).to_array(),
+                            extent: ((hi - lo) * 0.5).extend(reach.steady).to_array(),
+                            sweep: [sweep.height, sweep.offset, sweep.reach, sweep.limb_reach],
+                            response: reach.response.extend(sweep.card_radius).to_array(),
+                            ..default()
+                        },
                     );
                 }
             }
@@ -218,8 +222,11 @@ pub(super) fn build(forms: &TreeForms, counts: &[u32], projection: &LodProjectio
                         mesh: forms.quad.id(),
                         material: material.id(),
                     },
-                    sphere.truncate().extend(1.0),
-                    Vec3::new(sphere.w, 0.0, 0.0),
+                    GpuBucket {
+                        centre: sphere.truncate().extend(1.0).to_array(),
+                        extent: [sphere.w, 0.0, 0.0, 0.0],
+                        ..default()
+                    },
                 );
             }
         }

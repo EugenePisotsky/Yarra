@@ -42,51 +42,91 @@ pub(super) fn structural(mesh: &bevy::mesh::Mesh) -> bool {
     mesh.contains_attribute(WIND_PIVOT) && mesh.contains_attribute(WIND_AXIS)
 }
 
-/// Local displacement bound at the shader's hard angle limits (.8 trunk, .5 limb, and a push's
-/// `TOUCH_TURN` about the limb's root, `shaders/tree/wind.wesl`): turns move a point by at most
-/// the sum of their chords. The arc plus any over-height extension moves by < .8 * anchor height.
-pub(super) fn structural_padding(mesh: &bevy::mesh::Mesh) -> f32 {
-    use bevy::math::{Vec3, Vec3Swizzles};
-    use bevy::mesh::VertexAttributeValues;
-    if !structural(mesh) {
-        return 0.;
+/// The shader's hard limits on the trunk's lean and a limb's turn, radians
+/// (`shaders/tree/wind.wesl` structural_frame).
+pub(super) const MAX_LEAN: f32 = 0.8;
+
+pub(super) const MAX_LIMB_TURN: f32 = 0.5;
+
+/// How far a turn by `angle` moves a point, per metre from what it turns about.
+pub(super) fn chord(angle: f32) -> f32 {
+    2.0 * (0.5 * angle).sin()
+}
+
+/// What bounds how far the wind and a push move a hierarchical mesh's vertices
+/// (`shaders/tree/wind.wesl`), each the furthest over its vertices. The trunk's lean carries an
+/// anchor along an arc by at most the lean times its `height`, and turns its `offset` from the
+/// trunk; a vertex turns about its anchor, `reach` from it, with the trunk, its limb (by the
+/// limb's weight: `limb_reach` is its reach times that) and a push (`TOUCH_TURN`); a card rocks
+/// about its pivot, `card_radius` from it. Each turn moves a point by at most its chord, and
+/// the furthest of each part, added, bounds the furthest any vertex moves.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(super) struct WindSweep {
+    pub(super) height: f32,
+    pub(super) offset: f32,
+    pub(super) reach: f32,
+    pub(super) limb_reach: f32,
+    pub(super) card_radius: f32,
+}
+
+impl WindSweep {
+    /// A mesh's sweep in its own space; none without a wind hierarchy.
+    pub(super) fn of(mesh: &bevy::mesh::Mesh) -> Self {
+        use bevy::math::{Vec3, Vec3Swizzles};
+        use bevy::mesh::VertexAttributeValues;
+        if !structural(mesh) {
+            return Self::default();
+        }
+
+        let Some(VertexAttributeValues::Float32x3(positions)) =
+            mesh.attribute(bevy::mesh::Mesh::ATTRIBUTE_POSITION)
+        else {
+            return Self::default();
+        };
+        let Some(VertexAttributeValues::Float32x4(pivots)) = mesh.attribute(WIND_PIVOT) else {
+            return Self::default();
+        };
+        let Some(VertexAttributeValues::Float32x4(axes)) = mesh.attribute(WIND_AXIS) else {
+            return Self::default();
+        };
+        let cards = match mesh.attribute(CARD_PIVOT) {
+            Some(VertexAttributeValues::Float32x3(p)) => Some(p),
+            _ => None,
+        };
+        positions.iter().zip(pivots).zip(axes).enumerate().fold(
+            Self::default(),
+            |sweep, (i, ((p, pivot), axis))| {
+                let p = Vec3::from_array(*p);
+                let anchor = if axis[3] > 0. {
+                    Vec3::from_slice(&pivot[..3])
+                } else {
+                    cards.map_or(p, |cards| Vec3::from_array(cards[i]))
+                };
+                let reach = p.distance(anchor);
+                Self {
+                    height: sweep.height.max(anchor.y),
+                    offset: sweep.offset.max(anchor.xz().length()),
+                    reach: sweep.reach.max(reach),
+                    limb_reach: sweep.limb_reach.max(reach * axis[3].max(0.)),
+                    card_radius: sweep
+                        .card_radius
+                        .max(cards.map_or(0., |cards| p.distance(Vec3::from_array(cards[i])))),
+                }
+            },
+        )
     }
 
-    let Some(VertexAttributeValues::Float32x3(positions)) =
-        mesh.attribute(bevy::mesh::Mesh::ATTRIBUTE_POSITION)
-    else {
-        return 0.;
-    };
-    let Some(VertexAttributeValues::Float32x4(pivots)) = mesh.attribute(WIND_PIVOT) else {
-        return 0.;
-    };
-    let Some(VertexAttributeValues::Float32x4(axes)) = mesh.attribute(WIND_AXIS) else {
-        return 0.;
-    };
-    let cards = match mesh.attribute(CARD_PIVOT) {
-        Some(VertexAttributeValues::Float32x3(p)) => Some(p),
-        _ => None,
-    };
-    let touch_chord = 2.0 * (TOUCH_TURN * 0.5).sin();
-    positions
-        .iter()
-        .zip(pivots)
-        .zip(axes)
-        .enumerate()
-        .map(|(i, ((p, pivot), axis))| {
-            let p = Vec3::from_array(*p);
-            let anchor = if axis[3] > 0. {
-                Vec3::from_slice(&pivot[..3])
-            } else {
-                cards.map_or(p, |cards| Vec3::from_array(cards[i]))
-            };
-            let card_radius = cards.map_or(0., |cards| p.distance(Vec3::from_array(cards[i])));
-            0.8 * anchor.y.max(0.)
-                + 0.78 * anchor.xz().length()
-                + (1.28 + touch_chord) * p.distance(anchor)
-                + 0.21 * card_radius
-        })
-        .fold(0., f32::max)
+    /// How far its vertices move with the trunk leaning by at most `lean` and a limb turning by
+    /// at most `limb` per unit of its weight (each within the shader's limits) and a card by at
+    /// most `card`, and a push.
+    pub(super) fn reach(&self, lean: f32, limb: f32, card: f32) -> f32 {
+        let lean = lean.min(MAX_LEAN);
+        lean * self.height
+            + chord(lean) * (self.offset + self.reach)
+            + (chord(MAX_LIMB_TURN) * self.reach).min(limb * self.limb_reach)
+            + chord(TOUCH_TURN) * self.reach
+            + card * self.card_radius
+    }
 }
 
 /// Furthest a push turns a limb about its root, radians (`shaders/tree/wind.wesl` TOUCH_TURN).

@@ -9,7 +9,7 @@ use super::super::impostor::{
     TreeFormSpec, instanced_quad, quad_reach,
 };
 
-use super::super::material::{TreeWindMaterial, WindBoundsPending, WindChecked};
+use super::super::material::{TreeWindMaterial, WindBoundsPending, WindChecked, WindReach};
 use super::super::wind::WindBuffer;
 use super::MAX_REPRESENTATIONS;
 use super::shed::{Limb, limb_table};
@@ -21,13 +21,13 @@ use bevy::{
 
 use std::{collections::HashMap, sync::Arc};
 
-/// One primitive of a mesh LOD, with its bounds in object space as the material conversion
-/// grew them for wind and turning cards (the bounds its entities were culled with).
+/// One primitive of a mesh LOD, with its bounds in object space and how far the wind can move
+/// it past them, as the material conversion found them.
 #[derive(Clone, Debug)]
 pub(super) struct Part {
     pub(super) mesh: Handle<Mesh>,
     pub(super) material: Handle<TreeWindMaterial>,
-    pub(super) bounds: (Vec3, Vec3),
+    pub(super) reach: WindReach,
 }
 
 pub(super) struct Form {
@@ -166,6 +166,7 @@ pub(super) fn harvest(
         Option<&MeshMaterial3d<TreeWindMaterial>>,
         Has<WindChecked>,
         Option<&Aabb>,
+        Option<&WindReach>,
         Has<WindBoundsPending>,
     )>,
     (environment, wind, mut cache, mut materials): (
@@ -185,13 +186,13 @@ pub(super) fn harvest(
                 continue;
             }
 
-            // Every mesh of the spawned scene has been seen by the material conversion, and
-            // its bounds grown (the template stands at the origin, unturned and unscaled).
+            // Every mesh of the spawned scene has been seen by the material conversion, and its
+            // wind reach found (the template stands at the origin, unturned and unscaled).
             let mut found = Vec::new();
             let mut pending = !children.contains(template);
 
             for entity in children.iter_descendants(template) {
-                let Ok((mesh, material, checked, aabb, growing)) = parts.get(entity) else {
+                let Ok((mesh, material, checked, aabb, reach, growing)) = parts.get(entity) else {
                     continue;
                 };
 
@@ -204,10 +205,7 @@ pub(super) fn harvest(
                     (Some(material), Some(aabb)) => found.push(Part {
                         mesh: mesh.0.clone(),
                         material: material.0.clone(),
-                        bounds: (
-                            Vec3::from(aabb.center - aabb.half_extents),
-                            Vec3::from(aabb.center + aabb.half_extents),
-                        ),
+                        reach: reach.copied().unwrap_or_else(|| WindReach::still(aabb)),
                     }),
                     _ => warn_once!(
                         "GPU trees: a primitive of {} LOD{lod} has no tree material and is not drawn",
@@ -263,7 +261,11 @@ pub(super) fn harvest(
             form.limbs.as_ref().map_or(0, |l| l.len()),
             form.lods
                 .iter()
-                .map(|parts| parts.iter().flatten().map(|p| p.bounds).collect::<Vec<_>>())
+                .map(|parts| parts
+                    .iter()
+                    .flatten()
+                    .map(|p| p.reach.bounds)
+                    .collect::<Vec<_>>())
                 .collect::<Vec<_>>(),
             form.impostor_sphere,
         );

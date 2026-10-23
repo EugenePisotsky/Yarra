@@ -587,6 +587,7 @@ impl TreeGpu {
             shadow_receivers: [[0.0; 4]; 3 * MAX_SHADOW_VIEWS],
             counts: [0, 0, frame.shadow_lod, next.records_per_view],
             sizes: [next.buckets.len() as u32, 0, u32::from(frame.hidden), 0],
+            wind: frame.turns.extend(0.0).to_array(),
         };
         self.shadow_views.clear();
 

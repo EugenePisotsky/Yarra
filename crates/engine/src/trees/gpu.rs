@@ -118,13 +118,18 @@ pub(super) struct GpuForm {
 }
 
 /// One draw entry's bucket (`Bucket` in `shaders/tree/lod.wesl`): the bounds of what it draws
-/// at unit scale in object space, wind included (a box's centre and half extents, or with
-/// `centre[3]` 1, a sphere's centre and radius in `extent[0]`), and its records in a view.
+/// at unit scale in object space (a box's centre and half extents, or with `centre[3]` 1, a
+/// sphere's centre and radius in `extent[0]`, wind included), and its records in a view. A box
+/// grows by how far the frame's wind can move what it draws (`super::material::WindReach`):
+/// `extent[3]` whatever the wind, and its sweep (anchor height, offset, reach, limb reach) by its
+/// response (trunk, limb, card, then the card radius).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Pod, Zeroable)]
 pub(super) struct GpuBucket {
     centre: [f32; 4],
     extent: [f32; 4],
+    sweep: [f32; 4],
+    response: [f32; 4],
     records: u32,
     capacity: u32,
     padding: [u32; 2],
@@ -144,6 +149,8 @@ pub(super) struct GpuCamera {
     counts: [u32; 4],
     /// Buckets (draw entries) per view, unused, hidden, unused.
     sizes: [u32; 4],
+    /// The bounds on the wind's turns this frame (`super::wind::turn_bounds`), unused.
+    wind: [f32; 4],
 }
 
 /// The instance records, pool, origins and transforms the instanced tree and impostor
@@ -205,6 +212,7 @@ pub(super) fn plugin(app: &mut App) {
             PostUpdate,
             frame::collect
                 .run_if(drawing)
+                .after(super::TreeWindSystems)
                 .after(bevy::camera::visibility::VisibilitySystems::CheckVisibility)
                 .after(bevy::light::SimulationLightSystems::UpdateLightFrusta)
                 .after(bevy::transform::TransformSystems::Propagate),

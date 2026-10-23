@@ -22,6 +22,9 @@ pub(super) struct TreeGpuFrame {
     pub(super) dt: f32,
     pub(super) shadow_lod: u32,
     pub(super) hidden: bool,
+    /// The bounds on the wind's turns (`super::super::wind::turn_bounds`), which pad what each
+    /// primitive is culled with.
+    pub(super) turns: Vec3,
 }
 
 /// Bands are widened by this share and these metres before a representation is ruled out:
@@ -196,6 +199,7 @@ pub(super) fn collect(
     time: Res<Time>,
     pool: Res<TreePool>,
     layout: Res<TreeDrawLayout>,
+    wind: Res<super::super::wind::WindPose>,
     world_view: crate::ActiveWorldView,
     lights: Query<(
         Entity,
@@ -257,5 +261,6 @@ pub(super) fn collect(
         dt: time.delta_secs(),
         shadow_lod: settings.shadow_lod as u32,
         hidden: settings.hidden,
+        turns: wind.turns(),
     };
 }

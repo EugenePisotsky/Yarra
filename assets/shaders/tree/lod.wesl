@@ -29,7 +29,12 @@ struct Form {
 // in extent.x), and its first record and room in a view.
 struct Bucket {
     centre: vec4<f32>,
+    // A box's half extents and, in w, how far what it draws moves whatever the wind.
     extent: vec4<f32>,
+    // A box's sweep (crates/engine/src/trees/cards.rs WindSweep): anchor height, offset, reach,
+    // limb reach; and its response to the wind: trunk, limb, card, then the card radius.
+    sweep: vec4<f32>,
+    response: vec4<f32>,
     records: u32,
     capacity: u32,
     padding: vec2<u32>,
@@ -49,6 +54,9 @@ struct Camera {
     counts: vec4<u32>,
     // Buckets per view, unused, hidden (1 draws nothing), unused.
     sizes: vec4<u32>,
+    // The bounds on the wind's turns this frame (crates/engine/src/trees/wind.rs turn_bounds):
+    // the trunk's lean, a limb's and a card's turn, per unit of a bucket's response.
+    wind: vec4<f32>,
 }
 
 @group(0) @binding(0) var<uniform> camera: Camera;
@@ -133,14 +141,38 @@ fn sphere_bounds(centre: vec3<f32>, radius: f32) -> Bounds {
     return Bounds(centre, vec3(0.0), vec3(0.0), vec3(0.0), radius);
 }
 
+// The shader's limits on the trunk's lean and a limb's turn (tree/wind.wesl structural_frame),
+// and a push's turn (TOUCH_TURN), radians.
+const MAX_LEAN: f32 = 0.8;
+const MAX_LIMB_TURN: f32 = 0.5;
+const TOUCH_TURN: f32 = 0.6;
+
+// How far a turn by `angle` moves a point, per metre from what it turns about.
+fn chord(angle: f32) -> f32 {
+    return 2.0 * sin(0.5 * angle);
+}
+
+// How far the frame's wind, a push and cards turning to the camera can move what a box bucket
+// draws past its mesh's bounds, at unit scale (crates/engine/src/trees/cards.rs WindSweep
+// `reach`): in calm air a tree is culled close to its own bounds, in a gale as far as its trunk
+// can bend.
+fn sway_reach(bucket: Bucket) -> f32 {
+    let turns = camera.wind.xyz * bucket.response.xyz;
+    let lean = min(turns.x, MAX_LEAN);
+    let sweep = bucket.sweep;
+    return bucket.extent.w + lean * sweep.x + chord(lean) * (sweep.y + sweep.z)
+        + min(chord(MAX_LIMB_TURN) * sweep.z, turns.y * sweep.w) + chord(TOUCH_TURN) * sweep.z
+        + turns.z * bucket.response.w;
+}
+
 // Where a bucket's primitive of an instance can reach.
 fn bucket_bounds(bucket: Bucket, root: vec3<f32>, scale: f32, yaw: f32) -> Bounds {
     let centre = root + rotate_y(bucket.centre.xyz * scale, yaw);
     if bucket.centre.w > 0.5 {
         return sphere_bounds(centre, bucket.extent.x * scale);
     }
-    return Bounds(centre, bucket.extent.xyz * scale, rotate_y(vec3(1.0, 0.0, 0.0), yaw),
-                  rotate_y(vec3(0.0, 0.0, 1.0), yaw), 0.0);
+    return Bounds(centre, (bucket.extent.xyz + sway_reach(bucket)) * scale,
+                  rotate_y(vec3(1.0, 0.0, 0.0), yaw), rotate_y(vec3(0.0, 0.0, 1.0), yaw), 0.0);
 }
 
 // How far the bounds reach along a plane's (unit) normal.

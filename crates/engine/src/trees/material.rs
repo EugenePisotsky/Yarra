@@ -438,13 +438,58 @@ fn convert(
     }
 }
 
+/// How far the wind, a push and cards turning to the camera can move a tree primitive past its
+/// mesh's own bounds, in the mesh's space: `steady` whatever the wind, and its sweep as far as
+/// the wind turns it, by the material's response (profile x times w for the trunk, w for limbs,
+/// z for cards). The GPU trees cull with this frame's wind (`shaders/tree/lod.wesl`).
+#[derive(Component, Clone, Copy, Debug)]
+pub(super) struct WindReach {
+    /// The mesh's own bounds.
+    pub(super) bounds: (Vec3, Vec3),
+    pub(super) steady: f32,
+    pub(super) sweep: super::cards::WindSweep,
+    pub(super) response: Vec3,
+}
+
+impl WindReach {
+    /// A primitive no wind moves.
+    pub(super) fn still(bounds: &Aabb) -> Self {
+        Self {
+            bounds: (
+                Vec3::from(bounds.center - bounds.half_extents),
+                Vec3::from(bounds.center + bounds.half_extents),
+            ),
+            steady: 0.,
+            sweep: default(),
+            response: Vec3::ZERO,
+        }
+    }
+
+    /// How far its vertices move with turns bounded by `turns` (`super::wind::turn_bounds`).
+    pub(super) fn reach(&self, turns: Vec3) -> f32 {
+        let turns = turns * self.response;
+        self.steady + self.sweep.reach(turns.x, turns.y, turns.z)
+    }
+}
+
+/// A converted tree primitive whose bounds wait for its wind reach.
+type PendingBounds = (
+    Entity,
+    &'static GlobalTransform,
+    &'static Mesh3d,
+    &'static MeshMaterial3d<TreeWindMaterial>,
+    &'static mut Aabb,
+);
+
 fn expand_bounds(
     mut commands: Commands,
     assets: Res<Assets<Mesh>>,
-    mut meshes: Query<(Entity, &GlobalTransform, &Mesh3d, &mut Aabb), With<WindBoundsPending>>,
+    materials: Res<Assets<TreeWindMaterial>>,
+    mut meshes: Query<PendingBounds, With<WindBoundsPending>>,
 ) {
-    for (entity, transform, handle, mut bounds) in &mut meshes {
-        let Some(mesh) = assets.get(&handle.0) else {
+    for (entity, transform, handle, material, mut bounds) in &mut meshes {
+        let (Some(mesh), Some(material)) = (assets.get(&handle.0), materials.get(&material.0))
+        else {
             continue;
         };
 
@@ -456,12 +501,20 @@ fn expand_bounds(
             .abs()
             .min_element()
             .max(0.001);
-        bounds.half_extents += Vec3A::splat(
-            MAX_DISPLACEMENT / scale
-                + super::cards::max_card_swing(mesh)
-                + super::cards::structural_padding(mesh),
-        );
-        commands.entity(entity).remove::<WindBoundsPending>();
+        let profile = material.extension.profile;
+        let reach = WindReach {
+            steady: MAX_DISPLACEMENT / scale + super::cards::max_card_swing(mesh),
+            sweep: super::cards::WindSweep::of(mesh),
+            response: Vec3::new(profile.x * profile.w, profile.w, profile.z),
+            ..WindReach::still(&bounds)
+        };
+
+        // Entities are culled by their bounds alone, in any wind.
+        bounds.half_extents += Vec3A::splat(reach.reach(super::wind::strongest_turns()));
+        commands
+            .entity(entity)
+            .remove::<WindBoundsPending>()
+            .insert(reach);
     }
 }
 
