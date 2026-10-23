@@ -63,8 +63,12 @@ fn field_force(anchor: vec2<f32>, pose: WindPose) -> f32 {
 }
 
 fn turn_axis(v: vec3<f32>, axis: vec3<f32>, angle: f32) -> vec3<f32> {
-    let c = cos(angle);
-    return v * c + cross(axis, v) * sin(angle) + axis * dot(axis, v) * (1.0 - c);
+    return turn_by(v, axis, cos(angle), sin(angle));
+}
+
+// turn_axis by the angle whose cosine and sine are `c` and `s`.
+fn turn_by(v: vec3<f32>, axis: vec3<f32>, c: f32, s: f32) -> vec3<f32> {
+    return v * c + cross(axis, v) * s + axis * dot(axis, v) * (1.0 - c);
 }
 
 // Yaw preserves the authored in-plane roll; elevation follow optionally tilts
@@ -164,34 +168,49 @@ fn sway_point(p: vec3<f32>, frame: SwayFrame) -> vec3<f32> {
     return frame.deformed_anchor + frame.turn * (p - frame.source);
 }
 
-// Four coherent bands with the amplitude/phase response of a damped oscillator, for a tree
-// rooted at `root` (world XZ). This is an artistic approximation, not a fitted Kaimal
-// spectrum. Species retain their own response period when wind strength changes; damping
-// prevents ringing.
-fn sway_signal(root: vec2<f32>, pose: WindPose, period: f32, detail: f32) -> f32 {
-    let frequencies = vec4(0.55, 1.3, 2.7, 4.3);
-    let spatial = vec4(0.035, 0.07, 0.14, 0.28);
-    let phase = pose.sway_phases + dot(root, pose.field.xy) * spatial + vec4(detail);
-    let ratio = frequencies * max(0.5, period * pose.hierarchy.w) / 6.2831853;
+// The wind at a tree, the same for all its vertices: its strength (strength_at) and the phases
+// of its sway's four bands (sway) as sines and cosines.
+struct TreeWind {
+    sines: vec4<f32>,
+    cosines: vec4<f32>,
+    strength: f32,
+}
+
+fn tree_wind(root: vec2<f32>, pose: WindPose) -> TreeWind {
+    let phase = pose.sway_phases + dot(root, pose.field.xy) * vec4(0.035, 0.07, 0.14, 0.28);
+    return TreeWind(sin(phase), cos(phase), strength_at(root, pose));
+}
+
+// Four coherent bands with the amplitude/phase response of a damped oscillator, for a tree in
+// `wind`, its phases moved on by the angle whose cosine and sine are `detail`. This is an
+// artistic approximation, not a fitted Kaimal spectrum. Species retain their own response period
+// when wind strength changes; damping prevents ringing.
+fn sway(wind: TreeWind, pose: WindPose, period: f32, detail: vec2<f32>) -> f32 {
+    let sines = wind.sines * detail.x + wind.cosines * detail.y;
+    let cosines = wind.cosines * detail.x - wind.sines * detail.y;
+    let ratio = vec4(0.55, 1.3, 2.7, 4.3) * max(0.5, period * pose.hierarchy.w) / 6.2831853;
     let spring = vec4(1.0) - ratio * ratio;
     let damping = 1.5 * ratio;
     // Each band is sin(phase + lag) / |response|, its lag atan2(damping, spring) added because
     // phases travel backwards in time: expanded, so no angle is taken.
     let response = spring * spring + damping * damping;
-    return dot((sin(phase) * spring + cos(phase) * damping) / response, vec4(0.65, 0.38, 0.19, 0.09));
+    return dot((sines * spring + cosines * damping) / response, vec4(0.65, 0.38, 0.19, 0.09));
 }
 
+// No shift of a sway's phases (sway's `detail`).
+const SWAY_AS_IS: vec2<f32> = vec2(1.0, 0.0);
+
 // The frame of a vertex anchored at `local_anchor`, on a limb along `limb_axis` (w its weight, 0 for
-// the trunk) of a stem `height` metres tall, in wind of `strength` at the tree (strength_at).
+// the trunk) of a stem `height` metres tall, in the `wind` at its tree (tree_wind).
 fn structural_frame(local_anchor: vec3<f32>, limb_axis: vec4<f32>, height: f32,
-                    model: mat4x4<f32>, pose: WindPose, strength: f32, profile: vec4<f32>) -> SwayFrame {
+                    model: mat4x4<f32>, pose: WindPose, wind: TreeWind, profile: vec4<f32>) -> SwayFrame {
     let up = normalize(model[1].xyz);
     let direction = vec3(pose.field.x, 0.0, pose.field.y);
     var bend_axis = cross(up, direction);
     if dot(bend_axis, bend_axis) < 1e-8 { bend_axis = vec3(0.0, 0.0, 1.0); }
     bend_axis = normalize(bend_axis);
-    let pressure = strength * strength;
-    let wave = sway_signal(model[3].xz, pose, profile.y, 0.0);
+    let pressure = wind.strength * wind.strength;
+    let wave = sway(wind, pose, profile.y, SWAY_AS_IS);
     let lean = clamp(0.11 * pressure * profile.x * profile.w * pose.hierarchy.x
                     * (1.0 + pose.response.x * wave), -0.15, 0.8);
     let tree_height = max(0.1, height * length(model[1].xyz));
@@ -221,7 +240,7 @@ fn structural_frame(local_anchor: vec3<f32>, limb_axis: vec4<f32>, height: f32,
         if lever > 1e-5 { branch_axis = force_axis / lever; }
         let phase = dot(local_anchor, vec3(0.73, 0.41, -0.57));
         let branch_angle = clamp(0.10 * pressure * profile.w * limb_axis.w * pose.hierarchy.y * lever
-            * (0.6 + pose.response.x * sway_signal(model[3].xz, pose, profile.y * 0.35, phase)), -0.5, 0.5);
+            * (0.6 + pose.response.x * sway(wind, pose, profile.y * 0.35, vec2(cos(phase), sin(phase)))), -0.5, 0.5);
         turn = trunk * rotation(branch_axis, cos(branch_angle), sin(branch_angle));
     }
     return SwayFrame(source, deformed_anchor, bend_axis, turn);
@@ -250,9 +269,9 @@ fn sway_point_of_trunk(point: vec3<f32>, root: vec3<f32>, height: f32, profile: 
     var bend_axis = cross(up, direction);
     if dot(bend_axis, bend_axis) < 1e-8 { bend_axis = vec3(0.0, 0.0, 1.0); }
     bend_axis = normalize(bend_axis);
-    let strength = strength_at(root.xz, pose);
-    let pressure = strength * strength;
-    let wave = sway_signal(root.xz, pose, profile.y, 0.0);
+    let wind = tree_wind(root.xz, pose);
+    let pressure = wind.strength * wind.strength;
+    let wave = sway(wind, pose, profile.y, SWAY_AS_IS);
     let lean = amount * clamp(0.11 * pressure * profile.x * profile.w * pose.hierarchy.x
                               * (1.0 + pose.response.x * wave), -0.15, 0.8);
     let tree_height = max(0.1, height);
@@ -272,7 +291,7 @@ fn sway_point_of_trunk(point: vec3<f32>, root: vec3<f32>, height: f32, profile: 
 // (tree_wind.rs, binding 105 of the tree material); a limb's vertex turns about the limb's root
 // by `turn` (axis times angle) where characters push it (tree/touch.wesl). The trunk stands.
 @if(TREE_HIERARCHY)
-fn vertex_frame(vertex: TreeVertex, model: mat4x4<f32>, pose: WindPose, strength: f32,
+fn vertex_frame(vertex: TreeVertex, model: mat4x4<f32>, pose: WindPose, wind: TreeWind,
                 profile: vec4<f32>, turn: vec3<f32>) -> SwayFrame {
     var anchor = vertex.wind_pivot.xyz;
     if vertex.wind_axis.w == 0.0 {
@@ -280,15 +299,15 @@ fn vertex_frame(vertex: TreeVertex, model: mat4x4<f32>, pose: WindPose, strength
 @if(TREE_BRANCH_CARDS)
         anchor = vertex.card_pivot;
     }
-    let frame = structural_frame(anchor, vertex.wind_axis, vertex.wind_pivot.w, model, pose, strength, profile);
+    let frame = structural_frame(anchor, vertex.wind_axis, vertex.wind_pivot.w, model, pose, wind, profile);
     if vertex.wind_axis.w == 0.0 {
         return frame;
     }
     return touched(frame, turn);
 }
 
-// A vertex in the wind of `strength` at its tree (strength_at): its world position, its limb turned
-// by `turn` (tree/touch.wesl), and the turn its directions (normals, tangents) take with it.
+// A vertex in the `wind` at its tree (tree_wind): its world position, its limb turned by `turn`
+// (tree/touch.wesl), and the turn its directions (normals, tangents) take with it.
 // `viewer` is the view's LOD position, which cards turn toward (shadows and temporal motion use the
 // pose's camera instead).
 struct TreePose {
@@ -296,11 +315,11 @@ struct TreePose {
     turn: mat3x3<f32>,
 }
 
-fn tree_pose(vertex: TreeVertex, model: mat4x4<f32>, pose: WindPose, strength: f32,
+fn tree_pose(vertex: TreeVertex, model: mat4x4<f32>, pose: WindPose, wind: TreeWind,
              profile: vec4<f32>, viewer: vec3<f32>, turn: vec3<f32>) -> TreePose {
     var p = model * vec4(vertex.position, 1.0);
 @if(TREE_HIERARCHY) {
-    let frame = vertex_frame(vertex, model, pose, strength, profile, turn);
+    let frame = vertex_frame(vertex, model, pose, wind, profile, turn);
     p = vec4(sway_point(p.xyz, frame), 1.0);
 @if(TREE_BRANCH_CARDS) {
     let pivot = sway_point((model * vec4(vertex.card_pivot, 1.0)).xyz, frame);
@@ -321,8 +340,10 @@ fn tree_pose(vertex: TreeVertex, model: mat4x4<f32>, pose: WindPose, strength: f
             let rest = normal - a * dot(normal, a);
             let facing = to_view - a * dot(to_view, a);
             if dot(rest, rest) > 1e-8 && dot(facing, facing) > 1e-8 {
-                let angle = atan2(dot(a, cross(normalize(rest), normalize(facing))), dot(normalize(rest), normalize(facing)));
-                p = vec4(pivot + turn_axis(p.xyz - pivot, a, angle), 1.0);
+                // Both are square to the axis, so their dot and cross are the turn's cosine and sine.
+                let resting = normalize(rest);
+                let seen = normalize(facing);
+                p = vec4(pivot + turn_by(p.xyz - pivot, a, dot(resting, seen), dot(a, cross(resting, seen))), 1.0);
             }
         }
     }
@@ -332,7 +353,7 @@ fn tree_pose(vertex: TreeVertex, model: mat4x4<f32>, pose: WindPose, strength: f
     let leaf = select(0.35, 1.0, vertex.uv_b.x > 0.0);
     let flutter = sin(dot(vertex.card_pivot, vec3(1.91, 1.13, -1.37)) + pose.phases.w
                       + dot(model[3].xz, vec2(1.91, -1.37)))
-                  * 0.035 * strength * pose.hierarchy.z * profile.z * leaf;
+                  * 0.035 * wind.strength * pose.hierarchy.z * profile.z * leaf;
     p = vec4(pivot + turn_axis(p.xyz - pivot, frame.trunk_axis, flutter), 1.0);
 }
 }
@@ -347,7 +368,7 @@ fn tree_pose(vertex: TreeVertex, model: mat4x4<f32>, pose: WindPose, strength: f
 }
 
 // tree_pose's position alone.
-fn animated_position(vertex: TreeVertex, model: mat4x4<f32>, pose: WindPose, strength: f32,
+fn animated_position(vertex: TreeVertex, model: mat4x4<f32>, pose: WindPose, wind: TreeWind,
                      profile: vec4<f32>, viewer: vec3<f32>, turn: vec3<f32>) -> vec4<f32> {
-    return tree_pose(vertex, model, pose, strength, profile, viewer, turn).position;
+    return tree_pose(vertex, model, pose, wind, profile, viewer, turn).position;
 }

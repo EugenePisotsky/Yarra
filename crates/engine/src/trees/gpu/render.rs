@@ -370,11 +370,11 @@ fn log_counts(gpu: &mut TreeGpu, layout: &super::layout::Layout) {
 }
 
 /// Bytes per instance of the fade states (one u32) and of the frames the compute pass writes
-/// for the draws (`InstanceFrame` in `shaders/tree/instance.wesl`: three transform rows and the
-/// wind).
+/// for the draws (`InstanceFrame` in `shaders/tree/instance.wesl`: three transform rows, then the
+/// wind of this frame and the previous one, three vec4 each).
 const STATE_BYTES: u64 = std::mem::size_of::<u32>() as u64;
 
-const FRAME_BYTES: u64 = 4 * std::mem::size_of::<[f32; 4]>() as u64;
+const FRAME_BYTES: u64 = 9 * std::mem::size_of::<[f32; 4]>() as u64;
 
 #[allow(clippy::too_many_arguments)] // The pool, layout, frame and GPU resources it writes.
 fn prepare(

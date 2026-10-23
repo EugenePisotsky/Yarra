@@ -219,7 +219,7 @@ impl Harness {
             ),
             entries: with(bytemuck::cast_slice(buckets), BufferUsages::STORAGE),
             args: storage("args", VIEWS as u64 * u64::from(representations) * 20),
-            frames: storage("frames", instances.len() as u64 * 64),
+            frames: storage("frames", instances.len() as u64 * 144),
             wind: storage("wind", 2 * 7 * 16),
             form,
             capacity,
@@ -536,10 +536,10 @@ fn gpu_trees_beside_the_view_draw_as_far_as_the_wind_moves_them() {
 
 #[test]
 #[ignore = "requires native GPU access; runs the trees' LOD and fade pass"]
-fn gpu_trees_frames_hold_the_wind_strength_at_each_tree() {
-    // The two poses' strengths, without gusts to swell them: `WindPose`'s field.w is its
-    // fourth float, the response's swell its twelfth, and the previous pose follows seven
-    // vec4s on.
+fn gpu_trees_frames_hold_the_wind_at_each_tree() {
+    // Two poses without gusts to swell them or a direction to shift their sway: `WindPose`'s
+    // field.w is its fourth float, its sway phases its 21st to 24th, and the previous pose
+    // follows seven vec4s on.
     let (form, buckets) = spruce_form(1);
     let harness = Harness::new(
         &[instance(Vec3::new(3.0, 0.0, -30.0), None)],
@@ -549,6 +549,9 @@ fn gpu_trees_frames_hold_the_wind_strength_at_each_tree() {
     let mut wind = [0.0f32; 56];
     wind[3] = 1.3;
     wind[28 + 3] = 0.9;
+    let phases = [0.3, 0.6, 0.9, 1.2];
+    wind[20..24].copy_from_slice(&phases);
+    wind[48..52].copy_from_slice(&phases.map(|p| -p));
     harness
         .queue
         .write_buffer(&harness.wind, 0, bytemuck::cast_slice(&wind));
@@ -558,7 +561,13 @@ fn gpu_trees_frames_hold_the_wind_strength_at_each_tree() {
         .into_iter()
         .map(f32::from_bits)
         .collect();
-    assert_eq!(frame[12..14], [1.3, 0.9]);
+
+    // After the transform's twelve floats, each pose's sines, cosines and strength (padded).
+    let near = |a: &[f32], b: [f32; 4]| a.iter().zip(b).all(|(a, b)| (a - b).abs() < 1e-5);
+    assert!(near(&frame[12..16], phases.map(f32::sin)));
+    assert!(near(&frame[16..20], phases.map(f32::cos)));
+    assert!(near(&frame[24..28], phases.map(|p| -p.sin())));
+    assert_eq!([frame[20], frame[32]], [1.3, 0.9]);
 }
 
 #[test]

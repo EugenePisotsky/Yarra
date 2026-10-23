@@ -70,7 +70,7 @@ fn finite(value: f32, fallback: f32) -> f32 {
     if value.is_finite() { value } else { fallback }
 }
 
-/// The furthest `sway_signal` reaches (`shaders/tree/wind.wesl`): its bands' weights, each band's
+/// The furthest `sway` reaches (`shaders/tree/wind.wesl`): its bands' weights, each band's
 /// damped gain at most 1.
 const SWAY_PEAK: f32 = 0.65 + 0.38 + 0.19 + 0.09;
 

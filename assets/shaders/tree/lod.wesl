@@ -7,7 +7,7 @@
 // indirect draw.
 
 import package::shaders::tree::instance::{Instance, InstanceFrame};
-import package::shaders::tree::wind::{WindFrames, strength_at};
+import package::shaders::tree::wind::{TreeWind, WindFrames, tree_wind};
 
 // A form's representations (mesh LODs, then its impostor) at unit scale.
 struct Form {
@@ -276,7 +276,7 @@ fn lod(@builtin(global_invocation_id) id: vec3<u32>) {
             vec4(0.0, scale, 0.0, root.y),
             vec4(-s, 0.0, c, root.z),
         ),
-        vec4(strength_at(root.xz, wind.current), strength_at(root.xz, wind.previous), 0.0, 0.0),
+        array<TreeWind, 2>(tree_wind(root.xz, wind.current), tree_wind(root.xz, wind.previous)),
     );
     // Bands are at unit scale: switch distances grow with the object's height.
     let distance = length(root - camera.eye_dt.xyz) / scale;
