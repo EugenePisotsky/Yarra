@@ -180,6 +180,14 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
   are bare.
 - **Ghost of Tsushima/Yōtei look.** *Kept* (`73efae0`, `c4813e5`). Lying blades, twin blades in a V
   from one strip (+1.4 ms, accepted), tussock patches, canopy darkness by depth, noise shadow lines.
+- **Blades bent once per frame, before drawing.** *Kept.* A compute pass (`pose.wesl`) bends each
+  drawn blade by trampling and the wind, this frame and last, into 48-byte records: the curve in
+  halves and last frame's as its change, so motion vectors keep their precision. The vertex
+  shader only evaluates the curves. Every vertex used to bend its blade twice: at the start view
+  grass took 4.5 of 17.1 ms GPU busy (12.7 without grass; 15.3 bending once, 15.7 without wind).
+  Now start 17.1 → 14.5 ms (47 → 52 fps uncapped) and the journey route 16.5 → 13.6 ms (48 → 53
+  fps); the pass costs 0.14 ms. Overcast captures at fixed exposure match the old draw to
+  0.4/255. The records take 88 MiB at the arenas' full capacity.
 - **Critically damped trampling.** *Kept.* Instant presses (no animation) and underdamped springs
   (read as shaking) were rejected.
 - **Gusts change amplitude only; weather scales the phase clock.** *Kept.* A gusting rate times the
@@ -190,7 +198,7 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
   bright as bare road.
 - **Rejected grass trials.** Shadow sheets and clump proxies, blade bands, compact scheduling
   (0.06 ms), clump light per vertex, a +48 MiB arena, blue against saturation (teal dusk). Open:
-  grass shadows, a tier past 96 m, per-instance blade preparation.
+  grass shadows, a tier past 96 m.
 - **Ground details as CPU-placed plain meshes.** *Kept.* Low-tier scans (36–370 triangles) instanced
   by Bevy are cheap; spawn per page and type.
 

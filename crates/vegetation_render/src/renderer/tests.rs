@@ -5,10 +5,11 @@ use bevy::shader::ShaderDefVal;
 use naga::{Module, Statement};
 use shader_check::{Def, Shaders};
 
-const COMPUTE_SHADERS: [&str; 3] = [
+const COMPUTE_SHADERS: [&str; 4] = [
     "shaders/vegetation/schedule.wesl",
     "shaders/vegetation/placement.wesl",
     "shaders/vegetation/candidate_cache.wesl",
+    "shaders/vegetation/pose.wesl",
 ];
 
 const DRAW_SHADER: &str = "shaders/vegetation/draw.wesl";
@@ -116,6 +117,24 @@ fn placement_classifies_each_candidate_once() {
     assert_eq!(entries, ["generate", "finalize"]);
     let generate = &module.entry_points[0].function;
     assert_eq!(calls(&module, &generate.body, "evaluate_candidate"), 1);
+}
+
+#[test]
+fn blades_bend_once_before_drawing() {
+    // The pose pass bends each blade by trampling and the wind; every vertex only reads it.
+    let named = |module: &Module, name: &str| {
+        module
+            .functions
+            .iter()
+            .any(|(_, f)| f.name.as_deref().is_some_and(|n| n.ends_with(name)))
+    };
+    let pose = composed("shaders/vegetation/pose.wesl", &grass_defs());
+    assert!(named(&pose, "wind_curve") && named(&pose, "trample_blade"));
+
+    for temporal in [false, true] {
+        let draw = composed(DRAW_SHADER, &draw_variant(temporal, true));
+        assert!(!named(&draw, "wind_curve") && !named(&draw, "trample_blade"));
+    }
 }
 
 #[test]

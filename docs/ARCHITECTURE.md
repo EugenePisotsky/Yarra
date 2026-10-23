@@ -367,7 +367,8 @@ The game camera (`WorldViewCamera`) renders in HDR and tone-maps into an offscre
 share of the window's physical size (`resolution_scale`, 0.5 by default) with 4× MSAA; with
 MetalFX Temporal, MSAA is off and the backend reconstructs at output size. In order:
 
-1. Compute before the camera: grass trampling, candidate cache and placement; ground prints
+1. Compute before the camera: grass trampling, candidate cache, placement and blade poses
+   (each drawn blade bent by trampling and wind, this frame and last); ground prints
    (`shaders/terrain/press.wesl`, `print_relief.wesl`, `print_mips.wesl`); GPU tree LOD and
    culling (`shaders/tree/lod.wesl`); the terrain-horizon search; cloud shadows.
 2. Main passes: terrain v2 patches (one shared grid mesh and `ClipmapTerrainMaterial`; heights
@@ -420,7 +421,7 @@ All shaders are WESL in `assets/shaders/`, a folder per subsystem:
 - `terrain/`: clipmap material and vertex shader, height blend, road wear, anti-tiling, ground
   prints (`print_map` their texels, `press` pressing them, `print_relief` and `print_mips` the
   relief, `prints` read by the terrain).
-- `vegetation/`: grass `schedule`, `placement/`, `candidate_cache`, `blade`, `draw/`,
+- `vegetation/`: grass `schedule`, `placement/`, `candidate_cache`, `pose`, `blade`, `draw/`,
   `trample`, sharing `types`, `random` and `lod`.
 - `tree/`: tree material, bark, wind and its prepass, impostors, the LOD compute pass.
 - `sky/`: the composite and its parts (air, fog, celestial, sun, cloud layer), light shafts,

@@ -4,7 +4,7 @@ use super::{
     generation::{GenerationInputs, GenerationKey},
     gpu_types::{
         CameraGpu, ConfigGpu, DRAW_ARGS_SIZE, GPU_TELEMETRY_SIZE, INSTANCE_CAPACITY, InstanceGpu,
-        WorkItemGpu,
+        POSE_DISPATCH_SIZE, POSES_SIZE, TemporalGrassGpu, WorkItemGpu,
     },
     page_slots,
     pipelines::VegetationPipelines,
@@ -41,13 +41,19 @@ pub(super) struct VegetationBuffers {
     pub(super) types: Buffer,
     pub(super) types_capacity: u64,
     pub(super) instances: Buffer,
+    /// Each instance slot's blade poses, this frame and last (`pose.wesl`).
+    pub(super) poses: Buffer,
+    pub(super) pose_dispatch: Buffer,
     pub(super) topology_indices: Buffer,
     pub(super) args: Buffer,
     pub(super) gpu_telemetry: Buffer,
     pub(super) camera: Buffer,
+    /// Last frame's camera and the raster transform (`temporal.rs`).
+    pub(super) temporal_grass: Buffer,
     pub(super) config: Buffer,
     pub(super) schedule_bind_group: BindGroup,
     pub(super) compute_bind_group: BindGroup,
+    pub(super) pose_bind_group: BindGroup,
     pub(super) draw_bind_group: BindGroup,
     pub(super) uploaded_revision: u64,
     pub(super) uploaded_origin: [f64; 2],
@@ -69,6 +75,7 @@ impl FromWorld for VegetationBuffers {
         let pipeline_cache = world.resource::<PipelineCache>();
         let schedule_layout = pipeline_cache.get_bind_group_layout(&pipelines.schedule_layout);
         let compute_layout = pipeline_cache.get_bind_group_layout(&pipelines.compute_layout);
+        let pose_layout = pipeline_cache.get_bind_group_layout(&pipelines.pose_layout);
         let draw_layout = pipeline_cache.get_bind_group_layout(&pipelines.draw_layout);
         let render_device = world.resource::<RenderDevice>();
         let candidate_cache = world.resource::<candidate_cache::CandidateCache>();
@@ -95,6 +102,18 @@ impl FromWorld for VegetationBuffers {
                 },
             mapped_at_creation: false,
         });
+        let poses = render_device.create_buffer(&BufferDescriptor {
+            label: Some("vegetation blade poses"),
+            size: POSES_SIZE,
+            usage: BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
+        let pose_dispatch = render_device.create_buffer(&BufferDescriptor {
+            label: Some("vegetation blade pose dispatch"),
+            size: POSE_DISPATCH_SIZE,
+            usage: BufferUsages::STORAGE | BufferUsages::INDIRECT,
+            mapped_at_creation: false,
+        });
         let topology_indices = render_device.create_buffer_with_data(&BufferInitDescriptor {
             label: Some("vegetation blade topology indices"),
             contents: bytemuck::cast_slice(&build_topology_indices()),
@@ -118,6 +137,12 @@ impl FromWorld for VegetationBuffers {
         let camera = render_device.create_buffer(&BufferDescriptor {
             label: Some("vegetation camera"),
             size: size_of::<CameraGpu>() as u64,
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let temporal_grass = render_device.create_buffer(&BufferDescriptor {
+            label: Some("vegetation previous camera"),
+            size: size_of::<TemporalGrassGpu>() as u64,
             usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -157,15 +182,19 @@ impl FromWorld for VegetationBuffers {
                 &candidate_cache.entries,
                 &candidate_cache.acceptance_bits,
                 &candidate_cache.build_items,
+                &pose_dispatch,
             ],
+        );
+        let pose_bind_group = create_pose_bind_group(
+            render_device,
+            &pose_layout,
+            [&instances, &types, &camera, &temporal_grass, &args, &poses],
+            world.resource::<TrampleMap>(),
         );
         let draw_bind_group = create_draw_bind_group(
             render_device,
             &draw_layout,
-            &instances,
-            &types,
-            &camera,
-            world.resource::<TrampleMap>(),
+            [&instances, &types, &camera, &poses],
         );
         Self {
             work_items,
@@ -181,13 +210,17 @@ impl FromWorld for VegetationBuffers {
             types,
             types_capacity: 16,
             instances,
+            poses,
+            pose_dispatch,
             topology_indices,
             args,
             gpu_telemetry,
             camera,
+            temporal_grass,
             config,
             schedule_bind_group,
             compute_bind_group,
+            pose_bind_group,
             draw_bind_group,
             uploaded_revision: 0,
             uploaded_origin: [0.; 2],
@@ -236,7 +269,7 @@ pub(super) fn dummy_storage(render_device: &RenderDevice, label: &'static str) -
 pub(super) fn create_compute_bind_group(
     render_device: &RenderDevice,
     layout: &BindGroupLayout,
-    buffers: [&Buffer; 13],
+    buffers: [&Buffer; 14],
 ) -> BindGroup {
     render_device.create_bind_group(
         Some("vegetation placement"),
@@ -255,28 +288,50 @@ pub(super) fn create_compute_bind_group(
             buffers[10].as_entire_binding(),
             buffers[11].as_entire_binding(),
             buffers[12].as_entire_binding(),
+            buffers[13].as_entire_binding(),
         )),
     )
 }
 
+/// The pose pass's group: instances, types, the camera and last frame's, draw arguments and
+/// poses, with the trample maps between the cameras and the arguments.
+pub(super) fn create_pose_bind_group(
+    render_device: &RenderDevice,
+    layout: &BindGroupLayout,
+    buffers: [&Buffer; 6],
+    trample: &TrampleMap,
+) -> BindGroup {
+    render_device.create_bind_group(
+        Some("vegetation blade poses"),
+        layout,
+        &BindGroupEntries::sequential((
+            buffers[0].as_entire_binding(),
+            buffers[1].as_entire_binding(),
+            buffers[2].as_entire_binding(),
+            buffers[3].as_entire_binding(),
+            &trample.current_view,
+            &trample.previous_view,
+            &trample.sampler,
+            buffers[4].as_entire_binding(),
+            buffers[5].as_entire_binding(),
+        )),
+    )
+}
+
+/// The draw's group: instances, types, the camera and the blade poses.
 pub(super) fn create_draw_bind_group(
     render_device: &RenderDevice,
     layout: &BindGroupLayout,
-    instances: &Buffer,
-    types: &Buffer,
-    camera: &Buffer,
-    trample: &TrampleMap,
+    buffers: [&Buffer; 4],
 ) -> BindGroup {
     render_device.create_bind_group(
         Some("vegetation draw"),
         layout,
         &BindGroupEntries::sequential((
-            instances.as_entire_binding(),
-            types.as_entire_binding(),
-            camera.as_entire_binding(),
-            &trample.current_view,
-            &trample.previous_view,
-            &trample.sampler,
+            buffers[0].as_entire_binding(),
+            buffers[1].as_entire_binding(),
+            buffers[2].as_entire_binding(),
+            buffers[3].as_entire_binding(),
         )),
     )
 }

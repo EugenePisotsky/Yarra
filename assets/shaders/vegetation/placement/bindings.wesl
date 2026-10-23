@@ -38,3 +38,5 @@ struct CandidateCacheEntry {
 @group(0) @binding(10) var<storage, read_write> candidate_cache_entries: array<CandidateCacheEntry>;
 @group(0) @binding(11) var<storage, read_write> candidate_acceptance_bits: array<u32>;
 @group(0) @binding(12) var<storage, read> cache_build_items: array<u32>;
+// The pose pass's workgroup counts (pose.wesl).
+@group(0) @binding(13) var<storage, read_write> pose_dispatch: array<u32, 3>;

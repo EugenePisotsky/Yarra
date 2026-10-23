@@ -2,7 +2,8 @@
 use super::{
     buffers::{
         VegetationBuffers, create_compute_bind_group, create_draw_bind_group,
-        create_schedule_bind_group, grow_storage, update_storage, writable_storage,
+        create_pose_bind_group, create_schedule_bind_group, grow_storage, update_storage,
+        writable_storage,
     },
     candidate_cache,
     generation::GenerationInputs,
@@ -309,7 +310,7 @@ fn upload_sources(
     replaced_buffers > 0
 }
 
-/// Rebuilds the schedule, placement and draw bind groups after a buffer was replaced.
+/// Rebuilds the schedule, placement, pose and draw bind groups after a buffer was replaced.
 fn rebind_groups(
     buffers: &mut VegetationBuffers,
     render_device: &RenderDevice,
@@ -348,15 +349,31 @@ fn rebind_groups(
             &candidate_cache.entries,
             &candidate_cache.acceptance_bits,
             &candidate_cache.build_items,
+            &buffers.pose_dispatch,
         ],
+    );
+    buffers.pose_bind_group = create_pose_bind_group(
+        render_device,
+        &pipeline_cache.get_bind_group_layout(&pipelines.pose_layout),
+        [
+            &buffers.instances,
+            &buffers.types,
+            &buffers.camera,
+            &buffers.temporal_grass,
+            &buffers.args,
+            &buffers.poses,
+        ],
+        trample,
     );
     buffers.draw_bind_group = create_draw_bind_group(
         render_device,
         &pipeline_cache.get_bind_group_layout(&pipelines.draw_layout),
-        &buffers.instances,
-        &buffers.types,
-        &buffers.camera,
-        trample,
+        [
+            &buffers.instances,
+            &buffers.types,
+            &buffers.camera,
+            &buffers.poses,
+        ],
     );
 }
 

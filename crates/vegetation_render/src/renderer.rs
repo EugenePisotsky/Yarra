@@ -16,6 +16,7 @@ mod gpu_types;
 mod packing;
 mod page_slots;
 mod pipelines;
+mod pose;
 mod prepare;
 mod telemetry;
 mod temporal;
@@ -46,6 +47,7 @@ pub(crate) fn install(render_app: &mut SubApp) {
                 trample::stamp,
                 candidate_cache::build,
                 generation::generate,
+                pose::pose,
                 telemetry::finish_telemetry,
             )
                 .chain()

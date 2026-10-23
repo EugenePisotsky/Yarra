@@ -1,64 +1,39 @@
-//! One grass draw writes colour, final scene depth and deformation-aware motion. The vertex
-//! shader poses every blade twice, with this frame's camera and wind and with last frame's.
-use super::{buffers::VegetationBuffers, gpu_types::CameraGpu};
+//! One grass draw writes colour, final scene depth and deformation-aware motion. The pose pass
+//! bends every blade twice, with this frame's camera and wind and with last frame's (`pose.rs`);
+//! this module decides what last frame was.
+use super::{
+    buffers::VegetationBuffers,
+    gpu_types::{CameraGpu, TemporalGrassGpu},
+};
 use crate::{VegetationSceneState, VegetationView};
 
 use bevy::{
     core_pipeline::{Core3dSystems, schedule::Core3d},
     prelude::*,
     render::{
-        GpuResourceAppExt, Render, RenderSystems,
+        Render, RenderSystems,
         render_resource::{
-            BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries, Buffer,
-            BufferDescriptor, BufferUsages, CachedRenderPipelineId, IndexFormat, LoadOp,
-            Operations, PipelineCache, RenderPassColorAttachment, RenderPassDescriptor,
-            ShaderStages, StoreOp, binding_types::uniform_buffer_sized,
+            BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries,
+            CachedRenderPipelineId, IndexFormat, LoadOp, Operations, PipelineCache,
+            RenderPassColorAttachment, RenderPassDescriptor, ShaderStages, StoreOp,
+            binding_types::uniform_buffer_sized,
         },
         renderer::{RenderContext, RenderDevice, RenderQueue, ViewQuery},
         view::{ViewDepthStencilTexture, ViewTarget},
     },
 };
 
-use bytemuck::{Pod, Zeroable};
-use std::mem::size_of;
 use upscaling::temporal::{TemporalFrame, TemporalMotionTarget};
 
 #[derive(Component)]
 pub(super) struct Pipeline(pub CachedRenderPipelineId);
 
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-struct Uniform {
-    previous: CameraGpu,
-    raster_clip: [f32; 16],
-}
-
-#[derive(Resource)]
+#[derive(Resource, Default)]
 struct State {
-    uniform: Buffer,
     group: Option<BindGroup>,
     previous: Option<CameraGpu>,
     catalog_revision: u64,
     was_active: bool,
-}
-
-impl FromWorld for State {
-    fn from_world(world: &mut World) -> Self {
-        let device = world.resource::<RenderDevice>();
-        let uniform = device.create_buffer(&BufferDescriptor {
-            label: Some("grass previous pose"),
-            size: size_of::<Uniform>() as u64,
-            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        Self {
-            uniform,
-            group: None,
-            previous: None,
-            catalog_revision: 0,
-            was_active: false,
-        }
-    }
 }
 
 pub(super) fn layout() -> BindGroupLayoutDescriptor {
@@ -69,7 +44,7 @@ pub(super) fn layout() -> BindGroupLayoutDescriptor {
 }
 
 pub(super) fn install(app: &mut SubApp) {
-    app.init_gpu_resource::<State>()
+    app.init_resource::<State>()
         .add_systems(
             Render,
             prepare
@@ -108,7 +83,7 @@ fn prepare(
         state.group = Some(device.create_bind_group(
             "grass temporal data",
             &cache.get_bind_group_layout(&layout()),
-            &BindGroupEntries::single(state.uniform.as_entire_binding()),
+            &BindGroupEntries::single(buffers.temporal_grass.as_entire_binding()),
         ));
     }
 
@@ -146,9 +121,9 @@ fn prepare(
     }
 
     queue.write_buffer(
-        &state.uniform,
+        &buffers.temporal_grass,
         0,
-        bytemuck::bytes_of(&Uniform {
+        bytemuck::bytes_of(&TemporalGrassGpu {
             previous,
             raster_clip: frame.raster_clip_from_world.to_cols_array(),
         }),

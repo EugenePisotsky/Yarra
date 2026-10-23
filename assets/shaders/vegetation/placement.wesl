@@ -9,7 +9,7 @@ import package::shaders::vegetation::types::{
 };
 import package::shaders::vegetation::placement::bindings::{
     work_items, types, instances, draw_args, visible_work_items, config, telemetry,
-    candidate_cache_entries, candidate_acceptance_bits,
+    candidate_cache_entries, candidate_acceptance_bits, pose_dispatch,
 };
 import package::shaders::vegetation::placement::sampling::{
     Candidate, SurfaceResult, sample_surface, sample_candidate, candidate_grows, sample_coverage, owns,
@@ -156,6 +156,11 @@ fn finalize() {
         atomicStore(&draw_args[bin].base_vertex, 0u);
         atomicStore(&draw_args[bin].first_instance, bin_offset(bin));
     }
+    // The pose pass takes a workgroup row per bin, as wide as the fuller bin.
+    let widest = max(atomicLoad(&draw_args[0].instance_count), atomicLoad(&draw_args[1].instance_count));
+    pose_dispatch[0] = (widest + WORKGROUP_SIZE - 1u) / WORKGROUP_SIZE;
+    pose_dispatch[1] = 2u;
+    pose_dispatch[2] = 1u;
     atomicStore(&draw_args[0].index_count, constants::HIGH_INDEX_COUNT);
     atomicStore(&draw_args[0].first_index, constants::HIGH_FIRST_INDEX);
     atomicStore(&draw_args[1].index_count, constants::LOW_INDEX_COUNT);

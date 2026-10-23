@@ -22,6 +22,15 @@ pub(super) const DRAW_INDEXED_ARGS_WORD_COUNT: u64 = 5;
 pub(super) const DRAW_ARGS_SIZE: u64 =
     BIN_COUNT as u64 * DRAW_INDEXED_ARGS_WORD_COUNT * size_of::<u32>() as u64;
 
+/// Bytes of one blade's pose (`types.wesl` `BladePose`). Each instance slot holds two, for a twin
+/// root's two blades.
+pub(super) const BLADE_POSE_SIZE: u64 = 48;
+
+pub(super) const POSES_SIZE: u64 = INSTANCE_CAPACITY as u64 * 2 * BLADE_POSE_SIZE;
+
+/// The pose pass's indirect dispatch: x, y and z workgroup counts.
+pub(super) const POSE_DISPATCH_SIZE: u64 = 3 * size_of::<u32>() as u64;
+
 #[cfg(not(target_os = "ios"))]
 pub(super) const TELEMETRY_READBACK_SIZE: u64 = GPU_TELEMETRY_SIZE + DRAW_ARGS_SIZE;
 
@@ -161,6 +170,15 @@ impl CameraGpu {
     }
 }
 
+/// Last frame's camera, which the pose pass bends the blades with again for motion vectors, and
+/// the clip transform the grass rasterizes with (`types.wesl` `TemporalGrass`).
+#[derive(Clone, Copy, Pod, Zeroable)]
+#[repr(C)]
+pub(super) struct TemporalGrassGpu {
+    pub(super) previous: CameraGpu,
+    pub(super) raster_clip: [f32; 16],
+}
+
 #[derive(Clone, Copy, PartialEq, Pod, Zeroable)]
 #[repr(C)]
 pub(super) struct ConfigGpu {
@@ -179,6 +197,7 @@ mod tests {
         assert_eq!(size_of::<SurfaceSampleGpu>(), 32);
         assert_eq!(size_of::<InstanceGpu>(), 32);
         assert_eq!(size_of::<CameraGpu>(), 272);
+        assert_eq!(size_of::<TemporalGrassGpu>(), 336);
         assert_eq!(size_of::<ConfigGpu>(), 16);
         assert_eq!(GPU_TELEMETRY_SIZE, 64);
         assert_eq!(DRAW_ARGS_SIZE, 40);

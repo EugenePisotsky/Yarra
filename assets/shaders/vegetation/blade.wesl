@@ -2,7 +2,7 @@
 // leans by the blade's tilt and whose middle arches by its bend, with height, width, facing and
 // colour varying per blade and per clump. The wind pushes the tip and the blade keeps its length.
 import package::shaders::vegetation::types::{
-    Instance, GrassType, Camera, PI, TYPE_INDEX_MASK, LOD_MORPH_MASK, LOD_MORPH_SHIFT,
+    Instance, GrassType, Camera, BladePose, PI, TYPE_INDEX_MASK, LOD_MORPH_MASK, LOD_MORPH_SHIFT,
 };
 import package::shaders::vegetation::random::{hash32, random01};
 import package::shaders::weather::gust::{gust, wind_frame};
@@ -294,4 +294,56 @@ fn wind_curve(rest: Curve, blade: Blade, grass: GrassType, camera: Camera) -> Cu
     c.p2 = c.p0 + (c.p2 - c.p0) * k;
     c.p3 = c.p0 + (c.p3 - c.p0) * k;
     return c;
+}
+
+// A blade's pose, this frame's and last frame's curve about one root.
+struct Pose {
+    now: Curve,
+    before: Curve,
+    // The width axis, after any trampling twist.
+    side: vec3<f32>,
+    pressed: f32,
+}
+
+fn halves(a: f32, b: f32) -> u32 {
+    return pack2x16float(vec2(a, b));
+}
+
+// `before` lies in last frame's render space, about its own root.
+fn pack_pose(now: Curve, before: Curve, side: vec3<f32>, pressed: f32) -> BladePose {
+    let n1 = now.p1 - now.p0;
+    let n2 = now.p2 - now.p0;
+    let n3 = now.p3 - now.p0;
+    let d1 = before.p1 - before.p0 - n1;
+    let d2 = before.p2 - before.p0 - n2;
+    let d3 = before.p3 - before.p0 - n3;
+    var pose: BladePose;
+    pose.curve = vec4(halves(n1.x, n1.y), halves(n1.z, n2.x), halves(n2.y, n2.z), halves(n3.x, n3.y));
+    pose.change = vec4(halves(n3.z, d1.x), halves(d1.y, d1.z), halves(d2.x, d2.y), halves(d2.z, d3.x));
+    pose.frame = vec4(halves(d3.y, d3.z), pack2x16snorm(side.xy), pack2x16snorm(vec2(side.z, pressed)), 0u);
+    return pose;
+}
+
+// The pose about `root`, both curves in this frame's render space.
+fn unpack_pose(pose: BladePose, root: vec3<f32>) -> Pose {
+    let a = unpack2x16float(pose.curve.x);
+    let b = unpack2x16float(pose.curve.y);
+    let c = unpack2x16float(pose.curve.z);
+    let d = unpack2x16float(pose.curve.w);
+    let e = unpack2x16float(pose.change.x);
+    let f = unpack2x16float(pose.change.y);
+    let g = unpack2x16float(pose.change.z);
+    let h = unpack2x16float(pose.change.w);
+    let i = unpack2x16float(pose.frame.x);
+    let n1 = vec3(a, b.x);
+    let n2 = vec3(b.y, c);
+    let n3 = vec3(d, e.x);
+    var p: Pose;
+    p.now = Curve(root, root + n1, root + n2, root + n3);
+    p.before = Curve(root, root + n1 + vec3(e.y, f), root + n2 + vec3(g, h.x), root + n3 + vec3(h.y, i));
+    let side_xy = unpack2x16snorm(pose.frame.y);
+    let side_z_pressed = unpack2x16snorm(pose.frame.z);
+    p.side = normalize3_or(vec3(side_xy, side_z_pressed.x), vec3(1.0, 0.0, 0.0));
+    p.pressed = side_z_pressed.y;
+    return p;
 }

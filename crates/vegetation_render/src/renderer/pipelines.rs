@@ -25,18 +25,21 @@ use std::borrow::Cow;
 const SCHEDULE_SHADER_PATH: &str = "shaders/vegetation/schedule.wesl";
 const PLACEMENT_SHADER_PATH: &str = "shaders/vegetation/placement.wesl";
 const CANDIDATE_CACHE_SHADER_PATH: &str = "shaders/vegetation/candidate_cache.wesl";
+const POSE_SHADER_PATH: &str = "shaders/vegetation/pose.wesl";
 const DRAW_SHADER_PATH: &str = "shaders/vegetation/draw.wesl";
 
 #[derive(Resource)]
 pub(super) struct VegetationPipelines {
     pub(super) schedule_layout: BindGroupLayoutDescriptor,
     pub(super) compute_layout: BindGroupLayoutDescriptor,
+    pub(super) pose_layout: BindGroupLayoutDescriptor,
     pub(super) draw_layout: BindGroupLayoutDescriptor,
     pub(super) schedule: CachedComputePipelineId,
     pub(super) generate: CachedComputePipelineId,
     pub(super) finalize: CachedComputePipelineId,
     pub(super) cache_build: CachedComputePipelineId,
     pub(super) cache_finish: CachedComputePipelineId,
+    pub(super) pose: CachedComputePipelineId,
     pub(super) draw_variants: Variants<RenderPipeline, VegetationPipelineSpecializer>,
 }
 
@@ -46,6 +49,7 @@ impl FromWorld for VegetationPipelines {
         let schedule_shader = asset_server.load(SCHEDULE_SHADER_PATH);
         let placement_shader = asset_server.load(PLACEMENT_SHADER_PATH);
         let candidate_cache_shader = asset_server.load(CANDIDATE_CACHE_SHADER_PATH);
+        let pose_shader = asset_server.load(POSE_SHADER_PATH);
         let draw_shader = asset_server.load(DRAW_SHADER_PATH);
         let pipeline_cache = world.resource::<PipelineCache>();
         let view_layouts = world.resource::<MeshPipelineViewLayouts>().clone();
@@ -82,6 +86,25 @@ impl FromWorld for VegetationPipelines {
                     storage_buffer_sized(false, None),
                     storage_buffer_sized(false, None),
                     storage_buffer_read_only_sized(false, None),
+                    storage_buffer_sized(false, None),
+                ),
+            ),
+        );
+        let pose_layout = BindGroupLayoutDescriptor::new(
+            "vegetation blade poses",
+            &BindGroupLayoutEntries::sequential(
+                ShaderStages::COMPUTE,
+                (
+                    storage_buffer_read_only_sized(false, None),
+                    storage_buffer_read_only_sized(false, None),
+                    uniform_buffer_sized(false, None),
+                    uniform_buffer_sized(false, None),
+                    // The trample map now and last frame, and its wrapping sampler.
+                    texture_2d(TextureSampleType::Float { filterable: true }),
+                    texture_2d(TextureSampleType::Float { filterable: true }),
+                    sampler(SamplerBindingType::Filtering),
+                    storage_buffer_read_only_sized(false, None),
+                    storage_buffer_sized(false, None),
                 ),
             ),
         );
@@ -93,10 +116,7 @@ impl FromWorld for VegetationPipelines {
                     storage_buffer_read_only_sized(false, None),
                     storage_buffer_read_only_sized(false, None),
                     uniform_buffer_sized(false, None),
-                    // The trample map now and last frame, and its wrapping sampler.
-                    texture_2d(TextureSampleType::Float { filterable: true }),
-                    texture_2d(TextureSampleType::Float { filterable: true }),
-                    sampler(SamplerBindingType::Filtering),
+                    storage_buffer_read_only_sized(false, None),
                 ),
             ),
         );
@@ -139,6 +159,14 @@ impl FromWorld for VegetationPipelines {
             &candidate_cache_shader,
             "finish_candidate_cache",
         );
+        let pose = pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
+            label: Some("vegetation blade poses".into()),
+            layout: vec![pose_layout.clone()],
+            shader: pose_shader,
+            shader_defs: shader_defs(),
+            entry_point: Some(Cow::Borrowed("pose")),
+            ..default()
+        });
         let mut draw_defs = shader_defs();
         draw_defs.push("SHADOW_FILTER_METHOD_HARDWARE_2X2".into());
         let draw_descriptor = RenderPipelineDescriptor {
@@ -183,12 +211,14 @@ impl FromWorld for VegetationPipelines {
         Self {
             schedule_layout,
             compute_layout,
+            pose_layout,
             draw_layout: draw_layout.clone(),
             schedule,
             generate,
             finalize,
             cache_build,
             cache_finish,
+            pose,
             draw_variants: Variants::new(
                 VegetationPipelineSpecializer {
                     view_layouts,

@@ -1,6 +1,8 @@
 // The draw's own bind groups and varyings. Group zero is Bevy's mesh-view bind group, including
 // directional shadow cascades; group two holds the cloud and forest-shadow surface inputs.
-import package::shaders::vegetation::types::{Instance, GrassType, Camera};
+import package::shaders::vegetation::types::{Instance, GrassType, Camera, BladePose};
+@if(TEMPORAL_GRASS)
+import package::shaders::vegetation::types::TemporalGrass;
 
 struct VertexOutput {
     @if(TEMPORAL_GRASS) @location(11) current_clip: vec4<f32>,
@@ -29,12 +31,8 @@ struct VertexOutput {
 @group(1) @binding(0) var<storage, read> instances: array<Instance>;
 @group(1) @binding(1) var<storage, read> types: array<GrassType>;
 @group(1) @binding(2) var<uniform> camera: Camera;
-// The trample map (trample.wesl) this frame and last, which poses blades for motion vectors.
-@group(1) @binding(3) var trample_now: texture_2d<f32>;
-@group(1) @binding(4) var trample_before: texture_2d<f32>;
-@group(1) @binding(5) var trample_sampler: sampler;
+// Each blade's curve this frame and last (pose.wesl), two records per instance.
+@group(1) @binding(3) var<storage, read> poses: array<BladePose>;
 
-@if(TEMPORAL_GRASS)
-struct TemporalGrass { previous: Camera, raster_clip: mat4x4<f32> }
 @if(TEMPORAL_GRASS)
 @group(3) @binding(0) var<uniform> temporal_grass: TemporalGrass;

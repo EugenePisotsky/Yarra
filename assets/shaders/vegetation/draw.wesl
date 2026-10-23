@@ -11,11 +11,15 @@ fn vertex(
     @builtin(vertex_index) vertex_index: u32,
     @builtin(instance_index) instance_index: u32,
 ) -> VertexOutput {
-    var output = blade_vertex(vertex_index, instance_index, camera, false);
+    let blade = blade_vertex(vertex_index, instance_index);
+    var output = blade.output;
     @if(TEMPORAL_GRASS) {
-        let previous = blade_vertex(vertex_index, instance_index, temporal_grass.previous, true);
+        // Last frame's render space lies apart from this frame's by the render origin's move.
+        let last_camera = temporal_grass.previous;
+        let shift = camera.render_origin.xy - last_camera.render_origin.xy;
+        let previous = blade.previous + vec3(shift.x, 0.0, shift.y);
         output.current_clip = output.clip_position;
-        output.previous_clip = previous.clip_position;
+        output.previous_clip = last_camera.clip_from_world * vec4(previous, 1.0);
         output.clip_position = temporal_grass.raster_clip * vec4(output.world_position, 1.0);
     }
     return output;

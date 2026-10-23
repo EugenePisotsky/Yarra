@@ -143,6 +143,9 @@
         (shader: "shaders/vegetation/placement.wesl", variants: [
             ["@grass"],
         ]),
+        (shader: "shaders/vegetation/pose.wesl", variants: [
+            ["@grass"],
+        ]),
         (shader: "shaders/vegetation/schedule.wesl", variants: [
             ["@grass"],
         ]),

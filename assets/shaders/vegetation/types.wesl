@@ -75,6 +75,20 @@ struct Camera {
     gust_swell: vec4<f32>,
 }
 
+// Last frame's camera, for motion vectors, and the clip transform the grass rasterizes with.
+struct TemporalGrass { previous: Camera, raster_clip: mat4x4<f32> }
+
+// One blade posed by trampling and the wind (pose.wesl), as drawing reads it: 18 halves in
+// order, then two snorm16 pairs. The halves are this frame's control points p1, p2, p3 after the
+// root (9), then their change since last frame (9): a frame's few millimetres keep their
+// precision as a change, where two positions in halves would differ by their rounding. The
+// pairs are the width axis xy, then its z and how far the blade is pressed down.
+struct BladePose {
+    curve: vec4<u32>,
+    change: vec4<u32>,
+    frame: vec4<u32>,
+}
+
 struct Config {
     // x: live work items, y: diagnostic counters enabled, z: candidate cache, w: reserved
     workload: vec4<u32>,

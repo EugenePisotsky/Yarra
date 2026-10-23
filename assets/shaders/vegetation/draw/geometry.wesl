@@ -1,13 +1,14 @@
 // Blade vertices. There are no vertex streams: `vertex_index` picks a row and side of the blade
 // (or its tip) and `instance_index` the blade placement emitted. Each vertex evaluates its blade's
-// curve and wind; the vertex budget is fixed per LOD bin.
-import package::shaders::vegetation::types::{Camera, PI, DENSITY_FADE_BAND};
+// curve as the pose pass left it, this frame's and last frame's; the vertex budget is fixed per
+// LOD bin.
+import package::shaders::vegetation::types::{PI, DENSITY_FADE_BAND};
 import package::shaders::vegetation::blade::{
-    normalize3_or, cubic_bezier, cubic_bezier_derivative, decode_instance, rest_blade,
-    rest_curve, trample_blade, twin_blade, wind_curve,
+    Curve, normalize3_or, cubic_bezier, cubic_bezier_derivative, decode_instance, rest_blade,
+    twin_blade, unpack_pose,
 };
 import package::shaders::vegetation::draw::bindings::{
-    VertexOutput, instances, types, camera, trample_now, trample_before, trample_sampler,
+    VertexOutput, instances, types, camera, poses,
 };
 
 const HIGH_ROWS: u32 = constants::HIGH_ROWS;
@@ -46,39 +47,44 @@ fn clump_normal(surface_normal: vec3<f32>, clump: f32) -> vec3<f32> {
 const TWIN_FIRST_HIGH: u32 = 4u;
 const TWIN_FIRST_LOW: u32 = 1u;
 
-// How characters push the grass rooted at `root`, from the trample map of `pose`'s frame: the
-// way its tips are pushed, length 1 lying flat. The map wraps, so roots near or beyond its edge
-// read nothing.
-fn trampled(root: vec3<f32>, pose: Camera, previous: bool) -> vec2<f32> {
-    if (pose.trample.w <= 0.0) {
-        return vec2<f32>(0.0);
-    }
-    let canonical = root.xz + pose.render_origin.xy;
-    let away = abs(canonical - pose.trample.xy);
-    let edge = max(away.x, away.y);
-    let half_side = pose.trample.z * 0.5;
-    let inside = 1.0 - smoothstep(half_side - 4.0, half_side - 1.0, edge);
-    if (inside <= 0.0) {
-        return vec2<f32>(0.0);
-    }
-    let uv = canonical / pose.trample.z;
-    var value = textureSampleLevel(trample_now, trample_sampler, uv, 0.0);
-    if previous {
-        value = textureSampleLevel(trample_before, trample_sampler, uv, 0.0);
-    }
-    return value.xy * inside;
+// Near the edge of the high-detail disk, rows slide onto the low mesh's straight segments, so
+// the switch to it never pops: the ends along the blade of the low segment holding `t`, and how
+// far between them `t` lies.
+struct LowSegment {
+    start: f32,
+    end: f32,
+    share: f32,
 }
 
-fn blade_vertex(vertex_index: u32, instance_index: u32, pose: Camera, previous: bool) -> VertexOutput {
-    var instance = instances[instance_index];
-    if previous {
-        // Both poses use the same blade; only the render origin may differ.
-        instance.root_clump.x += camera.render_origin.x - pose.render_origin.x;
-        instance.root_clump.z += camera.render_origin.y - pose.render_origin.y;
+fn low_segment(t: f32, low_segments: f32) -> LowSegment {
+    let s = t * low_segments;
+    let k = min(floor(s), low_segments - 1.0);
+    return LowSegment(k / low_segments, (k + 1.0) / low_segments, s - k);
+}
+
+// Where the curve passes `t`, slid by `morph` toward the low mesh.
+fn curve_point(c: Curve, t: f32, low: LowSegment, morph: f32) -> vec3<f32> {
+    let position = cubic_bezier(c.p0, c.p1, c.p2, c.p3, t);
+    if (morph >= 1.0) {
+        return position;
     }
-    var b = decode_instance(instance);
+    let straight = mix(
+        cubic_bezier(c.p0, c.p1, c.p2, c.p3, low.start),
+        cubic_bezier(c.p0, c.p1, c.p2, c.p3, low.end),
+        low.share,
+    );
+    return mix(straight, position, morph);
+}
+
+// A blade vertex, and where it stood last frame in this frame's render space.
+struct BladeVertex {
+    output: VertexOutput,
+    previous: vec3<f32>,
+}
+
+fn blade_vertex(vertex_index: u32, instance_index: u32) -> BladeVertex {
+    var b = decode_instance(instances[instance_index]);
     let grass = types[b.type_index];
-    let push = trampled(b.root, pose, previous);
 
     let rows = select(HIGH_ROWS, LOW_ROWS, b.low);
     let tip = vertex_index >= 2u * rows;
@@ -88,41 +94,35 @@ fn blade_vertex(vertex_index: u32, instance_index: u32, pose: Camera, previous: 
     var t = path / f32(rows);
     // Segments of this blade in the low-detail strip, which high detail morphs toward.
     var low_segments = f32(LOW_ROWS);
+    var record = 2u * instance_index;
     if (grass.form.x > 0.5) {
         let split = f32(select(TWIN_FIRST_HIGH, TWIN_FIRST_LOW, b.low));
         let first = path < split;
         t = select((path - split) / (f32(rows) - split), (split - path) / split, first);
         low_segments = select(f32(LOW_ROWS - TWIN_FIRST_LOW), f32(TWIN_FIRST_LOW), first);
         b = twin_blade(b, first);
+        record += u32(first);
     }
-    let blade = trample_blade(rest_blade(b, grass), push);
-    let c = wind_curve(rest_curve(blade), blade, grass, pose);
+    let blade = rest_blade(b, grass);
+    let pose = unpack_pose(poses[record], blade.root);
+    let morph = select(b.lod_morph, 1.0, b.low);
+    let low = low_segment(t, low_segments);
 
-    var position = cubic_bezier(c.p0, c.p1, c.p2, c.p3, t);
+    var position = curve_point(pose.now, t, low, morph);
+    var previous = curve_point(pose.before, t, low, morph);
+    let c = pose.now;
     let tangent = normalize3_or(cubic_bezier_derivative(c.p0, c.p1, c.p2, c.p3, t), blade.up);
     var taper = pow(max(1.0 - t, 0.0), TAPER);
-    if (!b.low && b.lod_morph < 1.0) {
-        // Near the edge of the high-detail disk, rows slide onto the low mesh's straight
-        // segments so the switch to it never pops.
-        let s = t * low_segments;
-        let k = min(floor(s), low_segments - 1.0);
-        let f = s - k;
-        let t0 = k / low_segments;
-        let t1 = (k + 1.0) / low_segments;
-        let low = mix(
-            cubic_bezier(c.p0, c.p1, c.p2, c.p3, t0),
-            cubic_bezier(c.p0, c.p1, c.p2, c.p3, t1),
-            f,
-        );
-        let low_taper = mix(pow(1.0 - t0, TAPER), pow(max(1.0 - t1, 0.0), TAPER), f);
-        position = mix(low, position, b.lod_morph);
-        taper = mix(low_taper, taper, b.lod_morph);
+    if (morph < 1.0) {
+        let low_taper = mix(pow(1.0 - low.start, TAPER), pow(max(1.0 - low.end, 0.0), TAPER),
+            low.share);
+        taper = mix(low_taper, taper, morph);
     }
 
     // The width axis, carried along the curve; the normal faces where the blade leans.
-    let side = normalize3_or(blade.side - tangent * dot(blade.side, tangent), blade.side);
-    let normal = normalize3_or(cross(side, tangent), blade.forward);
-    let to_camera = normalize3_or(pose.camera_position.xyz - position, normal);
+    let side = normalize3_or(pose.side - tangent * dot(pose.side, tangent), pose.side);
+    let normal = normalize3_or(cross(side, tangent), blade.up);
+    let to_camera = normalize3_or(camera.camera_position.xyz - position, normal);
     // Turn the width line toward the camera-facing one by at most MAX_VIEW_OPENING where the
     // blade is seen edge-on. Lighting keeps the physical frame.
     let facing_side = normalize3_or(cross(tangent, to_camera), side);
@@ -142,11 +142,11 @@ fn blade_vertex(vertex_index: u32, instance_index: u32, pose: Camera, previous: 
             b.lod_rank,
         );
     }
-    let distance_to_camera = max(distance(pose.camera_position.xyz, position), 0.05);
+    let distance_to_camera = max(distance(camera.camera_position.xyz, position), 0.05);
     let coverage_scale = clamp(
         pow(1.0 / max(b.density, 0.125), COVERAGE_WIDTH_EXPONENT), 1.0, MAXIMUM_WIDTH_SCALE,
     );
-    let projected_half_width = blade.width * 0.5 * pose.projection.x
+    let projected_half_width = blade.width * 0.5 * camera.projection.x
         * sqrt(max(1.0 - dot(drawn_side, to_camera) * dot(drawn_side, to_camera), 0.0))
         / distance_to_camera;
     let subpixel_scale = mix(
@@ -155,10 +155,12 @@ fn blade_vertex(vertex_index: u32, instance_index: u32, pose: Camera, previous: 
         smoothstep(SUBPIXEL_FADE.x, SUBPIXEL_FADE.y, distance_to_camera),
     );
     let half_width = blade.width * 0.5 * taper * width_scale * max(coverage_scale, subpixel_scale);
-    position += drawn_side * side_sign * half_width;
+    let offset = drawn_side * side_sign * half_width;
+    position += offset;
+    previous += offset;
 
     var output: VertexOutput;
-    output.clip_position = pose.clip_from_world * vec4<f32>(position, 1.0);
+    output.clip_position = camera.clip_from_world * vec4<f32>(position, 1.0);
     output.world_position = position;
     output.world_normal = normal;
     output.side = side;
@@ -170,7 +172,7 @@ fn blade_vertex(vertex_index: u32, instance_index: u32, pose: Camera, previous: 
     let canopy_height = max(grass.size.y * CANOPY_SHARE, 0.02);
     // Pressed grass lies in the open, its neighbours pressed down with it, so it is lit.
     let depth = clamp(1.0 - dot(position - blade.root, blade.up) / canopy_height, 0.0, 1.0)
-        * (1.0 - 0.8 * blade.pressed);
+        * (1.0 - 0.8 * pose.pressed);
     output.material = vec4<f32>(
         grass.material.y,
         grass.material.z,
@@ -179,5 +181,5 @@ fn blade_vertex(vertex_index: u32, instance_index: u32, pose: Camera, previous: 
     );
     output.canopy = vec2<f32>(depth, canopy_height);
     output.clump_normal = clump_normal(b.surface_normal, b.clump);
-    return output;
+    return BladeVertex(output, previous);
 }
