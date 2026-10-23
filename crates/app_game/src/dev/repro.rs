@@ -136,7 +136,12 @@ pub(crate) fn install(app: &mut App) {
             .0
             .clone()
             .expect("actor-walk requires --start-view with a route");
-        app.insert_resource(engine::PlayerRoute::new(view.route).with_speed(repro.walk_speed))
+        let route = engine::PlayerRoute::new(view.route);
+        let route = match repro.walk_speed {
+            Some(speed) => route.with_speed(speed),
+            None => route,
+        };
+        app.insert_resource(route)
             .add_systems(Update, log_actor_walk);
     }
 
@@ -268,34 +273,9 @@ fn move_camera(
     start_view: Res<engine::WorldStartView>,
     origin: Res<engine::WorldOrigin>,
     catalog: Res<engine::WorldCatalog>,
-    viewpoint: Res<engine::WorldViewpoint>,
 ) {
+    // The walk turns the game's own follow camera along the route (`engine::PlayerRoute`).
     if view.0 == Route::ActorWalk {
-        // Follow the walking player while looking left and right, as a player does.
-        let (Some(bookmark), Some(position)) = (start_view.0.as_ref(), viewpoint.position()) else {
-            return;
-        };
-        let size = catalog
-            .world_space(position.space)
-            .map_or(world::DEFAULT_CELL_SIZE, |s| s.cell_size);
-        let offset = origin.cell().origin(size);
-        let at = position.cell.origin(size);
-        let relative = Vec3::new(
-            (at[0] + f64::from(position.local[0]) - offset[0]) as f32,
-            position.local[1],
-            (at[1] + f64::from(position.local[2]) - offset[1]) as f32,
-        );
-
-        // Hold the heading while the cover grows to the full patch budget, then look behind
-        // to one side and back every 20 s: most of the cover is replaced each time.
-        let mut look = bookmark.clone();
-        let t = time.elapsed_secs();
-
-        if t > 60. && (((t - 60.) / 20.) as u32).is_multiple_of(2) {
-            look.yaw_degrees += 180.;
-        }
-
-        **camera = engine::WorldStartView::camera_at(&look, relative);
         return;
     }
 

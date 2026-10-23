@@ -235,7 +235,7 @@ const FLAGS: &[Flag] = &[
         "--render-walk-speed",
         "MPS",
         Repro,
-        "Speed of actor-walk in metres per second (default 20; a walk is about 1.5)",
+        "Speed of actor-walk in metres per second (default the character's jog, about 2.9)",
     )
     .needs(REPRO),
     flag(

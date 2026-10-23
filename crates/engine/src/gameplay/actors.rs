@@ -114,6 +114,19 @@ impl PlayerRoute {
     }
 }
 
+/// Where a render-space translation lies in world XZ.
+fn world_xz(origin: &crate::WorldOrigin, catalog: &crate::WorldCatalog, translation: Vec3) -> Vec2 {
+    let size = origin
+        .space()
+        .and_then(|space| catalog.world_space(space))
+        .map_or(world::DEFAULT_CELL_SIZE, |space| space.cell_size);
+    let offset = origin.cell().origin(size);
+    Vec2::new(
+        (f64::from(translation.x) + offset[0]) as f32,
+        (f64::from(translation.z) + offset[1]) as f32,
+    )
+}
+
 pub(super) fn steer_player_along_route(
     route: Option<ResMut<PlayerRoute>>,
     origin: Option<Res<crate::WorldOrigin>>,
@@ -130,11 +143,6 @@ pub(super) fn steer_player_along_route(
     let (Some(mut route), Some(origin), Some(catalog)) = (route, origin, catalog) else {
         return;
     };
-    let size = origin
-        .space()
-        .and_then(|space| catalog.world_space(space))
-        .map_or(world::DEFAULT_CELL_SIZE, |space| space.cell_size);
-    let offset = origin.cell().origin(size);
 
     for (transform, mut intent, config) in &mut player {
         // Re-applied each frame: the character's presentation may replace its config.
@@ -142,10 +150,7 @@ pub(super) fn steer_player_along_route(
             config.jog_speed_mps = speed;
         }
 
-        let here = Vec2::new(
-            (f64::from(transform.translation.x) + offset[0]) as f32,
-            (f64::from(transform.translation.z) + offset[1]) as f32,
-        );
+        let here = world_xz(&origin, &catalog, transform.translation);
         let target =
             |route: &PlayerRoute| route.points.get(route.next).map(|p| Vec2::new(p[0], p[2]));
 
@@ -158,6 +163,39 @@ pub(super) fn steer_player_along_route(
             None => intent.set_direct(Vec2::ZERO, 0., None),
         }
     }
+}
+
+/// Route points ahead the camera looks toward, about 30 m along a road: it turns with the road's
+/// bends rather than at every point.
+const CAMERA_LOOK_AHEAD_POINTS: usize = 3;
+
+/// Turns the camera behind the player to look along the route ahead, as a player keeps it on the
+/// road; the rig eases there as it does after input. Where the route ends it stays.
+pub(super) fn turn_camera_along_route(
+    route: Option<Res<PlayerRoute>>,
+    origin: Option<Res<crate::WorldOrigin>>,
+    catalog: Option<Res<crate::WorldCatalog>>,
+    player: Single<&Transform, With<PlayerControlled>>,
+    mut rig: Single<&mut super::camera::CameraRig, With<super::camera::MainCamera>>,
+) {
+    let (Some(route), Some(origin), Some(catalog)) = (route, origin, catalog) else {
+        return;
+    };
+    let ahead = (route.next + CAMERA_LOOK_AHEAD_POINTS).min(route.points.len().saturating_sub(1));
+    let Some(point) = route.points.get(ahead).filter(|_| route.remaining() > 0) else {
+        return;
+    };
+    let way = Vec2::new(point[0], point[2]) - world_xz(&origin, &catalog, player.translation);
+
+    if way.length_squared() < 1.0 {
+        return;
+    }
+
+    // The orbit's yaw puts the camera on the side opposite the way, the nearest turn from where
+    // the rig aims now.
+    let yaw = (-way.x).atan2(-way.y);
+    let tau = std::f32::consts::TAU;
+    rig.target_yaw = yaw + ((rig.target_yaw - yaw) / tau).round() * tau;
 }
 
 pub(super) fn move_player_to_adopted_start(

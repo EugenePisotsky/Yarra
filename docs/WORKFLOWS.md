@@ -468,10 +468,14 @@ target/release/yarra-app-game --start-view content/world.project.views/overlook.
 
 Routes: `low-walk`, `grass-close`, `grass-away`, `grass-follow`, `grass-follow-far`, `grass-zoom`,
 `grass-top-down`, `grass-overhead`, `grass-stream`, `grass-soak`, `landscape`, `landscape-turn`,
-`landscape-descent`, `actor-walk` (walks the view's `route`; `journey.ron` has one). `landscape*`
-and `actor-walk` need `--start-view`. `--render-frame-clock` steps by frames, so two builds see
-the same camera. Snapshots follow the 300-frame warm-up; `--render-frames` is at least 900.
-`--render-walk-speed` defaults to 20 m/s (F1's fast walk is about 35).
+`landscape-descent`, `actor-walk` (walks the view's `route`; `journey.ron` has one, along the
+road). `landscape*` and `actor-walk` need `--start-view`. `--render-frame-clock` steps by frames,
+so two builds see the same camera. Snapshots follow the 300-frame warm-up; `--render-frames` is at
+least 900. `actor-walk` jogs as the player does (`--render-walk-speed` overrides, F1's fast walk
+is about 35 m/s), with the game's follow camera turned to look along the route ahead.
+
+To replay play as reported, keep the play settings a repro would otherwise change:
+`--resolution-scale 0.5 --upscaler metalfx-temporal --day-clock on --weather auto`.
 
 ### Timed profiles
 

@@ -106,6 +106,7 @@ impl Plugin for GameplayPlugin {
                     actors::steer_player_along_route
                         .after(GameplaySystems::MoveIntent)
                         .before(GameplaySystems::Movement),
+                    actors::turn_camera_along_route.before(GameplaySystems::CameraInput),
                     actors::hold_suspended_player
                         .after(actors::steer_player_along_route)
                         .before(GameplaySystems::Movement),
