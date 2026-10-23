@@ -427,6 +427,16 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
 
 ## Performance & measurement method
 
+- **The target is PS5-class hardware at 60 fps; the MacBook is where the work happens.** *Kept*
+  (user, October 23). Low settings for phones and handhelds (iPhone, Switch 2, Steam Deck) may
+  follow. Optimise real work wherever measuring finds it; a drop that is only the Mac's GPU clock
+  is not a goal in itself.
+- **A Mac lowers its GPU's performance state after minutes of near-full load.** *Kept* (October
+  23). Jogging from the start into the meadow before the gorge, every pass took twice as long,
+  fixed-size ones too, with the GPU in its Medium state the whole time. Standing there from a
+  fresh start it stayed at Maximum, 12.5 ms a frame. Streaming CPU (1.6 against 1.4 cores),
+  memory and the frame's work were unchanged. Read the performance state before chasing a drop;
+  headroom below the frame budget is the lever.
 - **The Metal HUD's GPU time is not a cost.** *Kept.* macOS clocks the GPU to the load (light scenes
   ran passes 2× slower). Budget in clock-free counts; time passes in Metal System Trace against a
   reference pass.

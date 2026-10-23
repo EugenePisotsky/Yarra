@@ -441,6 +441,14 @@ starting it.
   unless told; work keyed to the sun shows only with `--day-clock on`.
 - Heat moves results 5–30% within a run: alternate A/B/A/B, and do not trace while Houdini or a
   build runs (`pgrep -fl houdini`).
+- **A slowdown in every pass at once is the GPU's clock, not the frame's work.** After minutes of
+  near-full load (a jog through the forest into the meadow) macOS holds the GPU in its Medium
+  performance state, which runs each pass about twice as long; standing still, it returns to
+  Maximum within a minute or two. Read the state from the same Metal System Trace (below) before
+  chasing a drop, and compare costs at Maximum. Fixed-size passes (`atmosphere_luts`) show the
+  clock; MetalFX slows less, so a ratio to it understates a drop.
+- The Mac is the working machine, not the target (PS5-class hardware at 60 fps): look for
+  headroom and real work, not perfect play on the Mac.
 
 ### Look captures
 
@@ -524,12 +532,16 @@ xcrun xctrace record --template 'Metal System Trace' --attach yarra-app-game --t
   --output tmp/trace/a.trace
 xcrun xctrace export --input tmp/trace/a.trace --output tmp/trace/a-intervals.xml \
   --xpath '/trace-toc/run[@number="1"]/data/table[@schema="metal-gpu-intervals"]'
+xcrun xctrace export --input tmp/trace/a.trace --output tmp/trace/a-states.xml \
+  --xpath '/trace-toc/run[@number="1"]/data/table[@schema="gpu-performance-state-intervals"]'
 rm -rf tmp/trace/a.trace; rm -f $TMPDIR/instruments*.ktrace; pkill -x yarra-app-game
 ```
 
 `python3 tools/summarize_gpu_intervals.py a-intervals.xml [b-intervals.xml]` gives the GPU's busy
 time per frame and each pass's share of it, and their ratios to a reference pass in the same trace
-(`--reference`), which is what to compare between traces. The GPU runs passes side by side, so a
+(`--reference`), which is what to compare between traces. `--states a-states.xml [b-states.xml]`
+adds the share of each trace's time the GPU spent in each performance state: compare traces only
+at the same state. The GPU runs passes side by side, so a
 pass's own interval is not its cost: a few rows of clouds traced beside the opaque pass last as
 long as the opaque pass. The tool splits each moment among the passes running then; a pass's
 true cost is clearest as the busy time it adds, between builds with and without it. Keep recordings to 3–11 s; `export --toc` lists tables,

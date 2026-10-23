@@ -12,6 +12,9 @@ shares the GPU with it: a pass of a few rows beside the opaque pass spans the op
 moment's time is split evenly among the intervals running then, and the GPU's busy time is the
 time anything runs, which is what a frame costs. The times follow the GPU's clock; compare two
 traces by busy time and each pass's share of a reference pass in the same trace (`--reference`).
+macOS lowers the GPU's performance state under sustained load, which slows every pass alike:
+`--states` takes each trace's exported gpu-performance-state-intervals table and prints the share
+of its time in each state.
 """
 
 import argparse
@@ -22,8 +25,8 @@ import xml.etree.ElementTree as ET
 PROCESS = "yarra-app-game"
 
 
-def intervals(path):
-    """(start ns, end ns, pass label, channel) of the game's intervals."""
+def rows(path):
+    """An exported table's rows, each column as (formatted, raw) text."""
     seen = {}
 
     def value(element):
@@ -42,13 +45,28 @@ def intervals(path):
         elif element.tag == "row":
             row = dict(zip(columns, (value(c) for c in element)))
             element.clear()
-            if PROCESS not in row.get("process", ("", ""))[0]:
-                continue
-            label = row.get("event-label", ("", ""))[0].split(":")[0].strip()
-            label = re.sub(r"Command Buffer \d+", "Command Buffer", label)
-            start = int(row["start"][1])
-            end = start + int(row["duration"][1] or 0)
-            yield start, end, label, row.get("channel-name", ("", ""))[0]
+            yield row
+
+
+def intervals(path):
+    """(start ns, end ns, pass label, channel) of the game's intervals."""
+    for row in rows(path):
+        if PROCESS not in row.get("process", ("", ""))[0]:
+            continue
+        label = row.get("event-label", ("", ""))[0].split(":")[0].strip()
+        label = re.sub(r"Command Buffer \d+", "Command Buffer", label)
+        start = int(row["start"][1])
+        end = start + int(row["duration"][1] or 0)
+        yield start, end, label, row.get("channel-name", ("", ""))[0]
+
+
+def performance_states(path):
+    """Each GPU performance state's share of a trace's time, largest first."""
+    time = collections.Counter()
+    for row in rows(path):
+        time[row.get("gpu-performance-state", ("?", ""))[0]] += int(row["duration"][1] or 0)
+    total = max(sum(time.values()), 1)
+    return [(state, ns / total) for state, ns in time.most_common()]
 
 
 def summarize(path, frames_by):
@@ -85,6 +103,7 @@ def main():
     parser.add_argument("--frames-by", default="temporal tone map to output")
     parser.add_argument("--reference", default="main_opaque_pass_3d")
     parser.add_argument("--top", type=int, default=30)
+    parser.add_argument("--states", nargs="*", default=[])
     args = parser.parse_args()
 
     tables = [summarize(path, args.frames_by) for path in args.traces]
@@ -95,6 +114,9 @@ def main():
 
     for path, (_, _, frames) in zip(args.traces, tables):
         print(f"{path}: {frames} frames")
+    for path in args.states:
+        shares = "  ".join(f"{state} {share:.0%}" for state, share in performance_states(path))
+        print(f"{path}: GPU state {shares}")
     print(f"{'GPU busy':48} " + "  ".join(cell(p, busy) for p, busy, _ in tables))
     order = sorted(tables[0][0], key=lambda label: -tables[0][0][label])
     for label in order[: args.top]:
