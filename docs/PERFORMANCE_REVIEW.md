@@ -92,6 +92,10 @@ budget is now 10.5 ms, so that 60 fps holds at Medium (`tools/frame_budget.toml`
 | mountain-hamlet | 12.0 ms | sky and air 4.0, upscale and post 3.7 |
 | brook-mouth | 11.6 ms | sky and air 3.1, upscale and post 3.7 |
 
+After the atmosphere tables and the weld (`585b0b8`): meadow 11.9, start 13.3, forest-pine 12.3,
+storm-road 11.4, mountain-hamlet 11.3, brook-mouth 10.7 ms; `tools/bench_history.csv` keeps the
+rest.
+
 Run back to back, the same views took 17–39% longer once about six minutes of full load had
 dropped the GPU to its Medium state (storm-road 17.1 ms, mountain-hamlet 14.1). The earlier
 figures of 15.3 ms (pine forest) and 18.4 ms (storm road) were most likely taken in that state.
