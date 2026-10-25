@@ -1,16 +1,17 @@
 # The frame budget and the views `tools/bench.py` measures it in.
 #
 # GPU busy milliseconds per frame at the play setup (fullscreen, 50% + MetalFX Temporal,
-# 1728×1084 internal) with the Mac's GPU at its Maximum performance state. 1728×1084 is about the
-# 1920×1080 a PS5 renders at 50% of 4K, and Resident Evil Village draws a dense outdoor frame with
-# all its effects in 7–11 ms of this Mac at 1920×1080 (docs/PERFORMANCE_REVIEW.md). 60 fps here
-# needs about 14 ms busy, since MetalFX's wait leaves the GPU idle about 1.4 ms of each frame;
-# 12.5 ms keeps a reserve for heat and clock drops.
+# 1728×1084 internal) with the Mac's GPU at its Maximum performance state, where runs repeat.
+# 1728×1084 is about the 1920×1080 a PS5 renders at 50% of 4K. After minutes of play macOS holds
+# the GPU at Medium, where the same frame takes 1.2–1.4× as long, and Resident Evil Village, run
+# that long, drew its dense outdoor frames in 7–11 ms of this Mac at 1920×1080
+# (docs/PERFORMANCE_REVIEW.md). 60 fps needs about 14 ms busy, MetalFX's wait leaving the GPU idle
+# about 1.4 ms of each frame, so the budget holds 60 fps at Medium: 10.5 ms at Maximum.
 #
 # A line is a group of passes the trace can tell apart. A change that adds work states its cost
 # against its line; a line over budget is optimised, or the excess ships as a quality tier.
 
-total_ms = 12.5
+total_ms = 10.5
 frames_by = "temporal tone map to output"
 time = "10:00"
 warmup_seconds = 20
@@ -19,39 +20,39 @@ cooldown_seconds = 90
 
 [[line]]
 name = "opaque"
-ms = 4.0
-# Terrain 2.0, trees 1.5, rocks, buildings and characters 0.5.
+ms = 3.5
+# Terrain 1.5, trees 1.5, rocks, buildings and characters 0.5.
 passes = ["^main_opaque_pass_3d"]
 
 [[line]]
 name = "prepass and motion"
-ms = 0.5
+ms = 0.4
 passes = ["prepass$", "scene motion", "geometry motion"]
 
 [[line]]
 name = "shadows"
-ms = 1.5
+ms = 1.2
 passes = ["^shadow_"]
 
 [[line]]
 name = "grass"
-ms = 1.5
+ms = 1.2
 passes = ["grass", "vegetation"]
 
 [[line]]
 name = "sky and air"
-ms = 1.0
+ms = 0.8
 passes = ["^sky", "^atmosphere", "cloud", "shafts", "sun occlusion"]
 
 [[line]]
 name = "upscale and post"
-# MetalFX Temporal's own passes take about 2.2 ms.
-ms = 3.0
+# MetalFX Temporal's own passes take about 2.2 ms; post after them 0.4.
+ms = 2.6
 passes = ["MetalFX", "^upscaling$", "bloom", "exposure", "tone map", "^ui$", "_2d$"]
 
 [[line]]
 name = "world compute"
-ms = 0.3
+ms = 0.2
 passes = ["^tree", "print", "albedo", "horizon"]
 
 [[line]]

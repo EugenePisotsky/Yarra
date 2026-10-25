@@ -80,7 +80,8 @@ cost is in every view before a tree, blade or rock is drawn.
 ### The views that matter
 
 The benchmark's baseline (`tools/bench.py`, October 25, commit `fdff35c`): play setup, 10:00,
-GPU at its Maximum state throughout. Budget 12.5 ms (`tools/frame_budget.toml`).
+GPU at its Maximum state throughout. The over-budget column used the first budget, 12.5 ms; the
+budget is now 10.5 ms, so that 60 fps holds at Medium (`tools/frame_budget.toml`).
 
 | View | GPU busy | Over budget |
 | --- | ---: | --- |
@@ -95,8 +96,9 @@ Run back to back, the same views took 17–39% longer once about six minutes of 
 dropped the GPU to its Medium state (storm-road 17.1 ms, mountain-hamlet 14.1). The earlier
 figures of 15.3 ms (pine forest) and 18.4 ms (storm road) were most likely taken in that state.
 In play the Mac reaches it within minutes, so a view at 12.5 ms on the bench runs at 15–17 ms
-while jogging: the drop to 40 fps the player feels. Dynamic resolution is the Mac's answer; the
-budget is the target's.
+while jogging: the drop to 40 fps the player feels. Village, run ten minutes, was most likely at
+Medium too, so its 7–11 ms compare with our Medium figures. The budget therefore holds 60 fps
+at Medium; dynamic resolution covers what still exceeds it.
 
 60 fps on the Mac needs about 14 ms busy (about 2.6 ms of every frame is idle, 1.4 of it waiting on
 MetalFX). The 60 fps cap shows only 60, 40 or 30 fps, so a 1–2 ms win changes nothing the player
