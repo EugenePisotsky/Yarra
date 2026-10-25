@@ -13,9 +13,16 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
   Native is for faster machines; MSAA is off under Temporal, so MSAA-based ideas do not help. The
   60 fps cap is the default (`cb74dda`); the default upscaler stays `Auto` (MetalFX Spatial):
   Temporal is chosen in F1 or with `--upscaler metalfx-temporal`.
-- **No feature cuts as optimisations.** *Kept.* MSAA, the AA modes and shadows are supported
-  options; turning them off (MSAA ~2 ms, shadows ~2.2 ms at native) is a visual choice, not a fix.
-  Optimise real work or accept it.
+- **A frame budget decides, with quality tiers.** *Kept* (user, October 25). The budget may
+  override a look verdict: work that does not fit its system's line is optimised first, and what
+  still does not fit ships as a quality tier. Lower tiers may swap techniques and content, such as
+  card grass on slower devices (as Where Winds Meet does) or lighter tree variants.
+- **Dynamic resolution as an option.** *Not built* (user, October 25). The render scale held to the
+  frame budget under Temporal, so a heavy moment shows a slightly softer image instead of a drop
+  from 60 to 40 fps. It helps pixel work, not vertex work. Village has none on the Mac; on PS5 it
+  renders fixed 4K checkerboard.
+- **Deferred or visibility-buffer shading may give up MSAA.** *Kept* (user, October 25). FXAA +
+  TAA, as Village uses, looks good, and MSAA is already off under Temporal.
 - **Pacing by display link plus Metal's minimum presentation interval.** *Kept.* 99.7% of intervals
   on time against 81% with a timer; the Metal interval alone and higher thread QoS were rejected.
   Keep the wgpu-hal patch (`third_party/wgpu-hal/YARRA_PATCH.md`) until upstream has it.

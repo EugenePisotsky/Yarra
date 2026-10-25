@@ -354,13 +354,12 @@ in forests. Direction 2's check (hours) still comes early.
     DX12) to learn which Mac costs transfer, and decide the console path (a backend or another
     engine) before content scale grows further.
 
-## Questions for the user
+## Open questions
 
-- May a frame budget override look verdicts, with quality tiers taking the place of the "no feature
-  cuts" rule?
-- Is dynamic resolution acceptable?
-- If deferred or visibility-buffer shading comes, is losing MSAA acceptable (it is off under
-  Temporal already)?
+The user decided on October 25 that the budget overrides look verdicts through quality tiers, that
+dynamic resolution comes as an option and that deferred shading may give up MSAA
+([Decisions](DECISIONS.md#rendering--presentation)).
+
 - A foliage-heavy open-world game in sunlight on the same Mac (Assassin's Creed Shadows, Death
   Stranding, Cyberpunk 2077) would be a fairer yardstick for density than Village.
 
