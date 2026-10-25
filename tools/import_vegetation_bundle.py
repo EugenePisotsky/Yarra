@@ -188,6 +188,55 @@ def adapt_foliage(doc, blob, blend):
     return moving_ids
 
 
+def weld(doc, blob):
+    """Merge each primitive's vertices that agree in every attribute but the tangent, and return
+    the new buffer. The kit writes a tangent per face, so no corner was shared and every pass
+    shaded three vertices a triangle; a merged vertex takes the mean of its faces' tangents.
+    Accessors no primitive reads (authoring attributes) are dropped."""
+    out, views, accessors = bytearray(), [], []
+
+    def add(template, values):
+        fmt = '<' + {5123: 'H', 5125: 'I', 5126: 'f'}[template['componentType']] * len(values[0])
+        out.extend(bytes(-len(out) % 4))
+        views.append({'buffer': 0, 'byteOffset': len(out), 'byteLength': struct.calcsize(fmt) * len(values)})
+        for value in values:
+            out.extend(struct.pack(fmt, *value))
+        accessor = {k: v for k, v in template.items() if k not in ('bufferView', 'byteOffset', 'min', 'max')}
+        accessor.update(bufferView=len(views) - 1, count=len(values))
+        if 'min' in template:
+            accessor['min'] = [min(v[c] for v in values) for c in range(len(values[0]))]
+            accessor['max'] = [max(v[c] for v in values) for c in range(len(values[0]))]
+        accessors.append(accessor)
+        return len(accessors) - 1
+
+    for mesh in doc['meshes']:
+        for primitive in mesh['primitives']:
+            names = sorted(primitive['attributes'])
+            data = {name: rows(doc, blob, primitive['attributes'][name]) for name in names}
+            keys = [name for name in names if name != 'TANGENT']
+            tangents = data.get('TANGENT', [])
+            found, first, sums, remap = {}, [], [], []
+            for i in range(len(data[keys[0]])):
+                j = found.setdefault(tuple(data[k][i] for k in keys), len(first))
+                if j == len(first):
+                    first.append(i)
+                    sums.append([0., 0., 0., 0.])
+                remap.append(j)
+                for c, t in enumerate(tangents[i] if tangents else ()):
+                    sums[j][c] += t
+            for name in names:
+                if name == 'TANGENT':
+                    values = [(*unit(s[:3]), 1. if s[3] >= 0 else -1.) if dot(s[:3], s[:3]) > 1e-12
+                              else data[name][i] for s, i in zip(sums, first)]
+                else:
+                    values = [data[name][i] for i in first]
+                primitive['attributes'][name] = add(doc['accessors'][primitive['attributes'][name]], values)
+            indices = [(remap[r[0]],) for r in rows(doc, blob, primitive['indices'])]
+            primitive['indices'] = add(doc['accessors'][primitive['indices']], indices)
+    doc['bufferViews'], doc['accessors'] = views, accessors
+    return out
+
+
 def texture(ktx, files, output, srgb, normal):
     cmd = [str(ktx), 'create', '--format', 'R8G8B8A8_SRGB' if srgb else 'R8G8B8A8_UNORM',
            '--assign-tf', 'srgb' if srgb else 'linear', '--encode', 'uastc',
@@ -270,6 +319,12 @@ def main():
                 if first_ids is not None and ids != first_ids:
                     raise ValueError('Rotating-card IDs change between LODs')
                 first_ids = ids
+                vertices = sum(doc['accessors'][p['attributes']['POSITION']]['count']
+                               for mesh in doc['meshes'] for p in mesh['primitives'])
+                blob = weld(doc, blob)
+                welded = sum(doc['accessors'][p['attributes']['POSITION']]['count']
+                             for mesh in doc['meshes'] for p in mesh['primitives'])
+                print(f'{name} lod{lod}: {vertices} -> {welded} vertices', flush=True)
                 folder = stage/'runtime'/name
                 folder.mkdir(parents=True, exist_ok=True)
                 target = folder/f'{name}_lod{lod}.gltf'

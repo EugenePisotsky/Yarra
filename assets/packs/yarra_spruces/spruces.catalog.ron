@@ -1,14 +1,14 @@
 (schema_version: 1, assets: [
 (key: "yarra_spruces/spruce_forest", display_name: "Spruce Forest", source_uri: "local/yarra_spruces/source/spruce_forest.glb", variants: [
-(uri: "local/yarra_spruces/runtime/spruce_forest/spruce_forest_lod0.gltf", bounds: (7.8863, 14.0541, 7.8824), gpu_bytes_estimate: 1767360, minimum_screen_height: 480.0),
-(uri: "local/yarra_spruces/runtime/spruce_forest/spruce_forest_lod1.gltf", bounds: (7.8863, 14.0541, 7.8824), gpu_bytes_estimate: 960128, minimum_screen_height: 240.0),
-(uri: "local/yarra_spruces/runtime/spruce_forest/spruce_forest_lod2.gltf", bounds: (7.8863, 14.0541, 7.8824), gpu_bytes_estimate: 588872, minimum_screen_height: 200.0),
+(uri: "local/yarra_spruces/runtime/spruce_forest/spruce_forest_lod0.gltf", bounds: (7.8863, 14.0541, 7.8824), gpu_bytes_estimate: 620264, minimum_screen_height: 480.0),
+(uri: "local/yarra_spruces/runtime/spruce_forest/spruce_forest_lod1.gltf", bounds: (7.8863, 14.0541, 7.8824), gpu_bytes_estimate: 389544, minimum_screen_height: 240.0),
+(uri: "local/yarra_spruces/runtime/spruce_forest/spruce_forest_lod2.gltf", bounds: (7.8863, 14.0541, 7.8824), gpu_bytes_estimate: 263272, minimum_screen_height: 200.0),
 (uri: "local/yarra_spruces/runtime/spruce_forest/spruce_forest.impostor.json", bounds: (7.8863, 14.0541, 7.8824), gpu_bytes_estimate: 3257928, minimum_screen_height: 0.0),
 ]),
 (key: "yarra_spruces/spruce_snow", display_name: "Spruce Snow", source_uri: "local/yarra_spruces/source/spruce_snow.glb", variants: [
-(uri: "local/yarra_spruces/runtime/spruce_snow/spruce_snow_lod0.gltf", bounds: (7.8863, 14.0541, 7.8824), gpu_bytes_estimate: 7487652, minimum_screen_height: 480.0),
-(uri: "local/yarra_spruces/runtime/spruce_snow/spruce_snow_lod1.gltf", bounds: (7.8863, 14.0541, 7.8824), gpu_bytes_estimate: 2243756, minimum_screen_height: 240.0),
-(uri: "local/yarra_spruces/runtime/spruce_snow/spruce_snow_lod2.gltf", bounds: (7.8863, 14.0541, 7.8824), gpu_bytes_estimate: 897356, minimum_screen_height: 200.0),
+(uri: "local/yarra_spruces/runtime/spruce_snow/spruce_snow_lod0.gltf", bounds: (7.8863, 14.0541, 7.8824), gpu_bytes_estimate: 2356864, minimum_screen_height: 480.0),
+(uri: "local/yarra_spruces/runtime/spruce_snow/spruce_snow_lod1.gltf", bounds: (7.8863, 14.0541, 7.8824), gpu_bytes_estimate: 965164, minimum_screen_height: 240.0),
+(uri: "local/yarra_spruces/runtime/spruce_snow/spruce_snow_lod2.gltf", bounds: (7.8863, 14.0541, 7.8824), gpu_bytes_estimate: 404056, minimum_screen_height: 200.0),
 (uri: "local/yarra_spruces/runtime/spruce_snow/spruce_snow.impostor.json", bounds: (7.8863, 14.0541, 7.8824), gpu_bytes_estimate: 3418466, minimum_screen_height: 0.0),
 ]),
 ])

@@ -292,7 +292,9 @@ uv run --with numpy --with pillow python scripts/bake_impostor.py outputs/spruce
 cd -
 ```
 
-Here, import all forms of a pack in one run (an import replaces the pack), register, cook:
+Here, import all forms of a pack in one run (an import replaces the pack, keeping the old one as
+`<dir>.previous-<time>`), register, cook. The import welds each LOD's vertices and prints the
+counts before and after:
 
 ```sh
 V=$HOME/Dev/Assets/vegetation/outputs
@@ -469,8 +471,9 @@ at Maximum). Passes listed as `background` (the cloud volume's sweep) are charge
 they run alone: overlapping the opaque pass, an even split charged the clouds up to 1.4 ms of it,
 while turning them off saves 0.2. Rows append to `tools/bench_history.csv` with the commit and note: a change's cost is
 the difference from the previous row of the same view, and heat moves a row by a few percent, so
-judge sub-0.3 ms changes by an A/B/A of that view. Flags after `--` reach every run
-(`--profile-grass off`, `--profile-objects off`, `--profile-terrain off` split the opaque line).
+judge sub-0.3 ms changes by an A/B/A of that view. Flags after `--` reach every run:
+`--profile-objects off` (trees and rocks) splits the opaque line, leaving the terrain;
+`--profile-terrain off` does not, since the forests the terrain hid are then drawn instead.
 Traces stay in `tmp/bench/` until the next run.
 
 ### Look captures

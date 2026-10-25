@@ -226,6 +226,12 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
   as "a shapeless mess" beside longleaf stands, though its reference renders looked right.
 - **Cut-out overdraw, not triangles, is the foliage cost.** *Lesson.* Cut-out leaves were ~2.3 of
   4.1 ms; LODs that cut triangles but keep card area save nothing, and thinned crowns read as thin.
+- **Kit meshes are welded at import.** *Kept* (October 25). The kit writes a tangent per face, so
+  no corner was shared and every pass shaded three vertices a triangle. `import_vegetation_bundle.py`
+  merges vertices that agree in all else and averages their tangents: near LODs 3–3.5× fewer
+  vertices, far ones 2–2.5×, buffers as much smaller; snowy spruces on the storm road 12.13 →
+  11.41 ms GPU, the image unchanged. Moving the fix into the kit's exporter would serve its other
+  uses too.
 - **GPU-driven trees in game and editor.** *Kept* (`2f52071`, `9cf8c56`). One pool from far-object
   blocks; compute picks LODs, fades and culls into indirect draws. Main thread −1.5–2 ms in forests
   at GPU parity. Culling bounds must match per primitive: a looser sphere cost up to 1 ms.

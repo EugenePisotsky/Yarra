@@ -308,14 +308,17 @@ anything is built; gains are estimates until that check runs.
 The Village numbers move 4 and 5 ahead of 3. The fixed cost every view pays (terrain shading and
 sun visibility per fragment) already exceeds Village's densest frame, while tree work matters only
 in forests. Direction 2's check (hours) still comes early. The baseline adds that sky and air and
-the output end are over budget in every view, and their first steps are small: the atmosphere
-tables at Unreal's sizes, updated when the sun moves (about −0.35 ms), and bloom and exposure
-before the upscaler at the internal size (about −0.8 ms). They come first.
+the output end are over budget in every view. The atmosphere tables at the reference sizes took
+0.45 → 0.15 ms (`5fa39a1`). Bevy's bloom and exposure cannot run on the internal image before
+MetalFX (they read the whole window-sized target), so that step needs a bloom of our own, its
+last pass folded into the output tone map, for about −0.4 ms, and exposure from one of its mips
+for about −0.15.
 
 1. **A frame budget and an unattended benchmark.** *Built* (October 25): `tools/frame_budget.toml`,
    `tools/bench.py`, the history in `tools/bench_history.csv`, and the cost rule in AGENTS.md
-   ([Workflows](WORKFLOWS.md#benchmark-and-frame-budget)). Per-system costs inside the opaque pass
-   come from runs with `--profile-objects off` or `--profile-terrain off`.
+   ([Workflows](WORKFLOWS.md#benchmark-and-frame-budget)). Trees and rocks, from runs with
+   `--profile-objects off` (October 25): about 2.5 ms in start and 4.9 ms in forest-pine (opaque
+   2.8, prepass 0.8, shadows 1.0); the terrain left in the opaque pass is about 2.1 and 1.4 ms.
 2. **Rebuild the tree geometry** (content, days). Weld with per-vertex tangents (cards are planar,
    so the look does not change), order for the vertex cache (meshoptimizer), quantise the vertex to
    ~32–48 B with per-card and per-limb data in a per-form buffer, bring LOD1 and LOD2 to budget
@@ -356,8 +359,11 @@ before the upscaler at the internal size (about −0.8 ms). They come first.
    per-pixel mist and fog, not add to them: the mist-only grid tried in October added a grid and
    removed nothing. Sea and the blowing-snow layer stay analytic. Estimate 1.3–1.6 → 0.5–0.7 ms in
    the play setup, ~5 → under 1.5 ms at native. Atmosphere tables at Unreal's sizes and updated when
-   the sun moves enough are a smaller step beside it. *Check first:* the composite at 50% and 100%
-   scale; near-linear scaling confirms the slope a volume removes.
+   the sun moves enough are a smaller step beside it. *Checked* (October 25): with the per-pixel
+   haze, mist, weather fog, blowing snow and aerial perspective stubbed, the composite took 1.08 →
+   0.62 ms in the meadow, 1.81 → 0.67 on the storm road and 1.87 → 0.76 in the hamlet. A volume
+   costing about 0.3 ms nets −0.2 to −0.8 ms by view; the sky, clouds, sea, shafts and glare
+   (0.6–0.8 ms) stay per pixel.
 8. **The output end and the frame time** (small to medium). Exposure histogram at internal
    resolution or on bloom's first mip; find whether MetalFX's 1.4 ms wait is GPU idle or its own
    work; dynamic resolution (the scaler takes a min/max range and its history survives size
