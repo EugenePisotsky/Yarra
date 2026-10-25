@@ -377,7 +377,14 @@ for about −0.15.
 9. **Later: a visibility buffer or deferred lighting for every opaque material**, as Horizon
    Forbidden West and RE Engine do. Large; it removes lighting from every material shader and lets
    lighting terms run at lower rates; it gives up the MSAA option (already off under Temporal).
-   Only after 2–6, measured; direction 5's mask is its first step.
+   Only after 2–6, measured; direction 5's mask is its first step. *Checked* (October 25): GPU
+   counters with the grass pass alone show it ALU-limited (78%) in fragment shading, texture and
+   buffer limiters under 8%; its blades already follow Ghost of Tsushima (twin blades, 9- and
+   3-row strips, posed once a frame). Lighting stubbed to surface colour, meadow and start: grass
+   11.91 → 11.13 and 13.44 → 12.53 ms, terrain → 10.18 and 12.09, both → 9.45 and 11.35. So
+   lighting inside these two materials is 2.1–2.5 ms (an upper bound; stubs free registers too),
+   the terrain is lit under the grass that then covers it, and a lighting pass run once per final
+   pixel at full occupancy would cost a fraction of that. This moves deferred lighting ahead.
 10. **Platform.** Measure the meadow and forest views on a PC with an RDNA2 GPU (wgpu over Vulkan or
     DX12) to learn which Mac costs transfer, and decide the console path (a backend or another
     engine) before content scale grows further.
