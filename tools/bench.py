@@ -251,7 +251,7 @@ def append_history(results, lines, revision, stamp, note, extra):
               "cpu_main_ms", "render_prep_ms", "gpu_busy_ms"] + [line["name"] for line in lines]
     new = not os.path.exists(HISTORY)
     with open(HISTORY, "a", newline="") as file:
-        writer = csv.writer(file)
+        writer = csv.writer(file, lineterminator="\n")
         if new:
             writer.writerow(fields)
         for r in results:
