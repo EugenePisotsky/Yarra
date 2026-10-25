@@ -23,8 +23,8 @@ background = ["cloud volume"]
 
 [[line]]
 name = "opaque"
-ms = 3.5
-# Terrain 1.5, trees 1.5, rocks, buildings and characters 0.5.
+ms = 3.1
+# Terrain 1.3, trees 1.3, rocks, buildings and characters 0.5.
 passes = ["^main_opaque_pass_3d"]
 
 [[line]]
@@ -49,8 +49,9 @@ passes = ["^sky", "^atmosphere", "cloud", "shafts", "sun occlusion"]
 
 [[line]]
 name = "upscale and post"
-# MetalFX Temporal's own passes take about 2.2 ms; post after them 0.4.
-ms = 2.6
+# MetalFX Temporal's own passes take about 2.2 ms; after them, at the 7.5 Mpx output, tone
+# mapping and UI take about 0.2 ms each, leaving 0.4 for bloom and exposure.
+ms = 3.0
 passes = ["MetalFX", "^upscaling$", "bloom", "exposure", "tone map", "^ui$", "_2d$"]
 
 [[line]]

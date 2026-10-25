@@ -158,10 +158,12 @@ def group(passes, lines):
 
 
 def commit():
-    """The checked-out commit, marked when the tree has changes."""
+    """The checked-out commit, marked when tracked files the game reads have changes (not the
+    docs or this history)."""
     head = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT,
                           capture_output=True, text=True).stdout.strip()
-    dirty = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"], cwd=ROOT,
+    dirty = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no", "--", ".",
+                            ":!docs", ":!tools", ":!AGENTS.md"], cwd=ROOT,
                            capture_output=True, text=True).stdout.strip()
     return head + ("+" if dirty else "")
 
