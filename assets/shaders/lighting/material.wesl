@@ -11,10 +11,7 @@ import bevy_pbr::{
 @if(TREE_INSTANCED) import bevy_pbr::render::{mesh_types, mesh_bindings::mesh};
 
 @if(PREPASS_PIPELINE)
-import bevy_pbr::{
-    prepass::io::{VertexOutput, FragmentOutput},
-    deferred::functions::deferred_output,
-};
+import bevy_pbr::prepass::io::{VertexOutput, FragmentOutput};
 @else
 import bevy_pbr::render::{
     forward_io::{VertexOutput, FragmentOutput},
@@ -22,6 +19,9 @@ import bevy_pbr::render::{
     pbr_types::STANDARD_MATERIAL_FLAGS_UNLIT_BIT,
 };
 @if(!PREPASS_PIPELINE) import package::shaders::lighting::pbr_lighting::apply_pbr_lighting;
+@if(PREPASS_PIPELINE) import package::shaders::lighting::gbuffer;
+@if(MOTION_VECTOR_PREPASS)
+import bevy_pbr::render::pbr_prepass_functions::calculate_motion_vector;
 
 @if(VISIBILITY_RANGE_DITHER)
 import bevy_pbr::render::pbr_functions::visibility_range_dither;
@@ -120,9 +120,9 @@ fn fragment(
     // blends the lower bark built above towards the upper bark.
     // Clamped for the same reason as crown occlusion: MSAA extrapolates vertex colour on
     // thin branches.
-@if(TREE_BARK_BLEND && TREE_BARK_SKY && !PREPASS_PIPELINE && VERTEX_COLORS && VERTEX_UVS_A && VERTEX_TANGENTS)
+@if(TREE_BARK_BLEND && TREE_BARK_SKY && VERTEX_COLORS && VERTEX_UVS_A && VERTEX_TANGENTS)
     blend_upper_bark(&pbr_input, in.uv, vec3(1.0), in.color.a, in.world_normal, in.world_tangent);
-@if(TREE_BARK_BLEND && !TREE_BARK_SKY && !PREPASS_PIPELINE && VERTEX_COLORS && VERTEX_UVS_A && VERTEX_TANGENTS)
+@if(TREE_BARK_BLEND && !TREE_BARK_SKY && VERTEX_COLORS && VERTEX_UVS_A && VERTEX_TANGENTS)
     blend_upper_bark(&pbr_input, in.uv, clamp(in.color.rgb, vec3(0.0), vec3(1.0)), in.color.a,
         in.world_normal, in.world_tangent);
 
@@ -151,9 +151,20 @@ fn fragment(
     // clustered decals
     apply_decals(&pbr_input);
 
-    // write the gbuffer, lighting pass id, and optionally normal and motion_vector textures
+    // Yarra: on deferred views, our G-buffer (lighting/gbuffer.wesl) and motion; the deferred
+    // kernel lights it afterwards with the branches of the surface's model
+    // (lighting/deferred.wesl).
 @if(PREPASS_PIPELINE)
-    let out = deferred_output(in, pbr_input);
+    var out: FragmentOutput;
+@if(PREPASS_PIPELINE) {
+    out.deferred = gbuffer::pack(gbuffer::Surface(pbr_input.material.base_color.rgb,
+        pbr_input.material.perceptual_roughness, pbr_input.N, pbr_input.world_normal,
+        pbr_input.diffuse_occlusion.g, pbr_input.specular_occlusion,
+        pbr_input.material.reflectance.x, pbr_input.material.metallic, gbuffer::SHADED_MODEL));
+    out.deferred_lighting_pass_id = 1u;
+@if(MOTION_VECTOR_PREPASS)
+    out.motion_vector = calculate_motion_vector(in.world_position, in.previous_world_position);
+}
     // in forward mode, we calculate the lit color immediately, and then apply some post-lighting effects here.
     // in deferred mode the lit color and these effects will be calculated in the deferred lighting shader
 @if(!PREPASS_PIPELINE)

@@ -1,6 +1,6 @@
 //! The render world's side: the pool's buffers and uploads, the compute pass that fills the
 //! buckets (`shaders/tree/lod.wesl`), and one indirect draw per draw entry in the main,
-//! prepass and shadow phases, through the tree and impostor materials' own pipelines.
+//! prepass, G-buffer and shadow phases, through the tree and impostor materials' own pipelines.
 use super::super::impostor::ImpostorMaterial;
 use super::super::material::TreeWindMaterial;
 use super::super::wind::WindBuffer;
@@ -15,8 +15,9 @@ use super::{
 use bevy::{
     core_pipeline::{
         core_3d::{AlphaMask3d, Opaque3d, Opaque3dBatchSetKey, Opaque3dBinKey},
+        deferred::{AlphaMask3dDeferred, Opaque3dDeferred},
         prepass::{
-            AlphaMask3dPrepass, Opaque3dPrepass, OpaqueNoLightmap3dBatchSetKey,
+            AlphaMask3dPrepass, DeferredPrepass, Opaque3dPrepass, OpaqueNoLightmap3dBatchSetKey,
             OpaqueNoLightmap3dBinKey,
         },
         schedule::camera_driver,
@@ -26,7 +27,7 @@ use bevy::{
         system::{SystemParamItem, lifetimeless::SRes},
     },
     material::{
-        AlphaMode, MaterialProperties, RenderPhaseType,
+        AlphaMode, MaterialProperties, OpaqueRendererMethod, RenderPhaseType,
         key::{ErasedMaterialKey, ErasedMaterialPipelineKey, ErasedMeshPipelineKey},
     },
     mesh::Mesh,
@@ -97,6 +98,8 @@ pub(super) fn install(render_app: &mut SubApp, shared: Arc<Mutex<PoolData>>) {
         .add_render_command::<AlphaMask3d, DrawTrees>()
         .add_render_command::<Opaque3dPrepass, DrawTreeDepth>()
         .add_render_command::<AlphaMask3dPrepass, DrawTreeDepth>()
+        .add_render_command::<Opaque3dDeferred, DrawTreeDepth>()
+        .add_render_command::<AlphaMask3dDeferred, DrawTreeDepth>()
         .add_render_command::<Shadow, DrawTreeDepth>()
         .add_systems(
             Render,
@@ -751,6 +754,9 @@ enum Pass {
     Main,
     /// The depth and motion prepass, which MetalFX Temporal reads.
     Prepass,
+    /// The G-buffer of a deferred view (docs/DEFERRED_LIGHTING.md), with depth and motion:
+    /// lit afterwards, so drawn in no other pass.
+    Deferred,
 }
 
 struct Functions {
@@ -758,21 +764,23 @@ struct Functions {
     mask: DrawFunctionId,
     opaque_prepass: DrawFunctionId,
     mask_prepass: DrawFunctionId,
+    opaque_deferred: DrawFunctionId,
+    mask_deferred: DrawFunctionId,
 }
 
 /// Specializes each entry's instanced pipelines for every main view (and its prepass, if it
-/// has one) and queues one item per entry into each phase. Impostors draw in the main pass
-/// only.
+/// has one) and queues one item per entry into each phase. On deferred views meshes of deferred
+/// materials draw into the G-buffer instead. Impostors draw in the main pass only.
 fn queue(
     world: &mut World,
     mut pipelines: Local<HashMap<PipelineFor, CachedRenderPipelineId>>,
     mut queued: Local<usize>,
 ) {
     let layout = world.resource::<TreeDrawLayout>().layout.clone();
-    let mut views = world.query::<(&ExtractedView, &Msaa)>();
-    let views: Vec<(RetainedViewEntity, Msaa)> = views
+    let mut views = world.query::<(&ExtractedView, &Msaa, Has<DeferredPrepass>)>();
+    let views: Vec<(RetainedViewEntity, Msaa, bool)> = views
         .iter(world)
-        .map(|(view, msaa)| (view.retained_view_entity, *msaa))
+        .map(|(view, msaa, deferred)| (view.retained_view_entity, *msaa, deferred))
         .collect();
 
     // Items of every entry queued last frame go, whatever this frame's layout holds.
@@ -790,9 +798,11 @@ fn queue(
         mask: function::<AlphaMask3d, DrawTrees>(world),
         opaque_prepass: function::<Opaque3dPrepass, DrawTreeDepth>(world),
         mask_prepass: function::<AlphaMask3dPrepass, DrawTreeDepth>(world),
+        opaque_deferred: function::<Opaque3dDeferred, DrawTreeDepth>(world),
+        mask_deferred: function::<AlphaMask3dDeferred, DrawTreeDepth>(world),
     };
 
-    for (view, msaa) in views {
+    for (view, msaa, deferred_view) in views {
         let Some(view_key) = world.resource::<ViewKeyCache>().get(&view).copied() else {
             continue;
         };
@@ -820,6 +830,8 @@ fn queue(
             remove::<AlphaMask3d>(world, &view, *main);
             remove::<Opaque3dPrepass>(world, &view, *main);
             remove::<AlphaMask3dPrepass>(world, &view, *main);
+            remove::<Opaque3dDeferred>(world, &view, *main);
+            remove::<AlphaMask3dDeferred>(world, &view, *main);
         }
 
         for (index, entry) in layout.entries.iter().enumerate().take(DRAWS) {
@@ -831,7 +843,13 @@ fn queue(
                 continue;
             }
 
-            for (pass, key) in [(Pass::Main, Some(view_key)), (Pass::Prepass, prepass_key)] {
+            let gbuffer = deferred_view && deferred(world, entry);
+
+            for (pass, key) in [
+                (Pass::Main, (!gbuffer).then_some(view_key)),
+                (Pass::Prepass, prepass_key.filter(|_| !gbuffer)),
+                (Pass::Deferred, prepass_key.filter(|_| gbuffer)),
+            ] {
                 let Some(key) = key else {
                     continue;
                 };
@@ -891,11 +909,40 @@ fn queue(
                             item,
                         );
                     }
+                    (Pass::Deferred, RenderPhaseType::Opaque) => {
+                        add::<Opaque3dDeferred>(
+                            world,
+                            &view,
+                            functions.opaque_deferred,
+                            pipeline,
+                            mesh,
+                            item,
+                        );
+                    }
+                    (Pass::Deferred, RenderPhaseType::AlphaMask) => {
+                        add::<AlphaMask3dDeferred>(
+                            world,
+                            &view,
+                            functions.mask_deferred,
+                            pipeline,
+                            mesh,
+                            item,
+                        );
+                    }
                     _ => {}
                 }
             }
         }
     }
+}
+
+/// Whether an entry draws into the G-buffer of deferred views: meshes of deferred materials.
+fn deferred(world: &World, entry: &DrawEntry) -> bool {
+    matches!(entry.drawn, Drawn::Mesh { .. })
+        && world
+            .resource::<ErasedRenderAssets<PreparedMaterial>>()
+            .get(entry_material(entry))
+            .is_some_and(|m| m.properties.render_method == OpaqueRendererMethod::Deferred)
 }
 
 /// Whether some batch could draw an entry's representation, by the frame's bits per form.
@@ -1043,13 +1090,19 @@ fn specialize(
             let key = instanced_key(&entry.drawn, &properties, mesh_key);
             (properties.base_specialize?)(world, key, &layout, &properties)
         }
-        Pass::Prepass => {
+        Pass::Prepass | Pass::Deferred => {
             if !matches!(phase, RenderPhaseType::Opaque | RenderPhaseType::AlphaMask) {
                 return None;
             }
 
             // The tree material has its own prepass shaders (`specialize_shadow`).
             mesh_key |= MeshPipelineKey::PREPASS_READS_MATERIAL;
+
+            // As Bevy keys deferred materials: views key no deferred prepass of their own.
+            if pass == Pass::Deferred {
+                mesh_key |= MeshPipelineKey::DEFERRED_PREPASS;
+            }
+
             let key = instanced_key(&entry.drawn, &properties, mesh_key);
             (properties.prepass_specialize?)(world, &key, &layout, &properties)
         }

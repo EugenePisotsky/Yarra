@@ -29,12 +29,15 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
   Keep the wgpu-hal patch (`third_party/wgpu-hal/YARRA_PATCH.md`) until upstream has it.
 - **Deferred lighting, a surface at a time.** *In progress* (user, October 25,
   `docs/DEFERRED_LIGHTING.md`). Game cameras run Bevy's depth and deferred prepasses; terrain
-  writes a G-buffer in our packing and one full-screen pass of ours lights it (`f9854ff`); other
-  surfaces stay forward until their stage. Bevy's lighting pass is skipped: its lighting is not
-  ours, and it places pixels by the whole view, wrong under Temporal's region. This supersedes the
-  depth prepass only for Temporal (`3bc9be4`): under Spatial and Linear the trees now pay one too,
-  until they move into the G-buffer. A foliage or global prepass against overdraw was rejected
-  twice (+0.3 ms GPU, +0.7 ms render prep).
+  writes a G-buffer in our packing and one full-screen pass of ours lights it (`f9854ff`), then
+  grass (`e3f6fc1`), objects and tree meshes; impostors stay forward until their stage. Bevy's
+  lighting pass is skipped: its lighting is not ours, and it places pixels by the whole view,
+  wrong under Temporal's region. Bevy skips deferred materials in the main pass of every view, so
+  every camera that shows them is deferred, the editor's included. The shared lighting's models
+  share one kernel that branches per pixel; a kernel per model cost about 0.1 ms each, and tile
+  classification, tried, cost more than it saved (+0.04–0.26 ms). This supersedes the depth
+  prepass only for Temporal (`3bc9be4`). A foliage or global prepass against overdraw was
+  rejected twice (+0.3 ms GPU, +0.7 ms render prep).
 - **MetalFX Temporal's scaler takes full-size textures.** *Kept.* A region-sized scaler (`b2c8cdf`)
   saved 0.8 ms that MetalFX's internal wait absorbed, and its history went blocky in motion;
   reverted (`c70158a`). Temporal's ~4 ms is MetalFX's own.

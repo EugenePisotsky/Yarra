@@ -1,7 +1,7 @@
 // The G-buffer: what a surface writes in the deferred pass and the deferred lighting reads back
 // (docs/DEFERRED_LIGHTING.md). One `Rgba32Uint` texel, Bevy's deferred target, whose y word holds
 // the lighting model in its top 8 bits; each model's kernel reads the rest in its own layout.
-// The standard model's (lighting/deferred.wesl):
+// The shared lighting's models' (lighting/deferred.wesl):
 // - x: albedo, gamma 2.2, 8 bits a channel; perceptual roughness 8;
 // - y: shading normal, octahedral 12 + 12; model 8;
 // - z: diffuse occlusion, specular occlusion, reflectance and metallic, 8 each;
@@ -9,10 +9,30 @@
 // Grass's is in vegetation/draw/gbuffer.wesl.
 import bevy_render::utils::{octahedral_encode, octahedral_decode};
 
-// Lighting models. NONE marks pixels a forward pass draws over.
+// Lighting models. NONE marks pixels a forward pass draws over; grass has its own lighting
+// (vegetation/draw/gbuffer.wesl), the others share pbr_lighting.wesl.
 const MODEL_NONE: u32 = 0u;
 const MODEL_TERRAIN: u32 = 1u;
 const MODEL_GRASS: u32 = 2u;
+// Objects: rocks, props, buildings, characters, plain trees.
+const MODEL_STANDARD: u32 = 3u;
+// Tree foliage tagged `crown_v1` and `crown_v2`, and bark tagged `bark_sky_v1`
+// (crates/engine/src/trees/material.rs).
+const MODEL_CROWN: u32 = 4u;
+const MODEL_CROWN_SKY: u32 = 5u;
+const MODEL_BARK: u32 = 6u;
+
+// The model of the surface a material's pipeline shades, by the definitions that select its
+// branches of the shared lighting.
+@if(TERRAIN_SURFACE) const SHADED_MODEL: u32 = MODEL_TERRAIN;
+@elif(TREE_CROWN_SKY) const SHADED_MODEL: u32 = MODEL_CROWN_SKY;
+@elif(TREE_CROWN_SHADING) const SHADED_MODEL: u32 = MODEL_CROWN;
+@elif(TREE_BARK_SKY) const SHADED_MODEL: u32 = MODEL_BARK;
+@else const SHADED_MODEL: u32 = MODEL_STANDARD;
+
+fn shared_lighting(model: u32) -> bool {
+    return model == MODEL_TERRAIN || (model >= MODEL_STANDARD && model <= MODEL_BARK);
+}
 
 struct Surface {
     albedo: vec3<f32>,

@@ -1,7 +1,9 @@
-// The standard model's deferred lighting (crates/atmosphere/src/environment/deferred.rs): every
-// pixel of the standard model in the G-buffer (lighting/gbuffer.wesl) is lit once, by the
-// lighting the main pass's materials use (lighting/pbr_lighting.wesl). Other models' pixels are
-// left to their own kernels, and model NONE's to the forward passes drawn over them afterwards.
+// Deferred lighting of the models the shared lighting serves
+// (crates/atmosphere/src/environment/deferred.rs): every pixel of terrain, objects, tree crowns
+// and bark in the G-buffer (lighting/gbuffer.wesl) is lit once, by the lighting the main pass's
+// materials use (lighting/pbr_lighting.wesl), taking the branches of its model. Other models'
+// pixels are left to their own kernels, and model NONE's to the forward passes drawn over them
+// afterwards.
 import bevy_pbr::render::{
     mesh_types::MESH_FLAGS_SHADOW_RECEIVER_BIT,
     mesh_view_bindings::view,
@@ -9,7 +11,7 @@ import bevy_pbr::render::{
     pbr_types,
 };
 import package::shaders::lighting::{deferred_pixel, gbuffer};
-import package::shaders::lighting::pbr_lighting::apply_pbr_lighting;
+import package::shaders::lighting::pbr_lighting::{apply_pbr_lighting, light_model};
 
 @vertex
 fn vertex(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> {
@@ -19,9 +21,11 @@ fn vertex(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> {
 @fragment
 fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let texel = deferred_pixel::texel(position);
-    if gbuffer::model(texel) != gbuffer::MODEL_TERRAIN {
+    let model = gbuffer::model(texel);
+    if !gbuffer::shared_lighting(model) {
         discard;
     }
+    light_model(model);
     let s = gbuffer::unpack(texel);
     let pixel = deferred_pixel::pixel(position);
 

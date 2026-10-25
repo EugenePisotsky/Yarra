@@ -6,7 +6,7 @@ use crate::{
 
 use bevy::{
     anti_alias::fxaa::Fxaa,
-    core_pipeline::prepass::DepthPrepass,
+    core_pipeline::prepass::{DeferredPrepass, DepthPrepass},
     gizmos::transform_gizmo::TransformGizmoCamera,
     input::{
         gestures::PinchGesture,
@@ -84,7 +84,10 @@ pub(crate) fn setup_world_workspace(
         environment,
         Msaa::Off,
         Fxaa::default(),
+        // Terrain, grass, objects and trees write a G-buffer and are lit once per pixel
+        // (`atmosphere` deferred lighting), as in the game.
         DepthPrepass,
+        DeferredPrepass,
         transform,
         controller,
         WorldViewCamera,

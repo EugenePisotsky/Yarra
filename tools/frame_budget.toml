@@ -31,7 +31,7 @@ passes = ["^main_opaque_pass_3d", "deferred prepass$"]
 [[line]]
 name = "deferred lighting"
 ms = 0.8
-# Every model's kernel: the standard model's (terrain 0.5), then grass's (0.3).
+# Every model's kernel: the shared lighting's (terrain 0.5), then grass's (0.3).
 passes = ["deferred lighting$"]
 
 [[line]]

@@ -47,6 +47,33 @@ import package::shaders::lighting::surface::{cloud_light, environment, ground_ce
 import package::shaders::lighting::forest_shadow::{forest_transmittance, forest_sky_light, forest_sky_visibility, forest_crown_sky};
 import package::shaders::lighting::terrain_shadow::{terrain_sunlight, terrain_sky_visibility};
 import package::shaders::lighting::ground::ground_below;
+import package::shaders::lighting::gbuffer::{
+    MODEL_BARK, MODEL_CROWN, MODEL_CROWN_SKY, MODEL_TERRAIN, SHADED_MODEL,
+};
+
+// Yarra: the lighting model of the surface being lit (lighting/gbuffer.wesl), which picks the
+// branches below for terrain, tree crowns and bark. A material's own pipeline fixes it by its
+// shader definitions, so its branches fold away; the deferred kernel (lighting/deferred.wesl)
+// reads it per pixel and sets it first.
+@if(DEFERRED_LIGHTING_PIPELINE) var<private> lit_model: u32;
+
+@if(DEFERRED_LIGHTING_PIPELINE)
+fn light_model(model: u32) {
+    lit_model = model;
+}
+
+fn lit_model_is(model: u32) -> bool {
+    @if(DEFERRED_LIGHTING_PIPELINE) {
+        return lit_model == model;
+    }
+    @else {
+        return SHADED_MODEL == model;
+    }
+}
+
+fn lit_crown() -> bool {
+    return lit_model_is(MODEL_CROWN) || lit_model_is(MODEL_CROWN_SKY);
+}
 
 // Yarra: light reflected towards a surface by the ground around it, as environment radiance
 // (Bevy's ambient colour is used the same way): the albedo of the ground below it times the sun,
@@ -180,19 +207,16 @@ fn apply_pbr_lighting(
 
     let specular_transmissive_color = specular_transmission * in.material.base_color.rgb;
 
-    @if(TREE_BARK_SKY)
-    let diffuse_occlusion = vec3(bark_sky_reach(in.diffuse_occlusion.g, in.world_position.xyz));
-    @else
-    let diffuse_occlusion = in.diffuse_occlusion;
+    var diffuse_occlusion = in.diffuse_occlusion;
+    if lit_model_is(MODEL_BARK) {
+        diffuse_occlusion = vec3(bark_sky_reach(in.diffuse_occlusion.g, in.world_position.xyz));
+    }
     let specular_occlusion = in.specular_occlusion;
 
     // Neubelt and Pettineo 2013, "Crafting a Next-gen Material Pipeline for The Order: 1886"
     // Yarra: crown normals are shared by both sides of a leaf card, so a card seen from behind
     // is not at a grazing angle; treating it as one lit it with grey sky reflection.
-    @if(TREE_CROWN_SHADING)
-    let NdotV = max(abs(dot(in.N, in.V)), 0.0001);
-    @else
-    let NdotV = max(dot(in.N, in.V), 0.0001);
+    let NdotV = max(select(dot(in.N, in.V), abs(dot(in.N, in.V)), lit_crown()), 0.0001);
     let R = reflect(-in.V, in.N);
 
     // Do the above calculations again for the clearcoat layer. Remember that
@@ -487,19 +511,20 @@ fn apply_pbr_lighting(
                 let to_light = (*light).direction_to_light;
                 // The authored crown normal faces the sun on exposed sides; the crown's
                 // occlusion deepens sheltered ones. The march skips the crown's own front.
-                @if(TREE_CROWN_SHADING && !TREE_CROWN_SKY)
-                let crown = clamp(in.diffuse_occlusion.g, 0.0, 1.0);
-                // Linear sky visibility, eased into the range the self-shadow was tuned on.
-                @if(TREE_CROWN_SKY)
-                let crown = crown_sky_shade(clamp(in.diffuse_occlusion.g, 0.0, 1.0));
-                @if(TREE_CROWN_SHADING)
-                let sun_facing = smoothstep(-0.25, 0.65, dot(normalize(in.world_normal), to_light));
-                @if(TREE_CROWN_SHADING)
-                let own = mix(crown * crown * crown * crown, sqrt(crown), sun_facing);
-                @if(TREE_CROWN_SHADING)
-                let far = own * forest_transmittance(in.world_position.xyz, to_light, 2.5);
-                @else
-                let far = forest_transmittance(in.world_position.xyz, to_light, 0.25);
+                var far: f32;
+                if lit_crown() {
+                    var crown = clamp(in.diffuse_occlusion.g, 0.0, 1.0);
+                    // Linear sky visibility, eased into the range the self-shadow was tuned on.
+                    if lit_model_is(MODEL_CROWN_SKY) {
+                        crown = crown_sky_shade(crown);
+                    }
+                    let sun_facing = smoothstep(-0.25, 0.65,
+                        dot(normalize(in.world_normal), to_light));
+                    let own = mix(crown * crown * crown * crown, sqrt(crown), sun_facing);
+                    far = own * forest_transmittance(in.world_position.xyz, to_light, 2.5);
+                } else {
+                    far = forest_transmittance(in.world_position.xyz, to_light, 0.25);
+                }
                 // Terrain casts nothing past the cascades either: ridges shade the ground
                 // below their horizon (terrain_shadow).
                 let distant = far * terrain_sunlight(in.world_position.xyz, to_light);
@@ -517,35 +542,33 @@ fn apply_pbr_lighting(
         if dot((*light).direction_to_light, environment.sun.xyz) > 0.999 {
             let shadows_on = ((*light).flags
                 & mesh_view_types::DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) != 0u;
-            @if(TREE_CROWN_SKY)
-            ground_sunlit = shadow;
-            @elif(TERRAIN_SURFACE) {
+            if lit_model_is(MODEL_CROWN_SKY) {
+                ground_sunlit = shadow;
+            } else if lit_model_is(MODEL_TERRAIN) {
                 ground_sunlit = shadow;
                 let tilted = 1.0 - smoothstep(GROUND_TILT.x, GROUND_TILT.y, in.N.y);
                 if shadows_on && shadow < 1.0 && tilted > 0.0 {
                     let around = ground_in_light(i, in.world_position.xyz, view_z, shadow);
                     ground_sunlit = mix(shadow, around, tilted);
                 }
-            }
-            @else {
-                if shadows_on {
-                    ground_sunlit = ground_in_light(i, in.world_position.xyz, view_z, 1.0);
-                }
+            } else if shadows_on {
+                ground_sunlit = ground_in_light(i, in.world_position.xyz, view_z, 1.0);
             }
         }
         // The clouds' direct beam is shaded like any sunlight; what they pass on diffusely casts
         // no shadows, and crowns hold it back as they do the sky.
-        @if(!TREE_CROWN_SKY && !TREE_BARK_SKY)
-        let diffuse = cloud.y * forest_sky_visibility(in.world_position.xyz);
+        var diffuse = cloud.y * forest_sky_visibility(in.world_position.xyz);
         // Bark under its own crown holds it back as it does the sky (bark_sky_reach).
-        @if(TREE_BARK_SKY)
-        let diffuse = cloud.y * forest_sky_visibility(in.world_position.xyz) * diffuse_occlusion.g;
+        if lit_model_is(MODEL_BARK) {
+            diffuse *= diffuse_occlusion.g;
+        }
         // Under clouds this is sky light: foliage the crown hides from the sky sees less of it.
-        @if(TREE_CROWN_SKY)
-        let diffuse = cloud.y * crown_sky_reach(in.diffuse_occlusion.g, in.world_position.xyz);
+        if lit_model_is(MODEL_CROWN_SKY) {
+            diffuse = cloud.y * crown_sky_reach(in.diffuse_occlusion.g, in.world_position.xyz);
+        }
         shadow = shadow * cloud.x + diffuse;
         var light_contrib = lighting::directional_light(i, &lighting_input, enable_diffuse);
-        @if(TREE_CROWN_SHADING) {
+        if lit_crown() {
             // Light wraps around a crown clump past its terminator and shines through the
             // needles from behind, so neighbouring cards fade into each other instead of
             // switching between lit and black.
@@ -700,7 +723,7 @@ fn apply_pbr_lighting(
         var sky_facing = vec3(0.75 + 0.25 * in.N.y);
         // Valley floors and gullies see less of the sky than ridges (terrain_shadow).
         let terrain_sky = terrain_sky_visibility(in.world_position.xyz);
-        @if(TREE_CROWN_SKY) {
+        if lit_model_is(MODEL_CROWN_SKY) {
             // Foliage sees the sky past the rest of its crown (baked) and past the crowns
             // around it, which shade the lower crowns of a stand. Light passed through and
             // between leaves keeps the deepest foliage from black. Below the crown's
@@ -711,9 +734,10 @@ fn apply_pbr_lighting(
             indirect_light += ambient::ambient_light(in.world_position, in.N, in.V, NdotV, diffuse_color, F0, perceptual_roughness, vec3(reach * (1.0 - below) * terrain_sky));
             indirect_light += diffuse_color * ground * below * reach;
         }
-        @elif(TREE_CROWN_SHADING)
-        indirect_light += ambient::ambient_light(in.world_position, in.N, in.V, NdotV, diffuse_color, F0, perceptual_roughness, diffuse_occlusion * sky_facing * terrain_sky);
-        @else {
+        else if lit_model_is(MODEL_CROWN) {
+            indirect_light += ambient::ambient_light(in.world_position, in.N, in.V, NdotV, diffuse_color, F0, perceptual_roughness, diffuse_occlusion * sky_facing * terrain_sky);
+        }
+        else {
             // Below the horizon of a surface lies the ground, not sky: its lower half sees
             // the light the ground reflects, so trunks, cliffs and characters are not lit blue
             // from below. Flat ground is unchanged.

@@ -1,8 +1,9 @@
 //! Deferred lighting (docs/DEFERRED_LIGHTING.md): surfaces on deferred views write a G-buffer in
 //! the prepass (`shaders/lighting/gbuffer.wesl`), and before the main pass draws the forward
 //! surfaces each lighting model's kernel lights its own pixels once, in `DeferredLighting`. This
-//! module owns the standard model's kernel (`shaders/lighting/deferred.wesl`), which runs the
-//! shared lighting; other models' renderers own theirs.
+//! module owns the kernel of the models the shared lighting serves
+//! (`shaders/lighting/deferred.wesl`: terrain, objects, tree crowns and bark), which branches on
+//! each pixel's model; other models' renderers own theirs.
 //!
 //! Bevy's deferred lighting pass is skipped: it runs Bevy's lighting, and it places pixels by the
 //! whole view, which is wrong when the main pass draws a region of it (MetalFX Temporal). Its
@@ -37,10 +38,10 @@ use bevy::{
 
 const SHADER: &str = "shaders/lighting/deferred.wesl";
 
-/// Where other models' lighting kernels draw on deferred views: after the standard model's, whose
-/// pass is the first on the view's target and clears it, and before the main pass. Each kernel
-/// covers the view with `begin_lighting_pass` and discards other models' pixels, so their order
-/// among themselves does not matter.
+/// Where other models' lighting kernels draw on deferred views: after the shared lighting's
+/// kernel, whose pass is the first on the view's target and clears it, and before the main pass.
+/// Each kernel covers the view with `begin_lighting_pass` and discards other models' pixels, so
+/// their order among themselves does not matter.
 #[derive(SystemSet, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct DeferredLighting;
 
@@ -161,7 +162,6 @@ fn descriptor(
         .filter(|def| *def != ShaderDefVal::from("STANDARD_MATERIAL_CLEARCOAT"))
         .collect();
     defs.push(ShaderDefVal::UInt("MATERIAL_BIND_GROUP".into(), 2));
-    defs.push("TERRAIN_SURFACE".into());
     descriptor.label = Some("deferred lighting".into());
     descriptor.layout[2] = environment.clone();
     descriptor.vertex.shader = shader.clone();
@@ -203,10 +203,6 @@ fn draw(
 ) {
     let (camera, view_bind_group, target, depth, pipeline, resolution_override) = view.into_inner();
 
-    let ready = environment
-        .as_ref()
-        .zip(cache.get_render_pipeline(pipeline.0));
-
     // Opened whether or not the kernel can draw yet: the target's first pass clears it, and it
     // must be this one, ahead of the kernels in `DeferredLighting`, which load what it leaves.
     let mut pass = begin_lighting_pass(
@@ -217,7 +213,8 @@ fn draw(
         depth,
         resolution_override,
     );
-    let Some((environment, pipeline)) = ready else {
+    let (Some(environment), Some(pipeline)) = (&environment, cache.get_render_pipeline(pipeline.0))
+    else {
         return;
     };
 

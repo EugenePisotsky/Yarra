@@ -5,6 +5,7 @@ use bevy::world_serialization::WorldInstanceReady;
 
 use bevy::{
     camera::{Exposure, RenderTarget, visibility::RenderLayers},
+    core_pipeline::prepass::{DeferredPrepass, DepthPrepass},
     render::{render_resource::TextureFormat, view::Msaa},
     tasks::{AsyncComputeTaskPool, Task, block_on, poll_once},
 };
@@ -133,6 +134,9 @@ pub(super) fn setup(
             ..default()
         }),
         Msaa::Off,
+        // Environment materials draw into a G-buffer, lit by the deferred lighting.
+        DepthPrepass,
+        DeferredPrepass,
         Exposure { ev100: 13.0 },
         state.camera(),
         RenderLayers::layer(LAYER),

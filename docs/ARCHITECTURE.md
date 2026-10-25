@@ -374,19 +374,20 @@ multisample. In order:
    (each drawn blade bent by trampling and wind, this frame and last); ground prints
    (`shaders/terrain/press.wesl`, `print_relief.wesl`, `print_mips.wesl`); GPU tree LOD and
    culling (`shaders/tree/lod.wesl`); the terrain-horizon search; cloud shadows.
-2. G-buffer and prepasses: grass first, as indirect draws in a pass of its own (no shadows),
-   writing its surface (`shaders/vegetation/draw/gbuffer.wesl`), depth and, under Temporal, its
-   motion; trees write depth and motion; Bevy's deferred prepass draws terrain v2 patches (one
-   shared grid mesh and `ClipmapTerrainMaterial`; heights come from the clipmap), which write
-   their surface (`shaders/lighting/gbuffer.wesl`), depth and camera motion. The G-buffer word
-   names each pixel's lighting model.
-3. Deferred lighting (`atmosphere::environment::DeferredLighting`): each model's kernel, a
-   full-screen draw, lights its own pixels once: terrain with the shared lighting
-   (`shaders/lighting/deferred.wesl`), grass with its own (`shaders/vegetation/deferred.wesl`).
-   They replace Bevy's lighting pass and its lighting-id copy.
-4. Main passes, each surface lit in its own shader: trees and impostors as indirect draws per form
-   and representation in the main, prepass and shadow phases, meshes; on forward views (the
-   editor) terrain and grass too.
+2. G-buffer: grass first, as indirect draws in a pass of its own (no shadows), writing its
+   surface (`shaders/vegetation/draw/gbuffer.wesl`), depth and, under Temporal, its motion; then
+   Bevy's deferred prepass draws terrain v2 patches (one shared grid mesh and
+   `ClipmapTerrainMaterial`; heights come from the clipmap), objects and tree meshes (indirect
+   draws per form and representation), which write their surface
+   (`shaders/lighting/gbuffer.wesl`), depth and motion. The G-buffer word names each pixel's
+   lighting model.
+3. Deferred lighting (`atmosphere::environment::DeferredLighting`): two full-screen kernels light
+   each G-buffer pixel once: the shared lighting's (`shaders/lighting/deferred.wesl`) terrain,
+   objects, crowns and bark, branching on each pixel's model, and grass's
+   (`shaders/vegetation/deferred.wesl`). They replace Bevy's lighting pass and its lighting-id
+   copy.
+4. Main passes, each surface lit in its own shader: impostors as indirect draws per form, and
+   transparent or stock-material meshes.
 5. After the main pass: the sky composite, one pass over the resolved image with three full-screen
    draws, each in front of the last: the sea; the sky, sun and moon, aerial perspective and clouds;
    haze, mist, fog, blowing snow, light shafts and the sun's glare. Quarter-resolution light shafts,

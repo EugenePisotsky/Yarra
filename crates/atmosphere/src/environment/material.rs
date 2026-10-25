@@ -3,6 +3,7 @@ use crate::AtmosphereState;
 
 use bevy::{
     asset::AssetEventSystems,
+    material::OpaqueRendererMethod,
     pbr::{ExtendedMaterial, MaterialExtension},
     shader::ShaderRef,
 };
@@ -32,6 +33,21 @@ pub struct EnvironmentExtension {
 impl MaterialExtension for EnvironmentExtension {
     fn fragment_shader() -> ShaderRef {
         "shaders/lighting/material.wesl".into()
+    }
+
+    // Writes our G-buffer (`shaders/lighting/gbuffer.wesl`), not Bevy's.
+    fn deferred_fragment_shader() -> ShaderRef {
+        "shaders/lighting/material.wesl".into()
+    }
+}
+
+/// The source material as environment materials draw it: into the G-buffer on deferred views
+/// (docs/DEFERRED_LIGHTING.md), lit there by the lighting kernels; views without a G-buffer draw
+/// it lit in the main pass.
+fn deferred(source: &StandardMaterial) -> StandardMaterial {
+    StandardMaterial {
+        opaque_render_method: OpaqueRendererMethod::Deferred,
+        ..source.clone()
     }
 }
 
@@ -91,7 +107,7 @@ fn convert(
             && let (Some(p), Some(handle)) = (source.get(*id), cache.get(id))
             && let Some(mut material) = target.get_mut(handle)
         {
-            material.base = p.clone();
+            material.base = deferred(p);
         }
     }
 
@@ -115,7 +131,7 @@ fn convert(
             .entry(handle.id())
             .or_insert_with(|| {
                 target.add(EnvironmentMaterial {
-                    base: base.clone(),
+                    base: deferred(base),
                     extension: EnvironmentExtension {
                         parameters: assets.parameters.clone(),
                         shadows: assets.shadows.clone(),

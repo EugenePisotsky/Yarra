@@ -1,4 +1,9 @@
-use bevy::{gizmos::config::GizmoConfigStore, prelude::*, render::view::Msaa};
+use bevy::{
+    core_pipeline::prepass::{DeferredPrepass, DepthPrepass},
+    gizmos::config::GizmoConfigStore,
+    prelude::*,
+    render::view::Msaa,
+};
 use bevy_egui::{EguiPrimaryContextPass, egui};
 
 use engine::{
@@ -55,6 +60,9 @@ pub(crate) fn setup_animation_workspace(mut commands: Commands) {
     commands.spawn((
         Camera3d::default(),
         Msaa::Off,
+        // Environment materials draw into a G-buffer, lit by the deferred lighting.
+        DepthPrepass,
+        DeferredPrepass,
         Camera {
             is_active: false,
             clear_color: ClearColorConfig::Custom(Color::srgb(0.075, 0.08, 0.09)),
