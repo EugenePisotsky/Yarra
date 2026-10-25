@@ -58,9 +58,10 @@ passes = ["^sky", "^atmosphere", "cloud", "shafts", "sun occlusion"]
 [[line]]
 name = "upscale and post"
 # MetalFX Temporal's own passes take about 2.2 ms; after them, at the 7.5 Mpx output, tone
-# mapping and UI take about 0.2 ms each, leaving 0.4 for bloom and exposure.
+# mapping and UI take about 0.2 ms each and the copy to the window 0.1. Bloom and eye adaptation
+# run on the rendered image before it, 0.25 ms together.
 ms = 3.0
-passes = ["MetalFX", "^upscaling$", "bloom", "exposure", "tone map", "^ui$", "_2d$"]
+passes = ["MetalFX", "^upscaling$", "bloom", "eye adaptation", "tone map", "^ui$", "_2d$"]
 
 [[line]]
 name = "world compute"

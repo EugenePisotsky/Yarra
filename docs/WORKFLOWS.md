@@ -489,7 +489,7 @@ After one load (`--look-settle`, default 25 s) each variant draws 5 s, wind and 
 then a fullscreen screenshot (keep the display awake). `--gpu-timing-off` avoids lost GPU counters
 between quick launches; `row|column` names lay out the sheet.
 Keys: `ev`, `tone` (`tony agx neutral filmic aces boring reinhard none`), `ambient`, `sun`,
-`canopy`, `auto`, `fog`, `particles`, `shafts`, `phase` (0.34 morning, 0.5 noon), `moon`, `tilt`,
+`canopy`, `auto`, `fog`, `particles`, `shafts`, `bloom`, `phase` (0.34 morning, 0.5 noon), `moon`, `tilt`,
 `wind`, `wet`, `lightning`, `burst`, `haze`, `mist`, `depth`, `air`.
 
 ### Repro routes and snapshots

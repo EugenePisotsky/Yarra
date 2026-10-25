@@ -44,6 +44,16 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
   cloud, forest and horizon once per pixel, slow terms at half resolution. This supersedes the
   depth prepass only for Temporal (`3bc9be4`); a foliage or global depth prepass against overdraw
   was rejected twice (+0.3 ms GPU, +0.7 ms render prep).
+- **Bloom and eye adaptation of our own, before the upscaler.** *Kept* (October 26). Bevy's ran
+  on the 7.5 Mpx output after MetalFX (bloom 0.84 ms, exposure 0.20) and cannot read Temporal's
+  rendered region. Ours keep Bevy's filters, its natural preset's weights and its metering
+  (`atmosphere::bloom`, `adaptation`), run as compute on the rendered image and blend back before
+  reconstruction: 0.25 ms together. GPU busy at Maximum from `f5ac211`: meadow 10.06 → 9.48 ms,
+  start 11.08 → 10.43, forest-pine 10.80 → 10.14, storm-road 10.57 → 9.93, mountain-hamlet
+  10.51 → 9.96, brook-mouth 9.70 → 8.99. Captures show the same glow (correlation 0.97 in the
+  start view) and an image 2–8% brighter: Bevy's exposure curve is an 8-bit table, truncated and
+  read by floor, that darkened by up to an eighth of a stop, and its bloom levels (11/10-bit
+  floats) lost energy. Rain and ambient particles, drawn after reconstruction, no longer bloom.
 - **MetalFX Temporal's scaler takes full-size textures.** *Kept.* A region-sized scaler (`b2c8cdf`)
   saved 0.8 ms that MetalFX's internal wait absorbed, and its history went blocky in motion;
   reverted (`c70158a`). Temporal's ~4 ms is MetalFX's own.

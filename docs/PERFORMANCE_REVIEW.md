@@ -314,9 +314,9 @@ sun visibility per fragment) already exceeds Village's densest frame, while tree
 in forests. Direction 2's check (hours) still comes early. The baseline adds that sky and air and
 the output end are over budget in every view. The atmosphere tables at the reference sizes took
 0.45 → 0.15 ms (`5fa39a1`). Bevy's bloom and exposure cannot run on the internal image before
-MetalFX (they read the whole window-sized target), so that step needs a bloom of our own, its
-last pass folded into the output tone map, for about −0.4 ms, and exposure from one of its mips
-for about −0.15.
+MetalFX (they read the whole window-sized target). *Done* (October 26): our own bloom and eye
+adaptation on the rendered image before the upscaler, 1.04 → 0.25 ms, −0.55 to −0.71 ms busy
+per view ([Decisions](DECISIONS.md)).
 
 1. **A frame budget and an unattended benchmark.** *Built* (October 25): `tools/frame_budget.toml`,
    `tools/bench.py`, the history in `tools/bench_history.csv`, and the cost rule in AGENTS.md
@@ -369,7 +369,7 @@ for about −0.15.
    costing about 0.3 ms nets −0.2 to −0.8 ms by view; the sky, clouds, sea, shafts and glare
    (0.6–0.8 ms) stay per pixel.
 8. **The output end and the frame time** (small to medium). Exposure histogram at internal
-   resolution or on bloom's first mip; find whether MetalFX's 1.4 ms wait is GPU idle or its own
+   resolution (*done*, with bloom, October 26); find whether MetalFX's 1.4 ms wait is GPU idle or its own
    work; dynamic resolution (the scaler takes a min/max range and its history survives size
    changes); quality presets (object detail, shadow LOD, grass range) chosen by the budget. Dynamic
    resolution helps fragment-bound views and clock drops, not vertex-bound ones. *Check first:* the

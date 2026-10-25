@@ -52,6 +52,12 @@
         (shader: "shaders/sky/sun_rays.wesl", variants: [
             [],
         ]),
+        (shader: "shaders/post/bloom.wesl", variants: [
+            [],
+        ]),
+        (shader: "shaders/post/exposure.wesl", variants: [
+            [],
+        ]),
         (shader: "shaders/lighting/deferred.wesl", variants: [
             ["ATMOSPHERE", "DEFERRED_LIGHTING_PIPELINE", "DEFERRED_PREPASS", "DEPTH_PREPASS", "IRRADIANCE_VOLUMES_ARE_USABLE", "MATERIAL_BIND_GROUP=2", "MOTION_VECTOR_PREPASS", "MULTIPLE_LIGHTMAPS_IN_ARRAY", "MULTIPLE_LIGHT_PROBES_IN_ARRAY", "SHADOW_FILTER_METHOD_GAUSSIAN"],
             ["ATMOSPHERE", "DEFERRED_LIGHTING_PIPELINE", "DEFERRED_PREPASS", "DEPTH_PREPASS", "IRRADIANCE_VOLUMES_ARE_USABLE", "MATERIAL_BIND_GROUP=2", "MULTIPLE_LIGHTMAPS_IN_ARRAY", "MULTIPLE_LIGHT_PROBES_IN_ARRAY", "SHADOW_FILTER_METHOD_GAUSSIAN"],

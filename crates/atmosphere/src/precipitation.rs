@@ -1,5 +1,5 @@
 //! Game rain: camera-anchored streak volumes drawn on the resolved HDR image after temporal
-//! reconstruction and before bloom/tone mapping. Drop positions come from hashes plus a fall
+//! reconstruction and before tone mapping. Drop positions come from hashes plus a fall
 //! offset accumulated on the CPU, so there is no per-drop simulation state and changing wind
 //! never makes drops jump. Occlusion is a soft test against the scene depth; there is no
 //! shelter under trees yet.

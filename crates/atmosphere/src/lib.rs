@@ -2,6 +2,7 @@
 //! one ordered presentation system applies them before transform propagation.
 pub mod adaptation;
 pub mod ambient_particles;
+pub mod bloom;
 pub mod clouds;
 pub mod environment;
 pub mod forest_shadow;
@@ -21,19 +22,18 @@ pub mod valley_mist;
 pub mod wind;
 
 use bevy::{
-    camera::Exposure,
+    camera::{Exposure, Viewport},
     core_pipeline::tonemapping::Tonemapping,
     light::{
         Atmosphere, CascadeShadowConfigBuilder, SunDisk,
         atmosphere::{Falloff, ScatteringMedium},
     },
     pbr::AtmosphereSettings,
-    post_process::{auto_exposure::AutoExposure, bloom::Bloom},
     prelude::*,
     render::{
         extract_resource::ExtractResource,
         render_resource::{TextureUsages, TextureView},
-        view::{ColorGrading, ViewDepthStencilTexture},
+        view::{ColorGrading, ViewDepthStencilTexture, ViewTarget},
     },
 };
 
@@ -282,6 +282,7 @@ impl Plugin for WorldEnvironmentPlugin {
                 sky::SkyCompositePlugin,
                 light_shafts::LightShaftsPlugin,
                 sun_glare::SunGlarePlugin,
+                bloom::BloomPlugin,
             ))
             .insert_resource(ClearColor(Color::BLACK))
             .insert_resource(AtmosphereState {
@@ -404,9 +405,9 @@ type EnvironmentViews<'w, 's> = Query<
         &'static Transform,
         &'static mut Exposure,
         Option<&'static AtmosphereSettings>,
-        Option<&'static mut Bloom>,
+        Option<&'static mut bloom::BloomView>,
         Option<&'static mut Camera3d>,
-        Option<&'static mut AutoExposure>,
+        Option<&'static mut adaptation::EyeAdaptation>,
         Option<&'static mut ColorGrading>,
     ),
     (
@@ -425,7 +426,6 @@ fn apply(
     mut moon: Lights<WorldMoon, WorldSun>,
     mut ambient: ResMut<GlobalAmbientLight>,
     mut views: EnvironmentViews,
-    adaptation: Option<Res<adaptation::Adaptation>>,
     mut planets: Query<(&Atmosphere, &mut GlobalTransform), With<WorldAtmosphere>>,
     mut medium: Medium,
 ) {
@@ -461,7 +461,6 @@ fn apply(
         profile,
         &value,
         presentation,
-        adaptation.as_deref(),
     );
 
     medium.follow(profile);
@@ -574,7 +573,6 @@ fn present_views(
     profile: &AtmosphereProfile,
     value: &world::atmosphere::EvaluatedAtmosphere,
     presentation: AtmospherePresentation,
-    adaptation: Option<&adaptation::Adaptation>,
 ) {
     // Eye adaptation in the game only: authoring judges the exposure as set.
     let adapt =
@@ -588,7 +586,7 @@ fn present_views(
         (1.0, (0.0, 0.0))
     };
 
-    for (entity, _, mut exposure, settings, bloom, camera_3d, mut auto, grading) in views {
+    for (entity, _, mut exposure, settings, bloom, camera_3d, eye, grading) in views {
         let mut view_commands = commands.entity(entity);
         grade(&mut view_commands, grading, saturation, balance);
         exposure.ev100 = state
@@ -622,19 +620,16 @@ fn present_views(
         // The atmosphere handles both sky and aerial perspective. No second DistanceFog pass.
         view_commands.remove::<DistanceFog>();
 
-        if let Some(adaptation) = adaptation {
-            match auto.as_deref_mut() {
-                Some(auto)
-                    if auto.compensation_curve != *adaptation.curve(adapt, value.adaptation) =>
-                {
-                    auto.compensation_curve = adaptation.curve(adapt, value.adaptation).clone();
-                }
-                Some(_) => {}
-                None if adapt => {
-                    view_commands.insert(adaptation.settings(adapt, value.adaptation));
-                }
-                None => {}
+        let adaptation = adaptation::EyeAdaptation::new(adapt, value.adaptation);
+
+        match eye {
+            Some(mut eye) => {
+                eye.set_if_neq(adaptation);
             }
+            None if adapt => {
+                view_commands.insert(adaptation);
+            }
+            None => {}
         }
     }
 }
@@ -693,18 +688,21 @@ fn grade(
 }
 
 /// Bloom at the profile's intensity, or none when presentation turns it off.
-fn present_bloom(view: &mut EntityCommands, bloom: Option<Mut<Bloom>>, intensity: Option<f32>) {
+fn present_bloom(
+    view: &mut EntityCommands,
+    bloom: Option<Mut<bloom::BloomView>>,
+    intensity: Option<f32>,
+) {
     match (intensity, bloom) {
         (None, Some(_)) => {
-            view.remove::<Bloom>();
+            view.remove::<bloom::BloomView>();
         }
         (None, None) => {}
-        (Some(intensity), Some(mut bloom)) => bloom.intensity = intensity,
+        (Some(intensity), Some(mut bloom)) => {
+            bloom.set_if_neq(bloom::BloomView { intensity });
+        }
         (Some(intensity), None) => {
-            view.insert(Bloom {
-                intensity,
-                ..Bloom::NATURAL
-            });
+            view.insert(bloom::BloomView { intensity });
         }
     }
 }
@@ -734,6 +732,20 @@ fn scattering_medium(profile: &AtmosphereProfile, visibility: f32) -> Scattering
         scale: sunlight::AEROSOL_SCALE as f32,
     };
     medium
+}
+
+/// The pixels of a view's image that the main pass renders: its viewport, which the temporal
+/// upscaler shrinks to its input size, or else the whole image.
+pub(crate) fn rendered_region(viewport: Option<&Viewport>, target: &ViewTarget) -> URect {
+    match viewport {
+        Some(v) => URect::from_corners(v.physical_position, v.physical_position + v.physical_size),
+        None => URect::new(
+            0,
+            0,
+            target.main_texture().width(),
+            target.main_texture().height(),
+        ),
+    }
 }
 
 /// The view of a camera's depth texture that passes sample. Since Bevy 0.20 a depth texture may
@@ -862,7 +874,7 @@ mod tests {
             .id();
         app.update();
         assert!(app.world().get::<AtmosphereSettings>(camera).is_some());
-        assert!(app.world().get::<Bloom>(camera).is_some());
+        assert!(app.world().get::<bloom::BloomView>(camera).is_some());
         let profile = app.world().resource::<AtmosphereState>().profile.clone();
         *app.world_mut().resource_mut::<AtmospherePresentation>() = AtmospherePresentation {
             sky_and_haze: false,
@@ -877,13 +889,13 @@ mod tests {
 
         // Surfaces keep atmosphere lighting; the composite alone stops drawing sky and haze.
         assert!(app.world().get::<AtmosphereSettings>(camera).is_some());
-        assert!(app.world().get::<Bloom>(camera).is_none());
+        assert!(app.world().get::<bloom::BloomView>(camera).is_none());
         assert_eq!(app.world().resource::<AtmosphereState>().profile, profile);
         *app.world_mut().resource_mut::<AtmospherePresentation>() =
             AtmospherePresentation::default();
         app.update();
         assert!(app.world().get::<AtmosphereSettings>(camera).is_some());
-        assert!(app.world().get::<Bloom>(camera).is_some());
+        assert!(app.world().get::<bloom::BloomView>(camera).is_some());
     }
 
     #[test]

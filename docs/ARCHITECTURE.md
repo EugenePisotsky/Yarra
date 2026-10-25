@@ -240,7 +240,8 @@ SQLite. The renderers (Bevy) have no SQLite: `engine` is the only library joinin
 
 - Owns the sky and the air: `WorldEnvironmentPlugin` (`game()`/`editor()`), `AtmosphereState`,
   `AtmosphereOwner` (Game, Editor, Isolated), the sky composite (`sky`), clouds, light shafts,
-  sun glare, rain, particles, lightning, eye adaptation, the tone map (`WORLD_TONEMAPPING`).
+  sun glare, rain, particles, lightning, bloom, eye adaptation, the tone map
+  (`WORLD_TONEMAPPING`).
 - Owns the wind near the ground (`wind`): its air speed (`AIR_SPEED` per unit of weather wind
   strength) and one pattern of gusts carried downwind with the air (`Gusts`, twinned on the GPU
   by `weather/gust.wesl`). Rain and the ambient particles move with the gust at the camera;
@@ -391,9 +392,13 @@ multisample. In order:
    draws, each in front of the last: the sea; the sky, sun and moon, aerial perspective and clouds;
    haze, mist, fog, blowing snow, light shafts and the sun's glare. Quarter-resolution light shafts,
    sun occlusion and sun rays feed it.
-6. Temporal resolve (MetalFX Temporal only); rain and ambient particles between
-   `EarlyPostProcess` and `PostProcess`; bloom, eye adaptation and tone mapping.
-7. Upscaling to the window (MetalFX Spatial, or Linear during UI composition) under a UI camera
+6. Bloom and eye adaptation on the rendered image (`atmosphere::bloom`, `adaptation`;
+   `shaders/post/`): a compute pyramid blended back over the main pass's region, then a
+   histogram of every other pixel eased into the view's exposure. Run before the upscaler, they
+   cost the rendered pixels, not the window's.
+7. Temporal resolve (MetalFX Temporal only); rain and ambient particles between
+   `EarlyPostProcess` and `PostProcess`; tone mapping.
+8. Upscaling to the window (MetalFX Spatial, or Linear during UI composition) under a UI camera
    at native resolution.
 
 Every lit material, and the deferred lighting, binds the shared environment at slots 120–129

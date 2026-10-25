@@ -53,6 +53,8 @@ pub(crate) struct LookVariant {
     pub(crate) fog: Option<bool>,
     /// Ambient particles; the game's setting when `None`.
     pub(crate) particles: Option<bool>,
+    /// Bloom; the game's setting when `None`.
+    pub(crate) bloom: Option<bool>,
     /// Light shafts; the game's setting when `None`.
     pub(crate) shafts: Option<bool>,
     /// Screenshots taken one after another, for motion; 1 for a still.
@@ -95,7 +97,7 @@ pub(crate) const TONEMAPPERS: [(&str, Tonemapping); 8] = [
 ];
 
 /// `NAME[:key=value,...]` separated by `;`, keys `ev`, `tone`, `ambient`, `sun`, `canopy`,
-/// `auto`, `fog`, `particles`, `shafts`, `phase`, `haze`, `mist`, `depth`, `air` (scale of the air under crowns), `lightning` (a strike ahead held that many seconds in), `moon` (its age in days), `tilt` (degrees the camera turns up), `wind` (seconds into the wind's clock), `wet` (how wet the ground is held, 0..1) and `burst` (that many
+/// `auto`, `fog`, `particles`, `shafts`, `bloom`, `phase`, `haze`, `mist`, `depth`, `air` (scale of the air under crowns), `lightning` (a strike ahead held that many seconds in), `moon` (its age in days), `tilt` (degrees the camera turns up), `wind` (seconds into the wind's clock), `wet` (how wet the ground is held, 0..1) and `burst` (that many
 /// screenshots one after another, a frame or two apart).
 pub(crate) fn parse_variants(spec: &str) -> Result<Vec<LookVariant>, String> {
     let variants = spec
@@ -114,6 +116,7 @@ pub(crate) fn parse_variants(spec: &str) -> Result<Vec<LookVariant>, String> {
                 auto_exposure: None,
                 fog: None,
                 particles: None,
+                bloom: None,
                 shafts: None,
                 burst: 1,
                 phase: None,
@@ -148,7 +151,7 @@ pub(crate) fn parse_variants(spec: &str) -> Result<Vec<LookVariant>, String> {
                     "ambient" => variant.ambient = number(0.05..=20.0)?,
                     "sun" => variant.sun = number(0.05..=20.0)?,
                     "canopy" => variant.canopy = Some(number(0.0..=1.0)?),
-                    "auto" | "fog" | "particles" | "shafts" => {
+                    "auto" | "fog" | "particles" | "shafts" | "bloom" => {
                         let on = match value {
                             "1" | "on" => true,
                             "0" | "off" => false,
@@ -162,6 +165,7 @@ pub(crate) fn parse_variants(spec: &str) -> Result<Vec<LookVariant>, String> {
                             "auto" => variant.auto_exposure = Some(on),
                             "fog" => variant.fog = Some(on),
                             "particles" => variant.particles = Some(on),
+                            "bloom" => variant.bloom = Some(on),
                             _ => variant.shafts = Some(on),
                         }
                     }
@@ -347,6 +351,12 @@ fn present(
         presentation.light_shafts = shafts;
     }
 
+    let bloom = variant.bloom.unwrap_or(settings.bloom);
+
+    if presentation.bloom != bloom {
+        presentation.bloom = bloom;
+    }
+
     tuning.set_if_neq(variant.tuning);
 
     if let Some(mut weather) = weather
@@ -505,6 +515,7 @@ fn run(
         "fog": variant.fog.unwrap_or(settings.fog),
         "particles": variant.particles.unwrap_or(settings.particles),
         "shafts": variant.shafts.unwrap_or(settings.light_shafts),
+        "bloom": variant.bloom.unwrap_or(settings.bloom),
         "phase": variant.phase.unwrap_or(atmosphere.profile.initial_phase),
         "day": atmosphere.day,
         "haze": variant.tuning.haze,
@@ -601,6 +612,7 @@ mod tests {
             parse_variants("x:particles=off").unwrap()[0].particles,
             Some(false)
         );
+        assert_eq!(parse_variants("x:bloom=off").unwrap()[0].bloom, Some(false));
         assert_eq!(parse_variants("x:burst=12").unwrap()[0].burst, 12);
         assert_eq!(parse_variants("x:wind=2.5").unwrap()[0].wind, 2.5);
         assert_eq!(
