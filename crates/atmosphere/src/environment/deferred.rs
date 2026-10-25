@@ -1,4 +1,4 @@
-//! Deferred lighting (docs/DEFERRED_LIGHTING.md): surfaces on deferred views write a G-buffer in
+//! Deferred lighting (docs/ARCHITECTURE.md): surfaces on deferred views write a G-buffer in
 //! the prepass (`shaders/lighting/gbuffer.wesl`), and before the main pass draws the forward
 //! surfaces each lighting model's kernel lights its own pixels once, in `DeferredLighting`. This
 //! module owns the kernel of the models the shared lighting serves

@@ -29,14 +29,13 @@ pub(crate) use environment::VegetationSun;
 pub use environment::{VegetationAmbientGain, VegetationLighting, VegetationWind};
 use environment::{advance_vegetation_wind, sync_vegetation_sun};
 pub use renderer::terrain_contact_radius;
-pub(crate) use scene_state::VegetationDraw;
 
 pub use scene_state::{
     VegetationLodFocus, VegetationRenderOrigin, VegetationSceneState, VegetationTerrainGate,
     VegetationView, VegetationViewDisabled,
 };
 
-use scene_state::{attach_default_views, maintain_draw_entity};
+use scene_state::attach_default_views;
 pub use settings::{VegetationProfileMode, VegetationSettings};
 pub use trample::{MAX_VEGETATION_BENDERS, VegetationBender, VegetationBenders};
 
@@ -65,7 +64,6 @@ impl Plugin for VegetationRenderPlugin {
             ExtractResourcePlugin::<VegetationAmbientGain>::default(),
             ExtractResourcePlugin::<VegetationBenders>::default(),
             ExtractComponentPlugin::<VegetationView>::default(),
-            ExtractComponentPlugin::<VegetationDraw>::default(),
         ))
         .init_resource::<VegetationSettings>()
         .init_resource::<VegetationLighting>()
@@ -81,7 +79,7 @@ impl Plugin for VegetationRenderPlugin {
             PostUpdate,
             sync_vegetation_sun.after(TransformSystems::Propagate),
         )
-        .add_systems(PostUpdate, (attach_default_views, maintain_draw_entity));
+        .add_systems(PostUpdate, attach_default_views);
 
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
             return;

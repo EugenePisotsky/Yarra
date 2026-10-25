@@ -1,14 +1,11 @@
-// Grass draw: procedural blades shaded as thin, glossy foliage. With GRASS_GBUFFER (deferred
-// views) blades write their surface into the G-buffer for vegetation/deferred.wesl to light, and
-// with TEMPORAL_GRASS the motion of the wind and the camera; otherwise they are lit here.
+// Grass draw: procedural blades write their surface into the G-buffer, lit afterwards as thin,
+// glossy foliage (vegetation/deferred.wesl), and with TEMPORAL_GRASS the motion of the wind and
+// the camera.
 import package::shaders::vegetation::draw::bindings::{VertexOutput, camera};
 @if(TEMPORAL_GRASS)
 import package::shaders::vegetation::draw::bindings::temporal_grass;
 import package::shaders::vegetation::draw::geometry::blade_vertex;
-@if(GRASS_GBUFFER)
 import package::shaders::vegetation::draw::{gbuffer, lighting::surface};
-@if(!GRASS_GBUFFER)
-import package::shaders::vegetation::draw::lighting::shade;
 
 @vertex
 fn vertex(
@@ -29,14 +26,12 @@ fn vertex(
     return output;
 }
 
-@if(GRASS_GBUFFER)
 struct GBufferFragment {
     @location(0) surface: vec4<u32>,
     @location(1) own: vec4<f32>,
     @if(TEMPORAL_GRASS) @location(2) motion: vec2<f32>,
 }
 
-@if(GRASS_GBUFFER)
 @fragment fn fragment(input: VertexOutput) -> GBufferFragment {
     let texels = gbuffer::pack(surface(input));
     var output: GBufferFragment;
@@ -51,5 +46,3 @@ struct GBufferFragment {
     }
     return output;
 }
-@else
-@fragment fn fragment(input: VertexOutput) -> @location(0) vec4<f32> { return shade(input); }

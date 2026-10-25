@@ -41,9 +41,9 @@ impl MaterialExtension for EnvironmentExtension {
     }
 }
 
-/// The source material as environment materials draw it: into the G-buffer on deferred views
-/// (docs/DEFERRED_LIGHTING.md), lit there by the lighting kernels; views without a G-buffer draw
-/// it lit in the main pass.
+/// The source material as environment materials draw it: into the G-buffer, lit by the lighting
+/// kernels (docs/ARCHITECTURE.md, deferred lighting). Bevy draws deferred materials on no view
+/// without a G-buffer.
 fn deferred(source: &StandardMaterial) -> StandardMaterial {
     StandardMaterial {
         opaque_render_method: OpaqueRendererMethod::Deferred,

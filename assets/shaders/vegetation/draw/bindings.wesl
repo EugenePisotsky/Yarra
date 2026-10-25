@@ -1,5 +1,6 @@
-// The draw's own bind groups and varyings. Group zero is Bevy's mesh-view bind group, including
-// directional shadow cascades; group two holds the cloud and forest-shadow surface inputs.
+// The draw's own bind groups and varyings. Group two holds the environment's surface inputs; the
+// lighting kernel (vegetation/deferred.wesl) binds Bevy's mesh-view group at zero, with the
+// directional shadow cascades, and the G-buffer pass none.
 import package::shaders::vegetation::types::{Instance, GrassType, Camera, BladePose};
 @if(TEMPORAL_GRASS)
 import package::shaders::vegetation::types::TemporalGrass;

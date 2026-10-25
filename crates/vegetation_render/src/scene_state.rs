@@ -139,10 +139,6 @@ pub struct VegetationView;
 #[derive(Component)]
 pub struct VegetationViewDisabled;
 
-#[derive(Component, ExtractComponent, Clone, Copy, Debug, Default)]
-#[extract_app(bevy::render::RenderApp)]
-pub(crate) struct VegetationDraw;
-
 #[allow(clippy::type_complexity)] // One camera query.
 pub(crate) fn attach_default_views(
     mut commands: Commands,
@@ -163,20 +159,6 @@ pub(crate) fn attach_default_views(
             commands.entity(entity).insert(VegetationView);
         } else if !enabled && has_view {
             commands.entity(entity).remove::<VegetationView>();
-        }
-    }
-}
-
-pub(crate) fn maintain_draw_entity(
-    mut commands: Commands,
-    scene: Option<Res<VegetationSceneState>>,
-    draw_entities: Query<Entity, With<VegetationDraw>>,
-) {
-    if scene.is_some() && draw_entities.is_empty() {
-        commands.spawn((VegetationDraw, Name::new("Vegetation draw")));
-    } else if scene.is_none() {
-        for entity in &draw_entities {
-            commands.entity(entity).despawn();
         }
     }
 }

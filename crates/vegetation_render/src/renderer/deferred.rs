@@ -1,23 +1,29 @@
-//! Grass on deferred views (docs/DEFERRED_LIGHTING.md). Blades write their surface into the
-//! G-buffer in a pass of their own before Bevy's prepasses, so the terrain under them fails the
-//! depth test instead of being shaded; then, among the lighting kernels, one full-screen pass
-//! lights each of their pixels once (`shaders/vegetation/deferred.wesl`).
+//! Drawing grass (docs/ARCHITECTURE.md, rendering frame). Blades write their surface into the
+//! G-buffer of deferred views in a pass of their own before Bevy's prepasses, so the terrain
+//! under them fails the depth test instead of being shaded; then, among the lighting kernels, one
+//! full-screen pass lights each of their pixels once (`shaders/vegetation/deferred.wesl`). Views
+//! without a G-buffer draw no grass.
 use super::{
     buffers::VegetationBuffers,
     gpu_types::shader_defs,
-    pipelines::{DrawOutput, VegetationPipelineKey, VegetationPipelines},
+    pipelines::{VegetationPipelineKey, VegetationPipelines},
     temporal,
 };
+
+use crate::{VegetationProfileMode, VegetationSettings, VegetationView};
 
 use atmosphere::environment::{DeferredLighting, EnvironmentSurfaceGpu, begin_lighting_pass};
 
 use bevy::{
     camera::{MainPassResolutionOverride, Viewport},
     core_pipeline::{
-        Core3dSystems, core_3d::CORE_3D_DEPTH_FORMAT, prepass::ViewPrepassTextures,
+        Core3dSystems,
+        core_3d::CORE_3D_DEPTH_FORMAT,
+        prepass::{DeferredPrepass, ViewPrepassTextures},
         schedule::Core3d,
     },
-    pbr::{MeshPipelineViewLayoutKey, MeshPipelineViewLayouts, MeshViewBindGroup},
+    ecs::system::SystemParam,
+    pbr::{MeshPipelineViewLayoutKey, MeshPipelineViewLayouts, MeshViewBindGroup, ViewKeyCache},
     prelude::*,
     render::{
         Render, RenderSystems,
@@ -176,7 +182,10 @@ impl Specializer<RenderPipeline> for LightingSpecializer {
 pub(super) fn install(app: &mut SubApp) {
     app.add_systems(
         Render,
-        prepare_textures.in_set(RenderSystems::PrepareBindGroups),
+        (
+            queue.in_set(RenderSystems::Queue),
+            prepare_textures.in_set(RenderSystems::PrepareBindGroups),
+        ),
     )
     .add_systems(
         Core3d,
@@ -187,34 +196,78 @@ pub(super) fn install(app: &mut SubApp) {
     );
 }
 
-/// The G-buffer and lighting pipelines for a deferred view (`draw::queue`).
-pub(super) fn specialize(
-    cache: &PipelineCache,
-    pipelines: &mut VegetationPipelines,
-    lighting: &mut GrassLighting,
-    view: &ExtractedView,
-    view_layout_bits: u32,
-    motion: bool,
-) -> Result<ViewPipelines, BevyError> {
-    let gbuffer = pipelines.draw_variants.specialize(
-        cache,
-        VegetationPipelineKey {
-            output: DrawOutput::GBuffer { motion },
-            environment: true,
-        },
-    )?;
-    let lighting = lighting.variants.specialize(
-        cache,
-        LightingKey {
-            view_layout_bits,
-            target_format: view.target_format,
-        },
-    )?;
-    Ok(ViewPipelines {
-        gbuffer,
-        lighting,
-        motion,
-    })
+/// What grass's pipelines are specialized with.
+#[derive(SystemParam)]
+pub(super) struct GrassPipelines<'w> {
+    cache: Res<'w, PipelineCache>,
+    draw: ResMut<'w, VegetationPipelines>,
+    lighting: ResMut<'w, GrassLighting>,
+    view_keys: Res<'w, ViewKeyCache>,
+    environment: Option<Res<'w, EnvironmentSurfaceGpu>>,
+}
+
+impl GrassPipelines<'_> {
+    /// The G-buffer and lighting pipelines of a deferred view. Grass reads the environment for
+    /// its wetness and frost.
+    fn specialize(&mut self, view: &ExtractedView, motion: bool) -> Option<ViewPipelines> {
+        self.environment.as_ref()?;
+        let view_key = self.view_keys.get(&view.retained_view_entity)?;
+        let gbuffer = self
+            .draw
+            .draw_variants
+            .specialize(&self.cache, VegetationPipelineKey { motion })
+            .ok()?;
+        let lighting = self
+            .lighting
+            .variants
+            .specialize(
+                &self.cache,
+                LightingKey {
+                    view_layout_bits: MeshPipelineViewLayoutKey::from(*view_key).bits(),
+                    target_format: view.target_format,
+                },
+            )
+            .ok()?;
+        Some(ViewPipelines {
+            gbuffer,
+            lighting,
+            motion,
+        })
+    }
+}
+
+/// A view that draws grass, and whether MetalFX Temporal reads its motion.
+type QueuedView = (
+    Entity,
+    &'static ExtractedView,
+    Has<upscaling::temporal::TemporalView>,
+);
+
+fn queue(
+    mut commands: Commands,
+    mut pipelines: GrassPipelines,
+    settings: Res<VegetationSettings>,
+    views: Query<QueuedView, (With<VegetationView>, With<DeferredPrepass>)>,
+) {
+    for (entity, view, temporal) in &views {
+        commands.entity(entity).remove::<ViewPipelines>();
+
+        // Queue precedes PrepareBindGroups: buffers.active still describes the last frame here,
+        // so whether grass is resident is decided as it draws, and newly resident grass does not
+        // miss its first frame.
+        if matches!(
+            settings.profile_mode,
+            VegetationProfileMode::ComputeOnly
+                | VegetationProfileMode::ScheduleOnly
+                | VegetationProfileMode::Disabled
+        ) {
+            continue;
+        }
+
+        if let Some(view_pipelines) = pipelines.specialize(view, temporal) {
+            commands.entity(entity).insert(view_pipelines);
+        }
+    }
 }
 
 fn prepare_textures(

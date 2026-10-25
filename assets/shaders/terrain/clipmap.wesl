@@ -8,7 +8,6 @@
 // one, which takes the prints feet pressed into it (terrain/prints.wesl).
 import package::shaders::environment::maps::{FRESH_SNOW, fresh_snow_frost};
 import package::shaders::lighting::ground::fresh_snow_at;
-@if(!PREPASS_PIPELINE) import package::shaders::lighting::pbr_lighting::apply_pbr_lighting;
 import package::shaders::terrain::clipmap_common::{ControlCell, Sample, base_color, clipmap_normal, control_cell, intervals, leaf_height, leaf_spacing, levels, node_of, origin_samples, repeat_sampler, resident_level, settings, surfaces, unpack, wear_slot};
 import package::shaders::terrain::wear::{RUT_DEPTH_SCALE, WEAR_SHIFT, WEAR_TEXELS, Wear, bare_share, decode_wear, wear_hash, wear_patch, wheel_grooves};
 import package::shaders::terrain::prints::{print_relief_at, print_view};
@@ -21,11 +20,9 @@ import bevy_pbr::render::pbr_types;
 import package::shaders::frame::frame_count;
 @if(PREPASS_PIPELINE) import bevy_pbr::prepass::io::{FragmentOutput, VertexOutput};
 @else import bevy_pbr::render::forward_io::{FragmentOutput, VertexOutput};
-@if(PREPASS_PIPELINE) import bevy_pbr::render::pbr_functions::calculate_view;
+import bevy_pbr::render::pbr_functions::calculate_view;
 @if(MOTION_VECTOR_PREPASS) import bevy_pbr::render::pbr_prepass_functions::calculate_motion_vector;
-@if(PREPASS_PIPELINE) import package::shaders::lighting::gbuffer;
-@if(!PREPASS_PIPELINE) import bevy_pbr::render::pbr_fragment::pbr_input_from_vertex_output;
-@if(!PREPASS_PIPELINE) import bevy_pbr::render::pbr_functions::main_pass_post_lighting_processing;
+import package::shaders::lighting::gbuffer;
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(9) var normal_material: texture_2d_array<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(10) var macro_variation: texture_2d<f32>;
@@ -361,8 +358,18 @@ fn rut_parallax(page: WearPage, r: vec2<f32>, view: vec3<f32>, normal: vec3<f32>
     return vec3(shift * deepest, rut_at(page, r + step * deepest));
 }
 
+// Bevy builds a main-pass pipeline for every material and draws none of the deferred ones: the
+// terrain's shades nothing.
+@if(!PREPASS_PIPELINE)
 @fragment
-fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
+fn fragment() -> @location(0) vec4<f32> {
+    return vec4(0.0);
+}
+
+// The G-buffer pass: the terrain's surface, lit afterwards (lighting/deferred.wesl).
+@if(PREPASS_PIPELINE)
+@fragment
+fn fragment(in: VertexOutput) -> FragmentOutput {
     var out: FragmentOutput;
     let world_dx = dpdx(in.world_position.xz);
     let world_dy = dpdy(in.world_position.xz);
@@ -526,7 +533,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let bt = normalize(cross(t, ground_normal));
     let normal = normalize(t * local_normal.x + bt * local_normal.y + ground_normal * local_normal.z);
 
-    var pbr = surface_input(in, is_front);
+    var pbr = surface_input(in);
     let shade = vec3(surfaces[top.layers.x].shade.x, surfaces[top.layers.y].shade.x, surfaces[top.layers.z].shade.x);
     let response = macro_response(p, world_dx, world_dy, dot(w, shade));
     pbr.material.base_color = vec4(mix(clamp(color * response, vec3(0.0), vec3(1.0)), FRESH_SNOW, frost), 1.0);
@@ -540,7 +547,6 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     pbr.N = normal;
     pbr.clearcoat_N = normal;
     pbr = apply_rain_puddles(pbr, hollow);
-@if(PREPASS_PIPELINE) {
     out.deferred = gbuffer::pack(gbuffer::Surface(pbr.material.base_color.rgb,
         pbr.material.perceptual_roughness, pbr.N, pbr.world_normal, pbr.diffuse_occlusion.x,
         pbr.specular_occlusion, pbr.material.reflectance.x, pbr.material.metallic,
@@ -548,18 +554,11 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     out.deferred_lighting_pass_id = 1u;
 @if(MOTION_VECTOR_PREPASS)
     out.motion_vector = calculate_motion_vector(in.world_position, in.previous_world_position);
-}
-@else {
-    let lit = apply_pbr_lighting(pbr);
-    out.color = main_pass_post_lighting_processing(pbr, lit);
-}
     return out;
 }
 
-// The surface's inputs before its material: in the deferred pass the G-buffer takes them, lit
-// later (lighting/deferred.wesl); in the main pass they are lit here.
-fn surface_input(in: VertexOutput, is_front: bool) -> pbr_types::PbrInput {
-@if(PREPASS_PIPELINE) {
+// The surface's inputs before its material.
+fn surface_input(in: VertexOutput) -> pbr_types::PbrInput {
     var pbr = pbr_types::pbr_input_new();
     pbr.frag_coord = in.position;
     pbr.world_position = in.world_position;
@@ -567,7 +566,4 @@ fn surface_input(in: VertexOutput, is_front: bool) -> pbr_types::PbrInput {
     pbr.is_orthographic = view.clip_from_view[3].w == 1.0;
     pbr.V = calculate_view(in.world_position, pbr.is_orthographic);
     return pbr;
-}
-@else
-    return pbr_input_from_vertex_output(in, is_front, false);
 }

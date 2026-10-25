@@ -1,4 +1,4 @@
-// What every deferred lighting kernel shares (docs/DEFERRED_LIGHTING.md): the triangle that
+// What every deferred lighting kernel shares (docs/ARCHITECTURE.md): the triangle that
 // covers the view's surfaces, and a pixel's G-buffer texel and place.
 import bevy_pbr::render::{
     mesh_view_bindings::{deferred_prepass_texture, view},

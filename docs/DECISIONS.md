@@ -27,17 +27,23 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
 - **Pacing by display link plus Metal's minimum presentation interval.** *Kept.* 99.7% of intervals
   on time against 81% with a timer; the Metal interval alone and higher thread QoS were rejected.
   Keep the wgpu-hal patch (`third_party/wgpu-hal/YARRA_PATCH.md`) until upstream has it.
-- **Deferred lighting, a surface at a time.** *In progress* (user, October 25,
-  `docs/DEFERRED_LIGHTING.md`). Game cameras run Bevy's depth and deferred prepasses; terrain
-  writes a G-buffer in our packing and one full-screen pass of ours lights it (`f9854ff`), then
-  grass (`e3f6fc1`), objects and tree meshes (`05d5956`), and impostors. Bevy's
-  lighting pass is skipped: its lighting is not ours, and it places pixels by the whole view,
-  wrong under Temporal's region. Bevy skips deferred materials in the main pass of every view, so
-  every camera that shows them is deferred, the editor's included. The shared lighting's models
-  share one kernel that branches per pixel; a kernel per model cost about 0.1 ms each, and tile
-  classification, tried, cost more than it saved (+0.04–0.26 ms). This supersedes the depth
-  prepass only for Temporal (`3bc9be4`). A foliage or global prepass against overdraw was
-  rejected twice (+0.3 ms GPU, +0.7 ms render prep).
+- **Deferred lighting for every opaque surface.** *Kept* (user, October 25: "the most efficient
+  ways, not the fastest"; [Architecture](ARCHITECTURE.md#deferred-lighting)). Lighting inside
+  grass and terrain materials cost 2.1–2.5 ms on 2×2 quads and on terrain the grass then covered.
+  Terrain (`f9854ff`), grass (`e3f6fc1`), objects and tree meshes (`05d5956`) and impostors
+  (`3eae681`) moved in turn, each matching the forward look in captures; the forward lighting of
+  terrain, grass and impostors and the static-motion completion pass went after. GPU busy at
+  Maximum from `0a5ac41`, before the AA change: meadow 11.90 → 10.06 ms, start 13.34 → 11.08,
+  forest-pine 12.25 → 10.80, storm-road 11.44 → 10.57, mountain-hamlet 11.25 → 10.51,
+  brook-mouth 10.73 → 9.70. Our own lighting pass replaces Bevy's:
+  its lighting is not ours, and it places pixels by the whole view, wrong under Temporal's region.
+  *Rejected:* a kernel per model (a full-screen pass each, about 0.1 ms where its model is
+  absent) and tile classification (+0.04–0.26 ms: classifying cost 0.08–0.11 ms, and small tile
+  quads shade their diagonal twice). Branching per pixel costs one-model views a little (the
+  meadow's terrain-only kernel 0.50 → 0.59 ms). *Open:* a sun visibility pass computing shadows,
+  cloud, forest and horizon once per pixel, slow terms at half resolution. This supersedes the
+  depth prepass only for Temporal (`3bc9be4`); a foliage or global depth prepass against overdraw
+  was rejected twice (+0.3 ms GPU, +0.7 ms render prep).
 - **MetalFX Temporal's scaler takes full-size textures.** *Kept.* A region-sized scaler (`b2c8cdf`)
   saved 0.8 ms that MetalFX's internal wait absorbed, and its history went blocky in motion;
   reverted (`c70158a`). Temporal's ~4 ms is MetalFX's own.

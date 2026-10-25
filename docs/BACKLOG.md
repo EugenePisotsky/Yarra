@@ -48,7 +48,7 @@ decision when one is made.
 Measure the play setup (native fullscreen, 50% + MetalFX Temporal, day clock on) with work counts
 and Metal System Trace, never the HUD's GPU time ([Workflows](WORKFLOWS.md#captures-and-measurement)).
 The [Performance review](PERFORMANCE_REVIEW.md) of October 24 ranks the structural changes these
-items fold into; [Deferred lighting](DEFERRED_LIGHTING.md) is the one under way.
+items fold into; deferred lighting, its direction 9, is done.
 
 - **Sky composite.** One large pass for sky, sea, fog, aerial perspective, shafts and glare (about
   5 ms at native in the forest). Split it into smaller passes, or run the air at half resolution

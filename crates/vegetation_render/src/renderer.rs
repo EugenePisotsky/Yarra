@@ -3,15 +3,14 @@
 use bevy::render::ExtractSchedule;
 
 use bevy::{
-    core_pipeline::{core_3d::Opaque3d, schedule::camera_driver},
+    core_pipeline::schedule::camera_driver,
     prelude::*,
-    render::{Render, RenderSystems, render_phase::AddRenderCommand, renderer::RenderGraph},
+    render::{Render, RenderSystems, renderer::RenderGraph},
 };
 
 mod buffers;
 mod candidate_cache;
 mod deferred;
-mod draw;
 mod generation;
 mod gpu_types;
 mod packing;
@@ -34,13 +33,11 @@ pub(crate) fn install(render_app: &mut SubApp) {
     temporal::install(render_app);
     deferred::install(render_app);
     render_app
-        .add_render_command::<Opaque3d, draw::DrawVegetation>()
         .add_systems(
             Render,
             (
                 prepare::prepare.in_set(RenderSystems::PrepareBindGroups),
                 trample::prepare.in_set(RenderSystems::PrepareBindGroups),
-                draw::queue.in_set(RenderSystems::Queue),
             ),
         )
         .add_systems(

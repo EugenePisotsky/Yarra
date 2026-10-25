@@ -4,27 +4,17 @@
 // grid (YarraVegetation scripts/bake_impostor.py), each stored as the tile of its crop: the
 // four views nearest the camera's direction are blended, each read where the fragment's ray
 // meets that view's plane, then lit with the trees' crown
-// shading where the baked depth puts the crown's surface, not on the quad: on deferred views by
-// the deferred lighting, from the G-buffer (lighting/gbuffer.wesl, model IMPOSTOR). Near the
-// camera the quad bends in the wind as its mesh LODs' trunk does.
+// shading where the baked depth puts the crown's surface, not on the quad, by the deferred
+// lighting from the G-buffer (lighting/gbuffer.wesl, model IMPOSTOR). Near the camera the quad
+// bends in the wind as its mesh LODs' trunk does.
 import bevy_pbr::{render::mesh_functions, render::mesh_view_bindings::view, render::view_transformations::position_world_to_clip};
-// Impostors draw into the G-buffer or, on views without one, lit in the main pass; never into a
-// depth prepass or the shadows.
-@if(PREPASS_PIPELINE) import bevy_pbr::prepass::io::FragmentOutput;
-@if(PREPASS_PIPELINE) import package::shaders::lighting::gbuffer;
+// Impostors draw into the G-buffer only: never into a depth prepass or the shadows.
+import bevy_pbr::prepass::io::FragmentOutput;
+import package::shaders::lighting::gbuffer;
 @if(MOTION_VECTOR_PREPASS)
 import bevy_pbr::render::pbr_prepass_functions::calculate_motion_vector;
-@if(!PREPASS_PIPELINE)
-import bevy_pbr::{render::pbr_types, render::pbr_functions::{calculate_view, main_pass_post_lighting_processing}, render::mesh_types::MESH_FLAGS_SHADOW_RECEIVER_BIT};
-@if(!PREPASS_PIPELINE) import package::shaders::lighting::pbr_lighting::apply_pbr_lighting;
 import package::shaders::crossfade::dither_discard;
 import package::shaders::tree::wind::{WindFrames, sway_point_of_trunk};
-
-// The forward pass's output (Bevy's forward_io::FragmentOutput).
-@if(!PREPASS_PIPELINE)
-struct ForwardOutput {
-    @location(0) color: vec4<f32>,
-}
 
 struct ImpostorParams {
     // Object-space centre of the baked views and their half size.
@@ -299,8 +289,13 @@ fn surface(in: Varyings, ddx_uv: vec2<f32>, ddy_uv: vec2<f32>) -> Surface {
     return out;
 }
 
-// The crown's surface at this fragment, or a discard where the views show none.
-fn fragment_surface(in: Varyings) -> Surface {
+// Roughness and reflectance of the crowns' foliage, which keeps half the default reflectance
+// like the mesh crowns.
+const ROUGHNESS: f32 = 0.85;
+const REFLECTANCE: f32 = 0.25;
+
+@fragment
+fn fragment(in: Varyings) -> FragmentOutput {
     // Derivatives before any discard, while every fragment of the quad is still running,
     // scaled by the view's mip bias as every mesh texture is (sharper under a temporal
     // upscaler, which resolves to the output's pixels).
@@ -309,18 +304,7 @@ fn fragment_surface(in: Varyings) -> Surface {
     let ddx_uv = dpdx(in.corner) / tile * mip_scale;
     let ddy_uv = dpdy(in.corner) / tile * mip_scale;
     dither_discard(in.position, in.dither);
-    return surface(in, ddx_uv, ddy_uv);
-}
-
-// Roughness and reflectance of the crowns' foliage, which keeps half the default reflectance
-// like the mesh crowns.
-const ROUGHNESS: f32 = 0.85;
-const REFLECTANCE: f32 = 0.25;
-
-@if(PREPASS_PIPELINE)
-@fragment
-fn fragment(in: Varyings) -> FragmentOutput {
-    let s = fragment_surface(in);
+    let s = surface(in, ddx_uv, ddy_uv);
     var out: FragmentOutput;
     // Crown occlusion: indirect light, and the crown self-shadow past the shadow range.
     out.deferred = gbuffer::pack(gbuffer::Surface(s.colour, ROUGHNESS, s.normal, s.normal,
@@ -329,31 +313,5 @@ fn fragment(in: Varyings) -> FragmentOutput {
     // Their sway this far out moves them far less than a pixel a frame: the camera's motion.
 @if(MOTION_VECTOR_PREPASS)
     out.motion_vector = calculate_motion_vector(in.world_position, in.world_position);
-    return out;
-}
-
-@if(!PREPASS_PIPELINE)
-@fragment
-fn fragment(in: Varyings) -> ForwardOutput {
-    let s = fragment_surface(in);
-    var out: ForwardOutput;
-    var pbr_input = pbr_types::pbr_input_new();
-    pbr_input.material.base_color = vec4(s.colour, 1.0);
-    pbr_input.material.perceptual_roughness = ROUGHNESS;
-    pbr_input.material.reflectance = vec3(REFLECTANCE);
-    // Crown occlusion: indirect light, and the crown self-shadow past the shadow range.
-    pbr_input.diffuse_occlusion = vec3(s.occlusion);
-    pbr_input.specular_occlusion = s.occlusion;
-    pbr_input.frag_coord = in.position;
-    // Shadows, the forest shadow march and the view vector start at the crown's surface.
-    let surface_position = vec4(in.world_position.xyz + in.toward_view * s.depth, 1.0);
-    pbr_input.world_position = surface_position;
-    pbr_input.world_normal = s.normal;
-    pbr_input.N = s.normal;
-    pbr_input.is_orthographic = view.clip_from_view[3].w == 1.0;
-    pbr_input.V = calculate_view(surface_position, pbr_input.is_orthographic);
-    pbr_input.flags = MESH_FLAGS_SHADOW_RECEIVER_BIT;
-    out.color = apply_pbr_lighting(pbr_input);
-    out.color = main_pass_post_lighting_processing(pbr_input, out.color);
     return out;
 }

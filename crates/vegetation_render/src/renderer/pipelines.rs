@@ -1,4 +1,4 @@
-//! Compute layouts and draw-pipeline specialization for view, lighting and G-buffer variants.
+//! Compute layouts and the G-buffer draw's specialization with and without motion.
 use super::{gpu_types::shader_defs, temporal};
 
 use bevy::{
@@ -6,14 +6,13 @@ use bevy::{
         core_3d::CORE_3D_DEPTH_FORMAT, deferred::DEFERRED_PREPASS_FORMAT,
         prepass::MOTION_VECTOR_PREPASS_FORMAT,
     },
-    pbr::{MeshPipelineViewLayoutKey, MeshPipelineViewLayouts},
     prelude::*,
     render::render_resource::{
         BindGroupLayoutDescriptor, BindGroupLayoutEntries, CachedComputePipelineId, Canonical,
         ColorTargetState, CompareFunction, ComputePipelineDescriptor, DepthStencilState,
         FragmentState, FrontFace, PipelineCache, PolygonMode, PrimitiveState, PrimitiveTopology,
         RenderPipeline, RenderPipelineDescriptor, SamplerBindingType, ShaderStages, Specializer,
-        SpecializerKey, TextureFormat, TextureSampleType, Variants, VertexState,
+        SpecializerKey, TextureSampleType, Variants, VertexState,
         binding_types::{
             sampler, storage_buffer_read_only_sized, storage_buffer_sized, texture_2d,
             uniform_buffer_sized,
@@ -54,7 +53,6 @@ impl FromWorld for VegetationPipelines {
         let pose_shader = asset_server.load(POSE_SHADER_PATH);
         let draw_shader = asset_server.load(DRAW_SHADER_PATH);
         let pipeline_cache = world.resource::<PipelineCache>();
-        let view_layouts = world.resource::<MeshPipelineViewLayouts>().clone();
         let schedule_layout = BindGroupLayoutDescriptor::new(
             "vegetation visible work scheduling",
             &BindGroupLayoutEntries::sequential(
@@ -170,10 +168,13 @@ impl FromWorld for VegetationPipelines {
             ..default()
         });
         let mut draw_defs = shader_defs();
-        draw_defs.push("SHADOW_FILTER_METHOD_HARDWARE_2X2".into());
+        draw_defs.extend([
+            "ENVIRONMENT_SURFACE".into(),
+            ShaderDefVal::UInt("MATERIAL_BIND_GROUP".into(), 2),
+        ]);
         let draw_descriptor = RenderPipelineDescriptor {
             label: Some("vegetation draw".into()),
-            // The exact mesh-view layout is selected per camera by the pipeline specializer.
+            // Set by the specializer.
             layout: Vec::new(),
             vertex: VertexState {
                 shader: draw_shader.clone(),
@@ -186,8 +187,13 @@ impl FromWorld for VegetationPipelines {
                 shader: draw_shader,
                 entry_point: Some(Cow::Borrowed("fragment")),
                 shader_defs: draw_defs,
-                // Set per output by the specializer.
-                targets: Vec::new(),
+                // The G-buffer word and the grass's own texel; the specializer adds motion.
+                targets: vec![
+                    Some(ColorTargetState::from(DEFERRED_PREPASS_FORMAT)),
+                    Some(ColorTargetState::from(
+                        super::deferred::GRASS_TEXTURE_FORMAT,
+                    )),
+                ],
                 ..default()
             }),
             primitive: PrimitiveState {
@@ -219,37 +225,20 @@ impl FromWorld for VegetationPipelines {
             cache_finish,
             pose,
             draw_variants: Variants::new(
-                VegetationPipelineSpecializer {
-                    view_layouts,
-                    draw_layout,
-                },
+                VegetationPipelineSpecializer { draw_layout },
                 draw_descriptor,
             ),
         }
     }
 }
 
+/// The blades' G-buffer pass (`deferred.rs`); under MetalFX Temporal it writes their motion too.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, SpecializerKey)]
 pub(super) struct VegetationPipelineKey {
-    pub(super) output: DrawOutput,
-    pub(super) environment: bool,
-}
-
-/// What a grass draw writes.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub(super) enum DrawOutput {
-    /// Lit colour into a forward view's target, with that view's bind group layout.
-    Colour {
-        format: TextureFormat,
-        view_layout_bits: u32,
-    },
-    /// The blades' surface into a deferred view's G-buffer (`deferred.rs`), and under MetalFX
-    /// Temporal their motion.
-    GBuffer { motion: bool },
+    pub(super) motion: bool,
 }
 
 pub(super) struct VegetationPipelineSpecializer {
-    view_layouts: MeshPipelineViewLayouts,
     draw_layout: BindGroupLayoutDescriptor,
 }
 
@@ -261,59 +250,22 @@ impl Specializer<RenderPipeline> for VegetationPipelineSpecializer {
         key: Self::Key,
         descriptor: &mut RenderPipelineDescriptor,
     ) -> Result<Canonical<Self::Key>, BevyError> {
-        let mut defs: Vec<ShaderDefVal> = Vec::new();
-        let view_layout = match key.output {
-            DrawOutput::Colour {
-                view_layout_bits, ..
-            } => {
-                let view_key = MeshPipelineViewLayoutKey::from_bits_retain(view_layout_bits);
+        descriptor.layout = vec![
+            super::deferred::unused_view_layout(),
+            self.draw_layout.clone(),
+            atmosphere::environment::surface_layout(),
+        ];
 
-                if view_key.contains(MeshPipelineViewLayoutKey::ATMOSPHERE) {
-                    defs.push("ATMOSPHERE".into());
-                }
-
-                self.view_layouts.get_view_layout(view_key).main_layout
-            }
-            DrawOutput::GBuffer { .. } => super::deferred::unused_view_layout(),
-        };
-        descriptor.layout = vec![view_layout, self.draw_layout.clone()];
-        descriptor.layout.push(if key.environment {
-            defs.extend([
-                "ENVIRONMENT_SURFACE".into(),
-                ShaderDefVal::UInt("MATERIAL_BIND_GROUP".into(), 2),
-            ]);
-            atmosphere::environment::surface_layout()
-        } else {
-            BindGroupLayoutDescriptor::new("unused environment", &[])
-        });
-
-        let fragment = descriptor.fragment.as_mut().unwrap();
-
-        match key.output {
-            DrawOutput::Colour { format, .. } => {
-                fragment.targets = vec![Some(ColorTargetState::from(format))];
-            }
-            DrawOutput::GBuffer { motion } => {
-                defs.push("GRASS_GBUFFER".into());
-                fragment.targets = vec![
-                    Some(ColorTargetState::from(DEFERRED_PREPASS_FORMAT)),
-                    Some(ColorTargetState::from(
-                        super::deferred::GRASS_TEXTURE_FORMAT,
-                    )),
-                ];
-
-                if motion {
-                    defs.push("TEMPORAL_GRASS".into());
-                    descriptor.layout.push(temporal::layout());
-                    fragment
-                        .targets
-                        .push(Some(ColorTargetState::from(MOTION_VECTOR_PREPASS_FORMAT)));
-                }
-            }
+        if key.motion {
+            descriptor.layout.push(temporal::layout());
+            descriptor.vertex.shader_defs.push("TEMPORAL_GRASS".into());
+            let fragment = descriptor.fragment.as_mut().unwrap();
+            fragment.shader_defs.push("TEMPORAL_GRASS".into());
+            fragment
+                .targets
+                .push(Some(ColorTargetState::from(MOTION_VECTOR_PREPASS_FORMAT)));
         }
 
-        fragment.shader_defs.extend(defs.iter().cloned());
-        descriptor.vertex.shader_defs.extend(defs);
         Ok(key)
     }
 }

@@ -339,14 +339,6 @@ impl MaterialExtension for ImpostorExtension {
         false
     }
 
-    fn vertex_shader() -> ShaderRef {
-        SHADER.into()
-    }
-
-    fn fragment_shader() -> ShaderRef {
-        SHADER.into()
-    }
-
     fn deferred_vertex_shader() -> ShaderRef {
         SHADER.into()
     }

@@ -294,9 +294,9 @@ SQLite. The renderers (Bevy) have no SQLite: `engine` is the only library joinin
 - Owns procedural grass after Ghost of Tsushima: `VegetationRenderPlugin`,
   `VegetationSceneState`, `VegetationView`, `VegetationWind` (which trees also read), trampling
   (`VegetationBenders`, the characters among the plants, which trees also read),
-  `VegetationDiagnostics`. On deferred views grass writes the G-buffer and lights its pixels in
-  `atmosphere`'s `DeferredLighting`; on forward views it draws lit in the main pass, with the
-  same lighting (`shaders/vegetation/draw/lighting.wesl`: `surface`, then `light`).
+  `VegetationDiagnostics`. Grass writes the G-buffer of deferred views and lights its pixels in
+  `atmosphere`'s `DeferredLighting` (`shaders/vegetation/draw/lighting.wesl`: `surface` where
+  blades are drawn, then `light` per pixel); views without a G-buffer draw none.
 - Invariants: dormant until a `VegetationSceneState` exists and a camera has `VegetationView`;
   installs no GPU timing probes; no entity or row per blade. The candidate cache holds only
   stable acceptance, never view-dependent visibility or LOD.
@@ -399,6 +399,44 @@ multisample. In order:
 Every lit material, and the deferred lighting, binds the shared environment at slots 120–129
 (`EnvironmentParams`, cloud shadow, rain shelter, forest and terrain shadow, ground albedo). The
 editor uses the same renderers, with FXAA.
+
+### Deferred lighting
+
+Every camera that shows the world is deferred (`DepthPrepass` and `DeferredPrepass`): the game's,
+and the editor's world, Presets and Animation cameras. Bevy skips deferred materials in the main
+pass of every view, so a camera without a G-buffer would show no terrain, objects or trees.
+
+- **The G-buffer** is Bevy's `Rgba32Uint` target in our packing. Its y word's top byte names the
+  lighting model (`shaders/lighting/gbuffer.wesl`): terrain, objects, crowns v1 and v2, bark and
+  impostors share one layout, and grass has its own with an extra `Rgba8Unorm` of its own
+  (`shaders/vegetation/draw/gbuffer.wesl`). A material's model follows from its shader definitions
+  (`SHADED_MODEL`). Impostors also store the lift from their quad's depth to the crown surface
+  they are lit at.
+- **Writers.** Grass draws first, in its own pass before Bevy's prepasses (Bevy's deferred
+  prepass system is private, so nothing can be ordered between it and the depth prepass). Its
+  pass binds an empty group in the view's slot, because the view's group holds the G-buffer for
+  reading. Environment materials take `OpaqueRendererMethod::Deferred` when converted, with
+  `shaders/lighting/material.wesl` as their deferred fragment; tree and impostor materials inherit
+  it. The GPU trees queue their entries into `Opaque3dDeferred` and `AlphaMask3dDeferred`, keyed
+  with `DEFERRED_PREPASS` as Bevy keys deferred materials.
+- **Kernels.** Two full-screen draws at the far plane light each pixel once: depth skips the sky,
+  and each discards the other's pixels. The shared lighting's kernel, in `atmosphere`, branches per
+  pixel on the model (`pbr_lighting.wesl` `lit_model_is`); in a material's own pipeline the model
+  is a constant, so the branches fold away. Grass's kernel is in `vegetation_render`. The shared
+  kernel opens the first pass on the view's target, which clears it; other kernels draw after it
+  in `DeferredLighting`. Unordered render systems record on other threads, so the clearing pass
+  could otherwise be submitted last and blank other kernels' pixels on some frames.
+- **Bevy.** Its deferred lighting pass is skipped (`SkipDeferredLighting`): its lighting is not
+  ours, and it places pixels by the whole view, wrong under Temporal's region, so our passes use
+  `view.main_pass_viewport`. The shared kernel is specialised from its `DeferredLightingLayout`,
+  and its lighting-id copy is swapped for a no-op. Other quirks met:
+  - a deferred material draws with `deferred_vertex_shader`, which defaults to Bevy's prepass
+    vertex shader, not the material's own prepass one;
+  - `enable_prepass()` must be true for Bevy to specialise a deferred pipeline;
+  - the prepass view group holds the globals at binding 1, not 11 (`shaders/frame.wesl`);
+  - Bevy builds a main-pass pipeline for every material, deferred ones included, so terrain keeps
+    a forward fragment that shades nothing;
+  - on Metal, WGSL `pack4x8unorm` stored zero for a whole word, so the G-buffer packs bytes by hand.
 
 ## Streaming and residency
 

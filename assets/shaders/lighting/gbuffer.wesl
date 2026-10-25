@@ -1,6 +1,7 @@
 // The G-buffer: what a surface writes in the deferred pass and the deferred lighting reads back
-// (docs/DEFERRED_LIGHTING.md). One `Rgba32Uint` texel, Bevy's deferred target, whose y word holds
-// the lighting model in its top 8 bits; each model's kernel reads the rest in its own layout.
+// (docs/ARCHITECTURE.md, deferred lighting). One `Rgba32Uint` texel, Bevy's deferred target,
+// whose y word holds the lighting model in its top 8 bits; each model's kernel reads the rest in
+// its own layout.
 // The shared lighting's models' (lighting/deferred.wesl):
 // - x: albedo, gamma 2.2, 8 bits a channel; perceptual roughness 8;
 // - y: shading normal, octahedral 12 + 12; model 8;

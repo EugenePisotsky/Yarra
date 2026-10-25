@@ -1,8 +1,8 @@
 // Grass lighting: rounded blade normals, the sun's diffuse, sheen and transmitted light after
 // clouds, shadows and the atmosphere, and bounded sky fill. Distant blades take their sheen from
 // their clump's stable normal, so the field glitters as broad sweeps instead of noise. A blade's
-// `surface` is evaluated where it is drawn; `light` lights it there (forward views) or from the
-// G-buffer once per pixel (draw/gbuffer.wesl, vegetation/deferred.wesl).
+// `surface` is evaluated where it is drawn into the G-buffer (draw/gbuffer.wesl); `light` lights
+// it from there once per pixel (vegetation/deferred.wesl).
 @if(ENVIRONMENT_SURFACE)
 import package::shaders::lighting::surface::{cloud_light, surface_origin, surface_wetness};
 @if(ENVIRONMENT_SURFACE)
@@ -184,10 +184,6 @@ fn surface(input: VertexOutput) -> GrassSurface {
     let variance = clamp(dot(normal_width, normal_width), 0.0, 0.5);
     s.sheen_alpha = clamp(s.blade_alpha + variance * 0.5, 0.02, 0.9);
     return s;
-}
-
-fn shade(input: VertexOutput) -> vec4<f32> {
-    return vec4(light(surface(input), input.world_position, input.clip_position.xy), 1.0);
 }
 
 // The light leaving blade surface `s` at `position` toward the camera, in exposed units.
