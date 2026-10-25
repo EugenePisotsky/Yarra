@@ -266,16 +266,23 @@ def append_history(results, lines, revision, stamp, note, extra):
     """One row per view: when, which commit, what was measured, and the costs."""
     fields = ["date", "commit", "note", "flags", "view", "frames", "gpu_state", "fps",
               "cpu_main_ms", "render_prep_ms", "gpu_busy_ms"] + [line["name"] for line in lines]
-    new = not os.path.exists(HISTORY)
-    with open(HISTORY, "a", newline="") as file:
-        writer = csv.writer(file, lineterminator="\n")
-        if new:
-            writer.writerow(fields)
-        for r in results:
-            writer.writerow([
-                stamp, revision, note, " ".join(extra), r.view, r.frames, r.state,
-                f"{r.fps:.1f}", f"{r.main_ms:.2f}", f"{r.prep_ms:.2f}", f"{r.busy:.2f}",
-            ] + [f"{r.lines.get(line['name'], 0.0):.2f}" for line in lines])
+    # Budget lines come and go; earlier rows keep their columns, blank where a line is new.
+    rows = []
+    if os.path.exists(HISTORY):
+        with open(HISTORY, newline="") as file:
+            reader = csv.DictReader(file)
+            rows = list(reader)
+            fields += [name for name in reader.fieldnames if name not in fields]
+    for r in results:
+        rows.append(dict(zip(fields, [
+            stamp, revision, note, " ".join(extra), r.view, r.frames, r.state,
+            f"{r.fps:.1f}", f"{r.main_ms:.2f}", f"{r.prep_ms:.2f}", f"{r.busy:.2f}",
+        ] + [f"{r.lines.get(line['name'], 0.0):.2f}" for line in lines])))
+
+    with open(HISTORY, "w", newline="") as file:
+        writer = csv.DictWriter(file, fields, lineterminator="\n")
+        writer.writeheader()
+        writer.writerows(rows)
     print(f"appended {len(results)} rows to {os.path.relpath(HISTORY, ROOT)}")
 
 

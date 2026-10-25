@@ -23,9 +23,15 @@ background = ["cloud volume"]
 
 [[line]]
 name = "opaque"
-ms = 3.1
-# Terrain 1.3, trees 1.3, rocks, buildings and characters 0.5.
-passes = ["^main_opaque_pass_3d"]
+ms = 2.5
+# The G-buffer pass and forward surfaces: terrain 1.0, trees 1.0, rocks, buildings and
+# characters 0.5.
+passes = ["^main_opaque_pass_3d", "deferred prepass$"]
+
+[[line]]
+name = "deferred lighting"
+ms = 0.6
+passes = ["^deferred lighting$"]
 
 [[line]]
 name = "prepass and motion"

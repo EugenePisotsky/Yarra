@@ -5,7 +5,11 @@ use crate::{
     WorldEnvironmentCamera, WorldRenderRoot, WorldStartView, WorldViewCamera, actor::CameraTarget,
 };
 
-use bevy::{prelude::*, render::view::Msaa};
+use bevy::{
+    core_pipeline::prepass::{DeferredPrepass, DepthPrepass},
+    prelude::*,
+    render::view::Msaa,
+};
 
 /// Spawns and follows the gameplay camera. Requires GameplayPlugin; input is optional.
 pub struct GameCameraPlugin;
@@ -93,6 +97,9 @@ fn setup_camera(mut commands: Commands, start_view: Res<WorldStartView>) {
         start_view.projection(),
         WorldEnvironmentCamera::default(),
         Msaa::Off,
+        // Surfaces write a G-buffer and are lit once per pixel (`atmosphere` deferred lighting).
+        DepthPrepass,
+        DeferredPrepass,
         camera_transform(start, &camera_rig),
         camera_rig,
         MainCamera,

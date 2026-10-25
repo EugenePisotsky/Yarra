@@ -88,7 +88,6 @@ pub(crate) enum DiagnosticsMode {
 #[derive(Clone)]
 pub(crate) struct ReproOptions {
     pub route: crate::dev::repro::Route,
-    pub prepass: bool,
     pub hide_ui: bool,
     pub frame_clock: bool,
     pub temporal_view: upscaling::temporal::TemporalDebug,
@@ -385,7 +384,6 @@ impl ReproOptions {
 
         Ok(Some(Self {
             route,
-            prepass: args.has("--render-prepass"),
             hide_ui: args.has("--render-ui-off"),
             frame_clock: args.has("--render-frame-clock"),
             walk_speed: args

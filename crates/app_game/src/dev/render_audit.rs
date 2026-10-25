@@ -92,7 +92,6 @@ enum Control {
     GrassEnabled,
     Shadows,
     ShadowMap,
-    Prepass,
     Scale,
     Upscaler,
     TemporalDebug,
@@ -145,7 +144,6 @@ impl Control {
     const ADVANCED: &[Control] = &[
         Control::Grass,
         Control::Scene,
-        Control::Prepass,
         Control::Counters,
         Control::GpuPassTimings,
         Control::Lock,
@@ -206,13 +204,6 @@ impl Control {
             Self::ShadowMap => {
                 let size = crate::runtime_settings::SHADOW_MAP_SIZES[s.shadow_map];
                 format!("Shadow map: {size} px")
-            }
-            Self::Prepass => {
-                if s.temporal_active() {
-                    "Depth prepass: required by temporal".into()
-                } else {
-                    format!("Depth prepass: {}", on_off(s.prepass))
-                }
             }
             Self::Scale => format!("Resolution: {}%", (100.0 * s.scale()).round() as u32),
             Self::TemporalDebug => format!("Temporal view: {}", s.temporal_debug.label()),
@@ -314,7 +305,6 @@ fn buttons(
             Control::ShadowMap => {
                 s.shadow_map = (s.shadow_map + 1) % crate::runtime_settings::SHADOW_MAP_SIZES.len()
             }
-            Control::Prepass => s.prepass = !s.prepass,
             Control::Scale => {
                 s.scale_index = (s.scale_index + 1) % RESOLUTION_SCALES.len();
             }
@@ -495,14 +485,11 @@ mod tests {
                 .init_resource::<VegetationSettings>()
                 .add_plugins(RuntimeSettingsPlugin);
             app.world_mut().spawn((Window::default(), PrimaryWindow));
-            let camera = app
-                .world_mut()
-                .spawn((
-                    Camera::default(),
-                    GlobalTransform::default(),
-                    WorldViewCamera,
-                ))
-                .id();
+            app.world_mut().spawn((
+                Camera::default(),
+                GlobalTransform::default(),
+                WorldViewCamera,
+            ));
             app.world_mut()
                 .spawn((DirectionalLight::default(), engine::WorldSun));
             install(&mut app);
@@ -521,18 +508,12 @@ mod tests {
             {
                 let mut settings = app.world_mut().resource_mut::<RuntimeSettings>();
                 settings.controls_locked = true;
-                settings.prepass = false;
                 settings.grass = VegetationProfileMode::Disabled;
                 settings.clouds = engine::CloudQuality::High;
             }
 
             app.update();
             assert!(!app.world().resource::<GameInputEnabled>().0);
-            assert!(
-                !app.world()
-                    .entity(camera)
-                    .contains::<bevy::core_pipeline::prepass::DepthPrepass>()
-            );
             assert_eq!(
                 app.world().resource::<VegetationSettings>().profile_mode,
                 VegetationProfileMode::Disabled

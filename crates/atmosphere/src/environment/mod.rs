@@ -1,6 +1,7 @@
 //! The environment the sky, clouds, air, sea and every lit surface share: one parameter buffer
 //! (`EnvironmentParams`, `shaders/environment/params.wesl`) written from the atmosphere state each
 //! frame, and its maps (cloud shadow, rain shelter, forest shadow, valley mist, shore).
+mod deferred;
 #[cfg(test)]
 mod layout_tests;
 mod material;
@@ -220,7 +221,12 @@ impl Plugin for EnvironmentPlugin {
                 .after(ApplyAtmosphere),
         );
         surface::install(app);
+        deferred::install(app);
         crate::terrain_shadow::gpu::install(app);
+    }
+
+    fn finish(&self, app: &mut App) {
+        deferred::finish(app);
     }
 }
 

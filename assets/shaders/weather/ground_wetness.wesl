@@ -1,7 +1,8 @@
 // Standing water on soaked ground, with ripple rings while rain falls. Called by the terrain
 // shaders before shared PBR lighting, which adds general surface wetness on top.
 import bevy_pbr::render::pbr_types::PbrInput;
-import bevy_pbr::render::mesh_view_bindings::{globals, view};
+import bevy_pbr::render::mesh_view_bindings::view;
+import package::shaders::frame::time;
 import package::shaders::lighting::surface::{rain_shelter, surface_origin, surface_weather};
 
 fn cell_hash(cell: vec2<f32>) -> vec2<f32> {
@@ -100,7 +101,7 @@ fn apply_rain_puddles(input: PbrInput, hollow: f32) -> PbrInput {
     var normal = mix(pbr.N, vec3(0.0, 1.0, 0.0), puddle);
     let rain = clamp(weather.y, 0.0, 1.0) * shelter;
     if rain > 0.0 {
-        let ring = ripples(p * 3.0, globals.time) * 0.18 * rain * puddle;
+        let ring = ripples(p * 3.0, time()) * 0.18 * rain * puddle;
         normal += vec3(ring.x, 0.0, ring.y);
     }
     pbr.N = normalize(normal);

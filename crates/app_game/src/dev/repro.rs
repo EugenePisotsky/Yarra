@@ -114,12 +114,10 @@ pub(crate) fn install(app: &mut App) {
     };
     let route = repro.route;
 
-    // No prepass unless asked for.
     *app.world_mut().resource_mut::<RuntimeSettings>() = RuntimeSettings {
         scene: Scene::Current,
         // 75% unless `--resolution-scale` names another of the game's scales.
         scale_index: options.resolution_scale.and_then(scale_index).unwrap_or(1),
-        prepass: repro.prepass,
         // A scripted walk needs the character to move.
         controls_locked: route != Route::ActorWalk,
         counters: options.counters,
@@ -152,10 +150,9 @@ pub(crate) fn install(app: &mut App) {
         .add_systems(PostUpdate, synchronize_wind.before(engine::TreeWindSystems));
     let settings = app.world().resource::<RuntimeSettings>();
     warn!(
-        "RENDER_REPRO name={} version=9 warmup_frames=300 path_frames={} prepass={} ui={}",
+        "RENDER_REPRO name={} version=10 warmup_frames=300 path_frames={} ui={}",
         route.name(),
         route.path_frames(),
-        settings.prepass,
         settings.show_ui
     );
     let frames = repro.frames;

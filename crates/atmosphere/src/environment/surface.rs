@@ -1,7 +1,8 @@
-//! The environment as lit surfaces read it, in their material bind group (slots 120-125,
-//! `shaders/lighting/surface.wesl`, and 128-129, `shaders/lighting/ground.wesl`): the parameter
-//! buffer, the cloud shadow map, rain shelter, the forest shadow map and the ground albedo map.
-//! Pipelines outside Bevy's materials (grass) bind the same group.
+//! The environment as lit surfaces read it, in their material bind group (slots 120-129,
+//! `shaders/lighting/surface.wesl`, `forest_shadow.wesl`, `terrain_shadow.wesl` and `ground.wesl`):
+//! the parameter buffer, the cloud shadow map, rain shelter, the forest shadow map, the terrain's
+//! horizon map and the ground albedo map. Pipelines outside Bevy's materials (grass, the deferred
+//! lighting) bind the same group.
 use super::*;
 
 use bevy::render::{
@@ -96,16 +97,17 @@ fn prepare(
     queue: Res<RenderQueue>,
     cache: Res<PipelineCache>,
     layout: Res<EnvironmentSurfaceLayout>,
-    mut previous: Local<Option<(BufferId, [TextureViewId; 4])>>,
+    mut previous: Local<Option<(BufferId, [TextureViewId; 5])>>,
 ) {
     let Some(assets) = assets else {
         return;
     };
-    let (Some(buffer), Some(image), Some(shelter), Some(forest), Some(ground)) = (
+    let (Some(buffer), Some(image), Some(shelter), Some(forest), Some(terrain), Some(ground)) = (
         buffers.get(&assets.parameters),
         images.get(&assets.shadows),
         images.get(&assets.shelter),
         images.get(&assets.forest_shadow),
+        images.get(&assets.terrain_shadow),
         images.get(&assets.ground_albedo),
     ) else {
         return;
@@ -113,7 +115,7 @@ fn prepare(
     queue.write_buffer(&buffer.buffer, 0, bytemuck::bytes_of(&*params));
     let key = (
         buffer.buffer.id(),
-        [image, shelter, forest, ground].map(|i| i.texture_view.id()),
+        [image, shelter, forest, terrain, ground].map(|i| i.texture_view.id()),
     );
 
     if *previous != Some(key) {
@@ -127,6 +129,8 @@ fn prepare(
                 (123, &shelter.texture_view),
                 (124, &forest.texture_view),
                 (125, &forest.sampler),
+                (126, &terrain.texture_view),
+                (127, &terrain.sampler),
                 (128, &ground.texture_view),
                 (129, &ground.sampler),
             )),
@@ -167,6 +171,11 @@ pub fn surface_layout() -> BindGroupLayoutDescriptor {
                     texture_2d(TextureSampleType::Float { filterable: true }),
                 ),
                 (125, sampler(SamplerBindingType::Filtering)),
+                (
+                    126,
+                    texture_2d(TextureSampleType::Float { filterable: true }),
+                ),
+                (127, sampler(SamplerBindingType::Filtering)),
                 (
                     128,
                     texture_2d_array(TextureSampleType::Float { filterable: true }),

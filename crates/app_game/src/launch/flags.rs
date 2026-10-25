@@ -230,7 +230,6 @@ const FLAGS: &[Flag] = &[
         "Screenshot frames after warmup and before exit (default 600)",
     )
     .needs(Needs::Flag("--render-snapshot")),
-    flag("--render-prepass", "", Repro, "Enable the depth prepass").needs(REPRO),
     flag(
         "--render-walk-speed",
         "MPS",

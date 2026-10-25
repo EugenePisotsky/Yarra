@@ -1,0 +1,65 @@
+// The G-buffer: what a surface writes in the deferred pass and the deferred lighting reads back
+// (lighting/deferred.wesl, docs/DEFERRED_LIGHTING.md). One `Rgba32Uint` texel, Bevy's deferred
+// target, in our own layout:
+// - x: albedo, gamma 2.2, 8 bits a channel; perceptual roughness 8;
+// - y: shading normal, octahedral 12 + 12; model 8;
+// - z: diffuse occlusion, specular occlusion, reflectance and metallic, 8 each;
+// - w: geometric normal (shadow bias), octahedral 12 + 12; 8 spare.
+import bevy_render::utils::{octahedral_encode, octahedral_decode};
+
+// Lighting models. NONE marks pixels a forward pass draws over.
+const MODEL_NONE: u32 = 0u;
+const MODEL_TERRAIN: u32 = 1u;
+
+struct Surface {
+    albedo: vec3<f32>,
+    perceptual_roughness: f32,
+    // Normal-mapped, and as the mesh had it.
+    normal: vec3<f32>,
+    geometric_normal: vec3<f32>,
+    diffuse_occlusion: f32,
+    specular_occlusion: f32,
+    reflectance: f32,
+    metallic: f32,
+    model: u32,
+}
+
+// Four values in 0..1 as bytes, the first lowest. By hand: on Metal, `pack4x8unorm` stored zero
+// for the occlusion word.
+fn pack_unorm4(v: vec4<f32>) -> u32 {
+    let q = vec4<u32>(round(saturate(v) * 255.0));
+    return q.x | (q.y << 8u) | (q.z << 16u) | (q.w << 24u);
+}
+
+fn unpack_unorm4(bits: u32) -> vec4<f32> {
+    return vec4<f32>(vec4(bits, bits >> 8u, bits >> 16u, bits >> 24u) & vec4(0xffu)) / 255.0;
+}
+
+fn pack_normal(n: vec3<f32>) -> u32 {
+    let e = vec2<u32>(round(octahedral_encode(n) * 4095.0));
+    return e.x | (e.y << 12u);
+}
+
+fn unpack_normal(bits: u32) -> vec3<f32> {
+    return octahedral_decode(vec2(f32(bits & 0xfffu), f32((bits >> 12u) & 0xfffu)) / 4095.0);
+}
+
+fn pack(s: Surface) -> vec4<u32> {
+    return vec4(
+        pack_unorm4(vec4(pow(saturate(s.albedo), vec3(1.0 / 2.2)), s.perceptual_roughness)),
+        pack_normal(s.normal) | (s.model << 24u),
+        pack_unorm4(vec4(s.diffuse_occlusion, s.specular_occlusion, s.reflectance, s.metallic)),
+        pack_normal(s.geometric_normal),
+    );
+}
+
+fn model(texel: vec4<u32>) -> u32 {
+    return texel.y >> 24u;
+}
+
+fn unpack(texel: vec4<u32>) -> Surface {
+    let base = unpack_unorm4(texel.x);
+    let props = unpack_unorm4(texel.z);
+    return Surface(pow(base.rgb, vec3(2.2)), base.a, unpack_normal(texel.y), unpack_normal(texel.w),
+        props.x, props.y, props.z, props.w, model(texel));
+}

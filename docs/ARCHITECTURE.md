@@ -372,21 +372,27 @@ multisample. In order:
    (each drawn blade bent by trampling and wind, this frame and last); ground prints
    (`shaders/terrain/press.wesl`, `print_relief.wesl`, `print_mips.wesl`); GPU tree LOD and
    culling (`shaders/tree/lod.wesl`); the terrain-horizon search; cloud shadows.
-2. Main passes: terrain v2 patches (one shared grid mesh and `ClipmapTerrainMaterial`; heights
-   come from the clipmap), grass as indirect opaque draws (no shadows), trees and impostors as
-   indirect draws per form and representation in the main, prepass and shadow phases, meshes.
-3. After the main pass: the sky composite, one pass over the resolved image with three full-screen
+2. Prepasses: trees write depth and motion; Bevy's deferred prepass draws terrain v2 patches (one
+   shared grid mesh and `ClipmapTerrainMaterial`; heights come from the clipmap), which write
+   their surface into the G-buffer (`shaders/lighting/gbuffer.wesl`), depth and camera motion.
+3. Deferred lighting (`atmosphere::environment::deferred`): one full-screen draw lights every
+   G-buffer pixel once with the shared lighting (`shaders/lighting/deferred.wesl`). It replaces
+   Bevy's lighting pass and its lighting-id copy.
+4. Main passes, each surface lit in its own shader: grass as indirect opaque draws (no shadows),
+   trees and impostors as indirect draws per form and representation in the main, prepass and
+   shadow phases, meshes.
+5. After the main pass: the sky composite, one pass over the resolved image with three full-screen
    draws, each in front of the last: the sea; the sky, sun and moon, aerial perspective and clouds;
    haze, mist, fog, blowing snow, light shafts and the sun's glare. Quarter-resolution light shafts,
    sun occlusion and sun rays feed it.
-4. Temporal resolve (MetalFX Temporal only); rain and ambient particles between
+6. Temporal resolve (MetalFX Temporal only); rain and ambient particles between
    `EarlyPostProcess` and `PostProcess`; bloom, eye adaptation and tone mapping.
-5. Upscaling to the window (MetalFX Spatial, or Linear during UI composition) under a UI camera
+7. Upscaling to the window (MetalFX Spatial, or Linear during UI composition) under a UI camera
    at native resolution.
 
-Every lit material binds the shared environment at slots 120–129 (`EnvironmentParams`, cloud
-shadow, rain shelter, forest and terrain shadow, ground albedo). The editor uses the same
-renderers, with FXAA.
+Every lit material, and the deferred lighting, binds the shared environment at slots 120–129
+(`EnvironmentParams`, cloud shadow, rain shelter, forest and terrain shadow, ground albedo). The
+editor uses the same renderers, with FXAA.
 
 ## Streaming and residency
 
@@ -429,11 +435,12 @@ All shaders are WESL in `assets/shaders/`, a folder per subsystem:
   sun occlusion and sun rays. `clouds/`: density, panorama, tracing, shadows.
 - `lighting/`: shared lit-material code: `material` (adapted from Bevy's PBR, see
   `THIRD_PARTY.md`), `pbr_lighting`, `surface`, forest and terrain shadows, terrain horizon, the
-  ground below (`ground`).
+  ground below (`ground`); the G-buffer's packing (`gbuffer`) and the deferred lighting pass
+  (`deferred`).
 - `environment/`: the `EnvironmentParams` layout and map lookups. `weather/`: rain, particles,
   ambient particles, ground wetness. `water/`: the sea and its waves.
-- Root: `crossfade` (the LOD crossfades' dither for pipelines without Bevy's),
-  `environment_coverage` (editor).
+- Root: `crossfade` (the LOD crossfades' dither for pipelines without Bevy's), `frame` (time
+  and frame count in main and prepass pipelines), `environment_coverage` (editor).
 
 Modules import each other as `package::shaders::<folder>::<file>` and Bevy's as
 `bevy_pbr::...`; integer limits arrive from Rust as `constants::NAME` definitions. Bevy composes

@@ -17,6 +17,7 @@ use bevy::{
     asset::RenderAssetUsages,
     image::ImageAddressMode,
     image::{ImageFilterMode, ImageSampler, ImageSamplerDescriptor},
+    material::OpaqueRendererMethod,
     mesh::MeshVertexBufferLayoutRef,
     pbr::{Material, MaterialPipeline, MaterialPipelineKey, MaterialPlugin},
     prelude::*,
@@ -216,9 +217,18 @@ impl Material for ClipmapTerrainMaterial {
         CLIPMAP_SHADER.into()
     }
 
-    // No prepass: MetalFX motion comes from the main pass's depth and the camera.
-    fn enable_prepass() -> bool {
-        false
+    fn deferred_vertex_shader() -> ShaderRef {
+        CLIPMAP_VERTEX_SHADER.into()
+    }
+
+    // Deferred views light the terrain once per pixel after the G-buffer pass
+    // (`shaders/lighting/deferred.wesl`); the same shader writes the G-buffer there.
+    fn deferred_fragment_shader() -> ShaderRef {
+        CLIPMAP_SHADER.into()
+    }
+
+    fn opaque_render_method(&self) -> OpaqueRendererMethod {
+        OpaqueRendererMethod::Deferred
     }
 
     // The lighting knows the terrain (`shaders/lighting/pbr_lighting.wesl` TERRAIN_SURFACE): the
