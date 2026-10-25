@@ -1,17 +1,23 @@
-date,commit,note,flags,view,frames,gpu_state,fps,cpu_main_ms,render_prep_ms,gpu_busy_ms,opaque,prepass and motion,shadows,grass,sky and air,upscale and post,world compute,particles,engine
-2026-10-25T13:05,fdff35c,baseline before the structural work,,meadow,244,Maximum,71.0,2.32,3.15,12.23,,,,,,,,,
-2026-10-25T13:05,fdff35c,baseline before the structural work,,start,225,Maximum,63.1,2.22,3.28,13.68,4.84,0.23,0.14,2.09,1.83,3.76,0.11,0.08,0.60
-2026-10-25T13:05,fdff35c,baseline before the structural work,,forest-pine,212,Maximum,62.8,2.52,3.66,14.22,4.24,1.02,1.13,1.07,2.01,3.86,0.11,0.14,0.64
-2026-10-25T13:15,fdff35c,baseline before the structural work,,storm-road,248,Maximum,71.2,2.01,2.69,12.32,3.64,0.77,0.53,0.14,2.41,3.82,0.10,0.52,0.38
-2026-10-25T13:15,fdff35c,baseline before the structural work,,mountain-hamlet,232,Maximum,71.5,2.05,2.34,11.95,,,,,,,,,
-2026-10-25T13:15,fdff35c,baseline before the structural work,,brook-mouth,262,Maximum,72.3,2.33,3.25,11.63,3.14,0.54,0.74,0.64,2.12,3.72,0.10,0.07,0.54
-2026-10-25T13:50,d91687e+,"atmosphere tables at reference sizes, 2 aerial samples",,meadow,252,Maximum,71.5,2.28,3.08,11.94,2.62,0.24,0.15,2.91,1.48,3.81,0.10,0.07,0.55
-2026-10-25T13:50,d91687e+,"atmosphere tables at reference sizes, 2 aerial samples",,mountain-hamlet,237,Maximum,72.0,1.95,2.27,11.78,,,,,,,,,
-2026-10-25T14:28,5fa39a1,after the atmosphere tables,,forest-pine,208,Maximum,63.1,2.50,3.76,14.02,4.34,1.10,1.12,1.07,1.67,3.82,0.11,0.14,0.65
-2026-10-25T14:28,5fa39a1,after the atmosphere tables,,storm-road,228,Maximum,69.9,2.03,2.43,12.13,3.64,0.90,0.53,0.13,2.16,3.84,0.10,0.49,0.35
-2026-10-25T14:49,585b0b8,atmosphere tables and welded vegetation,,meadow,248,Maximum,71.7,2.21,2.98,11.90,2.61,0.23,0.14,2.91,1.47,3.81,0.10,0.07,0.56
-2026-10-25T14:49,585b0b8,atmosphere tables and welded vegetation,,start,227,Maximum,63.5,2.28,3.14,13.34,4.82,0.26,0.13,2.12,1.47,3.73,0.12,0.10,0.59
-2026-10-25T14:49,585b0b8,atmosphere tables and welded vegetation,,forest-pine,246,Maximum,71.6,2.55,3.46,12.25,3.59,0.62,0.66,1.06,1.67,3.82,0.11,0.13,0.58
-2026-10-25T14:49,585b0b8,atmosphere tables and welded vegetation,,storm-road,242,Maximum,72.4,1.95,2.44,11.44,3.44,0.50,0.42,0.14,2.14,3.81,0.10,0.52,0.37
-2026-10-25T14:49,585b0b8,atmosphere tables and welded vegetation,,mountain-hamlet,243,Maximum,72.5,2.00,2.30,11.25,3.78,0.47,0.26,0.29,2.21,3.66,0.13,0.06,0.38
-2026-10-25T14:49,585b0b8,atmosphere tables and welded vegetation,,brook-mouth,248,Maximum,78.2,2.37,3.30,10.73,2.81,0.46,0.51,0.65,1.84,3.73,0.10,0.07,0.55
+date,commit,note,flags,view,frames,gpu_state,fps,cpu_main_ms,render_prep_ms,gpu_busy_ms,opaque,deferred lighting,prepass and motion,shadows,grass,sky and air,upscale and post,world compute,particles,engine
+2026-10-25T13:05,fdff35c,baseline before the structural work,,meadow,244,Maximum,71.0,2.32,3.15,12.23,,,,,,,,,,
+2026-10-25T13:05,fdff35c,baseline before the structural work,,start,225,Maximum,63.1,2.22,3.28,13.68,4.84,,0.23,0.14,2.09,1.83,3.76,0.11,0.08,0.60
+2026-10-25T13:05,fdff35c,baseline before the structural work,,forest-pine,212,Maximum,62.8,2.52,3.66,14.22,4.24,,1.02,1.13,1.07,2.01,3.86,0.11,0.14,0.64
+2026-10-25T13:15,fdff35c,baseline before the structural work,,storm-road,248,Maximum,71.2,2.01,2.69,12.32,3.64,,0.77,0.53,0.14,2.41,3.82,0.10,0.52,0.38
+2026-10-25T13:15,fdff35c,baseline before the structural work,,mountain-hamlet,232,Maximum,71.5,2.05,2.34,11.95,,,,,,,,,,
+2026-10-25T13:15,fdff35c,baseline before the structural work,,brook-mouth,262,Maximum,72.3,2.33,3.25,11.63,3.14,,0.54,0.74,0.64,2.12,3.72,0.10,0.07,0.54
+2026-10-25T13:50,d91687e+,"atmosphere tables at reference sizes, 2 aerial samples",,meadow,252,Maximum,71.5,2.28,3.08,11.94,2.62,,0.24,0.15,2.91,1.48,3.81,0.10,0.07,0.55
+2026-10-25T13:50,d91687e+,"atmosphere tables at reference sizes, 2 aerial samples",,mountain-hamlet,237,Maximum,72.0,1.95,2.27,11.78,,,,,,,,,,
+2026-10-25T14:28,5fa39a1,after the atmosphere tables,,forest-pine,208,Maximum,63.1,2.50,3.76,14.02,4.34,,1.10,1.12,1.07,1.67,3.82,0.11,0.14,0.65
+2026-10-25T14:28,5fa39a1,after the atmosphere tables,,storm-road,228,Maximum,69.9,2.03,2.43,12.13,3.64,,0.90,0.53,0.13,2.16,3.84,0.10,0.49,0.35
+2026-10-25T14:49,585b0b8,atmosphere tables and welded vegetation,,meadow,248,Maximum,71.7,2.21,2.98,11.90,2.61,,0.23,0.14,2.91,1.47,3.81,0.10,0.07,0.56
+2026-10-25T14:49,585b0b8,atmosphere tables and welded vegetation,,start,227,Maximum,63.5,2.28,3.14,13.34,4.82,,0.26,0.13,2.12,1.47,3.73,0.12,0.10,0.59
+2026-10-25T14:49,585b0b8,atmosphere tables and welded vegetation,,forest-pine,246,Maximum,71.6,2.55,3.46,12.25,3.59,,0.62,0.66,1.06,1.67,3.82,0.11,0.13,0.58
+2026-10-25T14:49,585b0b8,atmosphere tables and welded vegetation,,storm-road,242,Maximum,72.4,1.95,2.44,11.44,3.44,,0.50,0.42,0.14,2.14,3.81,0.10,0.52,0.37
+2026-10-25T14:49,585b0b8,atmosphere tables and welded vegetation,,mountain-hamlet,243,Maximum,72.5,2.00,2.30,11.25,3.78,,0.47,0.26,0.29,2.21,3.66,0.13,0.06,0.38
+2026-10-25T14:49,585b0b8,atmosphere tables and welded vegetation,,brook-mouth,248,Maximum,78.2,2.37,3.30,10.73,2.81,,0.46,0.51,0.65,1.84,3.73,0.10,0.07,0.55
+2026-10-25T18:47,f9854ff,deferred terrain,,meadow,268,Maximum,73.9,2.22,3.41,11.18,2.03,0.66,0.23,0.14,2.14,1.45,3.70,0.13,0.11,0.60
+2026-10-25T18:47,f9854ff,deferred terrain,,start,210,Maximum,63.3,2.28,3.56,13.56,4.47,0.68,0.25,0.13,1.94,1.52,3.74,0.11,0.13,0.61
+2026-10-25T18:47,f9854ff,deferred terrain,,forest-pine,263,Maximum,75.6,2.60,3.87,11.82,3.00,0.55,0.59,0.62,0.89,1.38,3.82,0.11,0.13,0.74
+2026-10-25T18:47,f9854ff,deferred terrain,,storm-road,255,Maximum,76.9,1.79,2.77,10.69,2.43,0.46,0.59,0.37,0.11,1.76,3.85,0.10,0.53,0.47
+2026-10-25T18:47,f9854ff,deferred terrain,,mountain-hamlet,256,Maximum,76.5,1.99,2.68,10.57,2.73,0.57,0.49,0.25,0.24,1.94,3.72,0.12,0.06,0.46
+2026-10-25T18:47,f9854ff,deferred terrain,,brook-mouth,280,Maximum,84.2,2.54,3.47,10.01,1.96,0.49,0.49,0.50,0.45,1.54,3.72,0.11,0.07,0.67

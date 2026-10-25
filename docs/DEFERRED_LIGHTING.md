@@ -86,11 +86,11 @@ camera motion themselves).
 Bevy's attachments, our packing. Per pixel: the `Rgba32Uint` surface word (128 bits), an `Rgb10a2`
 target in Bevy's normal-prepass slot (32 bits), motion (`Rg16Float`) and depth: 24 B and depth,
 about 45 MB written and read a frame at 1728×1084. The `R8Uint` id is not needed (the model is in
-the surface word); its copy pass (`copy_deferred_lighting_id`) is removed from the schedule.
+the surface word); its copy pass (`copy_deferred_lighting_id`) is a no-op in the schedule.
 
 | Model | Surface word (128 bits) | Rgb10a2 |
 | --- | --- | --- |
-| Standard (terrain, objects, bark) | albedo sRGB 24, roughness 8; shading normal oct 2×12, model 3 + flags 5; occlusion 8, reflectance 8, metallic 8, spare 8; spare 32 | geometric normal oct 2×10 (shadow bias), spare 10 |
+| Standard (terrain, objects, bark) | albedo gamma 2.2 24, roughness 8; shading normal oct 2×12, model 8; diffuse occlusion 8, specular occlusion 8, reflectance 8, metallic 8; geometric normal oct 2×12 (shadow bias), spare 8 | unused |
 | Crown (v1, v2, impostor) | as standard; crown sky share and self-shadow terms in the spare words; impostor depth through `frag_depth` | crown normal oct 2×10 (sun facing, bias) |
 | Grass | albedo 24, occlusion 8; diffuse normal oct 2×12, model + flags 8; flat normal oct 2×8, sheen normal oct 2×8; sheen alpha (its `fwidth` variance folded in) 8, sheen strength 8, transmission 8, canopy depth 8 | canopy height 10, sky facing 10, spare 10 |
 
@@ -102,7 +102,10 @@ result.
 ### Bevy integration
 
 - Cameras: `DeferredPrepass`, `DepthPrepass`, `MotionVectorPrepass` (Temporal), the normal-prepass
-  slot enabled as our `Rgb10a2` target. `PbrPlugin { add_default_deferred_lighting_plugin: false }`.
+  slot enabled as our `Rgb10a2` target when a model needs it. Bevy's deferred lighting plugin
+  stays for its pipeline layout: every deferred view gets `SkipDeferredLighting`, and our pass is
+  specialised from `DeferredLightingLayout` with our shader and the environment group at group 2
+  (`crates/atmosphere/src/environment/deferred.rs`).
 - Terrain: `opaque_render_method() -> Deferred` and a deferred fragment shader (material
   evaluation, then pack). `EnvironmentMaterial` and `TreeWindMaterial` likewise through their
   extensions (`material.wesl` already has a dormant `deferred_output` branch).
@@ -112,6 +115,11 @@ result.
 - Grass: its own render system in `Prepass`, after `early_prepass` and before
   `early_deferred_prepass`, loading the G-buffer, motion and depth attachments.
 - Our passes reconstruct position with `view.main_pass_viewport`, never `view.viewport`.
+- A deferred material draws with `deferred_vertex_shader`, which defaults to Bevy's prepass
+  vertex shader, not to the material's `prepass_vertex_shader`; `enable_prepass()` must be true or
+  Bevy never queues it. The prepass view group holds Bevy's globals at binding 1, not 11
+  (`shaders/frame.wesl`).
+- On Metal, WGSL `pack4x8unorm` stored zero for a whole word; the G-buffer packs bytes by hand.
 - The lighting core moves into functions the kernels call; the forward path keeps calling the
   same functions until every material has moved, then it is deleted.
 
@@ -120,13 +128,19 @@ result.
 Each stage ends with the benchmark (all views, history row) and look captures of the views it
 touches against the stage before.
 
-1. **Groundwork and terrain.** Cameras, G-buffer packing (`assets/shaders/deferred/`), terrain's
-   deferred output with camera motion, classification, sun visibility, the standard kernel with
-   the terrain flags. Other materials stay forward and draw after the lighting. Also the AA
-   change (decision 1), since a deferred camera cannot multisample. Expect most of the terrain's
-   lighting share (up to 1.7 ms in the meadow) less the new passes.
-2. **Grass.** G-buffer output from the blade shader, drawn before the terrain; the grass kernel.
-   Removes grass lighting from 2×2 quads and the terrain's shading under blades.
+1. **Groundwork and terrain.** *Done* (`f49c88d`, `f9854ff`). Cameras, the AA change, G-buffer
+   packing (`shaders/lighting/gbuffer.wesl`), terrain's deferred output with camera motion, and
+   a full-screen fragment pass that runs the shared lighting per G-buffer pixel
+   (`shaders/lighting/deferred.wesl`). With terrain the only deferred model, classification and
+   per-model kernels had nothing to split and the depth test already skips the sky, so they move
+   to stage 2. Against `0a5ac41`, before the AA change: GPU busy fell 0.4–0.75 ms in five views
+   (meadow 11.90 → 11.18, forest-pine 12.25 → 11.82, storm-road 11.44 → 10.69, mountain-hamlet
+   11.25 → 10.57, brook-mouth 10.73 → 10.01) and rose 0.22 at the start view (13.34 → 13.56),
+   where grass covers terrain that is now shaded in the G-buffer pass and lit. The lighting pass
+   takes 0.46–0.68 ms.
+2. **Grass.** G-buffer output from the blade shader, drawn before the terrain; classification,
+   sun visibility, and the grass and standard kernels in compute. Removes grass lighting from 2×2
+   quads and the terrain's shading under blades.
 3. **Objects.** `EnvironmentMaterial`: rocks, props, buildings, characters, details, plants
    (crown v1).
 4. **Trees and impostors.** Crown v2 and bark-sky flags, the crown normal, impostor depth, motion
