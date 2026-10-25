@@ -12,16 +12,53 @@ were checked against the files; claims about other games cite a source, and esti
 
 ## The comparison
 
-| | Frame rate | What is on screen |
-| --- | ---: | --- |
-| Resident Evil Village, night snow forest | 123 fps | About a dozen bare trees, fog and darkness closing the view at 20–30 m |
-| Resident Evil Village, house interior | 211 fps | An enclosed hallway |
-| Yarra, meadow, no vegetation, no objects | ~100 fps | Terrain and sky only |
+Both games on the M2 Max at native 1920×1080 with no frame cap, read from the Metal HUD on
+October 24–25. Uncapped, the GPU runs at full clock, so frame rates compare; the HUD's per-stage
+times overlap one another and sum to more than the frame.
 
-All at 1920×1080 on the M2 Max; Village's upscaling and anti-aliasing settings are not yet known.
-On PS5, Village runs at 60 fps at 4K checkerboard, about 4.1 Mpx shaded a frame (Digital Foundry).
-Its forest is not a fair comparison for ours, since its level design limits what is drawn. But
-an empty terrain frame costing as much as Village's whole forest frame is a fair indictment.
+Village ran fullscreen with MetalFX off, image quality 1.0 and rendering mode Normal (not
+interlaced): every pixel shaded every frame. Anti-aliasing FXAA + TAA with CAS sharpening, no
+MSAA; textures High with 8× anisotropic filtering; mesh quality High; FidelityFX ambient
+occlusion, screen-space reflections, subsurface scattering, contact shadows; volumetric lighting
+High; shadow quality Mid with Shadow Cache on; bloom, lens flare, depth of field. Yarra ran in a
+window (composited) at 100% scale with MSAA 4×.
+
+| View | fps | GPU ms | Vertex | Fragment | Compute |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Village, a fence filling the frame | 143 | 6.8 | 1.6 | 3.5 | 3.7 |
+| Village, forest path at dusk | 139 | 7.1 | 1.5 | 3.9 | 3.4 |
+| Village, spruce valley vista | 134 | 7.4 | 1.4 | 4.2 | 3.4 |
+| Village, castle in a snowstorm | 119 | 8.3 | 1.8 | 4.4 | 3.8 |
+| Village, shack, rock face and trees | 109 | 9.0 | 1.9 | 5.2 | 4.2 |
+| Village, valley and castle in fog | 100 | 9.9 | 2.1 | 5.3 | 4.2 |
+| Village, village streets (five views) | 92–105 | 9.5–10.8 | 2.0–2.5 | 5.0–6.2 | 4.1–4.8 |
+| Yarra, meadow, terrain and sky only | 102 | 8.2 | | | |
+| Yarra, meadow with grass | 75 | 12.2 | | | |
+
+In play, Village never went below 80 fps (12.5 ms) and mostly held 90–100. On PS5 it runs at 60
+fps at 4K checkerboard, about 4.1 Mpx shaded a frame (Digital Foundry). What the numbers show:
+
+- **Our empty frame costs what Village's densest frame costs.** Terrain and sky alone run at
+  Village's village-street frame rate, and our meadow with grass is slower than the slowest moment
+  seen in Village.
+- **Village's fixed cost is lower than ours with far more in it.** With a wall filling the screen,
+  its whole screen-space pipeline (lighting, ambient occlusion, reflections, subsurface scattering,
+  volumetrics, TAA, sharpening, depth of field, bloom) costs about 6.8 ms; dense content adds 1–4 ms
+  on top. Our terrain fragment shader alone (4.67 ms) is more than all of Village's fragment work in
+  a dense forest view (3.9–4.4 ms).
+- **Village's frame has the shape this review proposes.** 40–53% of its GPU time is compute that
+  overlaps drawing (the stages sum to about 2 ms more than the frame); shadows are cached; volumetric
+  lighting stands in for per-pixel fog; TAA replaces MSAA. Its vertex work, shadows included, stays
+  at 1.4–2.5 ms a frame in dense forest and village views.
+- **Village keeps the GPU busy.** Its GPU time is 97–100% of its frame interval. Ours was 84% (empty
+  meadow) and 91% (grass) in the HUD, and 95% in a trace of the same view. Part of the gap may be
+  the composited window, so the next comparison runs Yarra fullscreen.
+
+Village is not our density target. It was also built for the PS4, its views are closed by valleys,
+walls, snowfall and fog under overcast light with no long sun shadows, and its far scenery is
+backdrop; ours has 10 km sight lines and a sun. But nothing about an open world makes a meadow's
+ground cost 4.7 ms. And the PS5 target at 50% of 4K renders 1920×1080, exactly the workload above:
+a shipped renderer fits a dense outdoor frame with all its effects in 7–11 ms of this Mac.
 
 ### Where an empty frame goes
 
@@ -249,6 +286,10 @@ the CPU is not the limit. The techniques are.
 Ranked by value for effort. Each starts with a cheap check that confirms or kills it before
 anything is built; gains are estimates until that check runs.
 
+The Village numbers move 4 and 5 ahead of 3. The fixed cost every view pays (terrain shading and
+sun visibility per fragment) already exceeds Village's densest frame, while tree work matters only
+in forests. Direction 2's check (hours) still comes early.
+
 1. **A frame budget and an unattended benchmark** (process, days). A budget table for the play setup
    at the Mac's full clock that maps to PS5 60 fps, for example: upscaler, post and UI 2.5 ms; sky,
    air and clouds 1.0; terrain 2.0; trees 2.5; grass 1.5; all shadows 1.5; characters, water and
@@ -320,9 +361,8 @@ anything is built; gains are estimates until that check runs.
 - Is dynamic resolution acceptable?
 - If deferred or visibility-buffer shading comes, is losing MSAA acceptable (it is off under
   Temporal already)?
-- Resident Evil Village's settings (MetalFX mode, resolution, anti-aliasing, "Interlaced") and its
-  frame rate in open, daylit areas; a foliage-heavy open-world game on the same Mac (Assassin's
-  Creed Shadows, Death Stranding, Cyberpunk 2077) would be a fairer yardstick.
+- A foliage-heavy open-world game in sunlight on the same Mac (Assassin's Creed Shadows, Death
+  Stranding, Cyberpunk 2077) would be a fairer yardstick for density than Village.
 
 ## Sources
 
