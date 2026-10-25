@@ -597,7 +597,7 @@ fn present_views(
             .unwrap_or(value.exposure_ev100);
 
         if profile.outdoor && settings.is_none() {
-            view_commands.insert(AtmosphereSettings::default());
+            view_commands.insert(atmosphere_settings());
         }
 
         if !profile.outdoor && settings.is_some() {
@@ -706,6 +706,18 @@ fn present_bloom(view: &mut EntityCommands, bloom: Option<Mut<Bloom>>, intensity
                 ..Bloom::NATURAL
             });
         }
+    }
+}
+
+/// Bevy rebuilds its atmosphere tables every frame; these are the technique's reference sizes
+/// (Hillaire, EGSR 2020) and Unreal's samples per aerial-view slice, where Bevy's defaults (a
+/// 400×200 sky view, ten samples a slice) cost several times as much.
+fn atmosphere_settings() -> AtmosphereSettings {
+    AtmosphereSettings {
+        transmittance_lut_size: UVec2::new(256, 64),
+        sky_view_lut_size: UVec2::new(192, 108),
+        aerial_view_lut_samples: 2,
+        ..default()
     }
 }
 
