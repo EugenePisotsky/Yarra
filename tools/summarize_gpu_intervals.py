@@ -88,8 +88,13 @@ def spills(events, encoders):
     return [(name, size, n) for (name, size), n in sorted(count.items())]
 
 
-def summarize(path, frames_by):
-    """Each pass's even share of GPU time and the busy time, ms per frame, and the frames."""
+def summarize(path, frames_by, background=()):
+    """Each pass's even share of GPU time and the busy time, ms per frame, and the frames.
+
+    A background pass (`background`, labels) works in the gaps of the others, as the cloud
+    volume's sweep does: it takes no share while another pass runs, only the time it runs alone,
+    which is about the time it adds.
+    """
     spans = list(intervals(path))
     events = sorted(
         [(start, 1, i) for i, (start, _, _, _) in enumerate(spans)]
@@ -103,8 +108,9 @@ def summarize(path, frames_by):
     for time, change, i in events:
         if running and time > last:
             busy += time - last
-            for j in running:
-                shares[spans[j][2]] += (time - last) / len(running)
+            sharing = [j for j in running if spans[j][2] not in background] or running
+            for j in sharing:
+                shares[spans[j][2]] += (time - last) / len(sharing)
         if change > 0:
             running.add(i)
         else:
@@ -124,13 +130,14 @@ def main():
     parser.add_argument("--top", type=int, default=30)
     parser.add_argument("--states", nargs="*", default=[])
     parser.add_argument("--spills", nargs=2, metavar=("EVENTS", "ENCODERS"))
+    parser.add_argument("--background", nargs="*", default=[], help="passes that fill gaps")
     args = parser.parse_args()
 
     if args.spills:
         for name, size, n in spills(*args.spills):
             print(f"{name[:48]:48} spills {size} ({n} recorded)")
 
-    tables = [summarize(path, args.frames_by) for path in args.traces]
+    tables = [summarize(path, args.frames_by, set(args.background)) for path in args.traces]
 
     def cell(passes, ms):
         share = ms / passes.get(args.reference, float("nan"))

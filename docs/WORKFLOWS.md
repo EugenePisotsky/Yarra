@@ -463,7 +463,11 @@ the GPU at Maximum) as lines of passes, and the views it is measured in. Each vi
 from 10:00 in its weather; a 3 s Metal System Trace gives each line's ms, printed against its
 budget (`!` over), with fps, CPU main and render preparation. Views run 90 s apart, since about
 six minutes of uncapped load drop the GPU to Medium; a view whose GPU left Maximum anyway is
-flagged and left out of the history. Rows append to `tools/bench_history.csv` with the commit and note: a change's cost is
+flagged and left out of the history. The trace's state table covers only its first half second,
+so when it shows no lasting state the clock is read from MetalFX Temporal's own pass (1.06–1.09 ms
+at Maximum). Passes listed as `background` (the cloud volume's sweep) are charged only the time
+they run alone: overlapping the opaque pass, an even split charged the clouds up to 1.4 ms of it,
+while turning them off saves 0.2. Rows append to `tools/bench_history.csv` with the commit and note: a change's cost is
 the difference from the previous row of the same view, and heat moves a row by a few percent, so
 judge sub-0.3 ms changes by an A/B/A of that view. Flags after `--` reach every run
 (`--profile-grass off`, `--profile-objects off`, `--profile-terrain off` split the opaque line).

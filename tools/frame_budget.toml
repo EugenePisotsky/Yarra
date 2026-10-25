@@ -17,6 +17,9 @@ time = "10:00"
 warmup_seconds = 20
 profile_seconds = 15
 cooldown_seconds = 90
+# Passes that work in the gaps of others, charged only the time they run alone: the cloud
+# volume's sweep spans whatever it overlaps, and an even split charged it 0.15–1.2 ms by chance.
+background = ["cloud volume"]
 
 [[line]]
 name = "opaque"

@@ -8,7 +8,10 @@ Each view in `tools/frame_budget.toml` runs the play setup uncapped from a held 
 Metal System Trace gives the GPU's busy time per frame and each pass's share of it
 (`summarize_gpu_intervals.py`); the budget's lines group the passes. Uncapped, the GPU stays at
 its Maximum performance state; a view that left it is flagged and kept out of the history, since
-every pass then slows alike. The views run with a pause between them for the same reason.
+every pass then slows alike. The views run with a pause between them for the same reason. The
+trace's state table covers only its first half second and often holds just momentary Minimum
+transitions, so without a lasting state the clock is read from MetalFX Temporal's own pass, the
+same work every frame.
 
 Rows append to `tools/bench_history.csv` with the commit and note, so a change's cost is the
 difference between two rows of one view. Flags after `--` go to every run (an A/B toggle such as
@@ -37,11 +40,13 @@ HISTORY = os.path.join(ROOT, "tools/bench_history.csv")
 WORK = os.path.join(ROOT, "tmp/bench")
 TABLE = "/trace-toc/run[@number=\"1\"]/data/table[@schema=\"{}\"]"
 
-# A trace with less of its time at the GPU's Maximum state is not compared.
-MAXIMUM_SHARE = 0.95
+# MetalFX Temporal's own pass at the play setup and the GPU's Maximum state (1.06–1.09 ms in
+# every view); a slower one means a lower clock.
+CLOCK_PASS = "MetalFX Temporal"
+CLOCK_MAXIMUM_MS = 1.15
 
 Result = collections.namedtuple(
-    "Result", "view busy frames maximum fps main_ms prep_ms lines"
+    "Result", "view busy frames state fps main_ms prep_ms lines"
 )
 
 
@@ -195,7 +200,7 @@ def main():
             results.append(result)
 
     print_table(results, lines, budget["total_ms"])
-    at_maximum = [r for r in results if r.maximum >= MAXIMUM_SHARE]
+    at_maximum = [r for r in results if r.state == "Maximum"]
     if not args.no_history:
         append_history(at_maximum, lines, revision, stamp, args.note, args.extra)
 
@@ -206,15 +211,25 @@ def measure(view, extra, budget):
     if recorded is None:
         return None
     tables, log_path = recorded
-    passes, busy, frames = summarize(tables["metal-gpu-intervals"], budget["frames_by"])
-    states = dict(performance_states(tables["gpu-performance-state-intervals"]))
+    passes, busy, frames = summarize(tables["metal-gpu-intervals"], budget["frames_by"],
+                                     set(budget["background"]))
+    state = gpu_state(tables["gpu-performance-state-intervals"], passes)
     fps, main_ms, prep_ms = measured_log(log_path)
     totals, unclaimed = group(passes, budget["line"])
     for label, ms in sorted(unclaimed.items(), key=lambda item: -item[1]):
         if ms >= 0.05:
             print(f"{view['name']}: no budget line for {label!r} ({ms:.2f} ms)")
-    return Result(view["name"], busy, frames, states.get("Maximum", 0.0), fps, main_ms, prep_ms,
-                  totals)
+    return Result(view["name"], busy, frames, state, fps, main_ms, prep_ms, totals)
+
+
+def gpu_state(states_path, passes):
+    """The GPU's performance state through the trace: the table's longest lasting state, or,
+    when it holds only momentary Minimum transitions, judged by the clock pass."""
+    lasting = [(state, share) for state, share in performance_states(states_path)
+               if state != "Minimum"]
+    if lasting:
+        return max(lasting, key=lambda item: item[1])[0]
+    return "Maximum" if passes.get(CLOCK_PASS, float("inf")) <= CLOCK_MAXIMUM_MS else "lower"
 
 
 def print_table(results, lines, total):
@@ -239,15 +254,15 @@ def print_table(results, lines, total):
     row("fps", None, [r.fps for r in results])
     row("CPU main", None, [r.main_ms for r in results])
     row("render prep", None, [r.prep_ms for r in results])
-    row("Maximum %", None, [100 * r.maximum for r in results])
+    print(f"{'GPU state':{width}}        " + "".join(f"{r.state[:8]:>9}" for r in results))
     for r in results:
-        if r.maximum < MAXIMUM_SHARE:
+        if r.state != "Maximum":
             print(f"{r.view}: the GPU left its Maximum state, so it stays out of the history")
 
 
 def append_history(results, lines, revision, stamp, note, extra):
     """One row per view: when, which commit, what was measured, and the costs."""
-    fields = ["date", "commit", "note", "flags", "view", "frames", "maximum_share", "fps",
+    fields = ["date", "commit", "note", "flags", "view", "frames", "gpu_state", "fps",
               "cpu_main_ms", "render_prep_ms", "gpu_busy_ms"] + [line["name"] for line in lines]
     new = not os.path.exists(HISTORY)
     with open(HISTORY, "a", newline="") as file:
@@ -256,7 +271,7 @@ def append_history(results, lines, revision, stamp, note, extra):
             writer.writerow(fields)
         for r in results:
             writer.writerow([
-                stamp, revision, note, " ".join(extra), r.view, r.frames, f"{r.maximum:.2f}",
+                stamp, revision, note, " ".join(extra), r.view, r.frames, r.state,
                 f"{r.fps:.1f}", f"{r.main_ms:.2f}", f"{r.prep_ms:.2f}", f"{r.busy:.2f}",
             ] + [f"{r.lines.get(line['name'], 0.0):.2f}" for line in lines])
     print(f"appended {len(results)} rows to {os.path.relpath(HISTORY, ROOT)}")
