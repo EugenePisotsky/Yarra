@@ -48,7 +48,7 @@ import package::shaders::lighting::forest_shadow::{forest_transmittance, forest_
 import package::shaders::lighting::terrain_shadow::{terrain_sunlight, terrain_sky_visibility};
 import package::shaders::lighting::ground::ground_below;
 import package::shaders::lighting::gbuffer::{
-    MODEL_BARK, MODEL_CROWN, MODEL_CROWN_SKY, MODEL_TERRAIN, SHADED_MODEL,
+    MODEL_BARK, MODEL_CROWN, MODEL_CROWN_SKY, MODEL_IMPOSTOR, MODEL_TERRAIN, SHADED_MODEL,
 };
 
 // Yarra: the lighting model of the surface being lit (lighting/gbuffer.wesl), which picks the
@@ -72,7 +72,12 @@ fn lit_model_is(model: u32) -> bool {
 }
 
 fn lit_crown() -> bool {
-    return lit_model_is(MODEL_CROWN) || lit_model_is(MODEL_CROWN_SKY);
+    return lit_model_is(MODEL_CROWN) || lit_crown_sky();
+}
+
+// Foliage whose crown occlusion is its linear sky visibility: `crown_v2` meshes and impostors.
+fn lit_crown_sky() -> bool {
+    return lit_model_is(MODEL_CROWN_SKY) || lit_model_is(MODEL_IMPOSTOR);
 }
 
 // Yarra: light reflected towards a surface by the ground around it, as environment radiance
@@ -505,8 +510,9 @@ fn apply_pbr_lighting(
             // Impostors cast nothing into the shadow maps, so near the camera nothing would
             // shade them and they washed out. Their crown and forest term applies at every
             // distance; the shadow maps only add what is darker (neighbouring meshes).
-            @if(IMPOSTOR_SELF_SHADOW)
-            weight = 1.0;
+            if lit_model_is(MODEL_IMPOSTOR) {
+                weight = 1.0;
+            }
             if weight > 0.0 {
                 let to_light = (*light).direction_to_light;
                 // The authored crown normal faces the sun on exposed sides; the crown's
@@ -515,7 +521,7 @@ fn apply_pbr_lighting(
                 if lit_crown() {
                     var crown = clamp(in.diffuse_occlusion.g, 0.0, 1.0);
                     // Linear sky visibility, eased into the range the self-shadow was tuned on.
-                    if lit_model_is(MODEL_CROWN_SKY) {
+                    if lit_crown_sky() {
                         crown = crown_sky_shade(crown);
                     }
                     let sun_facing = smoothstep(-0.25, 0.65,
@@ -528,10 +534,11 @@ fn apply_pbr_lighting(
                 // Terrain casts nothing past the cascades either: ridges shade the ground
                 // below their horizon (terrain_shadow).
                 let distant = far * terrain_sunlight(in.world_position.xyz, to_light);
-                @if(IMPOSTOR_SELF_SHADOW)
-                shadow = mix(min(shadow, distant), distant, beyond);
-                @else
-                shadow = mix(shadow, distant, beyond);
+                if lit_model_is(MODEL_IMPOSTOR) {
+                    shadow = mix(min(shadow, distant), distant, beyond);
+                } else {
+                    shadow = mix(shadow, distant, beyond);
+                }
             }
         }
         // Yarra: the ground below a point inside a crown lies in the point's own shadow, and so
@@ -542,7 +549,7 @@ fn apply_pbr_lighting(
         if dot((*light).direction_to_light, environment.sun.xyz) > 0.999 {
             let shadows_on = ((*light).flags
                 & mesh_view_types::DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) != 0u;
-            if lit_model_is(MODEL_CROWN_SKY) {
+            if lit_crown_sky() {
                 ground_sunlit = shadow;
             } else if lit_model_is(MODEL_TERRAIN) {
                 ground_sunlit = shadow;
@@ -563,7 +570,7 @@ fn apply_pbr_lighting(
             diffuse *= diffuse_occlusion.g;
         }
         // Under clouds this is sky light: foliage the crown hides from the sky sees less of it.
-        if lit_model_is(MODEL_CROWN_SKY) {
+        if lit_crown_sky() {
             diffuse = cloud.y * crown_sky_reach(in.diffuse_occlusion.g, in.world_position.xyz);
         }
         shadow = shadow * cloud.x + diffuse;
@@ -723,7 +730,7 @@ fn apply_pbr_lighting(
         var sky_facing = vec3(0.75 + 0.25 * in.N.y);
         // Valley floors and gullies see less of the sky than ridges (terrain_shadow).
         let terrain_sky = terrain_sky_visibility(in.world_position.xyz);
-        if lit_model_is(MODEL_CROWN_SKY) {
+        if lit_crown_sky() {
             // Foliage sees the sky past the rest of its crown (baked) and past the crowns
             // around it, which shade the lower crowns of a stand. Light passed through and
             // between leaves keeps the deepest foliage from black. Below the crown's

@@ -544,7 +544,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     out.deferred = gbuffer::pack(gbuffer::Surface(pbr.material.base_color.rgb,
         pbr.material.perceptual_roughness, pbr.N, pbr.world_normal, pbr.diffuse_occlusion.x,
         pbr.specular_occlusion, pbr.material.reflectance.x, pbr.material.metallic,
-        gbuffer::MODEL_TERRAIN));
+        gbuffer::MODEL_TERRAIN, 0.0));
     out.deferred_lighting_pass_id = 1u;
 @if(MOTION_VECTOR_PREPASS)
     out.motion_vector = calculate_motion_vector(in.world_position, in.previous_world_position);

@@ -769,8 +769,8 @@ struct Functions {
 }
 
 /// Specializes each entry's instanced pipelines for every main view (and its prepass, if it
-/// has one) and queues one item per entry into each phase. On deferred views meshes of deferred
-/// materials draw into the G-buffer instead. Impostors draw in the main pass only.
+/// has one) and queues one item per entry into each phase. On deferred views entries of
+/// deferred materials draw into the G-buffer instead. Impostors draw in no depth prepass.
 fn queue(
     world: &mut World,
     mut pipelines: Local<HashMap<PipelineFor, CachedRenderPipelineId>>,
@@ -936,13 +936,12 @@ fn queue(
     }
 }
 
-/// Whether an entry draws into the G-buffer of deferred views: meshes of deferred materials.
+/// Whether an entry draws into the G-buffer of deferred views: one of a deferred material.
 fn deferred(world: &World, entry: &DrawEntry) -> bool {
-    matches!(entry.drawn, Drawn::Mesh { .. })
-        && world
-            .resource::<ErasedRenderAssets<PreparedMaterial>>()
-            .get(entry_material(entry))
-            .is_some_and(|m| m.properties.render_method == OpaqueRendererMethod::Deferred)
+    world
+        .resource::<ErasedRenderAssets<PreparedMaterial>>()
+        .get(entry_material(entry))
+        .is_some_and(|m| m.properties.render_method == OpaqueRendererMethod::Deferred)
 }
 
 /// Whether some batch could draw an entry's representation, by the frame's bits per form.

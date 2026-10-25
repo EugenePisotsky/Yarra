@@ -67,8 +67,8 @@ From three read-only surveys of the code (October 25):
    impostors, objects and terrain. Every writer writes depth, motion and its G-buffer words;
    alpha tests happen once, here. The trees' separate depth prepass goes.
 3. **Lighting kernels**, one per lighting function, each owned by its renderer (`atmosphere`
-   cannot depend on `vegetation_render`): the shared lighting's (terrain, objects, crowns, bark)
-   and grass's, in `DeferredLighting`. Each is a full-screen draw at the far plane, so depth skips
+   cannot depend on `vegetation_render`): the shared lighting's (terrain, objects, crowns, bark,
+   impostors) and grass's, in `DeferredLighting`. Each is a full-screen draw at the far plane, so depth skips
    the sky, that discards other kernels' pixels, reads the G-buffer and depth, and writes the lit
    colour into the HDR target's region. The shared lighting's models differ in a few branches
    (`pbr_lighting.wesl` `lit_model_is`): a material's own pipeline fixes its model by its shader
@@ -99,8 +99,7 @@ pass (`copy_deferred_lighting_id`) is a no-op in the schedule.
 
 | Model | Surface word (128 bits) | Extra target |
 | --- | --- | --- |
-| Shared lighting (terrain, objects, crowns v1 and v2, bark) | albedo gamma 2.2 24, roughness 8; shading normal oct 2×12, model 8; diffuse occlusion 8 (crown occlusion or bark's sky share: the kit's vertex colours are grey), specular occlusion 8, reflectance 8, metallic 8; geometric normal oct 2×12 (shadow bias; a crown's authored normal for sun facing), spare 8 | unused |
-| Impostor | not yet: crown terms as above, depth of the lit point through `frag_depth` | |
+| Shared lighting (terrain, objects, crowns v1 and v2, bark, impostors) | albedo gamma 2.2 24, roughness 8; shading normal oct 2×12, model 8; diffuse occlusion 8 (crown occlusion or bark's sky share: the kit's vertex colours are grey), specular occlusion 8, reflectance 8, metallic 8; geometric normal oct 2×12 (shadow bias; a crown's authored normal for sun facing), lift snorm 8 (an impostor's crown surface, ±16 m toward the viewer from its quad's depth) | unused |
 | Grass (`vegetation/draw/gbuffer.wesl`) | albedo 24, occlusion 8; flat normal oct 2×12, model 8; rounded normal oct 2×12, √ sheen alpha (its `fwidth` variance folded in) 8; clump normal oct 2×8, √ blade alpha 8, sheen strength 8 | own `Rgba8Unorm`: transmission, canopy depth, canopy height, spare |
 
 Precision is checked on captures (crown occlusion may need 10 bits). Grass keeps both sheen
@@ -180,9 +179,15 @@ touches against the stage before.
    2.16 → 0.38, and the G-buffer pass rose 0.60 → 1.80. Branching per pixel costs the shared
    kernel on pixels of one model: the meadow's, terrain alone, rose 0.50 → 0.59 ms (register
    pressure or branch structure, not yet measured).
-4. **Impostors.** Their surface and lit point's depth into the G-buffer, lit as crowns with
-   their self-shadow; at the start view the main pass still takes 2.9 ms, mostly the distant
-   impostor forest.
+4. **Impostors.** *Done*. Their crown's surface goes into the G-buffer from the GPU trees'
+   deferred items, with the quad's depth and the lift to the crown's surface (as the forward
+   shader lit it), and camera motion; the shared kernel lights them as `crown_v2` foliage with
+   their self-shadow. Captures against `1da048f` match within noise (mean absolute difference
+   1.01 at the start view, 0.51 in forest-pine). Against stage 3: the start view fell 1.58 ms
+   (12.65 → 11.07), its main pass, mostly the distant impostor forest, 2.9 → 0.02 ms while the
+   G-buffer pass rose 1.07 → 2.31 and the kernel 0.60 → 0.74; forest-pine 11.00 → 10.72, the
+   meadow 10.38 → 10.14, the others held (storm-road 10.58 → 10.59, mountain-hamlet
+   10.62 → 10.59, brook-mouth 9.78 → 9.82). The main pass is now empty in every view.
 5. **Cleanup.** Forward lighting code paths deleted: terrain's and grass's draw no view since
    every camera showing them is deferred, and environment materials light forward only when
    transparent. MSAA paths and `CompleteTemporalMotion` deleted; lower-rate visibility terms if

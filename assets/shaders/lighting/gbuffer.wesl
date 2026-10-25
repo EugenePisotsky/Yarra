@@ -5,7 +5,7 @@
 // - x: albedo, gamma 2.2, 8 bits a channel; perceptual roughness 8;
 // - y: shading normal, octahedral 12 + 12; model 8;
 // - z: diffuse occlusion, specular occlusion, reflectance and metallic, 8 each;
-// - w: geometric normal (shadow bias), octahedral 12 + 12; 8 spare.
+// - w: geometric normal (shadow bias), octahedral 12 + 12; lift, snorm 8 over LIFT_RANGE.
 // Grass's is in vegetation/draw/gbuffer.wesl.
 import bevy_render::utils::{octahedral_encode, octahedral_decode};
 
@@ -21,17 +21,21 @@ const MODEL_STANDARD: u32 = 3u;
 const MODEL_CROWN: u32 = 4u;
 const MODEL_CROWN_SKY: u32 = 5u;
 const MODEL_BARK: u32 = 6u;
+// Impostors (crates/engine/src/trees/impostor.rs): lit as `crown_v2` foliage, with their own
+// self-shadow, at their crown's surface behind or before the quad.
+const MODEL_IMPOSTOR: u32 = 7u;
 
 // The model of the surface a material's pipeline shades, by the definitions that select its
 // branches of the shared lighting.
 @if(TERRAIN_SURFACE) const SHADED_MODEL: u32 = MODEL_TERRAIN;
+@elif(IMPOSTOR_SELF_SHADOW) const SHADED_MODEL: u32 = MODEL_IMPOSTOR;
 @elif(TREE_CROWN_SKY) const SHADED_MODEL: u32 = MODEL_CROWN_SKY;
 @elif(TREE_CROWN_SHADING) const SHADED_MODEL: u32 = MODEL_CROWN;
 @elif(TREE_BARK_SKY) const SHADED_MODEL: u32 = MODEL_BARK;
 @else const SHADED_MODEL: u32 = MODEL_STANDARD;
 
 fn shared_lighting(model: u32) -> bool {
-    return model == MODEL_TERRAIN || (model >= MODEL_STANDARD && model <= MODEL_BARK);
+    return model == MODEL_TERRAIN || (model >= MODEL_STANDARD && model <= MODEL_IMPOSTOR);
 }
 
 struct Surface {
@@ -45,7 +49,13 @@ struct Surface {
     reflectance: f32,
     metallic: f32,
     model: u32,
+    // Metres toward the viewer from the depth drawn to the point lit: an impostor's crown
+    // surface, off its quad.
+    lift: f32,
 }
+
+// The lift's range either way: an impostor's crown reaches its views' half size from the quad.
+const LIFT_RANGE: f32 = 16.0;
 
 // Four values in 0..1 as bytes, the first lowest. By hand: on Metal, `pack4x8unorm` stored zero
 // for the occlusion word.
@@ -83,7 +93,8 @@ fn pack(s: Surface) -> vec4<u32> {
         pack_unorm4(vec4(pow(saturate(s.albedo), vec3(1.0 / 2.2)), s.perceptual_roughness)),
         pack_normal(s.normal) | (s.model << 24u),
         pack_unorm4(vec4(s.diffuse_occlusion, s.specular_occlusion, s.reflectance, s.metallic)),
-        pack_normal(s.geometric_normal),
+        pack_normal(s.geometric_normal)
+            | (u32(i32(round(clamp(s.lift / LIFT_RANGE, -1.0, 1.0) * 127.0)) & 0xff) << 24u),
     );
 }
 
@@ -95,5 +106,6 @@ fn unpack(texel: vec4<u32>) -> Surface {
     let base = unpack_unorm4(texel.x);
     let props = unpack_unorm4(texel.z);
     return Surface(pow(base.rgb, vec3(2.2)), base.a, unpack_normal(texel.y), unpack_normal(texel.w),
-        props.x, props.y, props.z, props.w, model(texel));
+        props.x, props.y, props.z, props.w, model(texel),
+        f32(bitcast<i32>(texel.w) >> 24u) / 127.0 * LIFT_RANGE);
 }

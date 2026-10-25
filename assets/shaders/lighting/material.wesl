@@ -160,7 +160,8 @@ fn fragment(
     out.deferred = gbuffer::pack(gbuffer::Surface(pbr_input.material.base_color.rgb,
         pbr_input.material.perceptual_roughness, pbr_input.N, pbr_input.world_normal,
         pbr_input.diffuse_occlusion.g, pbr_input.specular_occlusion,
-        pbr_input.material.reflectance.x, pbr_input.material.metallic, gbuffer::SHADED_MODEL));
+        pbr_input.material.reflectance.x, pbr_input.material.metallic, gbuffer::SHADED_MODEL,
+        0.0));
     out.deferred_lighting_pass_id = 1u;
 @if(MOTION_VECTOR_PREPASS)
     out.motion_vector = calculate_motion_vector(in.world_position, in.previous_world_position);

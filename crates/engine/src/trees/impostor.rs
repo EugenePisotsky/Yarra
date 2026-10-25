@@ -13,6 +13,7 @@ use atmosphere::environment::{EnvironmentAssets, EnvironmentExtension, Environme
 
 use bevy::{
     asset::{AssetLoader, LoadContext, RenderAssetUsages, io::Reader},
+    material::OpaqueRendererMethod,
     math::DVec2,
     mesh::{Indices, MeshVertexBufferLayoutRef, PrimitiveTopology},
     pbr::{
@@ -327,12 +328,11 @@ struct ImpostorParams {
 }
 
 impl MaterialExtension for ImpostorExtension {
-    // Impostors stand beyond the mesh LODs, where their sway moves them far less than a pixel
-    // a frame: MetalFX Temporal's motion for them comes from the final depth and the camera
-    // (`upscaling::temporal::CompleteTemporalMotion`), and their alpha-tested cards are not
-    // drawn twice. They cast no shadows (`NotShadowCaster`).
+    // Impostors draw into the G-buffer of deferred views (`gpu::render` queues them; never into
+    // a depth prepass, so their alpha-tested quads are not drawn twice). They cast no shadows
+    // (`NotShadowCaster`).
     fn enable_prepass() -> bool {
-        false
+        true
     }
 
     fn enable_shadows() -> bool {
@@ -344,6 +344,14 @@ impl MaterialExtension for ImpostorExtension {
     }
 
     fn fragment_shader() -> ShaderRef {
+        SHADER.into()
+    }
+
+    fn deferred_vertex_shader() -> ShaderRef {
+        SHADER.into()
+    }
+
+    fn deferred_fragment_shader() -> ShaderRef {
         SHADER.into()
     }
 
@@ -408,6 +416,7 @@ impl ImpostorMaterials {
                             alpha_mode: AlphaMode::Mask(0.5),
                             perceptual_roughness: 0.85,
                             reflectance: 0.25,
+                            opaque_render_method: OpaqueRendererMethod::Deferred,
                             ..default()
                         },
                         extension: EnvironmentExtension {

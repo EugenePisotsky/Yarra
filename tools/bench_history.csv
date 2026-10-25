@@ -38,3 +38,9 @@ date,commit,note,flags,view,frames,gpu_state,fps,cpu_main_ms,render_prep_ms,gpu_
 2026-10-25T21:39,e3f6fc1+,deferred objects and trees,,storm-road,263,Maximum,76.5,1.88,2.53,10.58,2.50,0.86,0.16,0.40,0.25,1.62,3.80,0.11,0.53,0.35
 2026-10-25T21:39,e3f6fc1+,deferred objects and trees,,mountain-hamlet,260,Maximum,76.4,1.96,2.49,10.62,2.83,0.89,0.13,0.26,0.35,1.87,3.70,0.12,0.06,0.41
 2026-10-25T21:39,e3f6fc1+,deferred objects and trees,,brook-mouth,276,Maximum,86.3,2.40,3.33,9.78,1.84,0.90,0.16,0.51,0.41,1.52,3.71,0.11,0.08,0.55
+2026-10-25T22:10,05d5956+,deferred impostors,,start,265,Maximum,76.1,2.24,2.99,11.07,2.33,1.10,0.21,0.13,1.20,1.34,3.80,0.10,0.10,0.78
+2026-10-25T22:10,05d5956+,deferred impostors,,forest-pine,257,Maximum,78.3,2.67,3.64,10.72,1.86,1.30,0.25,0.60,0.59,1.37,3.77,0.12,0.13,0.72
+2026-10-25T22:10,05d5956+,deferred impostors,,storm-road,258,Maximum,76.7,1.76,2.55,10.59,2.45,0.89,0.17,0.40,0.25,1.62,3.78,0.11,0.53,0.38
+2026-10-25T22:10,05d5956+,deferred impostors,,mountain-hamlet,255,Maximum,76.7,1.93,2.34,10.59,2.78,0.93,0.14,0.26,0.35,1.85,3.68,0.13,0.06,0.40
+2026-10-25T22:10,05d5956+,deferred impostors,,brook-mouth,265,Maximum,84.5,2.46,3.34,9.82,1.82,0.92,0.18,0.50,0.43,1.52,3.70,0.11,0.07,0.56
+2026-10-25T22:29,05d5956+,deferred impostors,,meadow,263,Maximum,79.8,2.25,3.74,10.14,1.60,1.07,0.19,0.13,1.23,1.17,3.74,0.12,0.08,0.80

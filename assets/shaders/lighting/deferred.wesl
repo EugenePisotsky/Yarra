@@ -31,9 +31,9 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
 
     var pbr = pbr_types::pbr_input_new();
     pbr.frag_coord = pixel.frag_coord;
-    pbr.world_position = vec4(pixel.world_position, 1.0);
     pbr.is_orthographic = view.clip_from_view[3].w == 1.0;
-    pbr.V = calculate_view(pbr.world_position, pbr.is_orthographic);
+    pbr.V = calculate_view(vec4(pixel.world_position, 1.0), pbr.is_orthographic);
+    pbr.world_position = vec4(pixel.world_position + pbr.V * s.lift, 1.0);
     pbr.N = s.normal;
     pbr.clearcoat_N = s.normal;
     pbr.world_normal = s.geometric_normal;

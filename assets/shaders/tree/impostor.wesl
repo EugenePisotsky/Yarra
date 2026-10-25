@@ -4,17 +4,24 @@
 // grid (YarraVegetation scripts/bake_impostor.py), each stored as the tile of its crop: the
 // four views nearest the camera's direction are blended, each read where the fragment's ray
 // meets that view's plane, then lit with the trees' crown
-// shading where the baked depth puts the crown's surface, not on the quad. Near the camera
-// the quad bends in the wind as its mesh LODs' trunk does.
+// shading where the baked depth puts the crown's surface, not on the quad: on deferred views by
+// the deferred lighting, from the G-buffer (lighting/gbuffer.wesl, model IMPOSTOR). Near the
+// camera the quad bends in the wind as its mesh LODs' trunk does.
 import bevy_pbr::{render::mesh_functions, render::mesh_view_bindings::view, render::view_transformations::position_world_to_clip};
-// Impostors draw in the main pass only: no prepass (trees/impostor.rs `enable_prepass`) and
-// no shadows.
+// Impostors draw into the G-buffer or, on views without one, lit in the main pass; never into a
+// depth prepass or the shadows.
+@if(PREPASS_PIPELINE) import bevy_pbr::prepass::io::FragmentOutput;
+@if(PREPASS_PIPELINE) import package::shaders::lighting::gbuffer;
+@if(MOTION_VECTOR_PREPASS)
+import bevy_pbr::render::pbr_prepass_functions::calculate_motion_vector;
+@if(!PREPASS_PIPELINE)
 import bevy_pbr::{render::pbr_types, render::pbr_functions::{calculate_view, main_pass_post_lighting_processing}, render::mesh_types::MESH_FLAGS_SHADOW_RECEIVER_BIT};
-import package::shaders::lighting::pbr_lighting::apply_pbr_lighting;
+@if(!PREPASS_PIPELINE) import package::shaders::lighting::pbr_lighting::apply_pbr_lighting;
 import package::shaders::crossfade::dither_discard;
 import package::shaders::tree::wind::{WindFrames, sway_point_of_trunk};
 
 // The forward pass's output (Bevy's forward_io::FragmentOutput).
+@if(!PREPASS_PIPELINE)
 struct ForwardOutput {
     @location(0) color: vec4<f32>,
 }
@@ -292,8 +299,8 @@ fn surface(in: Varyings, ddx_uv: vec2<f32>, ddy_uv: vec2<f32>) -> Surface {
     return out;
 }
 
-@fragment
-fn fragment(in: Varyings) -> ForwardOutput {
+// The crown's surface at this fragment, or a discard where the views show none.
+fn fragment_surface(in: Varyings) -> Surface {
     // Derivatives before any discard, while every fragment of the quad is still running,
     // scaled by the view's mip bias as every mesh texture is (sharper under a temporal
     // upscaler, which resolves to the output's pixels).
@@ -302,13 +309,38 @@ fn fragment(in: Varyings) -> ForwardOutput {
     let ddx_uv = dpdx(in.corner) / tile * mip_scale;
     let ddy_uv = dpdy(in.corner) / tile * mip_scale;
     dither_discard(in.position, in.dither);
-    let s = surface(in, ddx_uv, ddy_uv);
+    return surface(in, ddx_uv, ddy_uv);
+}
+
+// Roughness and reflectance of the crowns' foliage, which keeps half the default reflectance
+// like the mesh crowns.
+const ROUGHNESS: f32 = 0.85;
+const REFLECTANCE: f32 = 0.25;
+
+@if(PREPASS_PIPELINE)
+@fragment
+fn fragment(in: Varyings) -> FragmentOutput {
+    let s = fragment_surface(in);
+    var out: FragmentOutput;
+    // Crown occlusion: indirect light, and the crown self-shadow past the shadow range.
+    out.deferred = gbuffer::pack(gbuffer::Surface(s.colour, ROUGHNESS, s.normal, s.normal,
+        s.occlusion, s.occlusion, REFLECTANCE, 0.0, gbuffer::MODEL_IMPOSTOR, s.depth));
+    out.deferred_lighting_pass_id = 1u;
+    // Their sway this far out moves them far less than a pixel a frame: the camera's motion.
+@if(MOTION_VECTOR_PREPASS)
+    out.motion_vector = calculate_motion_vector(in.world_position, in.world_position);
+    return out;
+}
+
+@if(!PREPASS_PIPELINE)
+@fragment
+fn fragment(in: Varyings) -> ForwardOutput {
+    let s = fragment_surface(in);
     var out: ForwardOutput;
     var pbr_input = pbr_types::pbr_input_new();
     pbr_input.material.base_color = vec4(s.colour, 1.0);
-    pbr_input.material.perceptual_roughness = 0.85;
-    // Foliage keeps half the default reflectance, like the mesh crowns.
-    pbr_input.material.reflectance *= 0.5;
+    pbr_input.material.perceptual_roughness = ROUGHNESS;
+    pbr_input.material.reflectance = vec3(REFLECTANCE);
     // Crown occlusion: indirect light, and the crown self-shadow past the shadow range.
     pbr_input.diffuse_occlusion = vec3(s.occlusion);
     pbr_input.specular_occlusion = s.occlusion;
