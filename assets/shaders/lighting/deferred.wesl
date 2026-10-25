@@ -1,45 +1,33 @@
-// Deferred lighting (crates/atmosphere/src/environment/deferred.rs): every pixel the G-buffer pass
-// wrote (lighting/gbuffer.wesl) is lit once, by the lighting the main pass's materials use
-// (lighting/pbr_lighting.wesl). A full-screen triangle at the far plane: the depth test leaves the
-// sky's pixels to the sky composite. Pixels of model NONE belong to surfaces a forward pass draws
-// over afterwards.
+// The standard model's deferred lighting (crates/atmosphere/src/environment/deferred.rs): every
+// pixel of the standard model in the G-buffer (lighting/gbuffer.wesl) is lit once, by the
+// lighting the main pass's materials use (lighting/pbr_lighting.wesl). Other models' pixels are
+// left to their own kernels, and model NONE's to the forward passes drawn over them afterwards.
 import bevy_pbr::render::{
     mesh_types::MESH_FLAGS_SHADOW_RECEIVER_BIT,
-    mesh_view_bindings::{deferred_prepass_texture, view},
+    mesh_view_bindings::view,
     pbr_functions::{calculate_view, main_pass_post_lighting_processing},
     pbr_types,
-    view_transformations::position_ndc_to_world,
 };
-import bevy_pbr::prepass::utils::prepass_depth;
-import package::shaders::lighting::gbuffer;
+import package::shaders::lighting::{deferred_pixel, gbuffer};
 import package::shaders::lighting::pbr_lighting::apply_pbr_lighting;
 
-struct Varyings {
-    @builtin(position) position: vec4<f32>,
-}
-
 @vertex
-fn vertex(@builtin(vertex_index) index: u32) -> Varyings {
-    let uv = vec2<f32>(f32(index >> 1u), f32(index & 1u)) * 2.0;
-    // At the far plane (reverse Z), so only pixels holding a surface pass the depth test.
-    return Varyings(vec4(uv * vec2(2.0, -2.0) + vec2(-1.0, 1.0), 0.0, 1.0));
+fn vertex(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> {
+    return deferred_pixel::cover(index);
 }
 
 @fragment
-fn fragment(in: Varyings) -> @location(0) vec4<f32> {
-    let texel = textureLoad(deferred_prepass_texture, vec2<i32>(in.position.xy), 0);
-    if gbuffer::model(texel) == gbuffer::MODEL_NONE {
-        return vec4(0.0);
+fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
+    let texel = deferred_pixel::texel(position);
+    if gbuffer::model(texel) != gbuffer::MODEL_TERRAIN {
+        discard;
     }
     let s = gbuffer::unpack(texel);
-    let depth = prepass_depth(in.position, 0u);
-    // Within the main pass's region of the target: under MetalFX Temporal it covers part of it.
-    let uv = (in.position.xy - view.main_pass_viewport.xy) / view.main_pass_viewport.zw;
-    let ndc = vec3(uv * vec2(2.0, -2.0) + vec2(-1.0, 1.0), depth);
+    let pixel = deferred_pixel::pixel(position);
 
     var pbr = pbr_types::pbr_input_new();
-    pbr.frag_coord = vec4(in.position.xy, depth, 1.0);
-    pbr.world_position = vec4(position_ndc_to_world(ndc), 1.0);
+    pbr.frag_coord = pixel.frag_coord;
+    pbr.world_position = vec4(pixel.world_position, 1.0);
     pbr.is_orthographic = view.clip_from_view[3].w == 1.0;
     pbr.V = calculate_view(pbr.world_position, pbr.is_orthographic);
     pbr.N = s.normal;

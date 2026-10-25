@@ -173,12 +173,12 @@ delete the file.
 cargo run --release -p yarra-app-game
 cargo run --release -p yarra-app-game -- --start-view content/world.project.views/journey.ron
 cargo run --release -p yarra-app-game -- --help        # every option, no window
-cargo run --release -p yarra-app-game -- --upscaler metalfx-temporal    # the play setup
+cargo run --release -p yarra-app-game -- --upscaler metalfx-spatial    # FXAA instead of Temporal
 ```
 
-**The play setup** is native fullscreen, 50% render scale (default), MetalFX Temporal, with the
-day clock and weather running (default in play). The window opens at 1280×720: fullscreen it with
-the green button. Measurements should match this setup.
+**The play setup** is native fullscreen, 50% render scale and MetalFX Temporal (both default),
+with the day clock and weather running (default in play). The window opens at 1280×720:
+fullscreen it with the green button. Measurements should match this setup.
 
 **Controls:** WASD or left stick moves; click or tap the ground to walk there; right drag,
 two-finger horizontal scroll or right stick orbits; wheel or pinch zooms.

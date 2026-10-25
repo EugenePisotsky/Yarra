@@ -13,6 +13,24 @@ const COMPUTE_SHADERS: [&str; 4] = [
 ];
 
 const DRAW_SHADER: &str = "shaders/vegetation/draw.wesl";
+const LIGHTING_SHADER: &str = "shaders/vegetation/deferred.wesl";
+
+/// What a draw writes (`pipelines.rs` `DrawOutput`).
+#[derive(Clone, Copy, PartialEq)]
+enum Output {
+    Colour,
+    GBuffer,
+    GBufferMotion,
+}
+
+/// The draw variants the renderer builds: forward views with or without the environment, and
+/// deferred ones, which always have it.
+const DRAW_VARIANTS: [(Output, bool); 4] = [
+    (Output::Colour, false),
+    (Output::Colour, true),
+    (Output::GBuffer, true),
+    (Output::GBufferMotion, true),
+];
 
 /// The definitions every vegetation pipeline passes, as the shader checker spells them.
 pub(super) fn grass_defs() -> Vec<Def> {
@@ -27,21 +45,53 @@ pub(super) fn grass_defs() -> Vec<Def> {
 }
 
 /// The draw shader's definitions as `pipelines.rs` specializes it.
-fn draw_variant(temporal: bool, environment: bool) -> Vec<Def> {
+fn draw_variant(output: Output, environment: bool) -> Vec<Def> {
     let mut defs = grass_defs();
     defs.push(Def::Flag("SHADOW_FILTER_METHOD_HARDWARE_2X2".into(), true));
 
     if environment {
         defs.push(Def::Flag("ENVIRONMENT_SURFACE".into(), true));
         defs.push(Def::Int("MATERIAL_BIND_GROUP".into(), 2));
-        defs.push(Def::Flag("ATMOSPHERE".into(), true));
     }
 
-    if temporal {
-        defs.push(Def::Flag("TEMPORAL_GRASS".into(), true));
+    match output {
+        Output::Colour if environment => defs.push(Def::Flag("ATMOSPHERE".into(), true)),
+        Output::Colour => {}
+        Output::GBuffer => defs.push(Def::Flag("GRASS_GBUFFER".into(), true)),
+        Output::GBufferMotion => {
+            defs.push(Def::Flag("GRASS_GBUFFER".into(), true));
+            defs.push(Def::Flag("TEMPORAL_GRASS".into(), true));
+        }
     }
 
     defs
+}
+
+/// The grass lighting kernel's definitions as `deferred.rs` specializes it.
+fn lighting_variant() -> Vec<Def> {
+    let mut defs = grass_defs();
+
+    for flag in [
+        "SHADOW_FILTER_METHOD_HARDWARE_2X2",
+        "ENVIRONMENT_SURFACE",
+        "DEPTH_PREPASS",
+        "DEFERRED_PREPASS",
+        "ATMOSPHERE",
+    ] {
+        defs.push(Def::Flag(flag.into(), true));
+    }
+
+    defs.push(Def::Int("MATERIAL_BIND_GROUP".into(), 2));
+    defs
+}
+
+fn draw_modules() -> impl Iterator<Item = (Output, Module)> {
+    DRAW_VARIANTS.into_iter().map(|(output, environment)| {
+        (
+            output,
+            composed(DRAW_SHADER, &draw_variant(output, environment)),
+        )
+    })
 }
 
 /// A composed and validated vegetation shader.
@@ -82,9 +132,24 @@ fn shaders_compose_and_validate() {
     for shader in COMPUTE_SHADERS {
         composed(shader, &grass_defs());
     }
-    for temporal in [false, true] {
-        for clouds in [false, true] {
-            composed(DRAW_SHADER, &draw_variant(temporal, clouds));
+
+    draw_modules().for_each(drop);
+    composed(LIGHTING_SHADER, &lighting_variant());
+}
+
+#[test]
+fn the_gbuffer_pass_binds_no_view_group() {
+    // The pass holds the G-buffer as attachments, and the view group binds it for reading
+    // (`deferred.rs` binds an empty group in its place).
+    for (output, module) in draw_modules() {
+        if output != Output::Colour {
+            assert!(
+                module
+                    .global_variables
+                    .iter()
+                    .all(|(_, global)| global.binding.as_ref().is_none_or(|b| b.group != 0)),
+                "a G-buffer draw binds group 0"
+            );
         }
     }
 }
@@ -94,7 +159,10 @@ fn checked_variants_carry_the_renderer_definitions() {
     let jobs = shader_check::entries::load(Shaders::get()).unwrap();
     let grass = grass_defs();
 
-    for shader in COMPUTE_SHADERS.into_iter().chain([DRAW_SHADER]) {
+    for shader in COMPUTE_SHADERS
+        .into_iter()
+        .chain([DRAW_SHADER, LIGHTING_SHADER])
+    {
         let variants: Vec<_> = jobs.iter().filter(|(s, _)| s == shader).collect();
         assert!(!variants.is_empty(), "entries.ron does not check {shader}");
 
@@ -131,8 +199,7 @@ fn blades_bend_once_before_drawing() {
     let pose = composed("shaders/vegetation/pose.wesl", &grass_defs());
     assert!(named(&pose, "wind_curve") && named(&pose, "trample_blade"));
 
-    for temporal in [false, true] {
-        let draw = composed(DRAW_SHADER, &draw_variant(temporal, true));
+    for (_, draw) in draw_modules() {
         assert!(!named(&draw, "wind_curve") && !named(&draw, "trample_blade"));
     }
 }
@@ -140,8 +207,7 @@ fn blades_bend_once_before_drawing() {
 #[test]
 fn drawing_reuses_the_placement_lod() {
     // The draw reads each instance's LOD bin and morph; it never projects blades again.
-    for temporal in [false, true] {
-        let module = composed(DRAW_SHADER, &draw_variant(temporal, true));
+    for (_, module) in draw_modules() {
         for (_, function) in module.functions.iter() {
             let name = function.name.as_deref().unwrap_or_default();
             assert!(

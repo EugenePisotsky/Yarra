@@ -28,6 +28,7 @@ pub use material::{
     EnvironmentExtension, EnvironmentMaterial, EnvironmentMaterialOptIn, EnvironmentMaterialSystems,
 };
 
+pub use deferred::{DeferredLighting, begin_lighting_pass};
 use publish::ForestSkyLevels;
 pub use surface::{EnvironmentSurfaceGpu, surface_layout};
 

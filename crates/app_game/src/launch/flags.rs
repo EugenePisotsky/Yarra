@@ -140,7 +140,7 @@ const FLAGS: &[Flag] = &[
         "--upscaler",
         "auto|linear|metalfx-spatial|metalfx-temporal",
         Scene,
-        "World upscaler (default auto)",
+        "World upscaler (default metalfx-temporal)",
     ),
     flag(
         "--cloud-quality",

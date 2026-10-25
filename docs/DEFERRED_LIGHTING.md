@@ -60,22 +60,23 @@ From three read-only surveys of the code (October 25):
 ### Frame order (Temporal)
 
 1. Shadow cascades (unchanged).
-2. **G-buffer stage** in the `Prepass` set, nearest coverage first so the GPU skips hidden
-   surfaces (early depth test on PS5; hidden-surface removal on the Mac works within a pass only):
-   grass (own render pass, before Bevy's deferred pass), then Bevy's `early_deferred_prepass` with
-   trees, impostors, objects and terrain. Every writer writes depth, motion and its G-buffer words;
+2. **G-buffer stage**, nearest coverage first so the GPU skips hidden surfaces (early depth test
+   on PS5; hidden-surface removal on the Mac works within a pass only): grass in a render pass of
+   its own before Bevy's prepasses (Bevy's `early_deferred_prepass` is private, so nothing can be
+   ordered between it and the trees' depth prepass), then Bevy's deferred prepass with trees,
+   impostors, objects and terrain. Every writer writes depth, motion and its G-buffer words;
    alpha tests happen once, here. The trees' separate depth prepass goes.
-3. **Classification** (compute, 8×8 tiles over `main_pass_viewport`): which models each tile
-   holds; tile lists and indirect arguments per kernel; sky-only tiles skip lighting.
-4. **Sun visibility** (compute, non-sky tiles): cascade filter with overlap blend, cloud beam and
-   scattered share, forest march and terrain horizon past the cascades, `ground_in_light` where a
-   model asks for it; written to an `RG8` texture. Direction 5's mask. Slow terms (cloud, forest,
-   horizon) can later run at half resolution.
-5. **Lighting kernels** (compute, indirect, one per model, each with only its own registers):
-   standard (terrain, objects, bark, crowns, impostors by flags) and grass. They read the
-   G-buffer, depth and visibility, add sky light, ground bounce and wetness, and write the lit
-   colour into the HDR target's region.
-6. Forward passes as today: anything not yet converted, the cloud volume, light shafts, sun glare,
+3. **Lighting kernels** in `DeferredLighting`, one per model, each with only its own registers and
+   owned by the model's renderer (`atmosphere` cannot depend on `vegetation_render`): standard
+   (terrain, objects, bark, crowns, impostors by flags) and grass. Each is a full-screen draw at
+   the far plane, so depth skips the sky, that discards other models' pixels, reads the G-buffer
+   and depth, and writes the lit colour into the HDR target's region.
+4. **Not built yet, each waiting for the trace to show what it would save.** Tile classification
+   (compute, 8×8 tiles over `main_pass_viewport`, indirect tile draws per kernel) would replace
+   the kernels' discards. A sun visibility pass (cascade filter, cloud beam and scattered share,
+   forest march and terrain horizon past the cascades, `ground_in_light`; direction 5's mask)
+   would compute what every kernel computes now, once, and its slow terms at half resolution.
+5. Forward passes as today: anything not yet converted, the cloud volume, light shafts, sun glare,
    the sky composite (reads depth, blends over the lit image), particles, MetalFX, post.
 
 `CompleteTemporalMotion` goes once every writer writes its motion (terrain and impostors write
@@ -83,37 +84,40 @@ camera motion themselves).
 
 ### G-buffer
 
-Bevy's attachments, our packing. Per pixel: the `Rgba32Uint` surface word (128 bits), an `Rgb10a2`
-target in Bevy's normal-prepass slot (32 bits), motion (`Rg16Float`) and depth: 24 B and depth,
-about 45 MB written and read a frame at 1728×1084. The `R8Uint` id is not needed (the model is in
-the surface word); its copy pass (`copy_deferred_lighting_id`) is a no-op in the schedule.
+Bevy's attachments, our packing. Per pixel: the `Rgba32Uint` surface word (128 bits), motion
+(`Rg16Float`) and depth; models that need more add their own target in their own pass (grass an
+`Rgba8Unorm`), or the `Rgb10a2` normal-prepass slot in Bevy's pass. About 45 MB written and read a
+frame at 1728×1084. The `R8Uint` id is not needed (the model is in the surface word); its copy
+pass (`copy_deferred_lighting_id`) is a no-op in the schedule.
 
-| Model | Surface word (128 bits) | Rgb10a2 |
+| Model | Surface word (128 bits) | Extra target |
 | --- | --- | --- |
 | Standard (terrain, objects, bark) | albedo gamma 2.2 24, roughness 8; shading normal oct 2×12, model 8; diffuse occlusion 8, specular occlusion 8, reflectance 8, metallic 8; geometric normal oct 2×12 (shadow bias), spare 8 | unused |
 | Crown (v1, v2, impostor) | as standard; crown sky share and self-shadow terms in the spare words; impostor depth through `frag_depth` | crown normal oct 2×10 (sun facing, bias) |
-| Grass | albedo 24, occlusion 8; diffuse normal oct 2×12, model + flags 8; flat normal oct 2×8, sheen normal oct 2×8; sheen alpha (its `fwidth` variance folded in) 8, sheen strength 8, transmission 8, canopy depth 8 | canopy height 10, sky facing 10, spare 10 |
+| Grass (`vegetation/draw/gbuffer.wesl`) | albedo 24, occlusion 8; flat normal oct 2×12, model 8; rounded normal oct 2×12, √ sheen alpha (its `fwidth` variance folded in) 8; clump normal oct 2×8, √ blade alpha 8, sheen strength 8 | own `Rgba8Unorm`: transmission, canopy depth, canopy height, spare |
 
-Precision is checked on captures (crown occlusion may need 10 bits; a second sheen normal for the
-16–64 m band, if the blended lobe shows, takes the grass spare bits). Derivative-based work
+Precision is checked on captures (crown occlusion may need 10 bits). Grass keeps both sheen
+normals, so its near and far lobes blend as in the forward shader. Derivative-based work
 (texture filtering, grass sheen variance, prints, snow) stays in the material, which writes its
 result.
 
 ### Bevy integration
 
 - Cameras: `DeferredPrepass`, `DepthPrepass`, `MotionVectorPrepass` (Temporal), the normal-prepass
-  slot enabled as our `Rgb10a2` target when a model needs it. Bevy's deferred lighting plugin
-  stays for its pipeline layout: every deferred view gets `SkipDeferredLighting`, and our pass is
-  specialised from `DeferredLightingLayout` with our shader and the environment group at group 2
-  (`crates/atmosphere/src/environment/deferred.rs`).
+  slot enabled as an `Rgb10a2` target when a model in Bevy's pass needs it. Bevy's deferred
+  lighting plugin stays for its pipeline layout: every deferred view gets `SkipDeferredLighting`,
+  and the standard kernel is specialised from `DeferredLightingLayout` with our shader and the
+  environment group at group 2 (`crates/atmosphere/src/environment/deferred.rs`).
 - Terrain: `opaque_render_method() -> Deferred` and a deferred fragment shader (material
   evaluation, then pack). `EnvironmentMaterial` and `TreeWindMaterial` likewise through their
   extensions (`material.wesl` already has a dormant `deferred_output` branch).
 - Trees and impostors: queue into `Opaque3dDeferred`/`AlphaMask3dDeferred` instead of the main
   and prepass phases. Bevy draws the deferred opaque phase only when its mesh bins are non-empty;
   non-mesh items alone are skipped, so check the trees' bins.
-- Grass: its own render system in `Prepass`, after `early_prepass` and before
-  `early_deferred_prepass`, loading the G-buffer, motion and depth attachments.
+- Grass: its own render system before the `Prepass` set (`vegetation_render`
+  `renderer/deferred.rs`), the first to take the G-buffer, motion and depth attachments each
+  frame, so it clears them. It binds an empty group in the view's slot: the view's bind group
+  holds the G-buffer for reading, which a pass writing it may not bind.
 - Our passes reconstruct position with `view.main_pass_viewport`, never `view.viewport`.
 - A deferred material draws with `deferred_vertex_shader`, which defaults to Bevy's prepass
   vertex shader, not to the material's `prepass_vertex_shader`; `enable_prepass()` must be true or
@@ -138,9 +142,19 @@ touches against the stage before.
    11.25 → 10.57, brook-mouth 10.73 → 10.01) and rose 0.22 at the start view (13.34 → 13.56),
    where grass covers terrain that is now shaded in the G-buffer pass and lit. The lighting pass
    takes 0.46–0.68 ms.
-2. **Grass.** G-buffer output from the blade shader, drawn before the terrain; classification,
-   sun visibility, and the grass and standard kernels in compute. Removes grass lighting from 2×2
-   quads and the terrain's shading under blades.
+2. **Grass.** *Done*. The blade shader's `surface` goes into the G-buffer from a pass before the
+   terrain's, and the grass kernel runs `light` on its pixels; the forward draw (the editor)
+   calls the same two. Each model's renderer owns its kernel, and the standard one
+   discards grass pixels; classification and sun visibility wait (see Frame order). Until trees
+   join the G-buffer, grass under a tree's prepass depth is still lit and then drawn over.
+   Captures against `1da048f` match within run-to-run noise (mean absolute difference 1.3–1.4
+   under Temporal). Against stage 1: GPU busy fell in the grass views (meadow 11.18 → 10.27,
+   start 13.56 → 12.64, forest-pine 11.82 → 11.29, brook-mouth 10.01 → 9.85) and held in the
+   others (storm-road 10.69 → 10.73, mountain-hamlet 10.57 → 10.67). In the meadow the grass
+   line fell 2.14 → 1.14 and opaque 2.03 → 1.62 (no terrain shaded under blades), and lighting
+   rose 0.66 → 0.86 with the grass kernel. Kernels must be ordered: unordered systems record on
+   other threads, so the target's clearing pass could be submitted after another kernel and
+   blank its pixels on some frames; the standard kernel always opens the first pass.
 3. **Objects.** `EnvironmentMaterial`: rocks, props, buildings, characters, details, plants
    (crown v1).
 4. **Trees and impostors.** Crown v2 and bark-sky flags, the crown normal, impostor depth, motion

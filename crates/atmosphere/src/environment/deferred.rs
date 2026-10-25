@@ -1,7 +1,8 @@
 //! Deferred lighting (docs/DEFERRED_LIGHTING.md): surfaces on deferred views write a G-buffer in
-//! the prepass (`shaders/lighting/gbuffer.wesl`), and one full-screen pass lights each of their
-//! pixels once with the shared lighting (`shaders/lighting/deferred.wesl`) before the main pass
-//! draws the forward surfaces over its own pixels.
+//! the prepass (`shaders/lighting/gbuffer.wesl`), and before the main pass draws the forward
+//! surfaces each lighting model's kernel lights its own pixels once, in `DeferredLighting`. This
+//! module owns the standard model's kernel (`shaders/lighting/deferred.wesl`), which runs the
+//! shared lighting; other models' renderers own theirs.
 //!
 //! Bevy's deferred lighting pass is skipped: it runs Bevy's lighting, and it places pixels by the
 //! whole view, which is wrong when the main pass draws a region of it (MetalFX Temporal). Its
@@ -26,6 +27,7 @@ use bevy::{
     render::{
         Render, RenderApp, RenderSystems,
         camera::ExtractedCamera,
+        render_phase::TrackedRenderPass,
         render_resource::*,
         renderer::{RenderContext, ViewQuery},
         view::{ExtractedView, ViewDepthStencilTexture, ViewTarget},
@@ -34,6 +36,13 @@ use bevy::{
 };
 
 const SHADER: &str = "shaders/lighting/deferred.wesl";
+
+/// Where other models' lighting kernels draw on deferred views: after the standard model's, whose
+/// pass is the first on the view's target and clears it, and before the main pass. Each kernel
+/// covers the view with `begin_lighting_pass` and discards other models' pixels, so their order
+/// among themselves does not matter.
+#[derive(SystemSet, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct DeferredLighting;
 
 /// The lighting pipeline per view key, specialised once each.
 #[derive(Resource, Default)]
@@ -53,10 +62,16 @@ pub(super) fn install(app: &mut App) {
             skip_bevy_lighting.in_set(RenderSystems::CreateViews),
         )
         .add_systems(Render, prepare.in_set(RenderSystems::Prepare))
+        .configure_sets(
+            Core3d,
+            DeferredLighting
+                .in_set(Core3dSystems::MainPass)
+                .before(main_opaque_pass_3d),
+        )
         .add_systems(
             Core3d,
-            draw.before(main_opaque_pass_3d)
-                .in_set(Core3dSystems::MainPass),
+            draw.in_set(Core3dSystems::MainPass)
+                .before(DeferredLighting),
         );
 }
 
@@ -187,16 +202,47 @@ fn draw(
     mut ctx: RenderContext,
 ) {
     let (camera, view_bind_group, target, depth, pipeline, resolution_override) = view.into_inner();
-    let (Some(environment), Some(pipeline)) = (environment, cache.get_render_pipeline(pipeline.0))
-    else {
+
+    let ready = environment
+        .as_ref()
+        .zip(cache.get_render_pipeline(pipeline.0));
+
+    // Opened whether or not the kernel can draw yet: the target's first pass clears it, and it
+    // must be this one, ahead of the kernels in `DeferredLighting`, which load what it leaves.
+    let mut pass = begin_lighting_pass(
+        &mut ctx,
+        "deferred lighting",
+        camera,
+        target,
+        depth,
+        resolution_override,
+    );
+    let Some((environment, pipeline)) = ready else {
         return;
     };
 
-    // Depth only tests here; the main pass draws on into it.
+    pass.set_render_pipeline(pipeline);
+    pass.set_bind_group(0, &view_bind_group.main, &view_bind_group.main_offsets);
+    pass.set_bind_group(1, &view_bind_group.binding_array, &[]);
+    pass.set_bind_group(2, &environment.0, &[]);
+    pass.draw(0..3, 0..1);
+}
+
+/// A lighting kernel's pass over the main pass's region of the view: it writes the HDR target and
+/// tests against the view's depth without writing it, so a triangle drawn at the far plane with
+/// depth compare Less reaches every surface's pixel and none of the sky's.
+pub fn begin_lighting_pass<'a>(
+    ctx: &'a mut RenderContext,
+    label: &'static str,
+    camera: &ExtractedCamera,
+    target: &'a ViewTarget,
+    depth: &'a ViewDepthStencilTexture,
+    resolution_override: Option<&MainPassResolutionOverride>,
+) -> TrackedRenderPass<'a> {
     let mut depth_attachment = depth.get_attachment(StoreOp::Store);
     depth_attachment.depth_ops = None;
     let mut pass = ctx.begin_tracked_render_pass(RenderPassDescriptor {
-        label: Some("deferred lighting"),
+        label: Some(label),
         color_attachments: &[Some(target.get_color_attachment())],
         depth_stencil_attachment: Some(depth_attachment),
         timestamp_writes: None,
@@ -210,9 +256,5 @@ fn draw(
         pass.set_camera_viewport(&viewport);
     }
 
-    pass.set_render_pipeline(pipeline);
-    pass.set_bind_group(0, &view_bind_group.main, &view_bind_group.main_offsets);
-    pass.set_bind_group(1, &view_bind_group.binding_array, &[]);
-    pass.set_bind_group(2, &environment.0, &[]);
-    pass.draw(0..3, 0..1);
+    pass
 }

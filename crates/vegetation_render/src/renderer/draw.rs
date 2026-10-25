@@ -1,18 +1,24 @@
-//! Queue visible vegetation and issue its indirect opaque draws.
+//! Queue visible vegetation and issue its indirect opaque draws: lit in the main pass on forward
+//! views, into the G-buffer on deferred ones (`deferred.rs`).
 use super::{
     buffers::VegetationBuffers,
-    pipelines::{VegetationPipelineKey, VegetationPipelines},
-    temporal,
+    deferred::{self, GrassLighting},
+    pipelines::{DrawOutput, VegetationPipelineKey, VegetationPipelines},
 };
 
 use crate::{VegetationDraw, VegetationProfileMode, VegetationSettings, VegetationView};
 
+use atmosphere::environment::EnvironmentSurfaceGpu;
+
 use bevy::{
     asset::AssetId,
-    core_pipeline::core_3d::{Opaque3d, Opaque3dBatchSetKey, Opaque3dBinKey},
+    core_pipeline::{
+        core_3d::{Opaque3d, Opaque3dBatchSetKey, Opaque3dBinKey},
+        prepass::DeferredPrepass,
+    },
     ecs::{
         query::ROQueryItem,
-        system::{SystemParamItem, lifetimeless::SRes},
+        system::{SystemParam, SystemParamItem, lifetimeless::SRes},
     },
     mesh::Mesh,
     pbr::{MeshPipelineViewLayoutKey, SetMeshViewBindGroup, ViewKeyCache},
@@ -23,41 +29,93 @@ use bevy::{
             BinnedRenderPhaseType, DrawFunctions, InputUniformIndex, PhaseItem, RenderCommand,
             RenderCommandResult, SetItemPipeline, TrackedRenderPass, ViewBinnedRenderPhases,
         },
-        render_resource::{IndexFormat, PipelineCache},
+        render_resource::{CachedRenderPipelineId, IndexFormat, PipelineCache},
         sync_world::MainEntity,
         view::ExtractedView,
     },
 };
 
-#[allow(clippy::too_many_arguments)] // Bevy render-world system parameters are independent resources.
+/// What grass draws are specialized with.
+#[derive(SystemParam)]
+pub(super) struct GrassPipelines<'w> {
+    cache: Res<'w, PipelineCache>,
+    draw: ResMut<'w, VegetationPipelines>,
+    lighting: ResMut<'w, GrassLighting>,
+    environment: Option<Res<'w, EnvironmentSurfaceGpu>>,
+}
+
+impl GrassPipelines<'_> {
+    /// The lit draw of a forward view.
+    fn forward(
+        &mut self,
+        view: &ExtractedView,
+        view_layout_bits: u32,
+    ) -> Option<CachedRenderPipelineId> {
+        let key = VegetationPipelineKey {
+            output: DrawOutput::Colour {
+                format: view.target_format,
+                view_layout_bits,
+            },
+            environment: self.environment.is_some(),
+        };
+        self.draw.draw_variants.specialize(&self.cache, key).ok()
+    }
+
+    /// The G-buffer and lighting pipelines of a deferred view. Deferred grass reads the
+    /// environment for its wetness and frost.
+    fn deferred(
+        &mut self,
+        view: &ExtractedView,
+        view_layout_bits: u32,
+        motion: bool,
+    ) -> Option<deferred::ViewPipelines> {
+        self.environment.as_ref()?;
+        deferred::specialize(
+            &self.cache,
+            &mut self.draw,
+            &mut self.lighting,
+            view,
+            view_layout_bits,
+            motion,
+        )
+        .ok()
+    }
+}
+
+/// The main pass's opaque phase, where forward views draw grass.
+#[derive(SystemParam)]
+pub(super) struct OpaquePhase<'w> {
+    phases: ResMut<'w, ViewBinnedRenderPhases<Opaque3d>>,
+    functions: Res<'w, DrawFunctions<Opaque3d>>,
+}
+
+type QueuedView = (
+    Entity,
+    &'static ExtractedView,
+    Has<DeferredPrepass>,
+    Has<upscaling::temporal::TemporalView>,
+);
+
 pub(super) fn queue(
     mut commands: Commands,
-    pipeline_cache: Res<PipelineCache>,
-    mut pipelines: ResMut<VegetationPipelines>,
+    mut pipelines: GrassPipelines,
+    mut opaque: OpaquePhase,
     settings: Res<VegetationSettings>,
-    mut opaque_phases: ResMut<ViewBinnedRenderPhases<Opaque3d>>,
-    draw_functions: Res<DrawFunctions<Opaque3d>>,
     view_key_cache: Res<ViewKeyCache>,
-    views: Query<
-        (
-            Entity,
-            &ExtractedView,
-            Option<&upscaling::temporal::TemporalView>,
-        ),
-        With<VegetationView>,
-    >,
+    views: Query<QueuedView, With<VegetationView>>,
     draw_entity: Query<(Entity, &MainEntity), With<VegetationDraw>>,
-    environment: Option<Res<atmosphere::environment::EnvironmentSurfaceGpu>>,
 ) {
     let Ok((draw_entity, draw_main_entity)) = draw_entity.single() else {
         return;
     };
-    let draw_function = draw_functions.read().id::<DrawVegetation>();
+    let draw_function = opaque.functions.read().id::<DrawVegetation>();
 
-    for (view_entity, view, temporal) in &views {
-        commands.entity(view_entity).remove::<temporal::Pipeline>();
+    for (view_entity, view, deferred, temporal) in &views {
+        commands
+            .entity(view_entity)
+            .remove::<deferred::ViewPipelines>();
         let (Some(phase), Some(mesh_view_key)) = (
-            opaque_phases.get_mut(&view.retained_view_entity),
+            opaque.phases.get_mut(&view.retained_view_entity),
             view_key_cache.get(&view.retained_view_entity),
         ) else {
             continue;
@@ -76,25 +134,18 @@ pub(super) fn queue(
             continue;
         }
 
-        let Ok(pipeline) = pipelines.draw_variants.specialize(
-            &pipeline_cache,
-            VegetationPipelineKey {
-                target_format: view.target_format,
-                view_layout_bits: MeshPipelineViewLayoutKey::from(*mesh_view_key).bits(),
-                environment: environment.is_some(),
-                temporal: temporal.is_some(),
-            },
-        ) else {
-            continue;
-        };
+        let view_layout_bits = MeshPipelineViewLayoutKey::from(*mesh_view_key).bits();
 
-        if temporal.is_some() {
-            commands
-                .entity(view_entity)
-                .insert(temporal::Pipeline(pipeline));
+        if deferred {
+            if let Some(view_pipelines) = pipelines.deferred(view, view_layout_bits, temporal) {
+                commands.entity(view_entity).insert(view_pipelines);
+            }
             continue;
         }
 
+        let Some(pipeline) = pipelines.forward(view, view_layout_bits) else {
+            continue;
+        };
         phase.add(
             Opaque3dBatchSetKey {
                 draw_function,
@@ -125,7 +176,7 @@ impl<P: PhaseItem> RenderCommand<P> for DrawVegetationIndirect {
     type Param = (
         SRes<VegetationBuffers>,
         Option<SRes<DiagnosticsRecorder>>,
-        Option<SRes<atmosphere::environment::EnvironmentSurfaceGpu>>,
+        Option<SRes<EnvironmentSurfaceGpu>>,
     );
 
     type ViewQuery = ();

@@ -10,6 +10,7 @@ use bevy::{
 
 mod buffers;
 mod candidate_cache;
+mod deferred;
 mod draw;
 mod generation;
 mod gpu_types;
@@ -31,6 +32,7 @@ pub use packing::terrain_contact_radius;
 
 pub(crate) fn install(render_app: &mut SubApp) {
     temporal::install(render_app);
+    deferred::install(render_app);
     render_app
         .add_render_command::<Opaque3d, draw::DrawVegetation>()
         .add_systems(
@@ -68,6 +70,7 @@ pub(crate) fn install(render_app: &mut SubApp) {
 
 pub(crate) fn initialize(world: &mut World) {
     world.init_resource::<pipelines::VegetationPipelines>();
+    world.init_resource::<deferred::GrassLighting>();
     world.init_resource::<candidate_cache::CandidateCache>();
     world.init_resource::<trample::TrampleMap>();
     world.init_resource::<buffers::VegetationBuffers>();

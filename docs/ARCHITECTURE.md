@@ -294,7 +294,9 @@ SQLite. The renderers (Bevy) have no SQLite: `engine` is the only library joinin
 - Owns procedural grass after Ghost of Tsushima: `VegetationRenderPlugin`,
   `VegetationSceneState`, `VegetationView`, `VegetationWind` (which trees also read), trampling
   (`VegetationBenders`, the characters among the plants, which trees also read),
-  `VegetationDiagnostics`.
+  `VegetationDiagnostics`. On deferred views grass writes the G-buffer and lights its pixels in
+  `atmosphere`'s `DeferredLighting`; on forward views it draws lit in the main pass, with the
+  same lighting (`shaders/vegetation/draw/lighting.wesl`: `surface`, then `light`).
 - Invariants: dormant until a `VegetationSceneState` exists and a camera has `VegetationView`;
   installs no GPU timing probes; no entity or row per blade. The candidate cache holds only
   stable acceptance, never view-dependent visibility or LOD.
@@ -372,15 +374,19 @@ multisample. In order:
    (each drawn blade bent by trampling and wind, this frame and last); ground prints
    (`shaders/terrain/press.wesl`, `print_relief.wesl`, `print_mips.wesl`); GPU tree LOD and
    culling (`shaders/tree/lod.wesl`); the terrain-horizon search; cloud shadows.
-2. Prepasses: trees write depth and motion; Bevy's deferred prepass draws terrain v2 patches (one
+2. G-buffer and prepasses: grass first, as indirect draws in a pass of its own (no shadows),
+   writing its surface (`shaders/vegetation/draw/gbuffer.wesl`), depth and, under Temporal, its
+   motion; trees write depth and motion; Bevy's deferred prepass draws terrain v2 patches (one
    shared grid mesh and `ClipmapTerrainMaterial`; heights come from the clipmap), which write
-   their surface into the G-buffer (`shaders/lighting/gbuffer.wesl`), depth and camera motion.
-3. Deferred lighting (`atmosphere::environment::deferred`): one full-screen draw lights every
-   G-buffer pixel once with the shared lighting (`shaders/lighting/deferred.wesl`). It replaces
-   Bevy's lighting pass and its lighting-id copy.
-4. Main passes, each surface lit in its own shader: grass as indirect opaque draws (no shadows),
-   trees and impostors as indirect draws per form and representation in the main, prepass and
-   shadow phases, meshes.
+   their surface (`shaders/lighting/gbuffer.wesl`), depth and camera motion. The G-buffer word
+   names each pixel's lighting model.
+3. Deferred lighting (`atmosphere::environment::DeferredLighting`): each model's kernel, a
+   full-screen draw, lights its own pixels once: terrain with the shared lighting
+   (`shaders/lighting/deferred.wesl`), grass with its own (`shaders/vegetation/deferred.wesl`).
+   They replace Bevy's lighting pass and its lighting-id copy.
+4. Main passes, each surface lit in its own shader: trees and impostors as indirect draws per form
+   and representation in the main, prepass and shadow phases, meshes; on forward views (the
+   editor) terrain and grass too.
 5. After the main pass: the sky composite, one pass over the resolved image with three full-screen
    draws, each in front of the last: the sea; the sky, sun and moon, aerial perspective and clouds;
    haze, mist, fog, blowing snow, light shafts and the sun's glare. Quarter-resolution light shafts,
@@ -428,15 +434,16 @@ All shaders are WESL in `assets/shaders/`, a folder per subsystem:
 - `terrain/`: clipmap material and vertex shader, height blend, road wear, anti-tiling, ground
   prints (`print_map` their texels, `press` pressing them, `print_relief` and `print_mips` the
   relief, `prints` read by the terrain).
-- `vegetation/`: grass `schedule`, `placement/`, `candidate_cache`, `pose`, `blade`, `draw/`,
-  `trample`, sharing `types`, `random` and `lod`.
+- `vegetation/`: grass `schedule`, `placement/`, `candidate_cache`, `pose`, `blade`, `draw/`
+  (geometry, lighting, G-buffer packing), the deferred lighting kernel (`deferred`), `trample`,
+  sharing `types`, `random` and `lod`.
 - `tree/`: tree material, bark, wind and its prepass, impostors, the LOD compute pass.
 - `sky/`: the composite and its parts (air, fog, celestial, sun, cloud layer), light shafts,
   sun occlusion and sun rays. `clouds/`: density, panorama, tracing, shadows.
 - `lighting/`: shared lit-material code: `material` (adapted from Bevy's PBR, see
   `THIRD_PARTY.md`), `pbr_lighting`, `surface`, forest and terrain shadows, terrain horizon, the
-  ground below (`ground`); the G-buffer's packing (`gbuffer`) and the deferred lighting pass
-  (`deferred`).
+  ground below (`ground`); the G-buffer's models and standard packing (`gbuffer`), what every
+  lighting kernel shares (`deferred_pixel`) and the standard model's kernel (`deferred`).
 - `environment/`: the `EnvironmentParams` layout and map lookups. `weather/`: rain, particles,
   ambient particles, ground wetness. `water/`: the sea and its waves.
 - Root: `crossfade` (the LOD crossfades' dither for pipelines without Bevy's), `frame` (time

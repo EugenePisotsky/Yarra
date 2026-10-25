@@ -10,7 +10,7 @@ fn defaults_and_paths_are_explicit() {
     let options = parse(&[]).unwrap();
     assert_eq!(options.fps, 60);
     assert!(!options.counters);
-    assert_eq!(options.upscaler, upscaling::UpscaleMethod::Auto);
+    assert_eq!(options.upscaler, upscaling::UpscaleMethod::MetalFxTemporal);
     assert!(options.profile.is_none());
     let options = parse(&[
         "--world-db",
@@ -69,7 +69,13 @@ fn profile_and_repro_ownership_is_validated() {
             "--render-snapshot-frames",
             "500",
         ],
-        vec!["--profile-seconds", "10", "--profile-temporal-bypass"],
+        vec![
+            "--profile-seconds",
+            "10",
+            "--upscaler",
+            "metalfx-spatial",
+            "--profile-temporal-bypass",
+        ],
     ] {
         assert!(parse(&args).is_err(), "{args:?}");
     }

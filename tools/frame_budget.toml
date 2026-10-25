@@ -30,8 +30,9 @@ passes = ["^main_opaque_pass_3d", "deferred prepass$"]
 
 [[line]]
 name = "deferred lighting"
-ms = 0.6
-passes = ["^deferred lighting$"]
+ms = 0.8
+# Every model's kernel: the standard model's (terrain 0.5), then grass's (0.3).
+passes = ["deferred lighting$"]
 
 [[line]]
 name = "prepass and motion"
@@ -45,7 +46,8 @@ passes = ["^shadow_"]
 
 [[line]]
 name = "grass"
-ms = 1.2
+ms = 1.0
+# The blades' G-buffer pass and their compute; their lighting is a deferred lighting kernel.
 passes = ["grass", "vegetation"]
 
 [[line]]

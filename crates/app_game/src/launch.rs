@@ -128,7 +128,7 @@ impl LaunchOptions {
         let resolution_scale = resolution_scale(&args)?;
         let upscaler = args.choice(
             "--upscaler",
-            "auto",
+            "metalfx-temporal",
             &[
                 ("auto", upscaling::UpscaleMethod::Auto),
                 ("linear", upscaling::UpscaleMethod::Linear),

@@ -1,15 +1,18 @@
 // The G-buffer: what a surface writes in the deferred pass and the deferred lighting reads back
-// (lighting/deferred.wesl, docs/DEFERRED_LIGHTING.md). One `Rgba32Uint` texel, Bevy's deferred
-// target, in our own layout:
+// (docs/DEFERRED_LIGHTING.md). One `Rgba32Uint` texel, Bevy's deferred target, whose y word holds
+// the lighting model in its top 8 bits; each model's kernel reads the rest in its own layout.
+// The standard model's (lighting/deferred.wesl):
 // - x: albedo, gamma 2.2, 8 bits a channel; perceptual roughness 8;
 // - y: shading normal, octahedral 12 + 12; model 8;
 // - z: diffuse occlusion, specular occlusion, reflectance and metallic, 8 each;
 // - w: geometric normal (shadow bias), octahedral 12 + 12; 8 spare.
+// Grass's is in vegetation/draw/gbuffer.wesl.
 import bevy_render::utils::{octahedral_encode, octahedral_decode};
 
 // Lighting models. NONE marks pixels a forward pass draws over.
 const MODEL_NONE: u32 = 0u;
 const MODEL_TERRAIN: u32 = 1u;
+const MODEL_GRASS: u32 = 2u;
 
 struct Surface {
     albedo: vec3<f32>,
@@ -35,6 +38,7 @@ fn unpack_unorm4(bits: u32) -> vec4<f32> {
     return vec4<f32>(vec4(bits, bits >> 8u, bits >> 16u, bits >> 24u) & vec4(0xffu)) / 255.0;
 }
 
+// A unit vector in 24 bits, octahedral 12 + 12.
 fn pack_normal(n: vec3<f32>) -> u32 {
     let e = vec2<u32>(round(octahedral_encode(n) * 4095.0));
     return e.x | (e.y << 12u);
@@ -42,6 +46,16 @@ fn pack_normal(n: vec3<f32>) -> u32 {
 
 fn unpack_normal(bits: u32) -> vec3<f32> {
     return octahedral_decode(vec2(f32(bits & 0xfffu), f32((bits >> 12u) & 0xfffu)) / 4095.0);
+}
+
+// A unit vector in 16 bits, octahedral 8 + 8, for directions only diffuse or broad lobes read.
+fn pack_normal16(n: vec3<f32>) -> u32 {
+    let e = vec2<u32>(round(octahedral_encode(n) * 255.0));
+    return e.x | (e.y << 8u);
+}
+
+fn unpack_normal16(bits: u32) -> vec3<f32> {
+    return octahedral_decode(vec2(f32(bits & 0xffu), f32((bits >> 8u) & 0xffu)) / 255.0);
 }
 
 fn pack(s: Surface) -> vec4<u32> {
