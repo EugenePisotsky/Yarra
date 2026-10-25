@@ -2,8 +2,7 @@
 use super::GameplaySystems;
 
 use crate::{
-    MsaaColorStorePolicy, WorldEnvironmentCamera, WorldRenderRoot, WorldStartView, WorldViewCamera,
-    actor::CameraTarget,
+    WorldEnvironmentCamera, WorldRenderRoot, WorldStartView, WorldViewCamera, actor::CameraTarget,
 };
 
 use bevy::{prelude::*, render::view::Msaa};
@@ -93,8 +92,7 @@ fn setup_camera(mut commands: Commands, start_view: Res<WorldStartView>) {
         crate::WORLD_TONEMAPPING,
         start_view.projection(),
         WorldEnvironmentCamera::default(),
-        Msaa::Sample4,
-        MsaaColorStorePolicy::Automatic,
+        Msaa::Off,
         camera_transform(start, &camera_rig),
         camera_rig,
         MainCamera,

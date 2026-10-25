@@ -123,10 +123,10 @@ fn prepare(
 
 #[derive(Resource)]
 struct Pipelines {
-    layout: [BindGroupLayoutDescriptor; 2],
-    occlusion: [CachedComputePipelineId; 2],
-    rays_layout: [BindGroupLayoutDescriptor; 2],
-    rays: [CachedComputePipelineId; 2],
+    layout: BindGroupLayoutDescriptor,
+    occlusion: CachedComputePipelineId,
+    rays_layout: BindGroupLayoutDescriptor,
+    rays: CachedComputePipelineId,
     repeat: Sampler,
 }
 
@@ -136,83 +136,59 @@ fn init(
     cache: Res<PipelineCache>,
     device: Res<RenderDevice>,
 ) {
-    let layout = std::array::from_fn(|multisampled| {
-        BindGroupLayoutDescriptor::new(
-            "sun occlusion",
-            &BindGroupLayoutEntries::sequential(
-                ShaderStages::COMPUTE,
-                (
-                    uniform_buffer::<ViewUniform>(true),
-                    storage_buffer_read_only_sized(
-                        false,
-                        std::num::NonZeroU64::new(std::mem::size_of::<EnvironmentParams>() as u64),
-                    ),
-                    if multisampled == 1 {
-                        texture_depth_2d_multisampled()
-                    } else {
-                        texture_depth_2d()
-                    },
-                    uniform_buffer::<GpuLights>(true),
-                    texture_2d_array(TextureSampleType::Depth),
-                    sampler(SamplerBindingType::Comparison),
-                    texture_2d(TextureSampleType::Float { filterable: true }),
-                    sampler(SamplerBindingType::Filtering),
-                    storage_buffer_sized(false, std::num::NonZeroU64::new(16)),
+    let layout = BindGroupLayoutDescriptor::new(
+        "sun occlusion",
+        &BindGroupLayoutEntries::sequential(
+            ShaderStages::COMPUTE,
+            (
+                uniform_buffer::<ViewUniform>(true),
+                storage_buffer_read_only_sized(
+                    false,
+                    std::num::NonZeroU64::new(std::mem::size_of::<EnvironmentParams>() as u64),
                 ),
+                texture_depth_2d(),
+                uniform_buffer::<GpuLights>(true),
+                texture_2d_array(TextureSampleType::Depth),
+                sampler(SamplerBindingType::Comparison),
+                texture_2d(TextureSampleType::Float { filterable: true }),
+                sampler(SamplerBindingType::Filtering),
+                storage_buffer_sized(false, std::num::NonZeroU64::new(16)),
             ),
-        )
-    });
+        ),
+    );
     let shader = server.load("shaders/sky/sun_occlusion.wesl");
-    let occlusion = std::array::from_fn(|multisampled| {
-        cache.queue_compute_pipeline(ComputePipelineDescriptor {
-            label: Some("sun occlusion".into()),
-            layout: vec![layout[multisampled].clone()],
-            shader: shader.clone(),
-            shader_defs: if multisampled == 1 {
-                vec!["MULTISAMPLED".into()]
-            } else {
-                vec![]
-            },
-            entry_point: Some("occlusion".into()),
-            ..default()
-        })
+    let occlusion = cache.queue_compute_pipeline(ComputePipelineDescriptor {
+        label: Some("sun occlusion".into()),
+        layout: vec![layout.clone()],
+        shader: shader.clone(),
+        shader_defs: vec![],
+        entry_point: Some("occlusion".into()),
+        ..default()
     });
-    let rays_layout = std::array::from_fn(|multisampled| {
-        BindGroupLayoutDescriptor::new(
-            "sun rays",
-            &BindGroupLayoutEntries::sequential(
-                ShaderStages::COMPUTE,
-                (
-                    uniform_buffer::<ViewUniform>(true),
-                    storage_buffer_read_only_sized(
-                        false,
-                        std::num::NonZeroU64::new(std::mem::size_of::<EnvironmentParams>() as u64),
-                    ),
-                    if multisampled == 1 {
-                        texture_depth_2d_multisampled()
-                    } else {
-                        texture_depth_2d()
-                    },
-                    storage_buffer_read_only_sized(false, std::num::NonZeroU64::new(16)),
-                    texture_storage_2d(TextureFormat::Rgba16Float, StorageTextureAccess::WriteOnly),
+    let rays_layout = BindGroupLayoutDescriptor::new(
+        "sun rays",
+        &BindGroupLayoutEntries::sequential(
+            ShaderStages::COMPUTE,
+            (
+                uniform_buffer::<ViewUniform>(true),
+                storage_buffer_read_only_sized(
+                    false,
+                    std::num::NonZeroU64::new(std::mem::size_of::<EnvironmentParams>() as u64),
                 ),
+                texture_depth_2d(),
+                storage_buffer_read_only_sized(false, std::num::NonZeroU64::new(16)),
+                texture_storage_2d(TextureFormat::Rgba16Float, StorageTextureAccess::WriteOnly),
             ),
-        )
-    });
+        ),
+    );
     let rays_shader = server.load("shaders/sky/sun_rays.wesl");
-    let rays = std::array::from_fn(|multisampled| {
-        cache.queue_compute_pipeline(ComputePipelineDescriptor {
-            label: Some("sun rays".into()),
-            layout: vec![rays_layout[multisampled].clone()],
-            shader: rays_shader.clone(),
-            shader_defs: if multisampled == 1 {
-                vec!["MULTISAMPLED".into()]
-            } else {
-                vec![]
-            },
-            entry_point: Some("sun_rays".into()),
-            ..default()
-        })
+    let rays = cache.queue_compute_pipeline(ComputePipelineDescriptor {
+        label: Some("sun rays".into()),
+        layout: vec![rays_layout.clone()],
+        shader: rays_shader.clone(),
+        shader_defs: vec![],
+        entry_point: Some("sun_rays".into()),
+        ..default()
     });
     let repeat = device.create_sampler(&SamplerDescriptor {
         label: Some("sun occlusion"),
@@ -238,7 +214,6 @@ type DrawnView = (
     &'static ViewUniformOffset,
     &'static ViewLightsUniformOffset,
     &'static ViewShadowBindings,
-    &'static Msaa,
 );
 
 #[allow(clippy::too_many_arguments)] // Independent render-world resources.
@@ -254,11 +229,10 @@ fn draw(
     shadow_samplers: Res<ShadowSamplers>,
     mut ctx: RenderContext,
 ) {
-    let (state, rays, depth, offset, light_offset, shadows, msaa) = view.into_inner();
-    let index = usize::from(msaa.samples() > 1);
+    let (state, rays, depth, offset, light_offset, shadows) = view.into_inner();
     let (Some(assets), Some(pipeline), Some(view_binding), Some(light_binding)) = (
         assets,
-        cache.get_compute_pipeline(pipelines.occlusion[index]),
+        cache.get_compute_pipeline(pipelines.occlusion),
         uniforms.uniforms.binding(),
         lights.view_gpu_lights.binding(),
     ) else {
@@ -271,7 +245,7 @@ fn draw(
     };
     let group = ctx.render_device().create_bind_group(
         "sun occlusion",
-        &cache.get_bind_group_layout(&pipelines.layout[index]),
+        &cache.get_bind_group_layout(&pipelines.layout),
         &BindGroupEntries::sequential((
             view_binding.clone(),
             clouds.buffer.as_entire_binding(),
@@ -287,11 +261,11 @@ fn draw(
 
     // Rays need this frame's share of the sun seen, so they follow in the same pass.
     let rays = rays
-        .zip(cache.get_compute_pipeline(pipelines.rays[index]))
+        .zip(cache.get_compute_pipeline(pipelines.rays))
         .map(|(rays, rays_pipeline)| {
             let group = ctx.render_device().create_bind_group(
                 "sun rays",
-                &cache.get_bind_group_layout(&pipelines.rays_layout[index]),
+                &cache.get_bind_group_layout(&pipelines.rays_layout),
                 &BindGroupEntries::sequential((
                     view_binding,
                     clouds.buffer.as_entire_binding(),

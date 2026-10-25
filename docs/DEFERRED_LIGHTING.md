@@ -46,12 +46,12 @@ From three read-only surveys of the code (October 25):
 
 ## Decisions this needs
 
-1. **MSAA retires for world cameras.** Deferred cameras cannot multisample (user, October 25:
-   deferred may give up MSAA; FXAA + TAA as Village uses look good). The game's default today is
-   50% + MetalFX Spatial + 4× MSAA (`crates/app_game/src/game_render.rs:58-65`). Proposal: MetalFX
-   Temporal becomes the default (it is the look target); Spatial and native take FXAA; the editor
-   takes FXAA. With MSAA go `MsaaColorStorePlugin`, the crossfade sample masks (dither everywhere),
-   and the sky composite's per-sample depth loops.
+1. **MSAA retires for world cameras.** *Decided* (user, October 25). Deferred cameras cannot
+   multisample. The game's default was 50% + MetalFX Spatial + 4× MSAA
+   (`crates/app_game/src/game_render.rs:58-65`); MetalFX Temporal becomes the default (it is the
+   look target), Spatial and native take FXAA, and so does the editor. With MSAA go
+   `MsaaColorStorePlugin`, the crossfade sample masks (dither everywhere), and the sky composite's
+   per-sample depth loops.
 2. **Grass keeps its own lighting model.** Moving it onto the shared core would add terrain
    horizon, ground bounce and terrain sky light and change its look; it gets its own kernel.
 

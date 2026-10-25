@@ -364,8 +364,9 @@ Owns the shell, workspaces, tools, working sets, saving, publication and the rec
 ## Rendering frame
 
 The game camera (`WorldViewCamera`) renders in HDR and tone-maps into an offscreen image at a
-share of the window's physical size (`resolution_scale`, 0.5 by default) with 4× MSAA; with
-MetalFX Temporal, MSAA is off and the backend reconstructs at output size. In order:
+share of the window's physical size (`resolution_scale`, 0.5 by default). MetalFX Temporal (the
+default) reconstructs at output size; the other upscalers take FXAA. World cameras do not
+multisample. In order:
 
 1. Compute before the camera: grass trampling, candidate cache, placement and blade poses
    (each drawn blade bent by trampling and wind, this frame and last); ground prints
@@ -384,9 +385,8 @@ MetalFX Temporal, MSAA is off and the backend reconstructs at output size. In or
    at native resolution.
 
 Every lit material binds the shared environment at slots 120–129 (`EnvironmentParams`, cloud
-shadow, rain shelter, forest and terrain shadow, ground albedo). `MsaaColorStorePlugin` discards multisample
-colour after the resolve only while `BevySkyPassReplaced` holds. The editor uses the same
-renderers.
+shadow, rain shelter, forest and terrain shadow, ground albedo). The editor uses the same
+renderers, with FXAA.
 
 ## Streaming and residency
 
@@ -432,7 +432,8 @@ All shaders are WESL in `assets/shaders/`, a folder per subsystem:
   ground below (`ground`).
 - `environment/`: the `EnvironmentParams` layout and map lookups. `weather/`: rain, particles,
   ambient particles, ground wetness. `water/`: the sea and its waves.
-- Root: `crossfade` (LOD crossfades as MSAA sample masks), `environment_coverage` (editor).
+- Root: `crossfade` (the LOD crossfades' dither for pipelines without Bevy's),
+  `environment_coverage` (editor).
 
 Modules import each other as `package::shaders::<folder>::<file>` and Bevy's as
 `bevy_pbr::...`; integer limits arrive from Rust as `constants::NAME` definitions. Bevy composes

@@ -114,12 +114,11 @@ pub(crate) fn install(app: &mut App) {
     };
     let route = repro.route;
 
-    // 4× MSAA and no prepass unless asked for.
+    // No prepass unless asked for.
     *app.world_mut().resource_mut::<RuntimeSettings>() = RuntimeSettings {
         scene: Scene::Current,
         // 75% unless `--resolution-scale` names another of the game's scales.
         scale_index: options.resolution_scale.and_then(scale_index).unwrap_or(1),
-        msaa: Msaa::Sample4,
         prepass: repro.prepass,
         // A scripted walk needs the character to move.
         controls_locked: route != Route::ActorWalk,

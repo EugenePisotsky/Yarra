@@ -13,7 +13,6 @@ pub use terrain_raycast::raycast_resident_terrain;
 
 mod character;
 mod character_catalog;
-mod msaa_store;
 mod object_lod;
 
 pub use object_lod::{ObjectFootprint, ObjectLodPlugin};
@@ -65,8 +64,6 @@ pub use character_catalog::{
     CharacterPresentationProfileSummary, CharacterPreviewClipDefinition, CharacterPreviewClipRole,
     DEFAULT_CHARACTER_PRESENTATION_ID, load_character_presentation_catalog_summary,
 };
-
-pub use msaa_store::{MsaaColorStorePlugin, MsaaColorStorePolicy};
 
 pub use world_streaming::{
     ActiveWorldSpace, ClipmapStats, ClipmapTerrain, FLOATING_ORIGIN_THRESHOLD_CELLS,

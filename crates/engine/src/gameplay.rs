@@ -11,8 +11,7 @@ pub use input::GameInputPlugin;
 pub use target::MovementTargetPlugin;
 
 use crate::{
-    MsaaColorStorePlugin, WorldEnvironmentPlugin, WorldStartView, WorldStreamingPlugin,
-    WorldStreamingSystems,
+    WorldEnvironmentPlugin, WorldStartView, WorldStreamingPlugin, WorldStreamingSystems,
     actor::advance_character_motors,
     character::{CharacterPresentationPlugin, CharacterPresentationResolveSet},
 };
@@ -38,7 +37,6 @@ impl MinimalGamePlugin {
 impl Plugin for MinimalGamePlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((
-            MsaaColorStorePlugin,
             WorldEnvironmentPlugin::game(),
             terrain_render::TerrainRenderPlugin,
             WorldStreamingPlugin::game(self.runtime_database.clone()),

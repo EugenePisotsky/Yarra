@@ -88,21 +88,12 @@ fn clipmap_material_compiles_and_renders() {
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
 
-    // Macro variation and MSAA change at draw time; a stationary view must keep its pixels
-    // across frames.
-    for variant in 0..3 {
+    // Macro variation changes at draw time; a stationary view must keep its pixels across
+    // frames.
+    for variant in 0..2 {
         if variant == 1 {
             *app.world_mut().resource_mut::<TerrainMacroVariation>() =
                 TerrainMacroVariation::Disabled;
-        }
-
-        if variant == 2 {
-            let world = app.world_mut();
-            let mut cameras = world.query_filtered::<&mut Msaa, With<Camera3d>>();
-
-            for mut msaa in cameras.iter_mut(world) {
-                *msaa = Msaa::Sample4;
-            }
         }
 
         let first = settled_pixels(&mut app);

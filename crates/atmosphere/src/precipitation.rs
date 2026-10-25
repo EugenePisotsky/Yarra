@@ -316,78 +316,65 @@ fn sync(
 
 #[derive(Resource)]
 struct Pipelines {
-    layout: [BindGroupLayoutDescriptor; 2],
-    /// Indexed by [streaks, splashes] then MSAA.
-    render: [[CachedRenderPipelineId; 2]; 2],
+    layout: BindGroupLayoutDescriptor,
+    /// Streaks, then splashes.
+    render: [CachedRenderPipelineId; 2],
 }
 
 fn init(mut commands: Commands, server: Res<AssetServer>, cache: Res<PipelineCache>) {
-    let layout = std::array::from_fn(|i| {
-        BindGroupLayoutDescriptor::new(
-            "rain",
-            &BindGroupLayoutEntries::sequential(
-                ShaderStages::VERTEX_FRAGMENT,
-                (
-                    uniform_buffer_sized(
-                        false,
-                        std::num::NonZeroU64::new(std::mem::size_of::<RainUniform>() as u64),
-                    ),
-                    storage_buffer_read_only_sized(
-                        false,
-                        std::num::NonZeroU64::new(std::mem::size_of::<EnvironmentParams>() as u64),
-                    ),
-                    uniform_buffer::<ViewUniform>(true),
-                    if i == 0 {
-                        texture_depth_2d()
-                    } else {
-                        texture_depth_2d_multisampled()
-                    },
-                    texture_2d(TextureSampleType::Float { filterable: false }),
-                    storage_buffer_read_only_sized(
-                        false,
-                        std::num::NonZeroU64::new((SPLASH_CAPACITY * 32) as u64),
-                    ),
+    let layout = BindGroupLayoutDescriptor::new(
+        "rain",
+        &BindGroupLayoutEntries::sequential(
+            ShaderStages::VERTEX_FRAGMENT,
+            (
+                uniform_buffer_sized(
+                    false,
+                    std::num::NonZeroU64::new(std::mem::size_of::<RainUniform>() as u64),
+                ),
+                storage_buffer_read_only_sized(
+                    false,
+                    std::num::NonZeroU64::new(std::mem::size_of::<EnvironmentParams>() as u64),
+                ),
+                uniform_buffer::<ViewUniform>(true),
+                texture_depth_2d(),
+                texture_2d(TextureSampleType::Float { filterable: false }),
+                storage_buffer_read_only_sized(
+                    false,
+                    std::num::NonZeroU64::new((SPLASH_CAPACITY * 32) as u64),
                 ),
             ),
-        )
-    });
+        ),
+    );
     let shader = server.load("shaders/weather/rain.wesl");
     let render = std::array::from_fn(|kind| {
-        std::array::from_fn(|i| {
-            let defs = if i == 1 {
-                vec!["MULTISAMPLED".into()]
-            } else {
-                vec![]
-            };
-            let (vertex, fragment) = if kind == 0 {
-                ("vertex", "fragment")
-            } else {
-                ("vertex_splash", "fragment_splash")
-            };
-            cache.queue_render_pipeline(RenderPipelineDescriptor {
-                label: Some(if kind == 0 { "rain" } else { "rain splashes" }.into()),
-                layout: vec![layout[i].clone()],
-                vertex: VertexState {
-                    shader: shader.clone(),
-                    shader_defs: defs.clone(),
-                    entry_point: Some(vertex.into()),
-                    buffers: vec![],
-                    ..default()
-                },
-                fragment: Some(FragmentState {
-                    shader: shader.clone(),
-                    shader_defs: defs,
-                    entry_point: Some(fragment.into()),
-                    targets: vec![Some(ColorTargetState {
-                        format: TextureFormat::Rgba16Float,
-                        // Premultiplied: streak radiance over the scene.
-                        blend: Some(BlendState::PREMULTIPLIED_ALPHA_BLENDING),
-                        write_mask: ColorWrites::ALL,
-                    })],
-                    ..default()
-                }),
+        let (vertex, fragment) = if kind == 0 {
+            ("vertex", "fragment")
+        } else {
+            ("vertex_splash", "fragment_splash")
+        };
+        cache.queue_render_pipeline(RenderPipelineDescriptor {
+            label: Some(if kind == 0 { "rain" } else { "rain splashes" }.into()),
+            layout: vec![layout.clone()],
+            vertex: VertexState {
+                shader: shader.clone(),
+                shader_defs: vec![],
+                entry_point: Some(vertex.into()),
+                buffers: vec![],
                 ..default()
-            })
+            },
+            fragment: Some(FragmentState {
+                shader: shader.clone(),
+                shader_defs: vec![],
+                entry_point: Some(fragment.into()),
+                targets: vec![Some(ColorTargetState {
+                    format: TextureFormat::Rgba16Float,
+                    // Premultiplied: streak radiance over the scene.
+                    blend: Some(BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                    write_mask: ColorWrites::ALL,
+                })],
+                ..default()
+            }),
+            ..default()
         })
     });
     commands.insert_resource(Pipelines { layout, render });
@@ -400,7 +387,6 @@ fn draw(
         &ViewTarget,
         &ViewDepthStencilTexture,
         &ViewUniformOffset,
-        &Msaa,
     )>,
     rain: Res<RainFrame>,
     splashes: Res<RainSplashes>,
@@ -412,17 +398,16 @@ fn draw(
     uniforms: Res<ViewUniforms>,
     mut ctx: RenderContext,
 ) {
-    let (_, target, depth, offset, msaa) = view.into_inner();
+    let (_, target, depth, offset) = view.into_inner();
 
     if target.main_texture_format() != TextureFormat::Rgba16Float {
         return;
     }
 
-    let index = usize::from(msaa.samples() > 1);
     let (Some(assets), Some(pipeline), Some(splash_pipeline), Some(view_binding)) = (
         assets,
-        cache.get_render_pipeline(pipelines.render[0][index]),
-        cache.get_render_pipeline(pipelines.render[1][index]),
+        cache.get_render_pipeline(pipelines.render[0]),
+        cache.get_render_pipeline(pipelines.render[1]),
         uniforms.uniforms.binding(),
     ) else {
         return;
@@ -448,7 +433,7 @@ fn draw(
         });
     let group = ctx.render_device().create_bind_group(
         "rain",
-        &cache.get_bind_group_layout(&pipelines.layout[index]),
+        &cache.get_bind_group_layout(&pipelines.layout),
         &BindGroupEntries::sequential((
             uniform.as_entire_binding(),
             clouds.buffer.as_entire_binding(),

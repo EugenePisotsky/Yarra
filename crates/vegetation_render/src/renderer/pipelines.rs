@@ -232,7 +232,6 @@ impl FromWorld for VegetationPipelines {
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, SpecializerKey)]
 pub(super) struct VegetationPipelineKey {
-    pub(super) msaa: Msaa,
     pub(super) target_format: TextureFormat,
     pub(super) view_layout_bits: u32,
     pub(super) environment: bool,
@@ -299,8 +298,6 @@ impl Specializer<RenderPipeline> for VegetationPipelineSpecializer {
                     write_mask: ColorWrites::ALL,
                 }));
         }
-
-        descriptor.multisample.count = key.msaa.samples();
 
         if MeshPipelineViewLayoutKey::from_bits_retain(key.view_layout_bits)
             .contains(MeshPipelineViewLayoutKey::ATMOSPHERE)

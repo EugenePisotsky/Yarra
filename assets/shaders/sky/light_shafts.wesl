@@ -17,9 +17,6 @@ import package::shaders::sky::sun::{cascade_visibility, gradient_noise};
 
 @group(0) @binding(0) var<uniform> view: View;
 @group(0) @binding(1) var<storage, read> environment: EnvironmentParams;
-@if(MULTISAMPLED)
-@group(0) @binding(2) var depth: texture_depth_multisampled_2d;
-@else
 @group(0) @binding(2) var depth: texture_depth_2d;
 @group(0) @binding(3) var<uniform> lights: Lights;
 @group(0) @binding(4) var shadow_maps: texture_depth_2d_array;

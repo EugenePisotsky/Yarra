@@ -277,7 +277,7 @@ fn display_name(name: &str) -> &str {
         return "Grass generation";
     }
 
-    if name.contains("msaa_store::opaque_pass") {
+    if name.contains("main_opaque_pass_3d") {
         return "Opaque terrain / objects / grass";
     }
 

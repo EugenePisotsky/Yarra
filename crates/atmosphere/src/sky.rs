@@ -2,10 +2,7 @@
 //! aerial perspective from Bevy's atmosphere tables, the cloud layer and weather fog.
 //!
 //! Bevy keeps computing the atmosphere tables and still lights surfaces through them; only its
-//! sky pass is replaced. That pass drew into the multisampled colour target between the opaque
-//! and transparent passes, so the target had to be stored and reloaded every frame, and it
-//! shaded each pixel from a single depth sample. This composite runs once on the resolved image
-//! and classifies every depth sample, so silhouettes against the sky are exact.
+//! sky pass is replaced, by this composite drawn over the image the opaque passes left.
 use crate::{
     AtmospherePresentation,
     clouds::{CloudPipelines, CloudQuality, CloudTarget, CloudView, refresh_clouds},
@@ -64,8 +61,8 @@ pub(crate) struct SkyCompositeDraw;
 #[extract_app(bevy::render::RenderApp)]
 pub(crate) struct SkyCompositeView;
 
-/// Render-world marker: Bevy's sky pass was found and replaced, so nothing but its opaque pass
-/// writes the multisampled colour target on atmosphere views.
+/// Render-world marker: Bevy's sky pass was found and replaced, so the composite alone draws the
+/// sky on atmosphere views.
 #[derive(Resource)]
 pub struct BevySkyPassReplaced;
 
@@ -117,9 +114,8 @@ impl Plugin for SkyCompositePlugin {
 /// Swap Bevy's sky pass for a no-op in its existing graph slot, so ordering edges that other
 /// plugins attached to it stay valid. The pass is private to `bevy_pbr`, so it is found by its
 /// ordering: the only system whose sole constraints are "after the opaque pass" and "before the
-/// transparent pass", besides the public transmissive pass. Like `MsaaColorStorePlugin`, this
-/// adapter is specific to Bevy 0.20 and fails loudly if the graph changes shape. Returns
-/// whether it was found.
+/// transparent pass", besides the public transmissive pass. The adapter is specific to Bevy 0.20
+/// and fails loudly if the graph changes shape. Returns whether it was found.
 fn replace_bevy_sky_pass(schedule: &mut Schedule) -> bool {
     assert!(!schedule.graph().systems.is_initialized());
     let matches = bevy_sky_pass_candidates(schedule);
@@ -175,7 +171,6 @@ enum Clouds {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct SkyKey {
-    multisampled: bool,
     atmosphere: bool,
     clouds: Clouds,
     draw: SkyDraw,
@@ -205,8 +200,8 @@ struct SkyPipelines {
     /// Group 0 with Bevy's atmosphere bindings, or with the view alone.
     atmosphere_layout: BindGroupLayoutDescriptor,
     view_layout: BindGroupLayoutDescriptor,
-    /// Group 1, single-sample and multisampled depth.
-    composite_layout: [BindGroupLayoutDescriptor; 2],
+    /// Group 1.
+    composite_layout: BindGroupLayoutDescriptor,
     fullscreen: FullscreenShader,
     shader: Handle<Shader>,
     dual_source_blending: bool,
@@ -219,10 +214,6 @@ impl SpecializedRenderPipeline for SkyPipelines {
 
     fn specialize(&self, key: SkyKey) -> RenderPipelineDescriptor {
         let mut shader_defs = vec![crate::environment::mist_noise_period_def()];
-
-        if key.multisampled {
-            shader_defs.push("MULTISAMPLED".into());
-        }
 
         if key.atmosphere {
             shader_defs.push("ATMOSPHERE".into());
@@ -248,7 +239,7 @@ impl SpecializedRenderPipeline for SkyPipelines {
                 } else {
                     self.view_layout.clone()
                 },
-                self.composite_layout[usize::from(key.multisampled)].clone(),
+                self.composite_layout.clone(),
             ],
             vertex: self.fullscreen.to_vertex_state(),
             fragment: Some(FragmentState {
@@ -323,48 +314,42 @@ fn init(
             ((3, uniform_buffer::<ViewUniform>(true)),),
         ),
     );
-    let composite_layout = std::array::from_fn(|multisampled| {
-        BindGroupLayoutDescriptor::new(
-            "sky composite",
-            &BindGroupLayoutEntries::sequential(
-                ShaderStages::FRAGMENT,
-                (
-                    if multisampled == 1 {
-                        texture_depth_2d_multisampled()
-                    } else {
-                        texture_depth_2d()
-                    },
-                    storage_buffer_read_only_sized(
-                        false,
-                        std::num::NonZeroU64::new(std::mem::size_of::<EnvironmentParams>() as u64),
-                    ),
-                    texture_2d(TextureSampleType::Float { filterable: true }),
-                    texture_2d(TextureSampleType::Float { filterable: true }),
-                    sampler(SamplerBindingType::Filtering),
-                    uniform_buffer_sized(false, std::num::NonZeroU64::new(COMPOSITE_SETTINGS_SIZE)),
-                    // Mist map and the cloud noise that shapes the mist.
-                    texture_2d(TextureSampleType::Float { filterable: true }),
-                    sampler(SamplerBindingType::Filtering),
-                    texture_3d(TextureSampleType::Float { filterable: true }),
-                    sampler(SamplerBindingType::Filtering),
-                    // Light shafts and the distance each of their texels marched to.
-                    texture_2d(TextureSampleType::Float { filterable: true }),
-                    texture_2d(TextureSampleType::Float { filterable: true }),
-                    // The sun as the camera sees it, and the share of its veil each texel gets.
-                    storage_buffer_read_only_sized(false, std::num::NonZeroU64::new(16)),
-                    texture_2d(TextureSampleType::Float { filterable: true }),
-                    // Cloud shadows, for the sea's sunlight.
-                    texture_2d(TextureSampleType::Float { filterable: true }),
-                    sampler(SamplerBindingType::Filtering),
-                    // How waves come ashore (read with the mist map's sampler).
-                    texture_2d(TextureSampleType::Float { filterable: true }),
-                    // The ground's albedo and height, for where snow blows and over what (read
-                    // with the mist map's sampler).
-                    texture_2d_array(TextureSampleType::Float { filterable: true }),
+    let composite_layout = BindGroupLayoutDescriptor::new(
+        "sky composite",
+        &BindGroupLayoutEntries::sequential(
+            ShaderStages::FRAGMENT,
+            (
+                texture_depth_2d(),
+                storage_buffer_read_only_sized(
+                    false,
+                    std::num::NonZeroU64::new(std::mem::size_of::<EnvironmentParams>() as u64),
                 ),
+                texture_2d(TextureSampleType::Float { filterable: true }),
+                texture_2d(TextureSampleType::Float { filterable: true }),
+                sampler(SamplerBindingType::Filtering),
+                uniform_buffer_sized(false, std::num::NonZeroU64::new(COMPOSITE_SETTINGS_SIZE)),
+                // Mist map and the cloud noise that shapes the mist.
+                texture_2d(TextureSampleType::Float { filterable: true }),
+                sampler(SamplerBindingType::Filtering),
+                texture_3d(TextureSampleType::Float { filterable: true }),
+                sampler(SamplerBindingType::Filtering),
+                // Light shafts and the distance each of their texels marched to.
+                texture_2d(TextureSampleType::Float { filterable: true }),
+                texture_2d(TextureSampleType::Float { filterable: true }),
+                // The sun as the camera sees it, and the share of its veil each texel gets.
+                storage_buffer_read_only_sized(false, std::num::NonZeroU64::new(16)),
+                texture_2d(TextureSampleType::Float { filterable: true }),
+                // Cloud shadows, for the sea's sunlight.
+                texture_2d(TextureSampleType::Float { filterable: true }),
+                sampler(SamplerBindingType::Filtering),
+                // How waves come ashore (read with the mist map's sampler).
+                texture_2d(TextureSampleType::Float { filterable: true }),
+                // The ground's albedo and height, for where snow blows and over what (read
+                // with the mist map's sampler).
+                texture_2d_array(TextureSampleType::Float { filterable: true }),
             ),
-        )
-    });
+        ),
+    );
     commands.insert_resource(SkyPipelines {
         atmosphere_layout,
         view_layout,
@@ -390,12 +375,7 @@ struct SkyPipeline {
 }
 
 /// View, sample count, whether Bevy prepares atmosphere tables for it, and whether it has clouds.
-type QueuedView = (
-    Entity,
-    &'static Msaa,
-    Has<ExtractedAtmosphere>,
-    Has<CloudView>,
-);
+type QueuedView = (Entity, Has<ExtractedAtmosphere>, Has<CloudView>);
 
 fn queue(
     mut commands: Commands,
@@ -411,9 +391,8 @@ fn queue(
     };
     let sky = presentation.is_none_or(|p| p.sky_and_haze);
 
-    for (entity, msaa, atmosphere, clouds) in &views {
+    for (entity, atmosphere, clouds) in &views {
         let key = SkyKey {
-            multisampled: msaa.samples() > 1,
             atmosphere: atmosphere && sky,
             clouds: match (clouds, *quality) {
                 (false, _) | (true, CloudQuality::Off) => Clouds::None,
@@ -560,7 +539,7 @@ fn draw(
         .unwrap_or(&fallback.d2_array);
     let composite_group = device.create_bind_group(
         "sky composite",
-        &cache.get_bind_group_layout(&pipelines.composite_layout[usize::from(key.multisampled)]),
+        &cache.get_bind_group_layout(&pipelines.composite_layout),
         &BindGroupEntries::sequential((
             crate::sampled_depth(depth),
             parameters.buffer.as_entire_binding(),

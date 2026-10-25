@@ -341,10 +341,10 @@ fn sync(
 
 #[derive(Resource)]
 struct Pipelines {
-    layout: [BindGroupLayoutDescriptor; 2],
-    /// The kinds' and shaken snow's, by MSAA.
-    render: [CachedRenderPipelineId; 2],
-    snow: [CachedRenderPipelineId; 2],
+    layout: BindGroupLayoutDescriptor,
+    /// The kinds', and shaken snow's.
+    render: CachedRenderPipelineId,
+    snow: CachedRenderPipelineId,
     repeat: Sampler,
     clamp: Sampler,
 }
@@ -355,62 +355,51 @@ fn init(
     cache: Res<PipelineCache>,
     device: Res<bevy::render::renderer::RenderDevice>,
 ) {
-    let layout = std::array::from_fn(|i| {
-        BindGroupLayoutDescriptor::new(
-            "ambient particles",
-            &BindGroupLayoutEntries::sequential(
-                ShaderStages::VERTEX_FRAGMENT,
-                (
-                    uniform_buffer_sized(
-                        false,
-                        std::num::NonZeroU64::new(std::mem::size_of::<AmbientUniform>() as u64),
-                    ),
-                    storage_buffer_read_only_sized(
-                        false,
-                        std::num::NonZeroU64::new(std::mem::size_of::<EnvironmentParams>() as u64),
-                    ),
-                    uniform_buffer::<ViewUniform>(true),
-                    if i == 0 {
-                        texture_depth_2d()
-                    } else {
-                        texture_depth_2d_multisampled()
-                    },
-                    uniform_buffer::<GpuLights>(true),
-                    texture_2d_array(TextureSampleType::Depth),
-                    sampler(SamplerBindingType::Comparison),
-                    texture_2d(TextureSampleType::Float { filterable: true }),
-                    sampler(SamplerBindingType::Filtering),
-                    texture_2d(TextureSampleType::Float { filterable: true }),
-                    texture_2d(TextureSampleType::Float { filterable: true }),
-                    sampler(SamplerBindingType::Filtering),
-                    storage_buffer_read_only_sized(
-                        false,
-                        std::num::NonZeroU64::new((SNOW_FALL_CAPACITY * SNOW_FALL_BYTES) as u64),
-                    ),
+    let layout = BindGroupLayoutDescriptor::new(
+        "ambient particles",
+        &BindGroupLayoutEntries::sequential(
+            ShaderStages::VERTEX_FRAGMENT,
+            (
+                uniform_buffer_sized(
+                    false,
+                    std::num::NonZeroU64::new(std::mem::size_of::<AmbientUniform>() as u64),
+                ),
+                storage_buffer_read_only_sized(
+                    false,
+                    std::num::NonZeroU64::new(std::mem::size_of::<EnvironmentParams>() as u64),
+                ),
+                uniform_buffer::<ViewUniform>(true),
+                texture_depth_2d(),
+                uniform_buffer::<GpuLights>(true),
+                texture_2d_array(TextureSampleType::Depth),
+                sampler(SamplerBindingType::Comparison),
+                texture_2d(TextureSampleType::Float { filterable: true }),
+                sampler(SamplerBindingType::Filtering),
+                texture_2d(TextureSampleType::Float { filterable: true }),
+                texture_2d(TextureSampleType::Float { filterable: true }),
+                sampler(SamplerBindingType::Filtering),
+                storage_buffer_read_only_sized(
+                    false,
+                    std::num::NonZeroU64::new((SNOW_FALL_CAPACITY * SNOW_FALL_BYTES) as u64),
                 ),
             ),
-        )
-    });
+        ),
+    );
     let shader = server.load("shaders/weather/ambient.wesl");
-    let pipeline = |i: usize, vertex: &'static str| {
-        let defs = if i == 1 {
-            vec!["MULTISAMPLED".into()]
-        } else {
-            vec![]
-        };
+    let pipeline = |vertex: &'static str| {
         cache.queue_render_pipeline(RenderPipelineDescriptor {
             label: Some("ambient particles".into()),
-            layout: vec![layout[i].clone()],
+            layout: vec![layout.clone()],
             vertex: VertexState {
                 shader: shader.clone(),
-                shader_defs: defs.clone(),
+                shader_defs: vec![],
                 entry_point: Some(vertex.into()),
                 buffers: vec![],
                 ..default()
             },
             fragment: Some(FragmentState {
                 shader: shader.clone(),
-                shader_defs: defs,
+                shader_defs: vec![],
                 entry_point: Some("fragment".into()),
                 targets: vec![Some(ColorTargetState {
                     format: TextureFormat::Rgba16Float,
@@ -422,8 +411,8 @@ fn init(
             ..default()
         })
     };
-    let render = std::array::from_fn(|i| pipeline(i, "vertex"));
-    let snow = std::array::from_fn(|i| pipeline(i, "vertex_snow"));
+    let render = pipeline("vertex");
+    let snow = pipeline("vertex_snow");
     let filtered = |address_mode| {
         device.create_sampler(&SamplerDescriptor {
             label: Some("ambient particles"),
@@ -453,7 +442,6 @@ fn draw(
         &ViewUniformOffset,
         &ViewLightsUniformOffset,
         &ViewShadowBindings,
-        &Msaa,
     )>,
     frame: Res<AmbientFrame>,
     assets: Option<Res<EnvironmentAssets>>,
@@ -466,16 +454,15 @@ fn draw(
     shadow_samplers: Res<ShadowSamplers>,
     mut ctx: RenderContext,
 ) {
-    let (_, target, depth, offset, light_offset, shadows, msaa) = view.into_inner();
+    let (_, target, depth, offset, light_offset, shadows) = view.into_inner();
 
     if target.main_texture_format() != TextureFormat::Rgba16Float {
         return;
     }
 
-    let index = usize::from(msaa.samples() > 1);
     let (Some(assets), Some(pipeline), Some(view_binding), Some(light_binding)) = (
         assets,
-        cache.get_render_pipeline(pipelines.render[index]),
+        cache.get_render_pipeline(pipelines.render),
         uniforms.uniforms.binding(),
         lights.view_gpu_lights.binding(),
     ) else {
@@ -499,7 +486,7 @@ fn draw(
         });
     let group = ctx.render_device().create_bind_group(
         "ambient particles",
-        &cache.get_bind_group_layout(&pipelines.layout[index]),
+        &cache.get_bind_group_layout(&pipelines.layout),
         &BindGroupEntries::sequential((
             uniform.as_entire_binding(),
             clouds.buffer.as_entire_binding(),
@@ -546,7 +533,7 @@ fn draw(
     }
 
     if frame.snow
-        && let Some(snow) = cache.get_render_pipeline(pipelines.snow[index])
+        && let Some(snow) = cache.get_render_pipeline(pipelines.snow)
     {
         pass.set_pipeline(snow);
         pass.draw(0..6, 0..SNOW_FALL_CAPACITY as u32 * SNOW_FALL_PARTICLES);

@@ -98,9 +98,13 @@ fn capture_waits_for_upscaling_and_flags_a_backend_change() {
         .query_filtered::<Entity, With<WorldViewCamera>>()
         .single(app.world())
         .unwrap();
+    let requested = app.world().resource::<RuntimeSettings>().upscaler;
     app.world_mut()
         .entity_mut(camera)
-        .insert(upscaling::UpscaleStatus::default());
+        .insert(upscaling::UpscaleStatus {
+            requested,
+            ..default()
+        });
     advance(&mut app, 2.1);
     assert!(
         app.world()

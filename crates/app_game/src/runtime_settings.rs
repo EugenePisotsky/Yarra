@@ -123,13 +123,12 @@ pub(crate) struct RuntimeSettings {
     /// Index into `SHADOW_MAP_SIZES`.
     pub(crate) shadow_map: usize,
     /// A depth prepass without MetalFX Temporal (which always has one). Otherwise it is pure
-    /// cost: alpha-tested leaves are drawn twice. On M2 Max with 4× MSAA it cost ~0.7 ms on
-    /// the grass route at 2560×1440 and ~1.0 ms of GPU time facing the forest at 3456×1942.
+    /// cost: alpha-tested leaves are drawn twice. On M2 Max it cost ~0.7 ms on the grass route
+    /// at 2560×1440 and ~1.0 ms of GPU time facing the forest at 3456×1942.
     pub(crate) prepass: bool,
     pub(crate) scale_index: usize,
     pub(crate) upscaler: upscaling::UpscaleMethod,
     pub(crate) temporal_debug: upscaling::temporal::TemporalDebug,
-    pub(crate) msaa: Msaa,
     pub(crate) counters: bool,
     pub(crate) gpu_pass_timings: bool,
     pub(crate) wind: bool,
@@ -167,7 +166,6 @@ impl Default for RuntimeSettings {
             prepass: false,
             scale_index: scale_index(render.resolution_scale)
                 .expect("game scale is available in runtime settings"),
-            msaa: render.msaa,
             upscaler: render.upscaler,
             temporal_debug: render.temporal_debug,
             // Statistics atomics are explicit on every platform, including audit startup.
@@ -233,7 +231,6 @@ fn sync_render_settings(
             upscaler: s.upscaler,
             temporal_debug: s.temporal_debug,
             render_size: profile.as_ref().and_then(|p| p.size),
-            msaa: s.msaa,
             show_ui: s.show_ui,
         });
     }

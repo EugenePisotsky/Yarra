@@ -24,7 +24,6 @@ pub(crate) struct ProfileSettings {
     pub light_shafts: bool,
     pub tree_touch: bool,
     pub temporal_bypass: bool,
-    pub msaa: Msaa,
     pub grass: bool,
     /// Object (tree, rock) and terrain draws, for splitting the main pass's cost.
     pub objects: bool,
@@ -112,11 +111,6 @@ impl ProfileSettings {
             light_shafts: args.switch("--profile-shafts")?,
             tree_touch: args.switch("--profile-tree-touch")?,
             temporal_bypass: args.has("--profile-temporal-bypass"),
-            msaa: args.choice(
-                "--profile-msaa",
-                "4",
-                &[("1", Msaa::Off), ("2", Msaa::Sample2), ("4", Msaa::Sample4)],
-            )?,
             grass: args.choice("--profile-grass", "full", &[("full", true), ("off", false)])?,
             objects: args.switch("--profile-objects")?,
             terrain: args.switch("--profile-terrain")?,
@@ -238,24 +232,22 @@ fn setup(settings: Res<ProfileSettings>, mut window: Single<&mut Window, With<Pr
 
     if settings.diagnostic {
         warn!(
-            "GRASS_PROFILE event=diagnostic_config unix_ms={} size={size} window={presentation} resolution_scale={} fps={} msaa={} grass={} pacing={pacing} clock=frame-based",
+            "GRASS_PROFILE event=diagnostic_config unix_ms={} size={size} window={presentation} resolution_scale={} fps={} grass={} pacing={pacing} clock=frame-based",
             unix_ms(),
             settings.resolution_scale(),
             settings.fps,
-            settings.msaa.samples(),
             settings.grass
         );
         return;
     }
 
     warn!(
-        "GRASS_PROFILE event=config unix_ms={} size={size} window={presentation} resolution_scale={} fps={} warmup_s={} seconds={} msaa={} grass={} pacing={pacing} clock=real-time",
+        "GRASS_PROFILE event=config unix_ms={} size={size} window={presentation} resolution_scale={} fps={} warmup_s={} seconds={} grass={} pacing={pacing} clock=real-time",
         unix_ms(),
         settings.resolution_scale(),
         settings.fps,
         settings.warmup,
         settings.seconds,
-        settings.msaa.samples(),
         settings.grass
     );
 }
@@ -353,7 +345,6 @@ pub(crate) fn apply_runtime_settings(app: &mut App) {
         .resource_mut::<crate::runtime_settings::RuntimeSettings>();
     settings.scale_index =
         scale_index(profile.resolution_scale()).expect("launch validates the resolution scale");
-    settings.msaa = profile.msaa;
     settings.bloom = profile.bloom;
     settings.auto_exposure = profile.auto_exposure;
     settings.fog = profile.fog;

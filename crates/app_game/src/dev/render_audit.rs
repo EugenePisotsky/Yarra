@@ -102,7 +102,6 @@ enum Control {
     TreeTouch,
     Lock,
     Reset,
-    Antialiasing,
     Clouds,
     Sky,
     Bloom,
@@ -140,7 +139,6 @@ impl Control {
         Control::Scale,
         Control::Upscaler,
         Control::TemporalDebug,
-        Control::Antialiasing,
         Control::ObjectDetail,
     ];
 
@@ -225,16 +223,6 @@ impl Control {
             Self::TreeTouch => format!("Tree touch: {}", on_off(s.tree_touch)),
             Self::Lock => format!("Lock controls: {}", on_off(s.controls_locked)),
             Self::Reset => "Reset launch settings".into(),
-            Self::Antialiasing => {
-                if s.temporal_active() {
-                    "AA: temporal (MSAA off)".into()
-                } else {
-                    match s.msaa {
-                        Msaa::Off => "AA: off".into(),
-                        _ => format!("AA: {}x MSAA", s.msaa.samples()),
-                    }
-                }
-            }
         }
     }
 }
@@ -359,13 +347,6 @@ fn buttons(
             }
             Control::Reset => {
                 session.reset(&mut s, &mut pacing);
-            }
-            Control::Antialiasing => {
-                s.msaa = match s.msaa {
-                    Msaa::Off => Msaa::Sample2,
-                    Msaa::Sample2 => Msaa::Sample4,
-                    _ => Msaa::Off,
-                };
             }
         }
         s.changed_at = time.elapsed_secs_f64();

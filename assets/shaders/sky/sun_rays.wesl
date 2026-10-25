@@ -10,9 +10,6 @@ import package::shaders::sky::sun::{GLARE_VEIL_WIDTH, gradient_noise};
 
 @group(0) @binding(0) var<uniform> view: View;
 @group(0) @binding(1) var<storage, read> environment: EnvironmentParams;
-@if(MULTISAMPLED)
-@group(0) @binding(2) var depth: texture_depth_multisampled_2d;
-@else
 @group(0) @binding(2) var depth: texture_depth_2d;
 // x: share of the sun seen; y: share the cloud layer lets through at the camera.
 @group(0) @binding(3) var<storage, read> sun_state: vec4<f32>;

@@ -409,7 +409,7 @@ same views before and after.
 cargo run -p yarra-shader-check                  # every variant in crates/shader_check/entries.ron
 cargo run -p yarra-shader-check -- --parse-all   # every .wesl file parses
 cargo run -p yarra-shader-check -- shaders/sky/composite.wesl --each-flag \
-  --defs "ATMOSPHERE,CACHED_CLOUDS,CLOUDS,DUAL_SOURCE_BLENDING,MIST_NOISE_PERIOD=2048,MULTISAMPLED"
+  --defs "ATMOSPHERE,CACHED_CLOUDS,CLOUDS,DUAL_SOURCE_BLENDING,MIST_NOISE_PERIOD=2048"
 ```
 
 Shaders are WESL in `assets/shaders/`; the game composes a variant only when a view first needs
@@ -421,7 +421,7 @@ it. `--each-flag` flips each `@if` flag in turn, `--print` shows the composed WG
 Ignored by default; run those a change touches, with GPU access:
 
 ```sh
-cargo test -p yarra-engine -- --ignored --nocapture          # trees, wind, depth, MSAA store
+cargo test -p yarra-engine -- --ignored --nocapture          # trees, wind, depth
 cargo test -p yarra-terrain-render -- --ignored --nocapture  # clipmap material
 cargo test -p yarra-atmosphere -- --ignored --nocapture      # terrain shadow search
 cargo test -p yarra-upscaling --features metalfx -- --ignored --nocapture
@@ -626,7 +626,7 @@ in step; `--help` prints the same with descriptions):
 | Panel and logging | `--diagnostics off\|panel\|full`, `--performance-open`, `--render-audit`, `--render-console`, `--timing-log`, `--gpu-timing-detail`, `--gpu-timing-off`, `--metalfx-timing-log`, `--grass-counters` |
 | Scripted routes | `--render-repro NAME`, `--render-frames N`, `--render-snapshot PATH`, `--render-snapshot-frames N,N`, `--render-prepass`, `--render-walk-speed MPS`, `--render-frame-clock`, `--render-temporal-view motion\|depth`, `--render-ui-off` |
 | Captures and checks | `--metal-capture PATH.gputrace` |
-| Timed profile | `--profile-seconds 2..3600`, `--profile-warmup 1..600`, `--profile-size game\|WIDTHxHEIGHT`, `--profile-surface WIDTHxHEIGHT`, `--profile-window fullscreen\|windowed`, `--profile-fps 0\|15..240`, `--profile-native-pacing`, `--profile-msaa 1\|2\|4`, `--profile-grass full\|off`, `--profile-objects on\|off`, `--profile-terrain on\|off`, `--profile-bloom on\|off`, `--profile-auto-exposure on\|off`, `--profile-fog on\|off`, `--profile-particles on\|off`, `--profile-shafts on\|off`, `--profile-tree-touch on\|off`, `--profile-temporal-bypass`, `--profile-diagnostic` |
+| Timed profile | `--profile-seconds 2..3600`, `--profile-warmup 1..600`, `--profile-size game\|WIDTHxHEIGHT`, `--profile-surface WIDTHxHEIGHT`, `--profile-window fullscreen\|windowed`, `--profile-fps 0\|15..240`, `--profile-native-pacing`, `--profile-grass full\|off`, `--profile-objects on\|off`, `--profile-terrain on\|off`, `--profile-bloom on\|off`, `--profile-auto-exposure on\|off`, `--profile-fog on\|off`, `--profile-particles on\|off`, `--profile-shafts on\|off`, `--profile-tree-touch on\|off`, `--profile-temporal-bypass`, `--profile-diagnostic` |
 | Look captures | `--look-capture DIR`, `--look-variants LIST`, `--look-settle SECONDS` |
 | LOD lab | `--lod-lab PACK/ASSET`, `--lod-lab-stand ASSET`, `--lod-lab-stand-count N`, `--lod-lab-spacing METRES`, `--lod-lab-capture DIR`, `--lod-lab-screenshot FILE`, `--lod-lab-yaws DEGREES,...`, `--lod-lab-scale 0.25..4`, `--lod-lab-pitch DEGREES`, `--lod-lab-distances METRES,...`, `--lod-lab-settle FRAMES` |
 | Output and pacing fallbacks | `--temporal-standard-output`, `--frame-pacing-timer` |

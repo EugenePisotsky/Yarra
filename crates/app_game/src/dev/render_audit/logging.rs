@@ -111,14 +111,7 @@ pub(super) fn log_status(
     frame: Res<FrameCount>,
     window: Single<(&Window, Option<&OnMonitor>), With<PrimaryWindow>>,
     monitors: Query<&Monitor>,
-    camera: Single<
-        (
-            &GlobalTransform,
-            &Msaa,
-            Option<&engine::MsaaColorStorePolicy>,
-        ),
-        With<WorldViewCamera>,
-    >,
+    camera: Single<&GlobalTransform, With<WorldViewCamera>>,
     assets: Res<GameRenderAssets>,
     images: Res<Assets<Image>>,
     meshes: Res<Assets<Mesh>>,
@@ -165,11 +158,8 @@ pub(super) fn log_status(
         .get(&assets.target)
         .map(Image::size)
         .unwrap_or(UVec2::ZERO);
-    let position = camera.0.translation();
-    let rotation = camera.0.rotation();
-    let msaa_samples = camera.1.samples();
-    let msaa_store_policy = camera.2.copied().unwrap_or_default();
-    let requested_msaa_samples = settings.msaa.samples();
+    let position = camera.translation();
+    let rotation = camera.rotation();
     let snapshot = vegetation.snapshot();
     let gpu = gpu_readback_fields(snapshot);
     let macro_state = terrain_macro.label();
@@ -212,7 +202,7 @@ pub(super) fn log_status(
         ground.resident, ground.missing, ground.patches, ground.triangles
     );
     warn!(
-        "RENDER_AUDIT v=2 event={event} seq={} unix_ms={unix_ms} elapsed_s={now:.3} main_frame={} app_fps_window={app_fps} window_s={window_s:.3} since_change_s={:.3} thermal={} low_power={} scene={:?} grass={} terrain_macro={macro_state} shadows={} shadow_map={} prepass={} scale={} msaa_samples={msaa_samples} requested_msaa_samples={requested_msaa_samples} msaa_store_policy={msaa_store_policy:?} counters={} wind={} locked={} ui={ui} render_px={}x{} surface_px={}x{} {display_fields} focused={focused} present_mode={present_mode:?} camera_pos={:.3},{:.3},{:.3} camera_rot={:.4},{:.4},{:.4},{:.4} {terrain_fields} high_detail_m={:.1} entities={} mesh_assets={} image_assets={} source_revision={} source_pages={} source_work_items={} source_repacks={} source_reallocs={} last_source_upload_bytes={} source_capacity_bytes={} instance_capacity={} instance_capacity_bytes={} generation_dispatches={generation_dispatches} generation_reuses={generation_reuses} {candidate_cache} {gpu} os={} debug_assertions={}",
+        "RENDER_AUDIT v=2 event={event} seq={} unix_ms={unix_ms} elapsed_s={now:.3} main_frame={} app_fps_window={app_fps} window_s={window_s:.3} since_change_s={:.3} thermal={} low_power={} scene={:?} grass={} terrain_macro={macro_state} shadows={} shadow_map={} prepass={} scale={} counters={} wind={} locked={} ui={ui} render_px={}x{} surface_px={}x{} {display_fields} focused={focused} present_mode={present_mode:?} camera_pos={:.3},{:.3},{:.3} camera_rot={:.4},{:.4},{:.4},{:.4} {terrain_fields} high_detail_m={:.1} entities={} mesh_assets={} image_assets={} source_revision={} source_pages={} source_work_items={} source_repacks={} source_reallocs={} last_source_upload_bytes={} source_capacity_bytes={} instance_capacity={} instance_capacity_bytes={} generation_dispatches={generation_dispatches} generation_reuses={generation_reuses} {candidate_cache} {gpu} os={} debug_assertions={}",
         state.sequence,
         frame.0,
         now - state.changed_at_s,

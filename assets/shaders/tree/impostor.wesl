@@ -11,15 +11,12 @@ import bevy_pbr::{render::mesh_functions, render::mesh_view_bindings::view, rend
 // no shadows.
 import bevy_pbr::{render::pbr_types, render::pbr_functions::{calculate_view, main_pass_post_lighting_processing}, render::mesh_types::MESH_FLAGS_SHADOW_RECEIVER_BIT};
 import package::shaders::lighting::pbr_lighting::apply_pbr_lighting;
-import package::shaders::crossfade::{crossfade_sample_mask, dither_discard};
+import package::shaders::crossfade::dither_discard;
 import package::shaders::tree::wind::{WindFrames, sway_point_of_trunk};
 
-// The forward pass's output (Bevy's forward_io::FragmentOutput), with the crossfade's covered
-// samples where the view crossfades by sample mask.
+// The forward pass's output (Bevy's forward_io::FragmentOutput).
 struct ForwardOutput {
     @location(0) color: vec4<f32>,
-    @if(CROSSFADE_SAMPLE_MASK)
-    @builtin(sample_mask) sample_mask: u32,
 }
 
 struct ImpostorParams {
@@ -304,13 +301,6 @@ fn fragment(in: Varyings) -> ForwardOutput {
     let mip_scale = exp2(view.mip_bias);
     let ddx_uv = dpdx(in.corner) / tile * mip_scale;
     let ddy_uv = dpdy(in.corner) / tile * mip_scale;
-@if(CROSSFADE_SAMPLE_MASK) {
-    let crossfade_mask = crossfade_sample_mask(in.position, in.dither);
-    if crossfade_mask == 0u {
-        discard;
-    }
-}
-@else
     dither_discard(in.position, in.dither);
     let s = surface(in, ddx_uv, ddy_uv);
     var out: ForwardOutput;
@@ -333,7 +323,5 @@ fn fragment(in: Varyings) -> ForwardOutput {
     pbr_input.flags = MESH_FLAGS_SHADOW_RECEIVER_BIT;
     out.color = apply_pbr_lighting(pbr_input);
     out.color = main_pass_post_lighting_processing(pbr_input, out.color);
-@if(CROSSFADE_SAMPLE_MASK)
-    out.sample_mask = crossfade_mask;
     return out;
 }

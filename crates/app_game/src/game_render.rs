@@ -1,5 +1,6 @@
 //! Game presentation defaults, shared with the optional render-audit controls.
 use bevy::{
+    anti_alias::fxaa::Fxaa,
     camera::{ImageRenderTarget, RenderTarget},
     image::ImageSampler,
     prelude::*,
@@ -47,7 +48,6 @@ pub(crate) struct GameRenderSettings {
     pub(crate) temporal_debug: upscaling::temporal::TemporalDebug,
     /// Explicit internal pixel dimensions for controlled profiling, independent of Retina scaling.
     pub(crate) render_size: Option<UVec2>,
-    pub(crate) msaa: Msaa,
     pub(crate) show_ui: bool,
     pub(crate) direct_temporal_output: bool,
 }
@@ -57,9 +57,8 @@ impl Default for GameRenderSettings {
         Self {
             resolution_scale: 0.5,
             temporal_debug: default(),
-            upscaler: upscaling::UpscaleMethod::Auto,
+            upscaler: upscaling::UpscaleMethod::MetalFxTemporal,
             render_size: None,
-            msaa: Msaa::Sample4,
             show_ui: true,
             direct_temporal_output: true,
         }
@@ -329,9 +328,13 @@ fn apply_settings(
             });
     }
 
-    commands
-        .entity(camera.entity)
-        .insert(if temporal { Msaa::Off } else { s.msaa });
+    // MetalFX Temporal resolves edges itself; the other paths take FXAA. World cameras do not
+    // multisample (docs/DECISIONS.md).
+    if temporal {
+        commands.entity(camera.entity).remove::<Fxaa>();
+    } else {
+        commands.entity(camera.entity).insert(Fxaa::default());
+    }
 
     for (entity, mut visibility, saved) in &mut ui_roots {
         if s.show_ui {
@@ -395,12 +398,17 @@ mod tests {
     }
 
     #[test]
-    fn normal_startup_scales_the_world_and_preserves_ui_across_settings_changes() {
+    fn spatial_startup_scales_the_world_and_preserves_ui_across_settings_changes() {
         let mut app = App::new();
-        app.init_resource::<Assets<Image>>().add_plugins((
-            bevy::extract::sync_world::SyncWorldPlugin::<bevy::render::RenderApp>::default(),
-            GameRenderPlugin,
-        ));
+        app.init_resource::<Assets<Image>>()
+            .insert_resource(GameRenderSettings {
+                upscaler: upscaling::UpscaleMethod::MetalFxSpatial,
+                ..default()
+            })
+            .add_plugins((
+                bevy::extract::sync_world::SyncWorldPlugin::<bevy::render::RenderApp>::default(),
+                GameRenderPlugin,
+            ));
         let window = app
             .world_mut()
             .spawn((
@@ -449,7 +457,7 @@ mod tests {
             app.world().get::<ImageNode>(composite).unwrap().image,
             upscaled
         );
-        assert_eq!(app.world().get::<Msaa>(main), Some(&Msaa::Sample4));
+        assert!(app.world().get::<Fxaa>(main).is_some());
         assert_eq!(
             app.world()
                 .resource::<Assets<Image>>()
@@ -507,7 +515,7 @@ mod tests {
             .resource_mut::<GameRenderSettings>()
             .upscaler = upscaling::UpscaleMethod::MetalFxTemporal;
         app.update();
-        assert_eq!(app.world().get::<Msaa>(main), Some(&Msaa::Off));
+        assert!(app.world().get::<Fxaa>(main).is_none());
         assert!(
             app.world()
                 .get::<upscaling::DirectTonemapOutput>(main)
@@ -586,7 +594,7 @@ mod tests {
                 .get::<bevy::core_pipeline::prepass::MotionVectorPrepass>(main)
                 .is_none()
         );
-        assert_eq!(app.world().get::<Msaa>(main), Some(&Msaa::Sample4));
+        assert!(app.world().get::<Fxaa>(main).is_some());
         assert_eq!(
             app.world().get::<ImageNode>(composite).unwrap().image,
             upscaled

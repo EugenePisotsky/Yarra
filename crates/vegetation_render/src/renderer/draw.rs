@@ -42,7 +42,6 @@ pub(super) fn queue(
         (
             Entity,
             &ExtractedView,
-            &Msaa,
             Option<&upscaling::temporal::TemporalView>,
         ),
         With<VegetationView>,
@@ -55,7 +54,7 @@ pub(super) fn queue(
     };
     let draw_function = draw_functions.read().id::<DrawVegetation>();
 
-    for (view_entity, view, msaa, temporal) in &views {
+    for (view_entity, view, temporal) in &views {
         commands.entity(view_entity).remove::<temporal::Pipeline>();
         let (Some(phase), Some(mesh_view_key)) = (
             opaque_phases.get_mut(&view.retained_view_entity),
@@ -80,7 +79,6 @@ pub(super) fn queue(
         let Ok(pipeline) = pipelines.draw_variants.specialize(
             &pipeline_cache,
             VegetationPipelineKey {
-                msaa: *msaa,
                 target_format: view.target_format,
                 view_layout_bits: MeshPipelineViewLayoutKey::from(*mesh_view_key).bits(),
                 environment: environment.is_some(),

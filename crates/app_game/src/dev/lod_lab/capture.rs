@@ -421,7 +421,6 @@ fn run(
             },
             "render": {
                 "resolution_scale": RESOLUTION_SCALES[settings.scale_index],
-                "msaa": format!("{:?}", settings.msaa),
                 "upscaler": format!("{:?}", settings.upscaler),
             },
             "sun": {

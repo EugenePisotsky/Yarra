@@ -3,9 +3,7 @@ use crate::AtmosphereState;
 
 use bevy::{
     asset::AssetEventSystems,
-    mesh::MeshVertexBufferLayoutRef,
-    pbr::{ExtendedMaterial, MaterialExtension, MaterialExtensionKey, MaterialExtensionPipeline},
-    render::render_resource::{RenderPipelineDescriptor, SpecializedMeshPipelineError},
+    pbr::{ExtendedMaterial, MaterialExtension},
     shader::ShaderRef,
 };
 
@@ -34,22 +32,6 @@ pub struct EnvironmentExtension {
 impl MaterialExtension for EnvironmentExtension {
     fn fragment_shader() -> ShaderRef {
         "shaders/lighting/material.wesl".into()
-    }
-
-    /// With 4x MSAA, LOD crossfades cover samples instead of dithering whole pixels
-    /// (`shaders/crossfade.wesl`); the main pass resolves them into a smooth blend.
-    fn specialize(
-        _pipeline: &MaterialExtensionPipeline,
-        descriptor: &mut RenderPipelineDescriptor,
-        _layout: &MeshVertexBufferLayoutRef,
-        key: MaterialExtensionKey<Self>,
-    ) -> Result<(), SpecializedMeshPipelineError> {
-        if key.mesh_key.msaa_samples() == 4
-            && let Some(fragment) = descriptor.fragment.as_mut()
-        {
-            fragment.shader_defs.push("CROSSFADE_SAMPLE_MASK".into());
-        }
-        Ok(())
     }
 }
 

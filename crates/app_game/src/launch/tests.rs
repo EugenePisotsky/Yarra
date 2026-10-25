@@ -102,8 +102,6 @@ fn supported_automation_commands_keep_their_configuration() {
         "60",
         "--profile-window",
         "fullscreen",
-        "--profile-msaa",
-        "4",
         "--profile-grass",
         "full",
     ])

@@ -7,9 +7,6 @@ import package::shaders::environment::params::EnvironmentParams;
 @if(!ATMOSPHERE)
 @group(0) @binding(3) var<uniform> view: View;
 
-@if(MULTISAMPLED)
-@group(1) @binding(0) var depth: texture_depth_multisampled_2d;
-@else
 @group(1) @binding(0) var depth: texture_depth_2d;
 
 @group(1) @binding(1) var<storage, read> environment: EnvironmentParams;

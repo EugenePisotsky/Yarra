@@ -126,10 +126,9 @@ fn prepare(
 
 #[derive(Resource)]
 struct Pipelines {
-    march_layout: [BindGroupLayoutDescriptor; 2],
+    march_layout: BindGroupLayoutDescriptor,
     blur_layout: BindGroupLayoutDescriptor,
-    /// Single-sample and multisampled depth.
-    march: [CachedComputePipelineId; 2],
+    march: CachedComputePipelineId,
     /// Horizontal, then vertical.
     blur: [CachedComputePipelineId; 2],
     repeat: Sampler,
@@ -142,38 +141,32 @@ fn init(
     cache: Res<PipelineCache>,
     device: Res<RenderDevice>,
 ) {
-    let march_layout = std::array::from_fn(|multisampled| {
-        BindGroupLayoutDescriptor::new(
-            "light shaft march",
-            &BindGroupLayoutEntries::sequential(
-                ShaderStages::COMPUTE,
-                (
-                    uniform_buffer::<ViewUniform>(true),
-                    storage_buffer_read_only_sized(
-                        false,
-                        std::num::NonZeroU64::new(std::mem::size_of::<EnvironmentParams>() as u64),
-                    ),
-                    if multisampled == 1 {
-                        texture_depth_2d_multisampled()
-                    } else {
-                        texture_depth_2d()
-                    },
-                    uniform_buffer::<GpuLights>(true),
-                    texture_2d_array(TextureSampleType::Depth),
-                    sampler(SamplerBindingType::Comparison),
-                    // Cloud shadow, forest map, mist map, cloud noise.
-                    texture_2d(TextureSampleType::Float { filterable: true }),
-                    texture_2d(TextureSampleType::Float { filterable: true }),
-                    texture_2d(TextureSampleType::Float { filterable: true }),
-                    texture_3d(TextureSampleType::Float { filterable: true }),
-                    sampler(SamplerBindingType::Filtering),
-                    sampler(SamplerBindingType::Filtering),
-                    texture_storage_2d(TextureFormat::Rgba16Float, StorageTextureAccess::WriteOnly),
-                    texture_storage_2d(TextureFormat::Rgba16Float, StorageTextureAccess::WriteOnly),
+    let march_layout = BindGroupLayoutDescriptor::new(
+        "light shaft march",
+        &BindGroupLayoutEntries::sequential(
+            ShaderStages::COMPUTE,
+            (
+                uniform_buffer::<ViewUniform>(true),
+                storage_buffer_read_only_sized(
+                    false,
+                    std::num::NonZeroU64::new(std::mem::size_of::<EnvironmentParams>() as u64),
                 ),
+                texture_depth_2d(),
+                uniform_buffer::<GpuLights>(true),
+                texture_2d_array(TextureSampleType::Depth),
+                sampler(SamplerBindingType::Comparison),
+                // Cloud shadow, forest map, mist map, cloud noise.
+                texture_2d(TextureSampleType::Float { filterable: true }),
+                texture_2d(TextureSampleType::Float { filterable: true }),
+                texture_2d(TextureSampleType::Float { filterable: true }),
+                texture_3d(TextureSampleType::Float { filterable: true }),
+                sampler(SamplerBindingType::Filtering),
+                sampler(SamplerBindingType::Filtering),
+                texture_storage_2d(TextureFormat::Rgba16Float, StorageTextureAccess::WriteOnly),
+                texture_storage_2d(TextureFormat::Rgba16Float, StorageTextureAccess::WriteOnly),
             ),
-        )
-    });
+        ),
+    );
     let blur_layout = BindGroupLayoutDescriptor::new(
         "light shaft blur",
         &BindGroupLayoutEntries::sequential(
@@ -201,25 +194,17 @@ fn init(
             ..default()
         })
     };
-    let march = std::array::from_fn(|multisampled| {
-        let mut defs = vec![
+    let march = compute(
+        "light shaft march",
+        &march_layout,
+        &march_shader,
+        "march".into(),
+        vec![
             bevy::shader::ShaderDefVal::UInt("SHAFT_SCALE".into(), SCALE),
             bevy::shader::ShaderDefVal::UInt("SHAFT_STEPS".into(), STEPS),
             crate::environment::mist_noise_period_def(),
-        ];
-
-        if multisampled == 1 {
-            defs.push("MULTISAMPLED".into());
-        }
-
-        compute(
-            "light shaft march",
-            &march_layout[multisampled],
-            &march_shader,
-            "march".into(),
-            defs,
-        )
-    });
+        ],
+    );
     let blur = [
         compute(
             "light shaft blur",
@@ -266,7 +251,6 @@ fn draw(
         &ViewUniformOffset,
         &ViewLightsUniformOffset,
         &ViewShadowBindings,
-        &Msaa,
     )>,
     assets: Option<Res<EnvironmentAssets>>,
     buffers: Res<RenderAssets<GpuShaderBuffer>>,
@@ -278,11 +262,10 @@ fn draw(
     shadow_samplers: Res<ShadowSamplers>,
     mut ctx: RenderContext,
 ) {
-    let (targets, depth, offset, light_offset, shadows, msaa) = view.into_inner();
-    let index = usize::from(msaa.samples() > 1);
+    let (targets, depth, offset, light_offset, shadows) = view.into_inner();
     let (Some(assets), Some(march), Some(blur_x), Some(blur_y), Some(view_binding)) = (
         assets,
-        cache.get_compute_pipeline(pipelines.march[index]),
+        cache.get_compute_pipeline(pipelines.march),
         cache.get_compute_pipeline(pipelines.blur[0]),
         cache.get_compute_pipeline(pipelines.blur[1]),
         uniforms.uniforms.binding(),
@@ -306,7 +289,7 @@ fn draw(
     let device = ctx.render_device().clone();
     let march_group = device.create_bind_group(
         "light shaft march",
-        &cache.get_bind_group_layout(&pipelines.march_layout[index]),
+        &cache.get_bind_group_layout(&pipelines.march_layout),
         &BindGroupEntries::sequential((
             view_binding,
             clouds.buffer.as_entire_binding(),

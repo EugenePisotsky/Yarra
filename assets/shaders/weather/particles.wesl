@@ -6,9 +6,6 @@ import package::shaders::environment::params::EnvironmentParams;
 
 @group(0) @binding(1) var<storage, read> environment: EnvironmentParams;
 @group(0) @binding(2) var<uniform> view: View;
-@if(MULTISAMPLED)
-@group(0) @binding(3) var depth: texture_depth_multisampled_2d;
-@else
 @group(0) @binding(3) var depth: texture_depth_2d;
 
 fn pcg(v: u32) -> u32 {

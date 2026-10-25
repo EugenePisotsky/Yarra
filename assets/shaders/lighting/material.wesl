@@ -25,8 +25,6 @@ import bevy_pbr::render::{
 
 @if(VISIBILITY_RANGE_DITHER)
 import bevy_pbr::render::pbr_functions::visibility_range_dither;
-@if(VISIBILITY_RANGE_DITHER && !PREPASS_PIPELINE && CROSSFADE_SAMPLE_MASK)
-import package::shaders::crossfade::crossfade_sample_mask;
 
 @if(TREE_BARK_BLEND) import package::shaders::tree::bark::blend_upper_bark;
 @if(TREE_SNOW) import package::shaders::tree::snow;
@@ -40,18 +38,6 @@ import bevy_core_pipeline::oit::draw::oit_draw;
 @if(FORWARD_DECAL)
 import bevy_pbr::decal::forward::get_forward_decal_info;
 
-// The forward output with the crossfade's covered samples.
-@if(VISIBILITY_RANGE_DITHER && !PREPASS_PIPELINE && CROSSFADE_SAMPLE_MASK)
-struct CrossfadeOutput {
-    @location(0) color: vec4<f32>,
-    @builtin(sample_mask) sample_mask: u32,
-}
-
-@if(VISIBILITY_RANGE_DITHER && !PREPASS_PIPELINE && CROSSFADE_SAMPLE_MASK)
-alias MaterialOutput = CrossfadeOutput;
-@else
-alias MaterialOutput = FragmentOutput;
-
 @fragment
 fn fragment(
 @if(MESHLET_MESH_MATERIAL_PASS)
@@ -60,7 +46,7 @@ fn fragment(
     vertex_output: VertexOutput,
 @if(!MESHLET_MESH_MATERIAL_PASS)
     @builtin(front_facing) is_front: bool,
-) -> MaterialOutput {
+) -> FragmentOutput {
 @if(MESHLET_MESH_MATERIAL_PASS)
     let vertex_output = resolve_vertex_output(frag_coord);
 @if(MESHLET_MESH_MATERIAL_PASS)
@@ -70,13 +56,7 @@ fn fragment(
 
     // If we're in the crossfade section of a visibility range, conditionally
     // discard the fragment according to the visibility pattern.
-@if(VISIBILITY_RANGE_DITHER && !PREPASS_PIPELINE && CROSSFADE_SAMPLE_MASK)
-    let crossfade_mask = crossfade_sample_mask(in.position, in.visibility_range_dither);
-@if(VISIBILITY_RANGE_DITHER && !PREPASS_PIPELINE && CROSSFADE_SAMPLE_MASK)
-    if crossfade_mask == 0u {
-        discard;
-    }
-@elif(VISIBILITY_RANGE_DITHER)
+@if(VISIBILITY_RANGE_DITHER)
     visibility_range_dither(in.position, in.visibility_range_dither);
 
 @if(FORWARD_DECAL)
@@ -209,8 +189,5 @@ fn fragment(
 @if(FORWARD_DECAL)
         out.color.a = min(forward_decal_info.alpha, out.color.a);
 
-@if(VISIBILITY_RANGE_DITHER && !PREPASS_PIPELINE && CROSSFADE_SAMPLE_MASK)
-        return CrossfadeOutput(out.color, crossfade_mask);
-@else
         return out;
 }

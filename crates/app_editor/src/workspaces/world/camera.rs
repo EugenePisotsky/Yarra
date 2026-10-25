@@ -5,6 +5,7 @@ use crate::{
 };
 
 use bevy::{
+    anti_alias::fxaa::Fxaa,
     core_pipeline::prepass::DepthPrepass,
     gizmos::transform_gizmo::TransformGizmoCamera,
     input::{
@@ -82,6 +83,7 @@ pub(crate) fn setup_world_workspace(
         ),
         environment,
         Msaa::Off,
+        Fxaa::default(),
         DepthPrepass,
         transform,
         controller,

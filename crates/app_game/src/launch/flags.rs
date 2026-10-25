@@ -307,7 +307,6 @@ const FLAGS: &[Flag] = &[
         "Keep gameplay pacing; profile FPS is the reference deadline",
     )
     .needs(Needs::Profile),
-    flag("--profile-msaa", "1|2|4", Profile, "MSAA samples (default 4)").needs(Needs::Profile),
     flag("--profile-grass", "full|off", Profile, "Grass").needs(Needs::Profile),
     flag("--profile-objects", "on|off", Profile, "Object draws").needs(Needs::Profile),
     flag("--profile-terrain", "on|off", Profile, "Terrain draws").needs(Needs::Profile),

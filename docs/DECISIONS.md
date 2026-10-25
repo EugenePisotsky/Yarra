@@ -10,9 +10,8 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
 ## Rendering & presentation
 
 - **Look target: 50% render scale + MetalFX Temporal at 60 fps.** *Kept* (user, October 9 and 17).
-  Native is for faster machines; MSAA is off under Temporal, so MSAA-based ideas do not help. The
-  60 fps cap is the default (`cb74dda`); the default upscaler stays `Auto` (MetalFX Spatial):
-  Temporal is chosen in F1 or with `--upscaler metalfx-temporal`.
+  Native is for faster machines. The 60 fps cap is the default (`cb74dda`), and so is Temporal
+  (October 25).
 - **A frame budget decides, with quality tiers.** *Kept* (user, October 25). The budget may
   override a look verdict: work that does not fit its system's line is optimised first, and what
   still does not fit ships as a quality tier. Lower tiers may swap techniques and content, such as
@@ -21,8 +20,10 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
   frame budget under Temporal, so a heavy moment shows a slightly softer image instead of a drop
   from 60 to 40 fps. It helps pixel work, not vertex work. Village has none on the Mac; on PS5 it
   renders fixed 4K checkerboard.
-- **Deferred or visibility-buffer shading may give up MSAA.** *Kept* (user, October 25). FXAA +
-  TAA, as Village uses, looks good, and MSAA is already off under Temporal.
+- **No MSAA; Temporal by default, FXAA otherwise.** *Kept* (user, October 25). Deferred shading
+  cannot multisample, and FXAA + TAA, as Village uses, looks good. MetalFX Temporal is the
+  default; Spatial, Linear and the editor take FXAA. The MSAA colour-store pass, the crossfades'
+  sample masks and the sky composite's per-sample classification went with it.
 - **Pacing by display link plus Metal's minimum presentation interval.** *Kept.* 99.7% of intervals
   on time against 81% with a timer; the Metal interval alone and higher thread QoS were rejected.
   Keep the wgpu-hal patch (`third_party/wgpu-hal/YARRA_PATCH.md`) until upstream has it.
@@ -257,7 +258,7 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
   the card's points turned. The chunk stands at the vertex plus that turn of their offset. Prepass
   4.5 → 2.6 ms, GPU busy 20.2 → 18.4 ms on the storm road.
 - **Timed dissolves, not distance crossfades.** *Kept.* Switch 4% past the band, dissolve over
-  0.6 s, MSAA samples split (`crossfade.wesl`), shadows doubled mid-fade. Distance crossfades drew
+  0.6 s, dithered (`crossfade.wesl`), shadows doubled mid-fade. Distance crossfades drew
   two LODs across a band and popped shadows.
 - **Impostors from a texel per output pixel.** *Kept* (`d76b928`). Spruce 92 → 172 m, LOD2 drawn
   from 240 px; the fixed 200 px hand-off magnified impostors ~2.6×.
