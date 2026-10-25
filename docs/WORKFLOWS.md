@@ -450,6 +450,25 @@ starting it.
 - The Mac is the working machine, not the target (PS5-class hardware at 60 fps): look for
   headroom and real work, not perfect play on the Mac.
 
+### Benchmark and frame budget
+
+```sh
+cargo build --release -p yarra-app-game
+python3 tools/bench.py --note "what this measures"                 # all views, ~3 min each
+python3 tools/bench.py --views meadow,forest-pine --note "grass off" -- --profile-grass off
+```
+
+`tools/frame_budget.toml` holds the frame budget (GPU busy ms per frame at the play setup with
+the GPU at Maximum) as lines of passes, and the views it is measured in. Each view runs uncapped
+from 10:00 in its weather; a 3 s Metal System Trace gives each line's ms, printed against its
+budget (`!` over), with fps, CPU main and render preparation. Views run 90 s apart, since about
+six minutes of uncapped load drop the GPU to Medium; a view whose GPU left Maximum anyway is
+flagged and left out of the history. Rows append to `tools/bench_history.csv` with the commit and note: a change's cost is
+the difference from the previous row of the same view, and heat moves a row by a few percent, so
+judge sub-0.3 ms changes by an A/B/A of that view. Flags after `--` reach every run
+(`--profile-grass off`, `--profile-objects off`, `--profile-terrain off` split the opaque line).
+Traces stay in `tmp/bench/` until the next run.
+
 ### Look captures
 
 ```sh

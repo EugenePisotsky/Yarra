@@ -31,3 +31,11 @@ cargo run -p yarra-shader-check
 
 Rendering changes are judged in the running game against captures of the same views; see
 [docs/WORKFLOWS.md](docs/WORKFLOWS.md).
+
+## Frame budget
+
+The frame has a GPU budget, split into lines in `tools/frame_budget.toml`. A change that adds
+per-pixel, per-vertex or per-instance work states its cost against its line, measured with
+`python3 tools/bench.py` (the commit message quotes the before and after rows). A line over
+budget is optimised in the same system, or the excess ships as a quality tier; a look verdict
+does not exempt it.

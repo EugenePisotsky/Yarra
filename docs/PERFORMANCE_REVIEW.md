@@ -79,16 +79,33 @@ cost is in every view before a tree, blade or rock is drawn.
 
 ### The views that matter
 
-| View (play setup unless noted) | GPU busy |
-| --- | ---: |
-| Empty meadow (100% 1080p) | 8.2 ms |
-| Meadow with grass | 11.7 ms |
-| Pine forest | 15.3 ms |
-| Storm spruce road (23.0 before this week's wind work) | 18.4 ms |
+The benchmark's baseline (`tools/bench.py`, October 25, commit `fdff35c`): play setup, 10:00,
+GPU at its Maximum state throughout. Budget 12.5 ms (`tools/frame_budget.toml`).
+
+| View | GPU busy | Over budget |
+| --- | ---: | --- |
+| meadow | 12.2 ms | sky and air 1.9, upscale and post 3.8, grass 2.7 |
+| start | 13.7 ms | opaque 4.7, sky and air 2.0, upscale and post 3.8, grass 2.1 |
+| forest-pine | 14.2 ms | sky and air 3.2, upscale and post 3.9, prepass 1.0 |
+| storm-road (snow-lab, storm) | 12.3 ms | sky and air 2.4, upscale and post 3.8, prepass 0.8 |
+| mountain-hamlet | 12.0 ms | sky and air 4.0, upscale and post 3.7 |
+| brook-mouth | 11.6 ms | sky and air 3.1, upscale and post 3.7 |
+
+Run back to back, the same views took 17–39% longer once about six minutes of full load had
+dropped the GPU to its Medium state (storm-road 17.1 ms, mountain-hamlet 14.1). The earlier
+figures of 15.3 ms (pine forest) and 18.4 ms (storm road) were most likely taken in that state.
+In play the Mac reaches it within minutes, so a view at 12.5 ms on the bench runs at 15–17 ms
+while jogging: the drop to 40 fps the player feels. Dynamic resolution is the Mac's answer; the
+budget is the target's.
 
 60 fps on the Mac needs about 14 ms busy (about 2.6 ms of every frame is idle, 1.4 of it waiting on
-MetalFX), and views above ~12.5 ms push the Mac into its Medium GPU clock. The 60 fps cap shows
-only 60, 40 or 30 fps, so a 1–2 ms win in an 18 ms view changes nothing the player sees.
+MetalFX). The 60 fps cap shows only 60, 40 or 30 fps, so a 1–2 ms win changes nothing the player
+sees unless it crosses that line.
+
+Two lines exceed the budget in every view. Sky and air: the composite (1.1–1.9 ms) and Bevy's
+atmosphere tables (0.45 ms) alone are over it; the cloud volume's 1.0–1.5 ms is mostly time it
+shares with the opaque pass, which the even split charges to it. Upscale and post: MetalFX's own
+2.2 ms, then bloom (0.9), exposure, tone mapping and UI at the 7.5 Mpx output size.
 
 ## The short answer
 
@@ -288,27 +305,26 @@ anything is built; gains are estimates until that check runs.
 
 The Village numbers move 4 and 5 ahead of 3. The fixed cost every view pays (terrain shading and
 sun visibility per fragment) already exceeds Village's densest frame, while tree work matters only
-in forests. Direction 2's check (hours) still comes early.
+in forests. Direction 2's check (hours) still comes early. The baseline adds that sky and air and
+the output end are over budget in every view, and their first steps are small: the atmosphere
+tables at Unreal's sizes, updated when the sun moves (about −0.35 ms), and bloom and exposure
+before the upscaler at the internal size (about −0.8 ms). They come first.
 
-1. **A frame budget and an unattended benchmark** (process, days). A budget table for the play setup
-   at the Mac's full clock that maps to PS5 60 fps, for example: upscaler, post and UI 2.5 ms; sky,
-   air and clouds 1.0; terrain 2.0; trees 2.5; grass 1.5; all shadows 1.5; characters, water and
-   particles 0.5; reserve 0.5; 12 ms in all. A `--bench` mode steps the frame clock through a fixed
-   set of views (meadow, pine forest, storm road, mountain hamlet, journey, brook mouth), records
-   ms per pass normalised to a fixed-size pass plus clock-free counts, appends to a tracked CSV, and
-   flags any system over its line. AGENTS.md gains a rule: a change that adds per-pixel,
-   per-vertex or per-instance work states its counts and benchmark change against its system's
-   line, and a change over the line finds savings in the same system or ships as a quality tier.
+1. **A frame budget and an unattended benchmark.** *Built* (October 25): `tools/frame_budget.toml`,
+   `tools/bench.py`, the history in `tools/bench_history.csv`, and the cost rule in AGENTS.md
+   ([Workflows](WORKFLOWS.md#benchmark-and-frame-budget)). Per-system costs inside the opaque pass
+   come from runs with `--profile-objects off` or `--profile-terrain off`.
 2. **Rebuild the tree geometry** (content, days). Weld with per-vertex tangents (cards are planar,
    so the look does not change), order for the vertex cache (meshoptimizer), quantise the vertex to
    ~32–48 B with per-card and per-limb data in a per-form buffer, bring LOD1 and LOD2 to budget
    (LOD2 ≤ ~500 triangles; snow loads at LOD0, coarse at LOD1), and add kit validators for vertices
-   per triangle, bytes per vertex and triangles per pixel at the switch distance. Estimate: storm road
-   −3.5 to −5 ms, pine forest −2 to −3. *Check first:* weld `spruce_snow` alone and A/B the storm road.
+   per triangle, bytes per vertex and triangles per pixel at the switch distance. Estimate: a third to
+   half of the trees' vertex work, about −0.7 to −1.5 ms in forest-pine. *Check first:* weld
+   `spruce_snow` alone and A/B the storm road.
 3. **Pose each tree vertex once a frame** (medium). A compute pass writes posed positions (this frame
    and the last) for the instances any view draws, or a limb palette the vertex shader reads; every
    pass fetches instead of recomputing, and the previous pose is read, not recomputed. Estimate
-   −1.5 to −3 ms in forests, overlapping direction 2. *Check first:* the rest-pose wind stub on the
+   −0.5 to −1.5 ms in forests, overlapping direction 2. *Check first:* the rest-pose wind stub on the
    storm road again, now that this week's fixes are in; under 1 ms means skip it.
 4. **Shade the terrain once per pixel, then cache its material** (weeks). First a deferred terrain
    pass: the terrain draws depth (and a tag) only, then one full-screen or compute pass reconstructs
@@ -316,7 +332,7 @@ in forests. Direction 2's check (hours) still comes early.
    into a material kernel and a lighting kernel for occupancy. Then a camera-centred material
    clipmap (a virtual texture without feedback, so turning costs nothing) caching ranking, blend,
    anti-tiling, macro variation, normals and static wear; rut parallax, prints, rain, frost, cliff
-   sides and lighting stay per pixel. Estimate: terrain from 4–4.7 to about 1–2 ms. *Check first:*
+   sides and lighting stay per pixel. Estimate: terrain from 4.7 ms at 100% 1080p (about 2.5 at the play setup) to about 1–2 ms. *Check first:*
    Metal GPU counters on the empty meadow's main pass (occupancy and limiters); `LEAF_RANGE` 96 m
    (overshading); MSAA off; stubs that split decode from splat.
 5. **Sun visibility once per pixel, and shadows at their own rates** (weeks). A compute pass after
@@ -325,7 +341,7 @@ in forests. Direction 2's check (hours) still comes early.
    rates: the near one every frame, the two far ones on alternate frames, the far one with frozen
    wind and lower caster LOD, the sun direction quantised (it moves 0.3°/s) and cascade fits
    texel-snapped. Estimate: mask −0.5 to −1 ms; cadence a third of the cascades' vertex work, about
-   −2 ms on the storm road. Cadence means owning the directional shadow path, which Bevy's cascades
+   −0.3 to −0.5 ms in forests. Cadence means owning the directional shadow path, which Bevy's cascades
    cannot schedule. *Check first:* the per-cascade triangle split in `TREE_GPU_COUNTS` on the storm
    road (under 40% in the far two means skip cadence); the terrain fragment's register count.
 6. **Draw less: occlusion** (medium). Hi-Z occlusion in the tree LOD compute from the previous

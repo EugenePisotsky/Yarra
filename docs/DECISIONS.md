@@ -462,6 +462,11 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
 
 ## Performance & measurement method
 
+- **A frame budget of 12.5 ms GPU at the play setup.** *Kept* (October 25). Its lines, one per
+  group of passes, are in `tools/frame_budget.toml`; `tools/bench.py` measures six views against
+  them and keeps the history ([Workflows](WORKFLOWS.md#benchmark-and-frame-budget)). The play
+  setup's 1728×1084 is about what a PS5 renders at 50% of 4K, and Resident Evil Village draws its
+  dense outdoor frames in 7–11 ms of this Mac at 1920×1080.
 - **The target is PS5-class hardware at 60 fps; the MacBook is where the work happens.** *Kept*
   (user, October 23). Low settings for phones and handhelds (iPhone, Switch 2, Steam Deck) may
   follow. Optimise real work wherever measuring finds it; a drop that is only the Mac's GPU clock

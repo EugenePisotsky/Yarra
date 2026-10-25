@@ -1,0 +1,7 @@
+date,commit,note,flags,view,frames,maximum_share,fps,cpu_main_ms,render_prep_ms,gpu_busy_ms,opaque,prepass and motion,shadows,grass,sky and air,upscale and post,world compute,particles,engine
+2026-10-25T13:05,fdff35c,baseline before the structural work,,meadow,244,1.00,71.0,2.32,3.15,12.23,2.77,0.21,0.14,2.69,1.88,3.82,0.12,0.08,0.51
+2026-10-25T13:05,fdff35c,baseline before the structural work,,start,225,1.00,63.1,2.22,3.28,13.68,4.70,0.23,0.14,2.05,2.01,3.76,0.11,0.08,0.60
+2026-10-25T13:05,fdff35c,baseline before the structural work,,forest-pine,212,1.00,62.8,2.52,3.66,14.22,3.25,1.00,1.13,0.92,3.18,3.86,0.11,0.14,0.64
+2026-10-25T13:15,fdff35c+,baseline before the structural work,,storm-road,248,1.00,71.2,2.01,2.69,12.32,3.64,0.77,0.53,0.14,2.41,3.82,0.10,0.52,0.38
+2026-10-25T13:15,fdff35c+,baseline before the structural work,,mountain-hamlet,232,1.00,71.5,2.05,2.34,11.95,2.60,0.60,0.30,0.26,3.97,3.67,0.13,0.06,0.35
+2026-10-25T13:15,fdff35c+,baseline before the structural work,,brook-mouth,262,1.00,72.3,2.33,3.25,11.63,2.30,0.52,0.74,0.51,3.11,3.72,0.10,0.07,0.54
