@@ -5,7 +5,7 @@
 // the vertex budget is fixed per LOD bin.
 import package::shaders::vegetation::blade::{
     Curve, MAXIMUM_WIDTH_SCALE, normalize3_or, cubic_bezier, cubic_bezier_derivative,
-    decode_instance, unpack_pose,
+    decode_instance, unpack_pose, canopy_height,
 };
 import package::shaders::vegetation::draw::bindings::{
     VertexOutput, instances, types, camera, poses,
@@ -26,8 +26,6 @@ const TARGET_HALF_PIXELS: f32 = 0.75;
 const SUBPIXEL_FADE: vec2<f32> = vec2(5.0, 15.0);
 // Blade shape across its length: full width low down, narrowing to the point.
 const TAPER: f32 = 0.55;
-// The field's canopy top, as a share of the type's tallest blades (which lean over).
-const CANOPY_SHARE: f32 = 0.55;
 
 // Twin types (Ghost of Tsushima's doubled blades) share one blade's strip between two blades in
 // a V from one root: the strip runs down the first blade from its tip to the root, then up the
@@ -145,24 +143,13 @@ fn blade_vertex(batch_vertex: u32, batch: u32) -> BladeVertex {
     output.world_position = position;
     output.world_normal = normal;
     output.side = side;
-    output.blade_t = t;
-    output.blade_u = side_sign;
     let root_color = grass.root.xyz * blade.brightness;
     let tip_color = select(grass.tip.xyz, grass.dry_tip.xyz, blade.dry) * blade.brightness;
     output.color = mix(root_color, tip_color, smoothstep(0.0, 0.55, t));
-    // Deep in the canopy the blades shade each other: a lying tip near the ground is as dark as
-    // a root, and blades rise out of the dark.
-    let canopy_height = max(grass.size.y * CANOPY_SHARE, 0.02);
     // Pressed grass lies in the open, its neighbours pressed down with it, so it is lit.
-    let depth = clamp(1.0 - dot(position - b.root, blade.up) / canopy_height, 0.0, 1.0)
+    let depth = clamp(1.0 - dot(position - b.root, blade.up) / canopy_height(grass), 0.0, 1.0)
         * (1.0 - 0.8 * pose.pressed);
-    output.material = vec4<f32>(
-        grass.material.y,
-        grass.material.z,
-        grass.material.x,
-        mix(0.15, 1.0, smoothstep(0.0, 0.8, 1.0 - depth)),
-    );
-    output.canopy = vec2<f32>(depth, canopy_height);
-    output.clump_normal = blade.clump_normal;
+    output.blade = vec3(t, side_sign, depth);
+    output.constants = blade.clump_normal | (b.type_index << 16u);
     return BladeVertex(output, previous);
 }

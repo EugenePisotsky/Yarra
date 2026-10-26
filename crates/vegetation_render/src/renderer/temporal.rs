@@ -39,7 +39,10 @@ impl State {
 pub(super) fn layout() -> BindGroupLayoutDescriptor {
     BindGroupLayoutDescriptor::new(
         "grass temporal data",
-        &BindGroupLayoutEntries::single(ShaderStages::VERTEX, uniform_buffer_sized(false, None)),
+        &BindGroupLayoutEntries::single(
+            ShaderStages::VERTEX_FRAGMENT,
+            uniform_buffer_sized(false, None),
+        ),
     )
 }
 

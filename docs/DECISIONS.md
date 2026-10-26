@@ -228,13 +228,22 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
 - **Ghost of Tsushima/Yōtei look.** *Kept* (`73efae0`, `c4813e5`). Lying blades, twin blades in a V
   from one strip (+1.4 ms, accepted), tussock patches, canopy darkness by depth, noise shadow lines.
 - **Blades bent once per frame, before drawing.** *Kept.* A compute pass (`pose.wesl`) bends each
-  drawn blade by trampling and the wind, this frame and last, into 48-byte records: the curve in
-  halves and last frame's as its change, so motion vectors keep their precision. The vertex
-  shader only evaluates the curves. Every vertex used to bend its blade twice: at the start view
+  drawn blade by trampling and the wind, this frame and last, into 64-byte records: the curve in
+  halves and last frame's as its change, so motion vectors keep their precision, then what else
+  its vertices need of it (`DrawnBlade`). The vertex shader only evaluates the curves. Every vertex used to bend its blade twice: at the start view
   grass took 4.5 of 17.1 ms GPU busy (12.7 without grass; 15.3 bending once, 15.7 without wind).
   Now start 17.1 → 14.5 ms (47 → 52 fps uncapped) and the journey route 16.5 → 13.6 ms (48 → 53
   fps); the pass costs 0.14 ms. Overcast captures at fixed exposure match the old draw to
-  0.4/255. The records take 88 MiB at the arenas' full capacity.
+  0.4/255. The records take 112 MiB at the arenas' full capacity.
+- **A grass vertex carries little.** *Kept* (October 26). On Apple's GPUs each vertex's outputs
+  are written out for the tiler, and that, not the vertex math, was most of the blades' vertex
+  stage: the same math with one output took the meadow's 1.09M vertices 0.18 ms, against 0.58
+  with 35 floats. They output 23: what is the same along a blade travels as one flat word, and
+  the fragment takes its type's material, its occlusion from the canopy depth and this frame's
+  screen position for motion from its own. Vertex 0.58 → 0.32 ms, fragments 0.64 → 0.56 (less to
+  interpolate). Blades are drawn 32 to an instance (one to an instance, the same vertices took
+  0.73 against 0.58 ms) and take their per-blade values from the pose record (0.80 → 0.73).
+  Triangle strips took 2.28 ms.
 - **Critically damped trampling.** *Kept.* Instant presses (no animation) and underdamped springs
   (read as shaking) were rejected.
 - **Gusts change amplitude only; weather scales the phase clock.** *Kept.* A gusting rate times the

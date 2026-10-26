@@ -14,8 +14,8 @@ import package::shaders::environment::maps::{FRESH_SNOW, fresh_snow_frost};
 import bevy_pbr::atmosphere::functions::{clamp_to_surface, calculate_visible_sun_ratio};
 
 import package::shaders::vegetation::types::PI;
-import package::shaders::vegetation::blade::{normalize3_or, value_noise};
-import package::shaders::vegetation::draw::bindings::{VertexOutput, camera};
+import package::shaders::vegetation::blade::{canopy_height, normalize3_or, value_noise};
+import package::shaders::vegetation::draw::bindings::{VertexOutput, camera, types};
 
 import bevy_pbr::render::{
     pbr_lighting as pbr_lighting,
@@ -125,7 +125,8 @@ struct GrassSurface {
     albedo: vec3<f32>,
     // 1 at the canopy's top, falling deep in it.
     occlusion: f32,
-    // The face toward the viewer, rounded across the blade's width, and the clump's stable normal.
+    // The face toward the viewer, rounded across the blade's width, and the clump's stable normal
+    // (which drawing carries packed: draw.wesl `fragment`).
     flat_normal: vec3<f32>,
     rounded_normal: vec3<f32>,
     clump_normal: vec3<f32>,
@@ -155,13 +156,15 @@ fn surface(input: VertexOutput) -> GrassSurface {
         input.side - s.flat_normal * dot(input.side, s.flat_normal),
         vec3<f32>(1.0, 0.0, 0.0),
     );
-    let angle = clamp(input.blade_u, -1.0, 1.0) * ROUNDING;
+    let angle = clamp(input.blade.y, -1.0, 1.0) * ROUNDING;
     s.rounded_normal = normalize3_or(s.flat_normal * cos(angle) + across * sin(angle), s.flat_normal);
-    s.clump_normal = normalize3_or(input.clump_normal, vec3<f32>(0.0, 1.0, 0.0));
-    let t = input.blade_t;
-    s.occlusion = clamp(input.material.w, 0.0, 1.0);
-    s.canopy_depth = input.canopy.x;
-    s.canopy_height = input.canopy.y;
+    let grass = types[input.constants >> 16u];
+    let t = input.blade.x;
+    s.canopy_depth = input.blade.z;
+    s.canopy_height = canopy_height(grass);
+    // Deep in the canopy the blades shade each other: a lying tip near the ground is as dark as
+    // a root, and blades rise out of the dark.
+    s.occlusion = mix(0.15, 1.0, smoothstep(0.0, 0.8, 1.0 - s.canopy_depth));
 
     // Wet blades darken like wet PBR surfaces, a little less since grass is already dark.
     s.albedo = input.color;
@@ -176,9 +179,9 @@ fn surface(input: VertexOutput) -> GrassSurface {
     }
 
     // Translucent mostly above the root; glossy along the middle of the blade.
-    s.transmission = input.material.y * smoothstep(0.1, 0.6, t);
-    s.sheen = input.material.z * smoothstep(0.05, 0.45, t) * (1.0 - 0.35 * t);
-    let roughness = clamp(input.material.x, 0.08, 1.0);
+    s.transmission = grass.material.z * smoothstep(0.1, 0.6, t);
+    s.sheen = grass.material.x * smoothstep(0.05, 0.45, t) * (1.0 - 0.35 * t);
+    let roughness = clamp(grass.material.y, 0.08, 1.0);
     s.blade_alpha = roughness * roughness;
     let normal_width = fwidth(s.rounded_normal);
     let variance = clamp(dot(normal_width, normal_width), 0.0, 0.5);

@@ -90,8 +90,8 @@ struct BladePose {
     curve: vec4<u32>,
     change: vec4<u32>,
     frame: vec4<u32>,
-    // Halves of the thinned width's fade and coverage, snorm16 xz of the up axis and of the
-    // clump normal, and 1 where the tips are dry.
+    // Halves of the thinned width's fade and coverage, snorm16 xz of the up axis, the clump
+    // normal in the G-buffer's 16 bits, and 1 where the tips are dry.
     drawn: vec4<u32>,
 }
 

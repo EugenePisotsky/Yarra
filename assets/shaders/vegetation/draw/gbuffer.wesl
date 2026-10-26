@@ -25,13 +25,14 @@ struct GrassTexels {
     own: vec4<f32>,
 }
 
-fn pack(s: GrassSurface) -> GrassTexels {
+// `clump_normal`: the surface's, in its 16 bits as drawing carries it.
+fn pack(s: GrassSurface, clump_normal: u32) -> GrassTexels {
     return GrassTexels(
         vec4(
             pack_unorm4(vec4(pow(saturate(s.albedo), vec3(1.0 / 2.2)), s.occlusion)),
             pack_normal(s.flat_normal) | (MODEL_GRASS << 24u),
             pack_normal(s.rounded_normal) | (byte(sqrt(s.sheen_alpha)) << 24u),
-            pack_normal16(s.clump_normal) | (byte(sqrt(s.blade_alpha)) << 16u)
+            (clump_normal & 0xffffu) | (byte(sqrt(s.blade_alpha)) << 16u)
                 | (byte(s.sheen * 0.5) << 24u),
         ),
         vec4(s.transmission, s.canopy_depth, s.canopy_height / CANOPY_RANGE, 0.0),

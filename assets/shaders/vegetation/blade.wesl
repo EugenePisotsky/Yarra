@@ -6,6 +6,7 @@ import package::shaders::vegetation::types::{
     DENSITY_FADE_BAND,
 };
 import package::shaders::vegetation::random::{hash32, random01};
+import package::shaders::lighting::gbuffer::pack_normal16;
 import package::shaders::weather::gust::{gust, wind_frame};
 
 // Largest lean of the tip from upright, at tilt 1, in radians: nearly lying on the ground.
@@ -150,6 +151,13 @@ fn rest_blade(b: BladeInstance, grass: GrassType) -> Blade {
     return blade;
 }
 
+// The field's canopy top, as a share of the type's tallest blades (which lean over).
+const CANOPY_SHARE: f32 = 0.55;
+
+fn canopy_height(grass: GrassType) -> f32 {
+    return max(grass.size.y * CANOPY_SHARE, 0.02);
+}
+
 // Thinned populations widen their survivors sublinearly, up to this much.
 const MAXIMUM_WIDTH_SCALE: f32 = 2.25;
 const COVERAGE_WIDTH_EXPONENT: f32 = 0.35;
@@ -163,8 +171,8 @@ struct DrawnBlade {
     // survivors widen (`coverage`).
     fade: f32,
     coverage: f32,
-    // The clump's stable normal: unresolved blades take their highlight from it.
-    clump_normal: vec3<f32>,
+    // The clump's stable normal in the G-buffer's 16 bits (draw/bindings.wesl `VertexOutput`).
+    clump_normal: u32,
     brightness: f32,
     dry: bool,
 }
@@ -196,7 +204,7 @@ fn drawn_blade(b: BladeInstance, blade: Blade) -> DrawnBlade {
     drawn.coverage = clamp(
         pow(1.0 / max(b.density, 0.125), COVERAGE_WIDTH_EXPONENT), 1.0, MAXIMUM_WIDTH_SCALE,
     );
-    drawn.clump_normal = clump_normal(b.surface_normal, b.clump);
+    drawn.clump_normal = pack_normal16(clump_normal(b.surface_normal, b.clump));
     drawn.brightness = blade.brightness;
     drawn.dry = blade.dry;
     return drawn;
@@ -368,8 +376,8 @@ fn halves(a: f32, b: f32) -> u32 {
     return pack2x16float(vec2(a, b));
 }
 
-// `before` lies in last frame's render space, about its own root. Up and the clump normal point
-// upward, so their x and z give them.
+// `before` lies in last frame's render space, about its own root. Up points upward, so its x and
+// z give it.
 fn pack_pose(
     now: Curve, before: Curve, side: vec3<f32>, pressed: f32, drawn: DrawnBlade,
 ) -> BladePose {
@@ -385,7 +393,7 @@ fn pack_pose(
     pose.frame = vec4(halves(d3.y, d3.z), pack2x16snorm(side.xy), pack2x16snorm(vec2(side.z, pressed)),
         halves(drawn.width, drawn.brightness));
     pose.drawn = vec4(halves(drawn.fade, drawn.coverage), pack2x16snorm(drawn.up.xz),
-        pack2x16snorm(drawn.clump_normal.xz), u32(drawn.dry));
+        drawn.clump_normal, u32(drawn.dry));
     return pose;
 }
 
@@ -416,7 +424,7 @@ fn unpack_pose(pose: BladePose, root: vec3<f32>) -> Pose {
     p.drawn.width = width_brightness.x;
     p.drawn.fade = thinning.x;
     p.drawn.coverage = thinning.y;
-    p.drawn.clump_normal = upward(unpack2x16snorm(pose.drawn.z));
+    p.drawn.clump_normal = pose.drawn.z;
     p.drawn.brightness = width_brightness.y;
     p.drawn.dry = pose.drawn.w != 0u;
     return p;

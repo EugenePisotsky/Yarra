@@ -79,3 +79,5 @@ date,commit,note,flags,view,frames,gpu_state,fps,cpu_main_ms,render_prep_ms,gpu_
 2026-10-26T13:27,d81832b+,static atmosphere tables rebuilt only on change,,start,307,Maximum,82.9,2.06,3.66,10.03,2.42,1.08,0.14,0.12,1.18,1.10,3.05,0.11,0.08,0.74
 2026-10-26T17:57,204894d+,"grass blades drawn 32 to an instance, drawn values posed once",,meadow,338,Maximum,94.0,2.20,3.04,8.84,1.61,1.01,0.13,0.12,1.30,1.05,3.01,0.12,0.08,0.40
 2026-10-26T17:57,204894d+,"grass blades drawn 32 to an instance, drawn values posed once",,start,283,Maximum,84.3,1.99,2.96,9.71,2.41,1.08,0.13,0.12,1.25,1.09,3.02,0.11,0.08,0.42
+2026-10-26T18:20,811c341+,"grass vertices output 23 floats, not 35",,meadow,316,Maximum,99.0,2.13,2.93,8.53,1.62,1.02,0.13,0.13,0.87,1.04,3.02,0.12,0.08,0.50
+2026-10-26T18:20,811c341+,"grass vertices output 23 floats, not 35",,start,283,Maximum,85.6,2.02,3.08,9.46,2.46,1.06,0.13,0.12,0.85,1.08,3.02,0.11,0.08,0.55

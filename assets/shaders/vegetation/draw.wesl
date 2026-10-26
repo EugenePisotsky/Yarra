@@ -19,10 +19,9 @@ fn vertex(
         let last_camera = temporal_grass.previous;
         let shift = camera.render_origin.xy - last_camera.render_origin.xy;
         let previous = blade.previous + vec3(shift.x, 0.0, shift.y);
-        output.current_clip = output.clip_position;
-        output.previous_clip = last_camera.clip_from_world * vec4(previous, 1.0);
-        let jitter = temporal_grass.raster_shift.xy * output.current_clip.w;
-        output.clip_position = output.current_clip + vec4(jitter, 0.0, 0.0);
+        output.previous_clip = (last_camera.clip_from_world * vec4(previous, 1.0)).xyw;
+        let jitter = temporal_grass.raster_shift.xy * output.clip_position.w;
+        output.clip_position += vec4(jitter, 0.0, 0.0);
     }
     return output;
 }
@@ -34,15 +33,20 @@ struct GBufferFragment {
 }
 
 @fragment fn fragment(input: VertexOutput) -> GBufferFragment {
-    let texels = gbuffer::pack(surface(input));
+    let texels = gbuffer::pack(surface(input), input.constants);
     var output: GBufferFragment;
     output.surface = texels.surface;
     output.own = texels.own;
     @if(TEMPORAL_GRASS) {
+        // Where the fragment lies on screen this frame, unjittered.
+        let size = camera.projection.yz;
+        let raster = vec2(input.clip_position.x / size.x * 2.0 - 1.0,
+            1.0 - input.clip_position.y / size.y * 2.0);
+        let current = raster - temporal_grass.raster_shift.xy;
         output.motion = vec2(0.0);
-        if input.current_clip.w > 0.00001 && input.previous_clip.w > 0.00001 {
-            output.motion = (input.current_clip.xy / input.current_clip.w
-                - input.previous_clip.xy / input.previous_clip.w) * vec2(0.5, -0.5);
+        if input.previous_clip.z > 0.00001 {
+            output.motion = (current - input.previous_clip.xy / input.previous_clip.z)
+                * vec2(0.5, -0.5);
         }
     }
     return output;
