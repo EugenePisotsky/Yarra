@@ -292,6 +292,14 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
   sway's lag without `atan2`, and turns its cards by sine and cosine, not by angle. The main pass
   poses a vertex once for its position, normal and tangent. GPU busy 23.0 → 20.2 ms; with no wind
   at all it is 18.4.
+- **A tree's limbs posed once a frame.** *Rejected* (October 26). In the pine forest the wind is
+  about 0.4 of the G-buffer pass's 0.82 ms of vertex time (0.42 with every tree at rest) and
+  about 0.28 ms more in the shadow cascades; the storm road and the hamlet lose about 0.3 ms in
+  all. A compute pass posing each mesh-drawn tree's limbs (6 to 85 per form) once a frame, which
+  their vertices read by a limb number added to the meshes, cut vertex time by 0.07–0.09 ms in
+  those views and itself cost 0.04 ms: GPU busy did not move. A limb's frame is a fifth of the
+  wind's cost and the cards' turns and flutter another 0.05 ms; last frame's pose, for motion
+  vectors, is the largest part (one pose: 0.82 → 0.59 ms).
 - **A snow chunk moves with its vertex's card, not by a pose of its own.** *Kept* (October 24).
   The snowy spruces' prepass posed each vertex and its chunk's middle, now and a frame earlier:
   four inlined poses, a 720-byte register spill, and 6% vertex occupancy for every vertex,
