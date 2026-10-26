@@ -35,6 +35,8 @@ from summarize_gpu_intervals import performance_states, summarize  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GAME = os.path.join(ROOT, "target/release/yarra-app-game")
+# Runs the game from its app bundle, under Game Mode as `cargo run` does.
+RUNNER = os.path.join(ROOT, "tools/cargo_runner_macos.sh")
 BUDGET = os.path.join(ROOT, "tools/frame_budget.toml")
 HISTORY = os.path.join(ROOT, "tools/bench_history.csv")
 WORK = os.path.join(ROOT, "tmp/bench")
@@ -76,6 +78,7 @@ def record(view, extra, budget):
     subprocess.run(["rm", "-rf", trace, *tables.values()], check=True)
 
     command = [
+        RUNNER,
         GAME,
         "--start-view", os.path.join(ROOT, view["file"]),
         "--profile-seconds", str(budget["profile_seconds"]),

@@ -1,0 +1,3 @@
+# The game runs from an app bundle on macOS, for Game Mode (tools/cargo_runner_macos.sh).
+[target.'cfg(target_os = "macos")']
+runner = "tools/cargo_runner_macos.sh"

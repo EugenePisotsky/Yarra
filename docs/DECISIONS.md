@@ -571,6 +571,14 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
   fresh start it stayed at Maximum, 12.5 ms a frame. Streaming CPU (1.6 against 1.4 cores),
   memory and the frame's work were unchanged. Read the performance state before chasing a drop;
   headroom below the frame budget is the lever.
+- **The game runs as an app macOS knows is a game.** *Trial* (October 27). Village runs with Game
+  Mode on and, the user finds, never leaves its fast clocks however long it runs; ours left them
+  after a minute. macOS gives Game Mode only to a fullscreen app whose bundle names a game category
+  (`LSApplicationCategoryType`): a bare binary is not one, and an Info.plist embedded in the
+  executable was not enough. `cargo run` and the bench start the game from `Yarra.app` beside its
+  binary (`tools/cargo_runner_macos.sh`, `crates/app_game/Info.plist`); `gamepolicyd` logs "Game
+  mode enabled" within a second of fullscreen, whether started by cargo or by `open`. Whether it
+  keeps the clocks up in long play is the user's test.
 - **The Metal HUD's GPU time is not a cost.** *Kept.* macOS clocks the GPU to the load (light scenes
   ran passes 2× slower). Budget in clock-free counts; time passes in Metal System Trace against a
   reference pass.

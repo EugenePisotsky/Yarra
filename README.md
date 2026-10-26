@@ -38,3 +38,7 @@ line: `target/release/yarra-world-cook cook`.
 
 In the game, move with WASD, a gamepad or a ground click; orbit with right-drag or the right
 stick. **F1** opens the performance panel. `--help` lists every launch option.
+
+On macOS `cargo run` starts the game from an app bundle beside its binary
+(`target/release/Yarra.app`), which macOS treats as a game and gives Game Mode;
+`open target/release/Yarra.app` launches the same bundle as an app.
