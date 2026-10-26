@@ -523,10 +523,15 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
     // Worn soil is darker and browner than loose soil of the same kind.
     let worn = mix(vec3(1.0), vec3(0.76, 0.7, 0.64), compacted) * (1.0 - 0.12 * rim);
     let color = (a.color.rgb * w.x + b.color.rgb * w.y + c.color.rgb * w.z) * worn;
-    // Fresh snow frosts the bare ground (snow surfaces are snow already).
-    let breakup = value_noise((in.world_position.xz + surface_origin()) / 3.0);
-    let frost = fresh_snow_frost(fresh_snow_at(in.world_position.xz), breakup, ground_normal.y,
-        distance_to_camera) * (1.0 - soft);
+    // Fresh snow frosts the bare ground (snow surfaces are snow already); its breakup noise is
+    // worked out only where snow lies.
+    let fresh = fresh_snow_at(in.world_position.xz);
+    var frost = 0.0;
+    if fresh > 0.0 {
+        let breakup = value_noise((in.world_position.xz + surface_origin()) / 3.0);
+        frost = fresh_snow_frost(fresh, breakup, ground_normal.y, distance_to_camera)
+            * (1.0 - soft);
+    }
     let local_normal = normalize(a.normal * w.x + b.normal * w.y + c.normal * w.z);
     // World-X tangent with the heightfield's +Z bitangent.
     let t = normalize(vec3(ground_normal.y, -ground_normal.x, 0.0));

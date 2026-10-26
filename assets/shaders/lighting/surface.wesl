@@ -67,10 +67,13 @@ fn rain_shelter(p: vec3<f32>) -> f32 {
 }
 
 /// Rain wetness of a surface: sky-facing surfaces soak fully, vertical ones partly, and
-/// anything under a canopy stays drier.
+/// anything under a canopy stays drier. Dry weather reads no shelter.
 fn surface_wetness(p: vec3<f32>, normal: vec3<f32>) -> f32 {
-    return clamp(environment.weather.x, 0.0, 1.0) * rain_shelter(p)
-        * mix(0.35, 1.0, smoothstep(-0.2, 0.7, normal.y));
+    let wetness = clamp(environment.weather.x, 0.0, 1.0);
+    if wetness <= 0.0 {
+        return 0.0;
+    }
+    return wetness * rain_shelter(p) * mix(0.35, 1.0, smoothstep(-0.2, 0.7, normal.y));
 }
 
 /// x: wetness, y: precipitation intensity.

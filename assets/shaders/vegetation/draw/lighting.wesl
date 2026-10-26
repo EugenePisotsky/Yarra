@@ -170,12 +170,16 @@ fn surface(input: VertexOutput) -> GrassSurface {
     s.albedo = input.color;
     @if(ENVIRONMENT_SURFACE)
     s.albedo *= mix(1.0, 0.7, surface_wetness(input.world_position, vec3<f32>(0.0, 1.0, 0.0)));
-    // Fresh snow frosts the blades' upper halves, most at their tips.
+    // Fresh snow frosts the blades' upper halves, most at their tips; its breakup noise is worked
+    // out only where snow lies.
     @if(ENVIRONMENT_SURFACE) {
-        let breakup = value_noise((input.world_position.xz + surface_origin()) / 3.0);
-        let frost = fresh_snow_frost(fresh_snow_at(input.world_position.xz), breakup, 1.0,
-            distance(camera.camera_position.xyz, input.world_position));
-        s.albedo = mix(s.albedo, FRESH_SNOW, frost * smoothstep(0.35, 1.0, t));
+        let fresh = fresh_snow_at(input.world_position.xz);
+        if fresh > 0.0 {
+            let breakup = value_noise((input.world_position.xz + surface_origin()) / 3.0);
+            let frost = fresh_snow_frost(fresh, breakup, 1.0,
+                distance(camera.camera_position.xyz, input.world_position));
+            s.albedo = mix(s.albedo, FRESH_SNOW, frost * smoothstep(0.35, 1.0, t));
+        }
     }
 
     // Translucent mostly above the root; glossy along the middle of the blade.
