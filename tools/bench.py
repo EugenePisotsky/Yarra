@@ -45,6 +45,9 @@ TABLE = "/trace-toc/run[@number=\"1\"]/data/table[@schema=\"{}\"]"
 CLOCK_PASS = "MetalFX Temporal"
 CLOCK_MAXIMUM_MS = 1.15
 
+# A table's export takes well under a minute.
+EXPORT_SECONDS = 300
+
 Result = collections.namedtuple(
     "Result", "view busy frames state fps main_ms prep_ms lines"
 )
@@ -100,10 +103,15 @@ def record(view, extra, budget):
     subprocess.run(["xcrun", "xctrace", "record", "--template", "Metal System Trace",
                     "--attach", "yarra-app-game", "--time-limit", "3s", "--output", trace],
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # An export now and then never finishes, leaving an empty table behind.
     for schema, path in tables.items():
-        subprocess.run(["xcrun", "xctrace", "export", "--input", trace, "--output", path,
-                        "--xpath", TABLE.format(schema)],
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            subprocess.run(["xcrun", "xctrace", "export", "--input", trace, "--output", path,
+                            "--xpath", TABLE.format(schema)],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           timeout=EXPORT_SECONDS)
+        except subprocess.TimeoutExpired:
+            break
 
     try:
         game.wait(timeout=budget["profile_seconds"] + 60)
@@ -115,7 +123,7 @@ def record(view, extra, budget):
                                            "instruments*.ktrace")):
         os.remove(leftover)
 
-    if not all(os.path.exists(path) for path in tables.values()):
+    if not all(os.path.exists(path) and os.path.getsize(path) > 0 for path in tables.values()):
         print(f"{name}: the trace was not exported")
         return None
     return tables, log_path
