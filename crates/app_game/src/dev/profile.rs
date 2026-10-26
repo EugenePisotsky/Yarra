@@ -20,6 +20,7 @@ pub(crate) struct ProfileSettings {
     pub bloom: bool,
     pub auto_exposure: bool,
     pub fog: bool,
+    pub blowing_snow: bool,
     pub particles: bool,
     pub light_shafts: bool,
     pub tree_touch: bool,
@@ -107,6 +108,7 @@ impl ProfileSettings {
             bloom: args.switch("--profile-bloom")?,
             auto_exposure: args.switch("--profile-auto-exposure")?,
             fog: args.switch("--profile-fog")?,
+            blowing_snow: args.switch("--profile-drift")?,
             particles: args.switch("--profile-particles")?,
             light_shafts: args.switch("--profile-shafts")?,
             tree_touch: args.switch("--profile-tree-touch")?,
@@ -348,6 +350,7 @@ pub(crate) fn apply_runtime_settings(app: &mut App) {
     settings.bloom = profile.bloom;
     settings.auto_exposure = profile.auto_exposure;
     settings.fog = profile.fog;
+    settings.blowing_snow = profile.blowing_snow;
     settings.particles = profile.particles;
     settings.light_shafts = profile.light_shafts;
     settings.tree_touch = profile.tree_touch;

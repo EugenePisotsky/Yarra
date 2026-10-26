@@ -140,6 +140,8 @@ pub(crate) struct RuntimeSettings {
     pub(crate) auto_exposure: bool,
     /// Ground haze and valley mist.
     pub(crate) fog: bool,
+    /// Snow the wind lifts off snow ground.
+    pub(crate) blowing_snow: bool,
     /// Dust motes, seed fluff and falling leaves.
     pub(crate) particles: bool,
     /// Sunbeams through haze, mist and the air under crowns.
@@ -177,6 +179,7 @@ impl Default for RuntimeSettings {
             bloom: true,
             auto_exposure: true,
             fog: true,
+            blowing_snow: true,
             particles: true,
             light_shafts: true,
             hide_terrain: false,
@@ -266,6 +269,7 @@ fn apply_settings(
     atmosphere.bloom = s.bloom;
     atmosphere.auto_exposure = s.auto_exposure;
     atmosphere.low_air = s.fog;
+    atmosphere.blowing_snow = s.blowing_snow;
     atmosphere.particles = s.particles;
     atmosphere.light_shafts = s.light_shafts;
     grass.profile_mode = s.grass_mode();

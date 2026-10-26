@@ -57,6 +57,8 @@ pub struct EnvironmentAssets {
     pub terrain_heights: Handle<Image>,
     /// The ground's albedo around the camera; see `crate::ground_albedo`.
     pub ground_albedo: Handle<Image>,
+    /// Blowing snow over the ground map's texels; see `crate::drift`.
+    pub drift: Handle<Image>,
     /// Where mist pools over the world; see `crate::valley_mist`.
     pub mist: Handle<Image>,
     /// How waves come ashore; see `crate::shore`.
@@ -282,6 +284,7 @@ fn setup(
         terrain_shadow: images.add(crate::terrain_shadow::TerrainShadow::image()),
         terrain_heights: images.add(crate::terrain_shadow::TerrainShadow::heights_image()),
         ground_albedo: images.add(crate::ground_albedo::GroundAlbedo::image()),
+        drift: images.add(crate::drift::image()),
         mist: images.add(crate::valley_mist::ValleyMist::image()),
         shore: images.add(crate::shore::Shore::image()),
         parameters: buffers.add(ShaderBuffer::new(

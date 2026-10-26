@@ -4,6 +4,7 @@ pub mod adaptation;
 pub mod ambient_particles;
 pub mod bloom;
 pub mod clouds;
+mod drift;
 pub mod environment;
 pub mod forest_shadow;
 pub mod ground_albedo;
@@ -81,6 +82,8 @@ pub struct AtmospherePresentation {
     pub auto_exposure: bool,
     /// Ground haze and valley mist ([`valley_mist`]); weather fog stays.
     pub low_air: bool,
+    /// Snow the wind lifts off snow ground (`sky/drift.wesl`).
+    pub blowing_snow: bool,
     /// Dust motes, seed fluff and falling leaves ([`ambient_particles`]).
     pub particles: bool,
     /// Sunbeams through haze, mist and the air under crowns ([`light_shafts`]).
@@ -97,6 +100,7 @@ impl Default for AtmospherePresentation {
             bloom: true,
             auto_exposure: true,
             low_air: true,
+            blowing_snow: true,
             particles: true,
             light_shafts: true,
             shadows: true,
@@ -283,6 +287,7 @@ impl Plugin for WorldEnvironmentPlugin {
                 light_shafts::LightShaftsPlugin,
                 sun_glare::SunGlarePlugin,
                 bloom::BloomPlugin,
+                drift::DriftPlugin,
             ))
             .insert_resource(ClearColor(Color::BLACK))
             .insert_resource(AtmosphereState {
@@ -881,6 +886,7 @@ mod tests {
             bloom: false,
             auto_exposure: false,
             low_air: false,
+            blowing_snow: false,
             particles: false,
             light_shafts: false,
             shadows: false,

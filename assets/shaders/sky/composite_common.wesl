@@ -47,6 +47,9 @@ struct CompositeSettings {
 // The ground around the camera seen from above (environment/maps.wesl `ground_texel`,
 // `ground_height`), for where snow lies and how high. Read with `mist_sampler`.
 @group(1) @binding(17) var ground_map: texture_2d_array<f32>;
+// Blowing snow's field over the ground map's texels (sky/drift.wesl `fill`). Read with
+// `mist_sampler`.
+@group(1) @binding(18) var drift_field: texture_2d_array<f32>;
 
 // Light added along part of a view ray, and how much of whatever lies beyond it shows through.
 struct Path {

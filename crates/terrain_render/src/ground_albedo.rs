@@ -7,7 +7,7 @@ use crate::clipmap::ClipmapSettings;
 
 use atmosphere::{
     environment::EnvironmentAssets,
-    ground_albedo::{FORMAT, GroundAlbedo, SIZE, TEXELS},
+    ground_albedo::{FORMAT, GroundAlbedo, GroundAlbedoFill, SIZE, TEXELS},
 };
 use bevy::{
     core_pipeline::schedule::camera_driver,
@@ -78,7 +78,10 @@ pub(crate) fn install(app: &mut App) {
         .init_resource::<FillFrame>()
         .add_systems(RenderStartup, init_pass)
         .add_systems(ExtractSchedule, extract)
-        .add_systems(RenderGraph, fill.before(camera_driver));
+        .add_systems(
+            RenderGraph,
+            fill.in_set(GroundAlbedoFill).before(camera_driver),
+        );
 }
 
 /// Takes the frame's source and placement, and tells the environment whether the map holds the

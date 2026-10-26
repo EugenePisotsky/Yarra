@@ -429,6 +429,8 @@ fn presentation_options_and_profile_scale() {
         "off",
         "--profile-fog",
         "off",
+        "--profile-drift",
+        "off",
         "--profile-particles",
         "off",
         "--profile-shafts",
@@ -443,7 +445,7 @@ fn presentation_options_and_profile_scale() {
     .unwrap();
     assert!(!switches.objects && !switches.terrain && !switches.fog);
     assert!(!switches.particles && !switches.light_shafts && !switches.auto_exposure);
-    assert!(!switches.tree_touch);
+    assert!(!switches.tree_touch && !switches.blowing_snow);
     assert!(switches.bloom && switches.grass);
     assert!(profile(&["--profile-fog", "dim"]).is_err());
 }

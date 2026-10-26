@@ -40,6 +40,9 @@
             ["ATMOSPHERE", "CACHED_CLOUDS", "CLOUDS", "DUAL_SOURCE_BLENDING", "MIST_NOISE_PERIOD=2048"],
             ["ATMOSPHERE", "DUAL_SOURCE_BLENDING", "MIST_NOISE_PERIOD=2048"],
         ]),
+        (shader: "shaders/sky/drift.wesl", variants: [
+            ["MIST_NOISE_PERIOD=2048"],
+        ]),
         (shader: "shaders/sky/light_shafts.wesl", variants: [
             ["MIST_NOISE_PERIOD=2048", "SHAFT_SCALE=4", "SHAFT_STEPS=32"],
         ]),

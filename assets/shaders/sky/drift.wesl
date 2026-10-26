@@ -4,12 +4,17 @@
 // pass, and flows in broad sheets carried with the wind, over the bare patches of snow country
 // as well. It is the ground's snow lifted, lit by
 // the sky above and by that snow below, and by the sun.
+//
+// Where and how thick it blows, and the light it takes from the sky, the ground and the sun,
+// depend on the ground alone, so `fill` works them out once a frame over the ground map's texels
+// (crates/atmosphere/src/drift.rs), and `drift_along` integrates each view ray through that
+// field, exactly in its height over the ground.
 import package::shaders::environment::maps::{
-    FRESH_SNOW, FROST_MEAN, ground_relief, ground_texel, snow_country,
+    FRESH_SNOW, FROST_MEAN, ground_layers, ground_relief, ground_texel, snow_country,
 };
 import package::shaders::sky::air::scattering;
 import package::shaders::sky::composite_common::{
-    environment, ground_map, mist_sampler, noise, noise_sampler,
+    environment, drift_field, ground_map, mist_sampler, noise, noise_sampler,
 };
 import package::shaders::weather::gust::{gust, wind_frame};
 @if(ATMOSPHERE)
@@ -54,6 +59,15 @@ const AMBIENT_DIFFUSE: f32 = 0.6;
 // ground map.
 const SNOW_ALBEDO: vec2<f32> = vec2(0.4, 0.65);
 
+const PI: f32 = 3.14159265;
+
+// The field `fill` writes: for each of the ground map's texels, the light blowing snow there
+// scatters towards the eye from the sky, the ground and the sun past the ground, over
+// `light_scale`, and its extinction per metre at the surface in its sheets. The composite reads
+// it as `drift_field`. The other maps are bound at the composite's slots, so the functions here
+// read them alike in both passes.
+@group(1) @binding(19) var field_out: texture_storage_2d_array<rgba16float, write>;
+
 // Blowing snow over part of a ray: its optical depth, and the unexposed light it scatters
 // towards the eye, summed by optical depth.
 struct Drift {
@@ -61,12 +75,15 @@ struct Drift {
     depth: f32,
 }
 
+// Whether snow can blow at all this frame: snow ground, a map of it, and wind enough somewhere.
+fn drifting() -> bool {
+    return environment.drift.w > 0.0 && environment.ground_near.z > 0.0
+        && environment.wind.x * (1.0 + environment.wind.y) > DRIFT_ONSET;
+}
+
 // Blowing snow over the first `distance` metres of the ray.
 fn drift_along(ray: vec3<f32>, distance: f32) -> Drift {
-    let speed = environment.wind.x;
-    let swell = environment.wind.y;
-    if environment.drift.w <= 0.0 || environment.ground_near.z <= 0.0
-        || speed * (1.0 + swell) <= DRIFT_ONSET {
+    if !drifting() {
         return Drift(vec3(0.0), 0.0);
     }
     let origin = view.world_position;
@@ -84,9 +101,8 @@ fn drift_along(ray: vec3<f32>, distance: f32) -> Drift {
     if t1 <= t0 {
         return Drift(vec3(0.0), 0.0);
     }
-    let sun = sunlight();
-    let towards_eye = sun * scattering(dot(ray, environment.sun.xyz));
-    let turn = environment.wind.z * SHEET_TURNS;
+    let scale = light_scale();
+    let towards_eye = sunlight() * scattering(dot(ray, environment.sun.xyz));
     var start_ground = ground_at(origin.xz + ray.xz * t0).x;
     var drift = Drift(vec3(0.0), 0.0);
     for (var i = 0u; i + 1u < DRIFT_CUTS; i += 1u) {
@@ -99,40 +115,73 @@ fn drift_along(ray: vec3<f32>, distance: f32) -> Drift {
             continue;
         }
         let stretch = end - start;
-        let relief = ground_at(origin.xz + ray.xz * end);
+        let end_ground = ground_at(origin.xz + ray.xz * end).x;
         let ha = max(origin.y + ray.y * start - start_ground, 0.0);
-        let hb = max(origin.y + ray.y * end - relief.x, 0.0);
-        start_ground = relief.x;
-        let middle = (origin + ray * (0.5 * (start + end))).xz;
-        let frame = wind_frame(middle, environment.gusts);
-        let blowing = smoothstep(DRIFT_ONSET, DRIFT_FULL, speed * gust(frame, swell));
-        if blowing <= 0.0 {
+        let hb = max(origin.y + ray.y * end - end_ground, 0.0);
+        start_ground = end_ground;
+        let field = field_at((origin + ray * (0.5 * (start + end))).xz);
+        if field.a <= 0.0 {
             continue;
         }
-        let below = ground_texel(ground_map, mist_sampler, environment.ground_near,
-            environment.ground_far, middle, vec4(0.0));
-        let country = snow_country(ground_map, mist_sampler, environment.ground_near,
-            environment.ground_far, middle);
-        let cover = max(snow_cover(below.rgb), country);
         let profile = layer_share(ha, hb, DRIFT_LAYER)
             + DRIFT_VEIL.x * layer_share(ha, hb, DRIFT_VEIL.y);
-        let depth = DRIFT_EXTINCTION * blowing * cover * sheets(frame, turn) * profile * stretch;
-        let lights = SnowLights(environment.drift.rgb * AMBIENT_DIFFUSE * relief.y, sun * below.a,
-            towards_eye);
-        let albedo = mix(below.rgb, FRESH_SNOW, FROST_MEAN * environment.weather.w * country);
-        drift.light += snow_light(lights, albedo) * depth;
+        let depth = field.a * profile * stretch;
+        drift.light += (field.rgb * scale + towards_eye) * depth;
         drift.depth += depth;
     }
     return drift;
 }
 
-// The light reaching blowing snow: the sky's as lit materials take it past the terrain around,
-// the sun's on the ground below past the terrain's horizon (the ground map's cosine), and the
-// sun's scattered towards the eye along the ray.
-struct SnowLights {
-    sky: vec3<f32>,
-    sun_on_ground: vec3<f32>,
-    sun_towards_eye: vec3<f32>,
+// The field at render XZ `xz`, its near layer over the far one as in the ground map.
+fn field_at(xz: vec2<f32>) -> vec4<f32> {
+    return ground_layers(drift_field, mist_sampler, environment.ground_near,
+        environment.ground_far, xz, 0u, vec4(0.0));
+}
+
+// One texel of the field for each of the ground map's: its layer and texel.
+@compute @workgroup_size(8, 8, 1)
+fn fill(@builtin(global_invocation_id) id: vec3<u32>) {
+    if any(id.xy >= textureDimensions(field_out)) {
+        return;
+    }
+    let placement = select(environment.ground_far, environment.ground_near, id.z == 0u);
+    let xz = placement.xy + (vec2<f32>(id.xy) + 0.5) * placement.z;
+    textureStore(field_out, id.xy, id.z, blowing_at(xz));
+}
+
+// The field's value at render XZ `xz`. The light is what snow grains there scatter towards the
+// eye over the ground below: half of what they see is the sky, half the ground reflecting the
+// sky and the sun, so over snow they show as bright as the snow or a shade brighter, in its
+// colour. The sky's light reaches them as lit materials take it past the terrain around, and the
+// sun's ground as the ground map's cosine past the terrain's horizon. The sun's own light
+// scattered towards the eye depends on the ray, so `drift_along` adds it.
+fn blowing_at(xz: vec2<f32>) -> vec4<f32> {
+    if !drifting() {
+        return vec4(0.0);
+    }
+    let frame = wind_frame(xz, environment.gusts);
+    let blowing = smoothstep(DRIFT_ONSET, DRIFT_FULL, environment.wind.x
+        * gust(frame, environment.wind.y));
+    if blowing <= 0.0 {
+        return vec4(0.0);
+    }
+    let below = ground_texel(ground_map, mist_sampler, environment.ground_near,
+        environment.ground_far, xz, vec4(0.0));
+    let country = snow_country(ground_map, mist_sampler, environment.ground_near,
+        environment.ground_far, xz);
+    let cover = max(snow_cover(below.rgb), country);
+    let extinction = DRIFT_EXTINCTION * blowing * cover
+        * sheets(frame, environment.wind.z * SHEET_TURNS);
+    let sky = environment.drift.rgb * AMBIENT_DIFFUSE * ground_at(xz).y;
+    let albedo = mix(below.rgb, FRESH_SNOW, FROST_MEAN * environment.weather.w * country);
+    let ground = albedo * (sky + sunlight() * below.a / PI);
+    return vec4(0.5 * (sky + ground) / light_scale(), extinction);
+}
+
+// The most light the field can hold, per channel, so half floats keep it near 1 whatever the sun
+// and sky: the whole sky's share and the sun's off the brightest ground.
+fn light_scale() -> vec3<f32> {
+    return max(environment.drift.rgb * AMBIENT_DIFFUSE + 0.5 * sunlight() / PI, vec3(1e-4));
 }
 
 // The sun's light on open ground past a closing cloud deck, as air_light lets it through.
@@ -141,14 +190,6 @@ fn sunlight() -> vec3<f32> {
         return vec3(0.0);
     }
     return environment.near_sun.rgb * (1.0 - environment.weather.z);
-}
-
-// Light grains of snow scatter towards the eye over ground of `albedo`: half of what they see is
-// the sky, half the ground below reflecting the sky and sun, so over snow they show as bright as
-// the snow or a shade brighter, in its colour; and the sun's own light, scattered as by haze.
-fn snow_light(lights: SnowLights, albedo: vec3<f32>) -> vec3<f32> {
-    let ground = albedo * (lights.sky + lights.sun_on_ground / 3.14159265);
-    return 0.5 * (lights.sky + ground) + lights.sun_towards_eye;
 }
 
 // How much of the full drift blows at `frame` (along the wind, across it): broad sheets drawn out

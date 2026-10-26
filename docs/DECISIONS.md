@@ -377,6 +377,15 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
   is endless and wind-driven, which particles and fog do at runtime; baked effects wait for
   one-off set pieces.
 
+- **Blowing snow's ground fields are worked out once a frame.** *Kept* (October 26). Measured with
+  `--profile-drift off`, blowing snow cost 0.60 ms of the storm road's frame and 0.69 of the
+  mountain hamlet's: every pixel's seven stretches each sampled the ground map three times and
+  the sheets' noise once, and hashed two octaves of gusts. All of that depends on the ground
+  alone, so a pass fills it into a field over the ground map's texels (0.015 ms), and each
+  stretch reads the field and the ground's height; the height profile stays exact per ray. GPU
+  busy at Maximum from `40ab1c1`: storm-road 9.72 → 9.41 ms, mountain-hamlet 9.67 → 9.22, meadow
+  9.30 → 9.16 (no snow; noise). Captures match the baseline (mean difference 1.2/255 on the storm
+  road, all of it falling flakes and the figure's pose).
 - **Blowing snow is a medium of the fog, driven by one pattern of gusts.** *Kept* (October 22,
   after the user's photo of a ground blizzard). Snow lifts off snow ground where the air near it
   runs past 3 m/s and blows in full from 6.5: in a blizzard (wind 2.3, about 6 m/s) it always

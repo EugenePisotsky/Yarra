@@ -25,6 +25,11 @@ pub const TEXELS: [f32; 2] = [2.0, 32.0];
 
 pub const FORMAT: TextureFormat = TextureFormat::Rgba16Float;
 
+/// The pass that fills the map, in the render graph schedule before the cameras; passes that read
+/// it the same frame run after it.
+#[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct GroundAlbedoFill;
+
 #[derive(Resource, Clone, Copy, Debug, Default)]
 pub struct GroundAlbedo {
     /// Render-local XZ of each layer's first corner.

@@ -324,6 +324,7 @@ const FLAGS: &[Flag] = &[
         "Ground haze and valley mist",
     )
     .needs(Needs::Profile),
+    flag("--profile-drift", "on|off", Profile, "Blowing snow").needs(Needs::Profile),
     flag(
         "--profile-particles",
         "on|off",

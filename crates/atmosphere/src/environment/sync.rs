@@ -190,7 +190,11 @@ pub(super) fn sync(
 
     // Blowing snow is the snow of the ground lifted: lit by the sky as the ground is
     // (sky/drift.wesl).
-    if world && snow > 0. && state.weather.is_some() {
+    if world
+        && snow > 0.
+        && state.weather.is_some()
+        && presentation.as_ref().is_none_or(|p| p.blowing_snow)
+    {
         params.drift = crate::sky_radiance(&value, flash.map_or(0., |f| f.flash))
             .extend(snow)
             .to_array();

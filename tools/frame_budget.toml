@@ -52,6 +52,8 @@ passes = ["grass", "vegetation"]
 
 [[line]]
 name = "sky and air"
+# The composite's sea, sky, clouds and glare 0.6–0.8 ms, haze and mist 0.2–0.3, blowing snow
+# 0.25–0.3 in the snow views; Bevy's atmosphere tables, light shafts and sun occlusion besides.
 ms = 0.8
 passes = ["^sky", "^atmosphere", "cloud", "shafts", "sun occlusion"]
 

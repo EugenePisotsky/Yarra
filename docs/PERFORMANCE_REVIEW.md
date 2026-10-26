@@ -369,7 +369,10 @@ to −0.31 ms busy per view.
    haze, mist, weather fog, blowing snow and aerial perspective stubbed, the composite took 1.08 →
    0.62 ms in the meadow, 1.81 → 0.67 on the storm road and 1.87 → 0.76 in the hamlet. A volume
    costing about 0.3 ms nets −0.2 to −0.8 ms by view; the sky, clouds, sea, shafts and glare
-   (0.6–0.8 ms) stay per pixel.
+   (0.6–0.8 ms) stay per pixel. *Measured* (October 26, `--profile-fog off`, `--profile-drift
+   off`): of that, blowing snow was 0.60–0.69 ms in the two snow views, and haze, mist and the
+   shafts 0.38–0.49 elsewhere and 0.10–0.16 there. *Done*: blowing snow's ground fields in a
+   field filled once a frame, 0.24–0.29 ms left ([Decisions](DECISIONS.md)).
 8. **The output end and the frame time** (small to medium). Exposure histogram at internal
    resolution (*done*, with bloom, October 26); the UI in the tone map's pass (*done*, October
    26); find whether MetalFX's 1.4 ms wait is GPU idle or its own

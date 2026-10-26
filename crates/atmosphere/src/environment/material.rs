@@ -176,6 +176,7 @@ mod tests {
                 terrain_shadow: default(),
                 terrain_heights: default(),
                 ground_albedo: default(),
+                drift: default(),
                 mist: default(),
                 shore: default(),
             })

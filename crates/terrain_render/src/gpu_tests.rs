@@ -412,6 +412,7 @@ fn environment(
         terrain_shadow: open.clone(),
         terrain_heights: open.clone(),
         ground_albedo: map.clone(),
+        drift: open.clone(),
         mist: open.clone(),
         shore: open,
     });

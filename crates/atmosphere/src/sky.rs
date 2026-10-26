@@ -344,8 +344,9 @@ fn init(
                 sampler(SamplerBindingType::Filtering),
                 // How waves come ashore (read with the mist map's sampler).
                 texture_2d(TextureSampleType::Float { filterable: true }),
-                // The ground's albedo and height, for where snow blows and over what (read
-                // with the mist map's sampler).
+                // The ground's albedo and height, for where snow blows and over what, and
+                // blowing snow's field over it (read with the mist map's sampler).
+                texture_2d_array(TextureSampleType::Float { filterable: true }),
                 texture_2d_array(TextureSampleType::Float { filterable: true }),
             ),
         ),
@@ -537,6 +538,7 @@ fn draw(
     let ground = images
         .get(&assets.ground_albedo)
         .unwrap_or(&fallback.d2_array);
+    let drift = images.get(&assets.drift).unwrap_or(&fallback.d2_array);
     let composite_group = device.create_bind_group(
         "sky composite",
         &cache.get_bind_group_layout(&pipelines.composite_layout),
@@ -560,6 +562,7 @@ fn draw(
             &cloud_shadow.sampler,
             &shore.texture_view,
             &ground.texture_view,
+            &drift.texture_view,
         )),
     );
     let size = resolution.map_or(
