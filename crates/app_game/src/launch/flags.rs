@@ -143,6 +143,12 @@ const FLAGS: &[Flag] = &[
         "World upscaler (default metalfx-temporal)",
     ),
     flag(
+        "--frame",
+        "window|WIDTHxHEIGHT",
+        Scene,
+        "Fixed frame the world renders for, letterboxed in the window (F1 changes it; default window)",
+    ),
+    flag(
         "--cloud-quality",
         "off|balanced|high",
         Scene,

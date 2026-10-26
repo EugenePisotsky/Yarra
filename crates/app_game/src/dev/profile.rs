@@ -131,7 +131,7 @@ impl ProfileSettings {
 }
 
 /// `WIDTHxHEIGHT`, each side 64..8192.
-fn dimensions(value: &str, key: &str) -> Result<UVec2, String> {
+pub(crate) fn dimensions(value: &str, key: &str) -> Result<UVec2, String> {
     value
         .split_once('x')
         .and_then(|(w, h)| Some(UVec2::new(w.parse().ok()?, h.parse().ok()?)))

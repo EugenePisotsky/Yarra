@@ -1,6 +1,6 @@
 //! Game presentation defaults, shared with the optional render-audit controls.
 use bevy::{
-    anti_alias::fxaa::Fxaa,
+    anti_alias::{contrast_adaptive_sharpening::ContrastAdaptiveSharpening, fxaa::Fxaa},
     camera::{ImageRenderTarget, RenderTarget},
     ecs::system::SystemParam,
     image::ImageSampler,
@@ -35,6 +35,9 @@ pub(crate) struct GameRenderSystems;
 
 pub(crate) const RESOLUTION_SCALES: [f32; 4] = [1.0, 0.75, 0.5, 1.0 / 3.0];
 
+/// The fixed frame F1 offers: Resident Evil Village's, as it was measured on this Mac.
+pub(crate) const VILLAGE_FRAME: UVec2 = UVec2::new(1920, 1080);
+
 /// Index of a launch scale in `RESOLUTION_SCALES`.
 pub(crate) fn scale_index(scale: f32) -> Option<usize> {
     RESOLUTION_SCALES
@@ -49,6 +52,10 @@ pub(crate) struct GameRenderSettings {
     pub(crate) temporal_debug: upscaling::temporal::TemporalDebug,
     /// Explicit internal pixel dimensions for controlled profiling, independent of Retina scaling.
     pub(crate) render_size: Option<UVec2>,
+    /// A fixed frame the world is rendered for and shown in, letterboxed in the window, as Resident
+    /// Evil Village shows its fullscreen 1920×1080 (docs/PERFORMANCE_REVIEW.md); the render scale
+    /// applies to it. None: the window's own pixels.
+    pub(crate) frame: Option<UVec2>,
     pub(crate) show_ui: bool,
     pub(crate) direct_temporal_output: bool,
 }
@@ -60,6 +67,7 @@ impl Default for GameRenderSettings {
             temporal_debug: default(),
             upscaler: upscaling::UpscaleMethod::MetalFxTemporal,
             render_size: None,
+            frame: None,
             show_ui: true,
             direct_temporal_output: true,
         }
@@ -76,16 +84,24 @@ impl GameRenderSettings {
     }
 
     /// The world camera owns the window: one pass tone-maps its image there and draws the UI
-    /// over it, so the UI camera and its composite of the world image stand down.
+    /// over it, so the UI camera and its composite of the world image stand down. A fixed frame
+    /// needs the composite to fit it in the window.
     fn direct_output(&self) -> bool {
-        self.temporal() && self.direct_temporal_output
+        self.temporal() && self.direct_temporal_output && self.frame.is_none()
+    }
+
+    /// The frame the world is shown in: the window's pixels, or the fixed frame.
+    pub(crate) fn output_size(&self, window: &Window) -> UVec2 {
+        self.frame
+            .unwrap_or_else(|| window.physical_size())
+            .max(UVec2::ONE)
     }
 
     /// The world's rendered pixels.
     pub(crate) fn target_size(&self, window: &Window) -> UVec2 {
         self.render_size.unwrap_or_else(|| {
             // Round up so odd output dimensions don't exceed the requested upscale ratio.
-            (window.physical_size().as_vec2() * self.resolution_scale)
+            (self.output_size(window).as_vec2() * self.resolution_scale)
                 .ceil()
                 .as_uvec2()
                 .max(UVec2::ONE)
@@ -139,7 +155,7 @@ fn setup(
     let upscaled = images.add(upscaling::output_image(if linear {
         UVec2::ONE
     } else {
-        window.physical_size()
+        settings.output_size(&window)
     }));
     camera.1.order = -1;
     commands
@@ -152,7 +168,7 @@ fn setup(
     if linear {
         commands
             .entity(camera.0)
-            .insert(linear_status(initial_size, window.physical_size()));
+            .insert(linear_status(initial_size, settings.output_size(&window)));
     } else {
         commands.entity(camera.0).insert(upscaling::UpscaleView {
             input: target.clone(),
@@ -164,6 +180,11 @@ fn setup(
 
     commands.spawn((
         Camera2d,
+        // Black where a fixed frame leaves the window bare.
+        Camera {
+            clear_color: ClearColorConfig::Custom(Color::BLACK),
+            ..default()
+        },
         Msaa::Off,
         IsDefaultUiCamera,
         GameUiCamera,
@@ -196,6 +217,7 @@ struct WorldCamera {
     target: &'static RenderTarget,
     projection: &'static mut Projection,
     temporal: Option<&'static upscaling::temporal::TemporalView>,
+    direct: Has<upscaling::DirectTonemapOutput>,
     upscale: Option<&'static upscaling::UpscaleView>,
     status: Option<&'static upscaling::UpscaleStatus>,
 }
@@ -205,8 +227,16 @@ struct WorldCamera {
 #[derive(SystemParam)]
 struct Presentation<'w, 's> {
     ui_camera: Single<'w, 's, (Entity, &'static mut Camera), With<GameUiCamera>>,
-    composite:
-        Single<'w, 's, (&'static mut ImageNode, &'static mut Visibility), With<GameComposite>>,
+    composite: Single<
+        'w,
+        's,
+        (
+            &'static mut ImageNode,
+            &'static mut Visibility,
+            &'static mut Node,
+        ),
+        With<GameComposite>,
+    >,
     ui_roots: Query<'w, 's, UiRoot, UiRoots>,
 }
 
@@ -234,7 +264,7 @@ fn apply_settings(
     let linear = s.linear_composition();
     let temporal = s.temporal();
     let direct = s.direct_output();
-    let output_size = window.physical_size().max(UVec2::ONE);
+    let output_size = s.output_size(&window);
 
     // Window-sized images only where a pass writes them: the spatial upscaler's output, and the
     // world image the composite shows. The linear path's composite samples the scaled image.
@@ -264,6 +294,8 @@ fn apply_settings(
         presentation.composite.0.image = presented.clone();
     }
 
+    presentation.fit(output_size, window.physical_size());
+
     if temporal {
         let request = upscaling::temporal::TemporalView {
             input_size: size,
@@ -274,22 +306,25 @@ fn apply_settings(
             commands
                 .entity(camera.entity)
                 .insert((request, bevy::camera::MainPassResolutionOverride(size)));
-            // Retain the original output path for matched performance comparisons.
-            if s.direct_temporal_output {
-                commands
-                    .entity(camera.entity)
-                    .insert(upscaling::DirectTonemapOutput);
-            }
         }
     } else if camera.temporal.is_some() {
         commands.entity(camera.entity).remove::<(
             upscaling::temporal::TemporalView,
-            upscaling::DirectTonemapOutput,
             bevy::camera::MainPassResolutionOverride,
             bevy::render::camera::TemporalJitter,
             bevy::render::camera::MipBias,
             bevy::core_pipeline::prepass::MotionVectorPrepass,
         )>();
+    }
+
+    if direct && !camera.direct {
+        commands
+            .entity(camera.entity)
+            .insert(upscaling::DirectTonemapOutput);
+    } else if !direct && camera.direct {
+        commands
+            .entity(camera.entity)
+            .remove::<upscaling::DirectTonemapOutput>();
     }
 
     if linear {
@@ -299,7 +334,7 @@ fn apply_settings(
                 .remove::<upscaling::UpscaleView>();
         }
 
-        let status = linear_status(size, window.physical_size());
+        let status = linear_status(size, output_size);
 
         if camera.status != Some(&status) {
             commands.entity(camera.entity).insert(status);
@@ -327,6 +362,18 @@ fn apply_settings(
         commands.entity(camera.entity).remove::<Fxaa>();
     } else {
         commands.entity(camera.entity).insert(Fxaa::default());
+    }
+
+    // A fixed frame is shown at its own size, so it keeps the detail its anti-aliasing softened
+    // as Village's does, by sharpening.
+    if s.frame.is_some() {
+        commands
+            .entity(camera.entity)
+            .insert(ContrastAdaptiveSharpening::default());
+    } else {
+        commands
+            .entity(camera.entity)
+            .remove::<ContrastAdaptiveSharpening>();
     }
 
     presentation.assign_ui(&mut commands, direct, camera.entity);
@@ -365,13 +412,15 @@ fn target_world(
         return;
     }
 
-    let scale = if s.temporal() {
-        window.scale_factor()
-    } else if s.render_size.is_some() {
-        s.target_size(window).y as f32 / window.height().max(1.0)
+    // The image's pixels per logical pixel of the window: the camera keeps the window's logical
+    // height, and the tree LOD it sets, whatever its pixels. Temporal draws the frame there, the
+    // other paths the rendered pixels.
+    let image = if s.temporal() {
+        s.output_size(window)
     } else {
-        window.scale_factor() * s.resolution_scale
+        s.target_size(window)
     };
+    let scale = image.y as f32 / window.height().max(1.0);
     let current = matches!(camera.target, RenderTarget::Image(target)
         if target.handle == assets.target && target.scale_factor == scale);
 
@@ -405,6 +454,29 @@ impl Presentation<'_, '_> {
         };
         commands.entity(drawing).insert(IsDefaultUiCamera);
         commands.entity(idle).remove::<IsDefaultUiCamera>();
+    }
+
+    /// Fits the composite to the frame's shape, centred in the window: all of it for the window's
+    /// own pixels, bars at the sides or top and bottom for a fixed frame.
+    fn fit(&mut self, frame: UVec2, window: UVec2) {
+        let frame = frame.as_vec2();
+        let window = window.max(UVec2::ONE).as_vec2();
+        let shape = (frame.x / frame.y) / (window.x / window.y);
+        let size = if shape > 1.0 {
+            Vec2::new(100.0, 100.0 / shape)
+        } else {
+            Vec2::new(100.0 * shape, 100.0)
+        };
+        let node = &mut self.composite.2;
+        let (width, height) = (percent(size.x), percent(size.y));
+        let (left, top) = (
+            percent((100.0 - size.x) * 0.5),
+            percent((100.0 - size.y) * 0.5),
+        );
+
+        if (node.width, node.height, node.left, node.top) != (width, height, left, top) {
+            (node.width, node.height, node.left, node.top) = (width, height, left, top);
+        }
     }
 
     fn show_ui(&mut self, commands: &mut Commands, show: bool) {
@@ -531,6 +603,83 @@ mod tests {
             app.update();
             assert_eq!(sized(&app), (Some(size), Some(scale)), "{upscaler:?}");
         }
+    }
+
+    #[test]
+    fn a_fixed_frame_renders_its_own_pixels_and_shows_letterboxed() {
+        let mut app = App::new();
+        app.init_resource::<Assets<Image>>()
+            .insert_resource(GameRenderSettings {
+                frame: Some(VILLAGE_FRAME),
+                resolution_scale: 1.0,
+                ..default()
+            })
+            .add_plugins((
+                bevy::extract::sync_world::SyncWorldPlugin::<bevy::render::RenderApp>::default(),
+                GameRenderPlugin,
+            ));
+        app.world_mut().spawn((
+            Window {
+                resolution: WindowResolution::new(3456, 2168).with_scale_factor_override(2.0),
+                ..default()
+            },
+            PrimaryWindow,
+        ));
+        let main = app
+            .world_mut()
+            .spawn((Camera3d::default(), WorldViewCamera))
+            .id();
+        app.update();
+        let world = app.world_mut();
+        let ui = world
+            .query_filtered::<Entity, With<GameUiCamera>>()
+            .single(world)
+            .unwrap();
+        let composite = world
+            .query_filtered::<Entity, With<GameComposite>>()
+            .single(world)
+            .unwrap();
+        let target = world.resource::<GameRenderAssets>().target.clone();
+
+        // The frame is rendered at its own size, sharpened, and the UI camera shows it under the
+        // UI: 16:9 in a wider-than-tall 16:10 window leaves bars above and below.
+        assert_eq!(
+            world
+                .resource::<Assets<Image>>()
+                .get(&target)
+                .unwrap()
+                .size(),
+            VILLAGE_FRAME
+        );
+        assert_eq!(
+            world
+                .get::<upscaling::temporal::TemporalView>(main)
+                .unwrap()
+                .input_size,
+            VILLAGE_FRAME
+        );
+        assert!(world.get::<upscaling::DirectTonemapOutput>(main).is_none());
+        assert!(world.get::<ContrastAdaptiveSharpening>(main).is_some());
+        assert!(world.get::<Camera>(ui).unwrap().is_active);
+        assert!(world.get::<IsDefaultUiCamera>(ui).is_some());
+        let node = world.get::<Node>(composite).unwrap();
+        let shape = (16.0 / 9.0) / (3456.0 / 2168.0);
+        let share = |value: Val| match value {
+            Val::Percent(share) => share,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!((node.width, node.left), (percent(100), percent(0)));
+        assert!((share(node.height) - 100.0 / shape).abs() < 1e-3);
+        assert!((share(node.top) - (100.0 - 100.0 / shape) * 0.5).abs() < 1e-3);
+
+        // Back to the window's own pixels: the direct output, unsharpened and whole.
+        world.resource_mut::<GameRenderSettings>().frame = None;
+        app.update();
+        let world = app.world();
+        assert!(world.get::<upscaling::DirectTonemapOutput>(main).is_some());
+        assert!(world.get::<ContrastAdaptiveSharpening>(main).is_none());
+        let node = world.get::<Node>(composite).unwrap();
+        assert_eq!((node.width, node.height), (percent(100), percent(100)));
     }
 
     #[test]

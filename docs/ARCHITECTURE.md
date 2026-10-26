@@ -372,9 +372,11 @@ Owns the shell, workspaces, tools, working sets, saving, publication and the rec
 
 ## Rendering frame
 
-The game camera (`WorldViewCamera`) renders in HDR at a share of the window's physical size
-(`resolution_scale`, 0.5 by default). MetalFX Temporal (the default) reconstructs at output size;
-the other upscalers take FXAA. World cameras do not multisample. In order:
+The game camera (`WorldViewCamera`) renders in HDR at a share of its frame (`resolution_scale`,
+0.5 by default): the window's physical size, or a fixed frame (`GameRenderSettings::frame`,
+`--frame` or F1, 1920×1080 as Resident Evil Village was measured) shown letterboxed. MetalFX
+Temporal (the default) reconstructs at the frame's size; the other upscalers take FXAA. World
+cameras do not multisample. In order:
 
 1. Compute before the camera: grass trampling, candidate cache, placement and blade poses
    (each drawn blade bent by trampling and wind, this frame and last, with the rest of what its
@@ -409,7 +411,9 @@ the other upscalers take FXAA. World cameras do not multisample. In order:
    onto it and draws the UI over it (`upscaling::DirectTonemapOutput`); no UI camera runs. The
    other upscalers tone-map into an offscreen image that a UI camera at native resolution
    upscales (MetalFX Spatial) or samples (Linear) under the UI. `--temporal-standard-output` and
-   the LOD lab's panel, whose egui draws on that camera, take the same path under Temporal.
+   the LOD lab's panel, whose egui draws on that camera, take the same path under Temporal, and
+   so does a fixed frame: its image, tone-mapped and sharpened (Bevy's contrast adaptive
+   sharpening), fits the window under bars of the UI camera's black.
 
 Every lit material, and the deferred lighting, binds the shared environment at slots 120–129
 (`EnvironmentParams`, cloud shadow, rain shelter, forest and terrain shadow, ground albedo). The

@@ -5,7 +5,7 @@ mod performance;
 mod timing;
 
 use crate::frame_pacing::{FramePacing, FrameRate};
-use crate::game_render::{GameRenderSettings, RESOLUTION_SCALES};
+use crate::game_render::{GameRenderSettings, RESOLUTION_SCALES, VILLAGE_FRAME};
 use crate::runtime_settings::{OBJECT_DETAIL_SCALES, RuntimeSettings, RuntimeSettingsApply, Scene};
 use bevy::{prelude::*, ui::Pressed, window::PrimaryWindow};
 use engine::{GamePointerInputBlocked, GameplaySystems};
@@ -93,6 +93,7 @@ enum Control {
     Shadows,
     ShadowMap,
     Scale,
+    Frame,
     Upscaler,
     TemporalDebug,
     Counters,
@@ -136,6 +137,7 @@ impl Control {
 
     const QUALITY: &[Control] = &[
         Control::Scale,
+        Control::Frame,
         Control::Upscaler,
         Control::TemporalDebug,
         Control::ObjectDetail,
@@ -206,6 +208,10 @@ impl Control {
                 format!("Shadow map: {size} px")
             }
             Self::Scale => format!("Resolution: {}%", (100.0 * s.scale()).round() as u32),
+            Self::Frame => match s.frame {
+                Some(size) => format!("Frame: {}x{}", size.x, size.y),
+                None => "Frame: window".into(),
+            },
             Self::TemporalDebug => format!("Temporal view: {}", s.temporal_debug.label()),
             Self::Upscaler => format!("Upscaler: {}", s.upscaler.label()),
             Self::Counters => format!("GPU counters: {}", on_off(s.counters)),
@@ -307,6 +313,12 @@ fn buttons(
             }
             Control::Scale => {
                 s.scale_index = (s.scale_index + 1) % RESOLUTION_SCALES.len();
+            }
+            Control::Frame => {
+                s.frame = match s.frame {
+                    None => Some(VILLAGE_FRAME),
+                    Some(_) => None,
+                };
             }
             Control::TemporalDebug => {
                 s.temporal_debug = s.temporal_debug.next();

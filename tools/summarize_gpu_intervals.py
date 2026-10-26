@@ -117,7 +117,9 @@ def summarize(path, frames_by, background=()):
             running.discard(i)
         last = time
 
-    frames = max(sum(1 for s in spans if s[2] == frames_by and s[3] == "Fragment"), 1)
+    # A pass runs once a frame on each channel it uses; some run on one (compute), some on two.
+    channels = collections.Counter(s[3] for s in spans if s[2] == frames_by)
+    frames = max(channels.values(), default=1)
     passes = {label: ns / frames / 1e6 for label, ns in shares.items()}
     return passes, busy / frames / 1e6, frames
 
@@ -125,7 +127,7 @@ def summarize(path, frames_by, background=()):
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("traces", nargs="+")
-    parser.add_argument("--frames-by", default="tone map and UI to output")
+    parser.add_argument("--frames-by", default="MetalFX Temporal")
     parser.add_argument("--reference", default="main_opaque_pass_3d")
     parser.add_argument("--top", type=int, default=30)
     parser.add_argument("--states", nargs="*", default=[])

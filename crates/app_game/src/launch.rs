@@ -38,6 +38,8 @@ pub(crate) struct LaunchOptions {
     pub repro: Option<ReproOptions>,
     /// Render scale at launch (one of `RESOLUTION_SCALES`).
     pub resolution_scale: Option<f32>,
+    /// A fixed frame at launch (`GameRenderSettings::frame`).
+    pub frame: Option<UVec2>,
     pub lod_lab: Option<LodLabOptions>,
     pub look_capture: Option<crate::dev::look_capture::LookCaptureOptions>,
 }
@@ -204,6 +206,10 @@ impl LaunchOptions {
             profile,
             repro,
             resolution_scale,
+            frame: match args.value("--frame")?.unwrap_or("window") {
+                "window" => None,
+                size => Some(crate::dev::profile::dimensions(size, "--frame")?),
+            },
             lod_lab: LodLabOptions::parse(&args)?,
             look_capture: look_capture(&args)?,
         })

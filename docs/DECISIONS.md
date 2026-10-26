@@ -63,6 +63,16 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
   storm-road 9.93 → 9.72, mountain-hamlet 9.96 → 9.67, brook-mouth 8.99 → 8.83. The LOD lab's
   panel and `--temporal-standard-output` keep the UI camera: egui draws only on a camera's own
   texture.
+- **A fixed 1920×1080 frame, as an option.** *Kept as an option* (user, October 26: "1920x1080
+  resolution like RE:Village"). `--frame 1920x1080` or F1's Frame: the world renders for 1920×1080
+  at the render scale (100% for Village's image quality 1.0), MetalFX Temporal resolves it 1:1 as
+  a TAA, Bevy's contrast adaptive sharpening follows the tone map (Village: FXAA + TAA with CAS),
+  and the UI camera shows it letterboxed under the UI at the window's resolution. GPU busy at
+  Maximum against the play setup (50% of the window, MetalFX 2× to 3456×2168) at `3b7b10f`:
+  meadow 8.45 → 7.15 ms, start 9.42 → 7.97, forest-pine 9.59 → 8.16, storm-road 9.12 → 7.76,
+  mountain-hamlet 9.06 → 7.86, brook-mouth 8.49 → 7.37, with 11% more pixels rendered: MetalFX
+  takes 1.0 ms instead of 2.35 and the composite at the window's size 0.27. The image is softer
+  than the 2× reconstruction; the default waits for the user's comparison in play.
 - **MetalFX Temporal's scaler takes full-size textures.** *Kept.* A region-sized scaler (`b2c8cdf`)
   saved 0.8 ms that MetalFX's internal wait absorbed, and its history went blocky in motion;
   reverted (`c70158a`). Temporal's ~4 ms is MetalFX's own.
