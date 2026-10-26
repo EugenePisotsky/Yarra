@@ -17,6 +17,7 @@ pub mod shore;
 pub mod sky;
 pub mod sun_glare;
 pub mod sunlight;
+mod tables;
 pub mod terrain_shadow;
 mod tonemapping;
 pub mod valley_mist;
@@ -288,6 +289,7 @@ impl Plugin for WorldEnvironmentPlugin {
                 sun_glare::SunGlarePlugin,
                 bloom::BloomPlugin,
                 drift::DriftPlugin,
+                tables::StaticTablesPlugin,
             ))
             .insert_resource(ClearColor(Color::BLACK))
             .insert_resource(AtmosphereState {

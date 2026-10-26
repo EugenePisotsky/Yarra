@@ -243,7 +243,9 @@ SQLite. The renderers (Bevy) have no SQLite: `engine` is the only library joinin
 - Owns the sky and the air: `WorldEnvironmentPlugin` (`game()`/`editor()`), `AtmosphereState`,
   `AtmosphereOwner` (Game, Editor, Isolated), the sky composite (`sky`), clouds, light shafts,
   sun glare, rain, particles, lightning, bloom, eye adaptation, the tone map
-  (`WORLD_TONEMAPPING`).
+  (`WORLD_TONEMAPPING`). Bevy's atmosphere tables light the sky and surfaces; their
+  transmittance and multiple-scattering tables are rebuilt only when the atmosphere changes
+  (`tables`).
 - Owns the wind near the ground (`wind`): its air speed (`AIR_SPEED` per unit of weather wind
   strength) and one pattern of gusts carried downwind with the air (`Gusts`, twinned on the GPU
   by `weather/gust.wesl`). Rain and the ambient particles move with the gust at the camera;

@@ -377,6 +377,15 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
   is endless and wind-driven, which particles and fog do at runtime; baked effects wait for
   one-off set pieces.
 
+- **Bevy's static atmosphere tables are built once.** *Kept* (October 26). Bevy rebuilds its four
+  tables every frame; the transmittance and multiple-scattering ones depend on the atmosphere and
+  its medium alone. `atmosphere::tables` zeroes their dispatch sizes in the render world's
+  settings on frames where neither those nor their textures changed (the shaders keep the
+  uniform's), an adapter on Bevy 0.20's pass like the sky pass swap. The sky-view and
+  aerial-view tables follow the view every frame; the aerial one, 1,024 threads each walking 64
+  samples, keeps the pass's span. GPU busy at Maximum: meadow 9.16 → 9.07 ms, start 10.12 →
+  10.03, forest-pine 9.86 → 9.82, storm-road 9.41 → 9.25, mountain-hamlet 9.22 → 9.12,
+  brook-mouth 8.83 → 8.63. Captures unchanged.
 - **Blowing snow's ground fields are worked out once a frame.** *Kept* (October 26). Measured with
   `--profile-drift off`, blowing snow cost 0.60 ms of the storm road's frame and 0.69 of the
   mountain hamlet's: every pixel's seven stretches each sampled the ground map three times and

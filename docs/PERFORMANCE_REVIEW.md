@@ -364,8 +364,10 @@ to −0.31 ms busy per view.
    in-scattering; the composite applies it with one fetch. It must replace the shaft march and the
    per-pixel mist and fog, not add to them: the mist-only grid tried in October added a grid and
    removed nothing. Sea and the blowing-snow layer stay analytic. Estimate 1.3–1.6 → 0.5–0.7 ms in
-   the play setup, ~5 → under 1.5 ms at native. Atmosphere tables at Unreal's sizes and updated when
-   the sun moves enough are a smaller step beside it. *Checked* (October 25): with the per-pixel
+   the play setup, ~5 → under 1.5 ms at native. A smaller step beside it, the atmosphere tables:
+   at the reference sizes (`5fa39a1`), and the transmittance and multiple-scattering ones built
+   only when the atmosphere changes (*done*, October 26); the sky-view and aerial-view tables
+   follow the view. *Checked* (October 25): with the per-pixel
    haze, mist, weather fog, blowing snow and aerial perspective stubbed, the composite took 1.08 →
    0.62 ms in the meadow, 1.81 → 0.67 on the storm road and 1.87 → 0.76 in the hamlet. A volume
    costing about 0.3 ms nets −0.2 to −0.8 ms by view; the sky, clouds, sea, shafts and glare
