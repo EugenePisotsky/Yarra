@@ -187,11 +187,14 @@ fn setup(
     commands.insert_resource(GameRenderAssets { target, upscaled });
 }
 
-/// What the output setup reads of the world camera.
+/// What the output setup reads of the world camera, and its projection, which a new target
+/// marks changed (`target_world`).
 #[derive(bevy::ecs::query::QueryData)]
+#[query_data(mutable)]
 struct WorldCamera {
     entity: Entity,
     target: &'static RenderTarget,
+    projection: &'static mut Projection,
     temporal: Option<&'static upscaling::temporal::TemporalView>,
     upscale: Option<&'static upscaling::UpscaleView>,
     status: Option<&'static upscaling::UpscaleStatus>,
@@ -224,7 +227,7 @@ fn apply_settings(
     assets: Res<GameRenderAssets>,
     mut images: ResMut<Assets<Image>>,
     window: Single<&Window, With<PrimaryWindow>>,
-    camera: Single<WorldCamera, With<WorldViewCamera>>,
+    mut camera: Single<WorldCamera, With<WorldViewCamera>>,
     mut presentation: Presentation,
 ) {
     let size = s.target_size(&window);
@@ -249,7 +252,7 @@ fn apply_settings(
     };
     resize(&mut images, &assets.upscaled, upscaled_size);
     resize(&mut images, &assets.target, image_size);
-    target_world(&mut commands, &s, &assets, &window, &camera);
+    target_world(&mut commands, &s, &assets, &window, &mut camera);
 
     let presented = if temporal || linear {
         &assets.target
@@ -346,13 +349,17 @@ fn target_world(
     s: &GameRenderSettings,
     assets: &GameRenderAssets,
     window: &Window,
-    camera: &WorldCameraItem,
+    camera: &mut WorldCameraItem,
 ) {
+    // Bevy 0.20's camera_system sizes a camera for its target on window and image events or a
+    // changed projection, not on a new target: back on the window from the world image, the
+    // camera kept the image's size and scale, and the UI drew at half resolution.
     if s.direct_output() {
         if !matches!(camera.target, RenderTarget::Window(WindowRef::Primary)) {
             commands
                 .entity(camera.entity)
                 .insert(RenderTarget::Window(WindowRef::Primary));
+            camera.projection.set_changed();
         }
 
         return;
@@ -376,6 +383,7 @@ fn target_world(
                 handle: assets.target.clone(),
                 scale_factor: scale,
             }));
+        camera.projection.set_changed();
     }
 }
 
@@ -460,6 +468,68 @@ mod tests {
                 GameRenderSettings::default().target_size(&window),
                 (window.physical_size().as_vec2() * 0.5).as_uvec2()
             );
+        }
+    }
+
+    #[test]
+    fn the_world_camera_takes_each_new_targets_size() {
+        let mut app = App::new();
+        app.init_resource::<Assets<Image>>()
+            .init_resource::<bevy::render::texture::ManualTextureViews>()
+            .add_message::<bevy::window::WindowResized>()
+            .add_message::<bevy::window::WindowCreated>()
+            .add_message::<bevy::window::WindowScaleFactorChanged>()
+            .add_message::<AssetEvent<Image>>()
+            .insert_resource(GameRenderSettings {
+                upscaler: upscaling::UpscaleMethod::MetalFxTemporal,
+                ..default()
+            })
+            .add_plugins((
+                bevy::extract::sync_world::SyncWorldPlugin::<bevy::render::RenderApp>::default(),
+                GameRenderPlugin,
+            ))
+            .add_systems(PostUpdate, bevy::render::camera::camera_system);
+        app.world_mut().spawn((
+            Window {
+                resolution: WindowResolution::new(1200, 900).with_scale_factor_override(2.0),
+                ..default()
+            },
+            PrimaryWindow,
+        ));
+        let main = app
+            .world_mut()
+            .spawn((Camera3d::default(), WorldViewCamera))
+            .id();
+        let sized = |app: &App| {
+            let camera = app.world().get::<Camera>(main).unwrap();
+            (
+                camera.physical_target_size(),
+                camera.target_scaling_factor(),
+            )
+        };
+
+        // On the window, then in the half-sized world image, then on the window again: the UI
+        // the camera draws on the window lays out by its size and scale.
+        app.update();
+        assert_eq!(sized(&app), (Some(UVec2::new(1200, 900)), Some(2.0)));
+
+        for (upscaler, size, scale) in [
+            (
+                upscaling::UpscaleMethod::MetalFxSpatial,
+                UVec2::new(600, 450),
+                1.0,
+            ),
+            (
+                upscaling::UpscaleMethod::MetalFxTemporal,
+                UVec2::new(1200, 900),
+                2.0,
+            ),
+        ] {
+            app.world_mut()
+                .resource_mut::<GameRenderSettings>()
+                .upscaler = upscaler;
+            app.update();
+            assert_eq!(sized(&app), (Some(size), Some(scale)), "{upscaler:?}");
         }
     }
 
