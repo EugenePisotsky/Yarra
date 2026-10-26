@@ -19,7 +19,10 @@ profile_seconds = 15
 cooldown_seconds = 90
 # Passes that work in the gaps of others, charged only the time they run alone: the cloud
 # volume's sweep spans whatever it overlaps, and an even split charged it 0.15–1.2 ms by chance.
-background = ["cloud volume"]
+# Bevy's light clustering count pass rasterises nothing here (no clustered lights; its populate
+# twin takes 0.01 ms) but runs beside the grass G-buffer, which an even split charged 0.3 ms of
+# to the engine in the meadow.
+background = ["cloud volume", "clustering count pass"]
 
 [[line]]
 name = "opaque"
