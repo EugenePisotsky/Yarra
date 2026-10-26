@@ -7,7 +7,7 @@ use super::{
 #[cfg(not(target_os = "ios"))]
 use super::{
     gpu_types::{
-        DRAW_INDEXED_ARGS_WORD_COUNT, GPU_TELEMETRY_WORD_COUNT, TELEMETRY_READBACK_SIZE,
+        BIN_COUNT, DRAW_INDEXED_ARGS_WORD_COUNT, GPU_TELEMETRY_WORD_COUNT, TELEMETRY_READBACK_SIZE,
         WORKGROUP_SIZE,
     },
     topology::{HIGH_INDEX_COUNT, HIGH_ROWS, LOW_INDEX_COUNT, LOW_ROWS},
@@ -105,10 +105,9 @@ pub(super) fn begin_telemetry_readback(
                 let required_words = (TELEMETRY_READBACK_SIZE / size_of::<u32>() as u64) as usize;
 
                 if words.len() >= required_words {
-                    let args_offset = GPU_TELEMETRY_WORD_COUNT as usize;
-                    let emitted_instances = std::array::from_fn(|bin| {
-                        words[args_offset + bin * DRAW_INDEXED_ARGS_WORD_COUNT as usize + 1]
-                    });
+                    let blades_offset = GPU_TELEMETRY_WORD_COUNT as usize
+                        + (BIN_COUNT as u64 * DRAW_INDEXED_ARGS_WORD_COUNT) as usize;
+                    let emitted_instances = std::array::from_fn(|bin| words[blades_offset + bin]);
                     diagnostics.update(|snapshot| {
                         snapshot.scheduled_work_items = words[0];
                         snapshot.dispatched_candidate_lanes = words[10]

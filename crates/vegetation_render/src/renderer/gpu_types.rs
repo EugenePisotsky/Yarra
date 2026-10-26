@@ -1,7 +1,8 @@
 //! CPU/WGSL layouts and shared allocation limits. Keep field order in sync with
 //! `assets/shaders/vegetation/types.wesl`; the shaders take the limits from [`shader_defs`].
 use super::topology::{
-    HIGH_FIRST_INDEX, HIGH_INDEX_COUNT, HIGH_ROWS, LOW_FIRST_INDEX, LOW_INDEX_COUNT, LOW_ROWS,
+    BLADES_PER_BATCH, HIGH_BATCH_INDEX_COUNT, HIGH_FIRST_INDEX, HIGH_ROWS, LOW_BATCH_INDEX_COUNT,
+    LOW_FIRST_INDEX, LOW_ROWS,
 };
 
 use bevy::shader::ShaderDefVal;
@@ -19,12 +20,19 @@ pub(super) const GPU_TELEMETRY_WORD_COUNT: u64 = 16;
 pub(super) const GPU_TELEMETRY_SIZE: u64 = GPU_TELEMETRY_WORD_COUNT * size_of::<u32>() as u64;
 pub(super) const DRAW_INDEXED_ARGS_WORD_COUNT: u64 = 5;
 
+/// The draws' arguments, a bin's after the other's, then the blades each bin holds
+/// (`placement/bindings.wesl` `Draws`).
 pub(super) const DRAW_ARGS_SIZE: u64 =
-    BIN_COUNT as u64 * DRAW_INDEXED_ARGS_WORD_COUNT * size_of::<u32>() as u64;
+    BIN_COUNT as u64 * (DRAW_INDEXED_ARGS_WORD_COUNT + 1) * size_of::<u32>() as u64;
+
+const _: () = assert!(
+    HIGH_CAPACITY.is_multiple_of(BLADES_PER_BATCH) && LOW_CAPACITY.is_multiple_of(BLADES_PER_BATCH),
+    "each bin holds whole batches"
+);
 
 /// Bytes of one blade's pose (`types.wesl` `BladePose`). Each instance slot holds two, for a twin
 /// root's two blades.
-pub(super) const BLADE_POSE_SIZE: u64 = 48;
+pub(super) const BLADE_POSE_SIZE: u64 = 64;
 
 pub(super) const POSES_SIZE: u64 = INSTANCE_CAPACITY as u64 * 2 * BLADE_POSE_SIZE;
 
@@ -51,8 +59,9 @@ pub(super) fn shader_defs() -> Vec<ShaderDefVal> {
         ("INSTANCE_CAPACITY", INSTANCE_CAPACITY),
         ("TYPE_INDEX_MASK", TYPE_INDEX_MASK),
         ("WORKGROUP_SIZE", WORKGROUP_SIZE),
-        ("HIGH_INDEX_COUNT", HIGH_INDEX_COUNT),
-        ("LOW_INDEX_COUNT", LOW_INDEX_COUNT),
+        ("BLADES_PER_BATCH", BLADES_PER_BATCH),
+        ("HIGH_BATCH_INDEX_COUNT", HIGH_BATCH_INDEX_COUNT),
+        ("LOW_BATCH_INDEX_COUNT", LOW_BATCH_INDEX_COUNT),
         ("HIGH_FIRST_INDEX", HIGH_FIRST_INDEX),
         ("LOW_FIRST_INDEX", LOW_FIRST_INDEX),
         ("HIGH_ROWS", HIGH_ROWS),
@@ -171,12 +180,13 @@ impl CameraGpu {
 }
 
 /// Last frame's camera, which the pose pass bends the blades with again for motion vectors, and
-/// the clip transform the grass rasterizes with (`types.wesl` `TemporalGrass`).
+/// the jitter the grass rasterizes with (`types.wesl` `TemporalGrass`).
 #[derive(Clone, Copy, Pod, Zeroable)]
 #[repr(C)]
 pub(super) struct TemporalGrassGpu {
     pub(super) previous: CameraGpu,
-    pub(super) raster_clip: [f32; 16],
+    // xy: `upscaling::temporal::TemporalFrame::raster_shift`, zw unused.
+    pub(super) raster_shift: [f32; 4],
 }
 
 #[derive(Clone, Copy, PartialEq, Pod, Zeroable)]
@@ -197,10 +207,10 @@ mod tests {
         assert_eq!(size_of::<SurfaceSampleGpu>(), 32);
         assert_eq!(size_of::<InstanceGpu>(), 32);
         assert_eq!(size_of::<CameraGpu>(), 272);
-        assert_eq!(size_of::<TemporalGrassGpu>(), 336);
+        assert_eq!(size_of::<TemporalGrassGpu>(), 288);
         assert_eq!(size_of::<ConfigGpu>(), 16);
         assert_eq!(GPU_TELEMETRY_SIZE, 64);
-        assert_eq!(DRAW_ARGS_SIZE, 40);
-        assert_eq!(TELEMETRY_READBACK_SIZE, 104);
+        assert_eq!(DRAW_ARGS_SIZE, 48);
+        assert_eq!(TELEMETRY_READBACK_SIZE, 112);
     }
 }

@@ -75,18 +75,24 @@ struct Camera {
     gust_swell: vec4<f32>,
 }
 
-// Last frame's camera, for motion vectors, and the clip transform the grass rasterizes with.
-struct TemporalGrass { previous: Camera, raster_clip: mat4x4<f32> }
+// Last frame's camera, for motion vectors, and the jitter the grass rasterizes with: xy is how
+// far it moves a clip position per unit of its w (upscaling `TemporalFrame::raster_shift`).
+struct TemporalGrass { previous: Camera, raster_shift: vec4<f32> }
 
-// One blade posed by trampling and the wind (pose.wesl), as drawing reads it: 18 halves in
-// order, then two snorm16 pairs. The halves are this frame's control points p1, p2, p3 after the
-// root (9), then their change since last frame (9): a frame's few millimetres keep their
-// precision as a change, where two positions in halves would differ by their rounding. The
-// pairs are the width axis xy, then its z and how far the blade is pressed down.
+// One blade posed by trampling and the wind (pose.wesl), as drawing reads it (blade.wesl
+// `pack_pose`): 18 halves in order, then two snorm16 pairs, then the blade's width and
+// brightness in halves; then the `DrawnBlade` rest. The 18 halves are this frame's control
+// points p1, p2, p3 after the root (9), then their change since last frame (9): a frame's few
+// millimetres keep their precision as a change, where two positions in halves would differ by
+// their rounding. The pairs are the width axis xy, then its z and how far the blade is pressed
+// down.
 struct BladePose {
     curve: vec4<u32>,
     change: vec4<u32>,
     frame: vec4<u32>,
+    // Halves of the thinned width's fade and coverage, snorm16 xz of the up axis and of the
+    // clump normal, and 1 where the tips are dry.
+    drawn: vec4<u32>,
 }
 
 struct Config {

@@ -30,7 +30,7 @@ pub(super) struct State {
 }
 
 impl State {
-    /// Last frame's camera and this frame's raster transform, for the G-buffer pass.
+    /// Last frame's camera and this frame's raster jitter, for the G-buffer pass.
     pub(super) fn group(&self) -> Option<&BindGroup> {
         self.group.as_ref()
     }
@@ -116,7 +116,7 @@ fn prepare(
         0,
         bytemuck::bytes_of(&TemporalGrassGpu {
             previous,
-            raster_clip: frame.raster_clip_from_world.to_cols_array(),
+            raster_shift: frame.raster_shift.extend(0.0).extend(0.0).to_array(),
         }),
     );
     state.previous = Some(camera);

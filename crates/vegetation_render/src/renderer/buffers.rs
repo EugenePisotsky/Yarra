@@ -48,7 +48,7 @@ pub(super) struct VegetationBuffers {
     pub(super) args: Buffer,
     pub(super) gpu_telemetry: Buffer,
     pub(super) camera: Buffer,
-    /// Last frame's camera and the raster transform (`temporal.rs`).
+    /// Last frame's camera and the raster jitter (`temporal.rs`).
     pub(super) temporal_grass: Buffer,
     pub(super) config: Buffer,
     pub(super) schedule_bind_group: BindGroup,

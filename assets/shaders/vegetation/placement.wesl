@@ -8,7 +8,7 @@ import package::shaders::vegetation::types::{
     WorkItem, TYPE_INDEX_MASK, LOD_MORPH_MASK, LOD_MORPH_SHIFT, DENSITY_FADE_BAND, PI,
 };
 import package::shaders::vegetation::placement::bindings::{
-    work_items, types, instances, draw_args, visible_work_items, config, telemetry,
+    work_items, types, instances, draws, visible_work_items, config, telemetry,
     candidate_cache_entries, candidate_acceptance_bits, pose_dispatch,
 };
 import package::shaders::vegetation::placement::sampling::{
@@ -118,7 +118,7 @@ fn generate(@builtin(global_invocation_id) invocation: vec3<u32>) {
     if (config.workload.y != 0u) {
         atomicAdd(&telemetry.values[2u + bin], 1u);
     }
-    let local_slot = atomicAdd(&draw_args[bin].instance_count, 1u);
+    let local_slot = atomicAdd(&draws.blades[bin], 1u);
     if (local_slot >= bin_capacity(bin)) {
         if (config.workload.y != 0u) {
             atomicAdd(&telemetry.values[6u + bin], 1u);
@@ -148,21 +148,26 @@ fn generate(@builtin(global_invocation_id) invocation: vec3<u32>) {
     );
 }
 
+const BLADES_PER_BATCH: u32 = constants::BLADES_PER_BATCH;
+
 @compute @workgroup_size(1, 1, 1)
 fn finalize() {
+    var widest = 0u;
     for (var bin = 0u; bin < 2u; bin += 1u) {
-        atomicStore(&draw_args[bin].instance_count,
-            min(atomicLoad(&draw_args[bin].instance_count), bin_capacity(bin)));
-        atomicStore(&draw_args[bin].base_vertex, 0u);
-        atomicStore(&draw_args[bin].first_instance, bin_offset(bin));
+        let blades = min(atomicLoad(&draws.blades[bin]), bin_capacity(bin));
+        let batches = (blades + BLADES_PER_BATCH - 1u) / BLADES_PER_BATCH;
+        atomicStore(&draws.blades[bin], blades);
+        atomicStore(&draws.args[bin].instance_count, batches);
+        atomicStore(&draws.args[bin].base_vertex, 0u);
+        atomicStore(&draws.args[bin].first_instance, bin_offset(bin) / BLADES_PER_BATCH);
+        widest = max(widest, batches * BLADES_PER_BATCH);
     }
-    // The pose pass takes a workgroup row per bin, as wide as the fuller bin.
-    let widest = max(atomicLoad(&draw_args[0].instance_count), atomicLoad(&draw_args[1].instance_count));
+    // The pose pass takes a workgroup row per bin, as wide as the fuller bin's batches.
     pose_dispatch[0] = (widest + WORKGROUP_SIZE - 1u) / WORKGROUP_SIZE;
     pose_dispatch[1] = 2u;
     pose_dispatch[2] = 1u;
-    atomicStore(&draw_args[0].index_count, constants::HIGH_INDEX_COUNT);
-    atomicStore(&draw_args[0].first_index, constants::HIGH_FIRST_INDEX);
-    atomicStore(&draw_args[1].index_count, constants::LOW_INDEX_COUNT);
-    atomicStore(&draw_args[1].first_index, constants::LOW_FIRST_INDEX);
+    atomicStore(&draws.args[0].index_count, constants::HIGH_BATCH_INDEX_COUNT);
+    atomicStore(&draws.args[0].first_index, constants::HIGH_FIRST_INDEX);
+    atomicStore(&draws.args[1].index_count, constants::LOW_BATCH_INDEX_COUNT);
+    atomicStore(&draws.args[1].first_index, constants::LOW_FIRST_INDEX);
 }

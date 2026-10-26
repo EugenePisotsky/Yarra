@@ -377,11 +377,13 @@ The game camera (`WorldViewCamera`) renders in HDR at a share of the window's ph
 the other upscalers take FXAA. World cameras do not multisample. In order:
 
 1. Compute before the camera: grass trampling, candidate cache, placement and blade poses
-   (each drawn blade bent by trampling and wind, this frame and last); ground prints
+   (each drawn blade bent by trampling and wind, this frame and last, with the rest of what its
+   vertices need: up, width, thinning, clump normal, colour); ground prints
    (`shaders/terrain/press.wesl`, `print_relief.wesl`, `print_mips.wesl`); GPU tree LOD and
    culling (`shaders/tree/lod.wesl`); the terrain-horizon search; cloud shadows.
-2. G-buffer: grass first, as indirect draws in a pass of its own (no shadows), writing its
-   surface (`shaders/vegetation/draw/gbuffer.wesl`), depth and, under Temporal, its motion; then
+2. G-buffer: grass first, as indirect draws of 32-blade instances in a pass of its own (no
+   shadows), writing its surface (`shaders/vegetation/draw/gbuffer.wesl`), depth and, under
+   Temporal, its motion; then
    Bevy's deferred prepass draws terrain v2 patches (one shared grid mesh and
    `ClipmapTerrainMaterial`; heights come from the clipmap), objects, tree meshes and impostors
    (indirect draws per form and representation), which write their surface

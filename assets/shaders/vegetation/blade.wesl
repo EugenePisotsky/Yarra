@@ -3,6 +3,7 @@
 // colour varying per blade and per clump. The wind pushes the tip and the blade keeps its length.
 import package::shaders::vegetation::types::{
     Instance, GrassType, Camera, BladePose, PI, TYPE_INDEX_MASK, LOD_MORPH_MASK, LOD_MORPH_SHIFT,
+    DENSITY_FADE_BAND,
 };
 import package::shaders::vegetation::random::{hash32, random01};
 import package::shaders::weather::gust::{gust, wind_frame};
@@ -65,14 +66,18 @@ fn decode_instance(instance: Instance) -> BladeInstance {
     blade.lod_morph = f32((instance.geometry.y >> LOD_MORPH_SHIFT) & LOD_MORPH_MASK)
         / f32(LOD_MORPH_MASK);
     blade.low = (instance.geometry.y >> 31u) != 0u;
-    let normal_xz = unpack2x16snorm(instance.geometry.z);
     blade.surface_normal = normalize3_or(
-        vec3<f32>(normal_xz.x, sqrt(max(0.0, 1.0 - dot(normal_xz, normal_xz))), normal_xz.y),
+        upward(unpack2x16snorm(instance.geometry.z)),
         vec3<f32>(0.0, 1.0, 0.0),
     );
     blade.seed = instance.geometry.w & 0x00ffffffu;
     blade.density = f32(instance.geometry.w >> 24u) / 255.0;
     return blade;
+}
+
+// The upward unit vector with these x and z.
+fn upward(xz: vec2<f32>) -> vec3<f32> {
+    return vec3<f32>(xz.x, sqrt(max(0.0, 1.0 - dot(xz, xz))), xz.y);
 }
 
 // One of a twin root's two blades. The second is the instance's own blade; the first is its
@@ -103,8 +108,10 @@ struct Blade {
     lean: f32,
     bend: f32,
     side_curve: f32,
-    root_color: vec3<f32>,
-    tip_color: vec3<f32>,
+    // Colour: the type's root and tip colours scaled by `brightness`, the dry tip colour where
+    // `dry`.
+    brightness: f32,
+    dry: bool,
     // Per-blade wind phase, 0..1.
     phase: f32,
     // How far a character has pressed the blade down, 0..1: pressed blades barely move in wind.
@@ -137,12 +144,62 @@ fn rest_blade(b: BladeInstance, grass: GrassType) -> Blade {
     blade.seed = seed;
 
     // Colour: a clump-wide brightness, dry tips in some clumps, and a little per blade.
-    let dry = random01(clump ^ 0x7b7d159cu) < grass.root.w;
-    let brightness = 1.0 + (random01(clump ^ 0x94d049bbu) * 2.0 - 1.0) * grass.tip.w
+    blade.dry = random01(clump ^ 0x7b7d159cu) < grass.root.w;
+    blade.brightness = 1.0 + (random01(clump ^ 0x94d049bbu) * 2.0 - 1.0) * grass.tip.w
         + (random01(seed ^ 0x68e31da4u) - 0.5) * 0.12;
-    blade.root_color = grass.root.xyz * brightness;
-    blade.tip_color = select(grass.tip.xyz, grass.dry_tip.xyz, dry) * brightness;
     return blade;
+}
+
+// Thinned populations widen their survivors sublinearly, up to this much.
+const MAXIMUM_WIDTH_SCALE: f32 = 2.25;
+const COVERAGE_WIDTH_EXPONENT: f32 = 0.35;
+
+// What drawing needs of a blade besides its curves (draw/geometry.wesl). It is the same at every
+// vertex, so the pose pass works it out once with the curves.
+struct DrawnBlade {
+    up: vec3<f32>,
+    width: f32,
+    // Thinned populations: blades past the kept share narrow away (`fade` to 0) and the
+    // survivors widen (`coverage`).
+    fade: f32,
+    coverage: f32,
+    // The clump's stable normal: unresolved blades take their highlight from it.
+    clump_normal: vec3<f32>,
+    brightness: f32,
+    dry: bool,
+}
+
+// A shallow, clump-stable tilt of the ground normal: neighbouring blades enter and leave the
+// broad highlight together.
+fn clump_normal(surface_normal: vec3<f32>, clump: f32) -> vec3<f32> {
+    let tangent = normalize3_or(cross(vec3(0.0, 1.0, 0.0), surface_normal), vec3(1.0, 0.0, 0.0));
+    let bitangent = normalize3_or(cross(surface_normal, tangent), vec3(0.0, 0.0, 1.0));
+    let angle = clump * 2.0 * PI;
+    return normalize3_or(
+        surface_normal + (tangent * cos(angle) + bitangent * sin(angle)) * 0.11,
+        surface_normal,
+    );
+}
+
+fn drawn_blade(b: BladeInstance, blade: Blade) -> DrawnBlade {
+    var drawn: DrawnBlade;
+    drawn.up = blade.up;
+    drawn.width = blade.width;
+    drawn.fade = 1.0;
+    if (b.density < 0.999) {
+        drawn.fade = 1.0 - smoothstep(
+            max(b.density - DENSITY_FADE_BAND * 0.5, 0.0),
+            min(b.density + DENSITY_FADE_BAND * 0.5, 1.0),
+            b.lod_rank,
+        );
+    }
+    drawn.coverage = clamp(
+        pow(1.0 / max(b.density, 0.125), COVERAGE_WIDTH_EXPONENT), 1.0, MAXIMUM_WIDTH_SCALE,
+    );
+    drawn.clump_normal = clump_normal(b.surface_normal, b.clump);
+    drawn.brightness = blade.brightness;
+    drawn.dry = blade.dry;
+    return drawn;
 }
 
 // Pushed blades lie between these leans from upright: some flat on the ground, some still
@@ -296,21 +353,26 @@ fn wind_curve(rest: Curve, blade: Blade, grass: GrassType, camera: Camera) -> Cu
     return c;
 }
 
-// A blade's pose, this frame's and last frame's curve about one root.
+// A blade's pose, this frame's and last frame's curve about one root, and the rest of what
+// drawing needs of it.
 struct Pose {
     now: Curve,
     before: Curve,
     // The width axis, after any trampling twist.
     side: vec3<f32>,
     pressed: f32,
+    drawn: DrawnBlade,
 }
 
 fn halves(a: f32, b: f32) -> u32 {
     return pack2x16float(vec2(a, b));
 }
 
-// `before` lies in last frame's render space, about its own root.
-fn pack_pose(now: Curve, before: Curve, side: vec3<f32>, pressed: f32) -> BladePose {
+// `before` lies in last frame's render space, about its own root. Up and the clump normal point
+// upward, so their x and z give them.
+fn pack_pose(
+    now: Curve, before: Curve, side: vec3<f32>, pressed: f32, drawn: DrawnBlade,
+) -> BladePose {
     let n1 = now.p1 - now.p0;
     let n2 = now.p2 - now.p0;
     let n3 = now.p3 - now.p0;
@@ -320,7 +382,10 @@ fn pack_pose(now: Curve, before: Curve, side: vec3<f32>, pressed: f32) -> BladeP
     var pose: BladePose;
     pose.curve = vec4(halves(n1.x, n1.y), halves(n1.z, n2.x), halves(n2.y, n2.z), halves(n3.x, n3.y));
     pose.change = vec4(halves(n3.z, d1.x), halves(d1.y, d1.z), halves(d2.x, d2.y), halves(d2.z, d3.x));
-    pose.frame = vec4(halves(d3.y, d3.z), pack2x16snorm(side.xy), pack2x16snorm(vec2(side.z, pressed)), 0u);
+    pose.frame = vec4(halves(d3.y, d3.z), pack2x16snorm(side.xy), pack2x16snorm(vec2(side.z, pressed)),
+        halves(drawn.width, drawn.brightness));
+    pose.drawn = vec4(halves(drawn.fade, drawn.coverage), pack2x16snorm(drawn.up.xz),
+        pack2x16snorm(drawn.clump_normal.xz), u32(drawn.dry));
     return pose;
 }
 
@@ -345,5 +410,14 @@ fn unpack_pose(pose: BladePose, root: vec3<f32>) -> Pose {
     let side_z_pressed = unpack2x16snorm(pose.frame.z);
     p.side = normalize3_or(vec3(side_xy, side_z_pressed.x), vec3(1.0, 0.0, 0.0));
     p.pressed = side_z_pressed.y;
+    let width_brightness = unpack2x16float(pose.frame.w);
+    let thinning = unpack2x16float(pose.drawn.x);
+    p.drawn.up = upward(unpack2x16snorm(pose.drawn.y));
+    p.drawn.width = width_brightness.x;
+    p.drawn.fade = thinning.x;
+    p.drawn.coverage = thinning.y;
+    p.drawn.clump_normal = upward(unpack2x16snorm(pose.drawn.z));
+    p.drawn.brightness = width_brightness.y;
+    p.drawn.dry = pose.drawn.w != 0u;
     return p;
 }

@@ -21,7 +21,8 @@ fn vertex(
         let previous = blade.previous + vec3(shift.x, 0.0, shift.y);
         output.current_clip = output.clip_position;
         output.previous_clip = last_camera.clip_from_world * vec4(previous, 1.0);
-        output.clip_position = temporal_grass.raster_clip * vec4(output.world_position, 1.0);
+        let jitter = temporal_grass.raster_shift.xy * output.current_clip.w;
+        output.clip_position = output.current_clip + vec4(jitter, 0.0, 0.0);
     }
     return output;
 }

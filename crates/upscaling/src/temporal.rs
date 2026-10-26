@@ -71,8 +71,19 @@ pub struct TemporalFrame {
     pub jitter: Vec2,
     pub clip_from_world: Mat4,
     pub previous_clip_from_world: Mat4,
-    pub raster_clip_from_world: Mat4,
+    /// Where renderers with their own clip transform rasterise: the jittered clip position is
+    /// the unjittered one plus `raster_shift * w` in x and y.
+    pub raster_shift: Vec2,
     pub reset: bool,
+}
+
+/// How far `TemporalJitter::jitter_projection` moves a clip position in x and y, per unit of its
+/// w, on the perspective projection `clip_from_view`. Its jitter is a shift of the projection's z
+/// column, so it moves a point by its view depth, which w is a multiple of.
+fn raster_shift(clip_from_view: Mat4, jitter: Vec2, size: Vec2) -> Vec2 {
+    let mut jittered = clip_from_view;
+    TemporalJitter { offset: jitter }.jitter_projection(&mut jittered, size);
+    (jittered.z_axis.xy() - clip_from_view.z_axis.xy()) / clip_from_view.z_axis.w
 }
 
 /// Custom opaque renderers write this attachment together with their HDR colour and final depth.
@@ -313,8 +324,6 @@ fn prepare(
         camera.depth_texture_usages = (TextureUsages::from(camera.depth_texture_usages)
             | TextureUsages::TEXTURE_BINDING)
             .into();
-        let mut projection = view.clip_from_view;
-        TemporalJitter { offset }.jitter_projection(&mut projection, size.as_vec2());
         commands.entity(entity).insert((
             MainPassResolutionOverride(size),
             h.motion.clone(),
@@ -323,7 +332,7 @@ fn prepare(
                 jitter: offset,
                 clip_from_world: clip,
                 previous_clip_from_world: if reset { clip } else { h.clip },
-                raster_clip_from_world: projection * view.world_from_view.to_matrix().inverse(),
+                raster_shift: raster_shift(view.clip_from_view, offset, size.as_vec2()),
                 reset,
             },
         ));
@@ -625,6 +634,7 @@ fn sampled_depth(depth: &ViewDepthStencilTexture) -> &wgpu::TextureView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bevy::camera::CameraProjection;
 
     #[test]
     fn jitter_is_bounded_and_visits_both_sides() {
@@ -632,5 +642,33 @@ mod tests {
         assert!(samples.iter().all(|p| p.abs().max_element() <= 0.5));
         assert!(samples.iter().any(|p| p.x < -0.4) && samples.iter().any(|p| p.x > 0.4));
         assert_eq!(jitter(0), jitter(32));
+    }
+
+    #[test]
+    fn raster_shift_matches_the_jittered_projection() {
+        let size = Vec2::new(1728.0, 1084.0);
+        let clip_from_view = PerspectiveProjection {
+            aspect_ratio: size.x / size.y,
+            ..default()
+        }
+        .get_clip_from_view();
+        let view_from_world = Transform::from_xyz(3.0, 2.0, -5.0)
+            .looking_at(Vec3::new(10.0, 0.0, 20.0), Vec3::Y)
+            .to_matrix()
+            .inverse();
+        let offset = Vec2::new(0.31, -0.42);
+        let mut jittered = clip_from_view;
+        TemporalJitter { offset }.jitter_projection(&mut jittered, size);
+        let shift = raster_shift(clip_from_view, offset, size);
+
+        for point in [Vec3::new(4.0, 0.5, 12.0), Vec3::new(-30.0, 3.0, 80.0)] {
+            let clip = clip_from_view * view_from_world * point.extend(1.0);
+            let raster = jittered * view_from_world * point.extend(1.0);
+            let shifted = clip + (shift * clip.w).extend(0.0).extend(0.0);
+            assert!(
+                (raster - shifted).abs().max_element() < 1e-5,
+                "{raster} vs {shifted}"
+            );
+        }
     }
 }
