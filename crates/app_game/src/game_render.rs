@@ -1,6 +1,8 @@
 //! Game presentation defaults, shared with the optional render-audit controls.
 use bevy::{
-    anti_alias::{contrast_adaptive_sharpening::ContrastAdaptiveSharpening, fxaa::Fxaa},
+    anti_alias::{
+        contrast_adaptive_sharpening::ContrastAdaptiveSharpening, fxaa::Fxaa, smaa::Smaa,
+    },
     camera::{ImageRenderTarget, RenderTarget},
     ecs::system::SystemParam,
     image::ImageSampler,
@@ -56,6 +58,7 @@ pub(crate) struct GameRenderSettings {
     /// Evil Village shows its fullscreen 1920×1080 (docs/PERFORMANCE_REVIEW.md); the render scale
     /// applies to it. None: the window's own pixels.
     pub(crate) frame: Option<UVec2>,
+    pub(crate) anti_aliasing: PostAntiAliasing,
     pub(crate) show_ui: bool,
     pub(crate) direct_temporal_output: bool,
 }
@@ -68,8 +71,34 @@ impl Default for GameRenderSettings {
             upscaler: upscaling::UpscaleMethod::MetalFxTemporal,
             render_size: None,
             frame: None,
+            anti_aliasing: PostAntiAliasing::Auto,
             show_ui: true,
             direct_temporal_output: true,
+        }
+    }
+}
+
+/// Anti-aliasing after the tone map, beside MetalFX Temporal's own (as Village pairs FXAA with
+/// its TAA) or alone under the other upscalers.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum PostAntiAliasing {
+    /// None after MetalFX Temporal, FXAA after the others.
+    #[default]
+    Auto,
+    Fxaa,
+    Smaa,
+    Off,
+}
+
+impl PostAntiAliasing {
+    pub(crate) const ALL: [Self; 4] = [Self::Auto, Self::Fxaa, Self::Smaa, Self::Off];
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Fxaa => "FXAA",
+            Self::Smaa => "SMAA",
+            Self::Off => "off",
         }
     }
 }
@@ -85,9 +114,23 @@ impl GameRenderSettings {
 
     /// The world camera owns the window: one pass tone-maps its image there and draws the UI
     /// over it, so the UI camera and its composite of the world image stand down. A fixed frame
-    /// needs the composite to fit it in the window.
+    /// needs the composite to fit it in the window, and post-process anti-aliasing Bevy's own tone
+    /// map before it.
     fn direct_output(&self) -> bool {
-        self.temporal() && self.direct_temporal_output && self.frame.is_none()
+        self.temporal()
+            && self.direct_temporal_output
+            && self.frame.is_none()
+            && self.post_anti_aliasing().is_none()
+    }
+
+    /// The anti-aliasing after the tone map, if any.
+    fn post_anti_aliasing(&self) -> Option<PostAntiAliasing> {
+        match self.anti_aliasing {
+            PostAntiAliasing::Auto if self.temporal() => None,
+            PostAntiAliasing::Auto => Some(PostAntiAliasing::Fxaa),
+            PostAntiAliasing::Off => None,
+            chosen => Some(chosen),
+        }
     }
 
     /// The frame the world is shown in: the window's pixels, or the fixed frame.
@@ -356,12 +399,23 @@ fn apply_settings(
             });
     }
 
-    // MetalFX Temporal resolves edges itself; the other paths take FXAA. World cameras do not
-    // multisample (docs/DECISIONS.md).
-    if temporal {
-        commands.entity(camera.entity).remove::<Fxaa>();
-    } else {
-        commands.entity(camera.entity).insert(Fxaa::default());
+    // World cameras do not multisample (docs/DECISIONS.md).
+    match s.post_anti_aliasing() {
+        Some(PostAntiAliasing::Fxaa) => {
+            commands
+                .entity(camera.entity)
+                .remove::<Smaa>()
+                .insert(Fxaa::default());
+        }
+        Some(PostAntiAliasing::Smaa) => {
+            commands
+                .entity(camera.entity)
+                .remove::<Fxaa>()
+                .insert(Smaa::default());
+        }
+        _ => {
+            commands.entity(camera.entity).remove::<(Fxaa, Smaa)>();
+        }
     }
 
     // A fixed frame is shown at its own size, so it keeps the detail its anti-aliasing softened
@@ -680,6 +734,58 @@ mod tests {
         assert!(world.get::<ContrastAdaptiveSharpening>(main).is_none());
         let node = world.get::<Node>(composite).unwrap();
         assert_eq!((node.width, node.height), (percent(100), percent(100)));
+    }
+
+    #[test]
+    fn post_anti_aliasing_runs_beside_metalfx_temporal_off_the_direct_output() {
+        let mut app = App::new();
+        app.init_resource::<Assets<Image>>()
+            .init_resource::<GameRenderSettings>()
+            .add_plugins((
+                bevy::extract::sync_world::SyncWorldPlugin::<bevy::render::RenderApp>::default(),
+                GameRenderPlugin,
+            ));
+        app.world_mut().spawn((
+            Window {
+                resolution: WindowResolution::new(1200, 900).with_scale_factor_override(2.0),
+                ..default()
+            },
+            PrimaryWindow,
+        ));
+        let main = app
+            .world_mut()
+            .spawn((Camera3d::default(), WorldViewCamera))
+            .id();
+        let state = |app: &App| {
+            let world = app.world();
+            (
+                world.get::<Fxaa>(main).is_some(),
+                world.get::<Smaa>(main).is_some(),
+                world.get::<upscaling::DirectTonemapOutput>(main).is_some(),
+            )
+        };
+
+        // Under Temporal, auto and off leave the edges to MetalFX on the direct output; FXAA and
+        // SMAA follow Bevy's tone map on the composite path.
+        for (anti_aliasing, expected) in [
+            (PostAntiAliasing::Auto, (false, false, true)),
+            (PostAntiAliasing::Smaa, (false, true, false)),
+            (PostAntiAliasing::Fxaa, (true, false, false)),
+            (PostAntiAliasing::Off, (false, false, true)),
+        ] {
+            app.world_mut()
+                .resource_mut::<GameRenderSettings>()
+                .anti_aliasing = anti_aliasing;
+            app.update();
+            assert_eq!(state(&app), expected, "{anti_aliasing:?}");
+        }
+
+        // The other upscalers take FXAA unless told otherwise.
+        let mut settings = app.world_mut().resource_mut::<GameRenderSettings>();
+        settings.anti_aliasing = PostAntiAliasing::Auto;
+        settings.upscaler = upscaling::UpscaleMethod::MetalFxSpatial;
+        app.update();
+        assert_eq!(state(&app), (true, false, false));
     }
 
     #[test]

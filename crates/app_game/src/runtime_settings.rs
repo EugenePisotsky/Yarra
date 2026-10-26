@@ -35,6 +35,7 @@ impl Plugin for RuntimeSettingsPlugin {
         let settings = RuntimeSettings {
             upscaler: options.upscaler,
             frame: options.frame,
+            anti_aliasing: options.anti_aliasing,
             counters: options.counters,
             gpu_pass_timings: options.gpu_detail,
             scale_index: options.resolution_scale.map_or_else(
@@ -127,6 +128,7 @@ pub(crate) struct RuntimeSettings {
     pub(crate) upscaler: upscaling::UpscaleMethod,
     /// `GameRenderSettings::frame`.
     pub(crate) frame: Option<UVec2>,
+    pub(crate) anti_aliasing: crate::game_render::PostAntiAliasing,
     pub(crate) temporal_debug: upscaling::temporal::TemporalDebug,
     pub(crate) counters: bool,
     pub(crate) gpu_pass_timings: bool,
@@ -168,6 +170,7 @@ impl Default for RuntimeSettings {
                 .expect("game scale is available in runtime settings"),
             upscaler: render.upscaler,
             frame: render.frame,
+            anti_aliasing: render.anti_aliasing,
             temporal_debug: render.temporal_debug,
             // Statistics atomics are explicit on every platform, including audit startup.
             counters: false,
@@ -230,6 +233,7 @@ fn sync_render_settings(
             temporal_debug: s.temporal_debug,
             render_size: profile.as_ref().and_then(|p| p.size),
             frame: s.frame,
+            anti_aliasing: s.anti_aliasing,
             show_ui: s.show_ui,
         });
     }

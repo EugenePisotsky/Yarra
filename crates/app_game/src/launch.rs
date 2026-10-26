@@ -40,6 +40,7 @@ pub(crate) struct LaunchOptions {
     pub resolution_scale: Option<f32>,
     /// A fixed frame at launch (`GameRenderSettings::frame`).
     pub frame: Option<UVec2>,
+    pub anti_aliasing: crate::game_render::PostAntiAliasing,
     pub lod_lab: Option<LodLabOptions>,
     pub look_capture: Option<crate::dev::look_capture::LookCaptureOptions>,
 }
@@ -206,6 +207,16 @@ impl LaunchOptions {
             profile,
             repro,
             resolution_scale,
+            anti_aliasing: args.choice(
+                "--anti-aliasing",
+                "auto",
+                &[
+                    ("auto", crate::game_render::PostAntiAliasing::Auto),
+                    ("fxaa", crate::game_render::PostAntiAliasing::Fxaa),
+                    ("smaa", crate::game_render::PostAntiAliasing::Smaa),
+                    ("off", crate::game_render::PostAntiAliasing::Off),
+                ],
+            )?,
             frame: match args.value("--frame")?.unwrap_or("window") {
                 "window" => None,
                 size => Some(crate::dev::profile::dimensions(size, "--frame")?),

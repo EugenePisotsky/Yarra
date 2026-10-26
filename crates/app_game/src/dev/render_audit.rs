@@ -5,7 +5,7 @@ mod performance;
 mod timing;
 
 use crate::frame_pacing::{FramePacing, FrameRate};
-use crate::game_render::{GameRenderSettings, RESOLUTION_SCALES, VILLAGE_FRAME};
+use crate::game_render::{GameRenderSettings, PostAntiAliasing, RESOLUTION_SCALES, VILLAGE_FRAME};
 use crate::runtime_settings::{OBJECT_DETAIL_SCALES, RuntimeSettings, RuntimeSettingsApply, Scene};
 use bevy::{prelude::*, ui::Pressed, window::PrimaryWindow};
 use engine::{GamePointerInputBlocked, GameplaySystems};
@@ -94,6 +94,7 @@ enum Control {
     ShadowMap,
     Scale,
     Frame,
+    AntiAliasing,
     Upscaler,
     TemporalDebug,
     Counters,
@@ -139,6 +140,7 @@ impl Control {
         Control::Scale,
         Control::Frame,
         Control::Upscaler,
+        Control::AntiAliasing,
         Control::TemporalDebug,
         Control::ObjectDetail,
     ];
@@ -214,6 +216,7 @@ impl Control {
             },
             Self::TemporalDebug => format!("Temporal view: {}", s.temporal_debug.label()),
             Self::Upscaler => format!("Upscaler: {}", s.upscaler.label()),
+            Self::AntiAliasing => format!("Post-process AA: {}", s.anti_aliasing.label()),
             Self::Counters => format!("GPU counters: {}", on_off(s.counters)),
             Self::GpuPassTimings => format!("GPU pass timings: {}", on_off(s.gpu_pass_timings)),
             Self::Wind => format!("Vegetation wind: {}", on_off(s.wind)),
@@ -327,6 +330,11 @@ fn buttons(
                 let methods = upscaling::UpscaleMethod::ALL;
                 let index = methods.iter().position(|m| *m == s.upscaler).unwrap_or(0);
                 s.upscaler = methods[(index + 1) % methods.len()];
+            }
+            Control::AntiAliasing => {
+                let all = PostAntiAliasing::ALL;
+                let index = all.iter().position(|a| *a == s.anti_aliasing).unwrap_or(0);
+                s.anti_aliasing = all[(index + 1) % all.len()];
             }
             Control::Counters => s.counters = !s.counters,
             Control::GpuPassTimings => {
