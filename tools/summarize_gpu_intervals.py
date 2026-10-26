@@ -125,7 +125,7 @@ def summarize(path, frames_by, background=()):
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("traces", nargs="+")
-    parser.add_argument("--frames-by", default="temporal tone map to output")
+    parser.add_argument("--frames-by", default="tone map and UI to output")
     parser.add_argument("--reference", default="main_opaque_pass_3d")
     parser.add_argument("--top", type=int, default=30)
     parser.add_argument("--states", nargs="*", default=[])

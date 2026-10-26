@@ -1,40 +1,59 @@
-//! Fuse the final tone map and output copy for temporal views.
+//! Fuse the final tone map, the UI and the output copy for temporal views.
 //! Uses Bevy's tone-mapping shader, LUTs, grading and dithering unchanged.
 use crate::temporal::TemporalView;
 
 use bevy::{
     camera::{CameraOutputMode, CompositingSpace},
     core_pipeline::{
-        Core3dSystems, FullscreenShader,
+        FullscreenShader,
         schedule::Core3d,
         tonemapping::{self, DebandDither, Tonemapping, TonemappingLuts},
         upscaling::upscaling,
     },
-    ecs::schedule::ConditionWithAccess,
+    ecs::{
+        query::QueryData,
+        schedule::{BoxedCondition, ConditionWithAccess},
+        system::SystemParam,
+    },
     prelude::*,
     render::{
         GpuResourceAppExt, Render, RenderApp, RenderStartup, RenderSystems,
         camera::ExtractedCamera,
         extract_component::{ExtractComponent, ExtractComponentPlugin},
         render_asset::RenderAssets,
+        render_phase::{SortedRenderPhase, ViewSortedRenderPhases},
         render_resource::{binding_types::*, *},
         renderer::{CurrentView, RenderContext, RenderDevice, ViewQuery},
         texture::{FallbackImage, GpuImage},
         view::{
             ExtractedView, ResolvedCompositingSpace, ViewTarget, ViewUniform, ViewUniformOffset,
-            ViewUniforms,
+            ViewUniforms, prepare_view_targets,
         },
     },
     shader::ShaderDefVal,
+    ui_render::{TransparentUi, UiCameraView, ui_pass},
 };
 
-/// Opt into direct tone-mapped output for a temporal camera with no effects after
-/// tone mapping. Bloom and HDR effects still run before this pass. The camera
-/// must own its full output target; viewports, output blending and non-linear
-/// compositing use Bevy's standard path. Remove this before adding LDR effects.
+use std::any::TypeId;
+
+/// Opt into direct output for a temporal camera with no effects after tone mapping: one pass
+/// tone-maps the image onto the camera's target and draws the camera's UI over it, so the UI
+/// needs no camera of its own. Bloom and HDR effects still run before this pass. The camera
+/// must own its full output target; viewports, output blending and non-linear compositing use
+/// Bevy's standard path. Remove this before adding LDR effects.
 #[derive(Component, Clone, ExtractComponent)]
 #[extract_app(bevy::render::RenderApp)]
 pub struct DirectTonemapOutput;
+
+/// A view that draws onto its output in this crate's pass. Its UI pipelines target the
+/// output's format, so Bevy's UI pass, which draws into the HDR main texture, leaves it alone.
+#[derive(Component)]
+struct Direct;
+
+/// The view's tone map pipeline, once compiled. Until then Bevy's tone map and copy write the
+/// output, and the pass draws only the UI over it.
+#[derive(Component)]
+struct Ready(CachedRenderPipelineId);
 
 #[derive(Resource)]
 struct Pipeline {
@@ -109,9 +128,6 @@ impl SpecializedRenderPipeline for Pipeline {
     }
 }
 
-#[derive(Component)]
-struct Ready(CachedRenderPipelineId);
-
 pub(super) fn install(app: &mut App) {
     app.add_plugins(ExtractComponentPlugin::<DirectTonemapOutput>::default());
     let Some(render) = app.get_sub_app_mut(RenderApp) else {
@@ -120,11 +136,18 @@ pub(super) fn install(app: &mut App) {
     render
         .init_gpu_resource::<SpecializedRenderPipelines<Pipeline>>()
         .add_systems(RenderStartup, init)
-        .add_systems(Render, prepare.in_set(RenderSystems::PrepareBindGroups))
         .add_systems(
-            Core3d,
-            draw.after(Core3dSystems::PostProcess).before(upscaling),
-        );
+            Render,
+            (
+                // Before the UI queues its pipelines, which take the format chosen here.
+                claim
+                    .in_set(RenderSystems::PrepareViews)
+                    .after(prepare_view_targets),
+                prepare.in_set(RenderSystems::PrepareBindGroups),
+            ),
+        )
+        // After Bevy's copy, which writes the image while the tone map pipeline compiles.
+        .add_systems(Core3d, draw.after(upscaling));
 }
 
 pub(super) fn finish(app: &mut App) {
@@ -136,36 +159,54 @@ pub(super) fn finish(app: &mut App) {
         .get_mut(Core3d)
         .expect("Core3d plugin is required");
 
-    // Add a condition in place: preserve all ordering edges and let the normal
+    // Add conditions in place: preserve all ordering edges and let the normal
     // startup initialize these systems, including the game's timing adapters.
     // This adapter, like the engine's opaque-pass adapter, targets Bevy 0.20.
     assert!(!schedule.graph().systems.is_initialized());
+    let tone_map = IntoSystem::into_system(tonemapping::tonemapping).system_type();
+    give_way(
+        schedule,
+        tone_map,
+        Box::new(IntoSystem::into_system(use_builtin)),
+    );
+    let copy = IntoSystem::into_system(upscaling).system_type();
+    give_way(
+        schedule,
+        copy,
+        Box::new(IntoSystem::into_system(use_builtin)),
+    );
+    let ui = IntoSystem::into_system(ui_pass).system_type();
+    give_way(
+        schedule,
+        ui,
+        Box::new(IntoSystem::into_system(draws_own_ui)),
+    );
+}
 
-    for system_type in [
-        IntoSystem::into_system(tonemapping::tonemapping).system_type(),
-        IntoSystem::into_system(upscaling).system_type(),
-    ] {
-        let keys: Vec<_> = schedule
-            .graph()
-            .systems
-            .iter()
-            .filter(|(_, s, _)| s.system_type() == system_type)
-            .map(|(k, _, _)| k)
-            .collect();
-        assert_eq!(keys.len(), 1, "expected one built-in output pass");
-        schedule
-            .graph_mut()
-            .systems
-            .get_conditions_mut(keys[0])
-            .unwrap()
-            .push(ConditionWithAccess::new(Box::new(IntoSystem::into_system(
-                use_builtin,
-            ))));
-    }
+/// Runs the one built-in output system of type `system` only while `condition` holds.
+fn give_way(schedule: &mut Schedule, system: TypeId, condition: BoxedCondition) {
+    let keys: Vec<_> = schedule
+        .graph()
+        .systems
+        .iter()
+        .filter(|(_, s, _)| s.system_type() == system)
+        .map(|(k, _, _)| k)
+        .collect();
+    assert_eq!(keys.len(), 1, "expected one built-in output pass");
+    schedule
+        .graph_mut()
+        .systems
+        .get_conditions_mut(keys[0])
+        .unwrap()
+        .push(ConditionWithAccess::new(condition));
 }
 
 fn use_builtin(current: Res<CurrentView>, ready: Query<(), With<Ready>>) -> bool {
     !ready.contains(current.0)
+}
+
+fn draws_own_ui(current: Res<CurrentView>, direct: Query<(), With<Direct>>) -> bool {
+    !direct.contains(current.0)
 }
 
 fn init(
@@ -196,138 +237,242 @@ fn init(
     });
 }
 
-#[allow(clippy::type_complexity)]
-fn prepare(
-    mut commands: Commands,
-    cache: Res<PipelineCache>,
-    pipeline: Res<Pipeline>,
-    mut pipelines: ResMut<SpecializedRenderPipelines<Pipeline>>,
-    views: Query<(
-        Entity,
-        &ExtractedCamera,
-        &ExtractedView,
-        &ViewTarget,
-        Option<&TemporalView>,
-        Option<&DirectTonemapOutput>,
-        Option<&Tonemapping>,
-        Option<&DebandDither>,
-        Option<&ResolvedCompositingSpace>,
-    )>,
-) {
-    for (e, camera, view, target, temporal, direct, tone, dither, space) in &views {
-        let supported = direct.is_some()
-            && temporal.is_some()
-            && camera.hdr
-            && camera.viewport.is_none()
+/// What decides whether a view can draw onto its output directly.
+#[derive(QueryData)]
+struct Candidate {
+    entity: Entity,
+    camera: &'static ExtractedCamera,
+    target: &'static ViewTarget,
+    ui: Option<&'static UiCameraView>,
+    temporal: Has<TemporalView>,
+    direct: Has<DirectTonemapOutput>,
+    tone: Option<&'static Tonemapping>,
+    space: Option<&'static ResolvedCompositingSpace>,
+}
+
+impl CandidateItem<'_, '_> {
+    /// The output's format, when nothing after the tone map needs the main texture.
+    fn output_format(&self) -> Option<TextureFormat> {
+        let supported = self.direct
+            && self.temporal
+            && self.camera.hdr
+            && self.camera.viewport.is_none()
             && matches!(
-                camera.output_mode,
+                self.camera.output_mode,
                 CameraOutputMode::Write {
                     blend_state: None,
                     ..
                 }
             )
             && matches!(
-                ResolvedCompositingSpace::space(space),
+                ResolvedCompositingSpace::space(self.space),
                 None | Some(CompositingSpace::Linear)
             )
-            && tone.is_some_and(Tonemapping::is_enabled);
-        let Some(format) = target.out_texture_view_format().filter(|_| supported) else {
-            commands.entity(e).remove::<Ready>();
+            && self.tone.is_some_and(Tonemapping::is_enabled);
+        self.target.out_texture_view_format().filter(|_| supported)
+    }
+}
+
+fn claim(mut commands: Commands, views: Query<Candidate>, mut ui_views: Query<&mut ExtractedView>) {
+    for view in &views {
+        let Some(format) = view.output_format() else {
+            commands.entity(view.entity).remove::<(Direct, Ready)>();
             continue;
         };
+        commands.entity(view.entity).insert(Direct);
+
+        if let Some(ui) = view.ui
+            && let Ok(mut ui_view) = ui_views.get_mut(ui.0)
+        {
+            ui_view.target_format = format;
+        }
+    }
+}
+
+fn prepare(
+    mut commands: Commands,
+    cache: Res<PipelineCache>,
+    pipeline: Res<Pipeline>,
+    mut pipelines: ResMut<SpecializedRenderPipelines<Pipeline>>,
+    views: Query<ToneMapped, With<Direct>>,
+) {
+    for view in &views {
+        let Some(format) = view.target.out_texture_view_format() else {
+            continue;
+        };
+        let grading = &view.view.color_grading;
         let key = Key {
             format,
-            tone: *tone.unwrap(),
-            dither: *dither.unwrap_or(&DebandDither::Disabled),
-            hue: view.color_grading.global.hue != 0.,
-            balance: view.color_grading.global.temperature != 0.
-                || view.color_grading.global.tint != 0.,
-            sectional: view
-                .color_grading
-                .all_sections()
-                .any(|section| *section != default()),
+            tone: *view.tone,
+            dither: *view.dither.unwrap_or(&DebandDither::Disabled),
+            hue: grading.global.hue != 0.,
+            balance: grading.global.temperature != 0. || grading.global.tint != 0.,
+            sectional: grading.all_sections().any(|section| *section != default()),
         };
         let id = pipelines.specialize(&cache, &pipeline, key);
 
         if cache.get_render_pipeline(id).is_some() {
-            commands.entity(e).insert(Ready(id));
+            commands.entity(view.entity).insert(Ready(id));
         } else {
-            commands.entity(e).remove::<Ready>();
+            commands.entity(view.entity).remove::<Ready>();
         }
     }
+}
+
+/// What the tone map pipeline is specialised by.
+#[derive(QueryData)]
+struct ToneMapped {
+    entity: Entity,
+    view: &'static ExtractedView,
+    target: &'static ViewTarget,
+    tone: &'static Tonemapping,
+    dither: Option<&'static DebandDither>,
 }
 
 #[derive(Default)]
 struct Bindings {
     // Temporal reconstruction alternates the HDR source every frame. Retain
     // both bindings, with a fixed bound across resizes/LUT changes/view switches.
-    cached: Vec<(BufferId, TextureViewId, TextureViewId, BindGroup)>,
+    cached: Vec<((BufferId, TextureViewId, TextureViewId), BindGroup)>,
 }
 
-#[allow(clippy::too_many_arguments)] // Independent render-world inputs of one pass.
+impl Bindings {
+    fn get(
+        &mut self,
+        key: (BufferId, TextureViewId, TextureViewId),
+        create: impl FnOnce() -> BindGroup,
+    ) -> &BindGroup {
+        let index = match self.cached.iter().position(|(k, _)| *k == key) {
+            Some(index) => index,
+            None => {
+                if self.cached.len() == 2 {
+                    self.cached.remove(0);
+                }
+
+                self.cached.push((key, create()));
+                self.cached.len() - 1
+            }
+        };
+        &self.cached[index].1
+    }
+}
+
+/// What the tone map reads besides the view.
+#[derive(SystemParam)]
+struct ToneMapInputs<'w> {
+    cache: Res<'w, PipelineCache>,
+    pipeline: Res<'w, Pipeline>,
+    uniforms: Res<'w, ViewUniforms>,
+    images: Res<'w, RenderAssets<GpuImage>>,
+    luts: Res<'w, TonemappingLuts>,
+    fallback: Res<'w, FallbackImage>,
+}
+
+impl ToneMapInputs<'_> {
+    /// The view's tone map pipeline and its bind group, once both exist.
+    fn bind<'a>(
+        &'a self,
+        ready: &Ready,
+        target: &ViewTarget,
+        tone: &Tonemapping,
+        bindings: &'a mut Bindings,
+        device: &RenderDevice,
+    ) -> Option<(&'a RenderPipeline, &'a BindGroup)> {
+        let pipeline = self.cache.get_render_pipeline(ready.0)?;
+        let buffer = self.uniforms.uniforms.buffer()?;
+        let source = target.main_texture_view();
+        let (lut, lut_sampler) =
+            tonemapping::get_lut_bindings(&self.images, &self.luts, tone, &self.fallback);
+        let group = bindings.get((buffer.id(), source.id(), lut.id()), || {
+            device.create_bind_group(
+                Some("temporal tone map inputs"),
+                &self.cache.get_bind_group_layout(&self.pipeline.layout),
+                &BindGroupEntries::sequential((
+                    &self.uniforms.uniforms,
+                    source,
+                    &self.pipeline.sampler,
+                    lut,
+                    lut_sampler,
+                )),
+            )
+        });
+        Some((pipeline, group))
+    }
+}
+
+/// The UI views and what they draw.
+#[derive(SystemParam)]
+struct UiPhases<'w, 's> {
+    views: Query<'w, 's, &'static ExtractedView>,
+    phases: Res<'w, ViewSortedRenderPhases<TransparentUi>>,
+}
+
+impl UiPhases<'_, '_> {
+    /// The UI view's phase, when it has anything to draw.
+    fn of(&self, ui: &UiCameraView) -> Option<(Entity, &SortedRenderPhase<TransparentUi>)> {
+        let view = self.views.get(ui.0).ok()?;
+        let phase = self.phases.get(&view.retained_view_entity)?;
+        (!phase.items.is_empty()).then_some((ui.0, phase))
+    }
+}
+
+/// What the output pass draws of its view.
+#[derive(QueryData)]
+struct Output {
+    ready: Option<&'static Ready>,
+    target: &'static ViewTarget,
+    offset: &'static ViewUniformOffset,
+    tone: &'static Tonemapping,
+    ui: Option<&'static UiCameraView>,
+}
+
 fn draw(
-    view: ViewQuery<(&Ready, &ViewTarget, &ViewUniformOffset, &Tonemapping)>,
-    cache: Res<PipelineCache>,
-    pipeline: Res<Pipeline>,
-    uniforms: Res<ViewUniforms>,
-    images: Res<RenderAssets<GpuImage>>,
-    luts: Res<TonemappingLuts>,
-    fallback: Res<FallbackImage>,
+    world: &World,
+    view: ViewQuery<Output, With<Direct>>,
+    inputs: ToneMapInputs,
+    ui_phases: UiPhases,
     mut bindings: Local<Bindings>,
     mut ctx: RenderContext,
 ) {
-    let (ready, target, offset, tone) = view.into_inner();
-    let Some(render_pipeline) = cache.get_render_pipeline(ready.0) else {
+    let view = view.into_inner();
+    let image = view.ready.and_then(|ready| {
+        inputs.bind(
+            ready,
+            view.target,
+            view.tone,
+            &mut bindings,
+            ctx.render_device(),
+        )
+    });
+    let ui = view.ui.and_then(|ui| ui_phases.of(ui));
+
+    if image.is_none() && ui.is_none() {
+        return;
+    }
+
+    // The tone map overwrites the whole output, and a clear permits a tile GPU to skip loading
+    // last frame's image. Without it Bevy's copy has written the image, and the UI loads it.
+    let clear = image.is_some().then_some(LinearRgba::BLACK);
+    let Some(attachment) = view.target.out_texture_color_attachment(clear) else {
         return;
     };
-    let Some(buffer) = uniforms.uniforms.buffer() else {
-        return;
-    };
+    let mut pass = ctx.begin_tracked_render_pass(RenderPassDescriptor {
+        label: Some("tone map and UI to output"),
+        color_attachments: &[Some(attachment)],
+        ..default()
+    });
 
-    // This pass owns the entire target and overwrites it without blending.
-    // Clear permits a tile GPU to avoid loading last frame's display image.
-    let Some(attachment) = target.out_texture_color_attachment(Some(LinearRgba::BLACK)) else {
-        return;
-    };
-    let source = target.main_texture_view();
-    let (lut, lut_sampler) = tonemapping::get_lut_bindings(&images, &luts, tone, &fallback);
-    let key = (buffer.id(), source.id(), lut.id());
-    let cached_index = bindings
-        .cached
-        .iter()
-        .position(|(b, s, l, _)| (*b, *s, *l) == key);
-    let index = if let Some(index) = cached_index {
-        index
-    } else {
-        let group = ctx.render_device().create_bind_group(
-            Some("temporal tone map inputs"),
-            &cache.get_bind_group_layout(&pipeline.layout),
-            &BindGroupEntries::sequential((
-                &uniforms.uniforms,
-                source,
-                &pipeline.sampler,
-                lut,
-                lut_sampler,
-            )),
-        );
+    if let Some((pipeline, group)) = image {
+        pass.set_render_pipeline(pipeline);
+        pass.set_bind_group(0, group, &[view.offset.offset]);
+        pass.draw(0..3, 0..1);
+    }
 
-        if bindings.cached.len() == 2 {
-            bindings.cached.remove(0);
-        }
-
-        bindings.cached.push((key.0, key.1, key.2, group));
-        bindings.cached.len() - 1
-    };
-    let mut pass = ctx
-        .command_encoder()
-        .begin_render_pass(&RenderPassDescriptor {
-            label: Some("temporal tone map to output"),
-            color_attachments: &[Some(attachment)],
-            ..default()
-        });
-    pass.set_pipeline(render_pipeline);
-    pass.set_bind_group(0, &bindings.cached[index].3, &[offset.offset]);
-    pass.draw(0..3, 0..1);
+    if let Some((ui_view, phase)) = ui
+        && let Err(error) = phase.render(&mut pass, world, ui_view)
+    {
+        error!("UI on the output: {error:?}");
+    }
 }
 
 #[cfg(test)]

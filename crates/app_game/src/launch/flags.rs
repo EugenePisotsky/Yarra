@@ -458,7 +458,7 @@ const FLAGS: &[Flag] = &[
         "--temporal-standard-output",
         "",
         Reference,
-        "Compare standard Temporal tone-map output",
+        "Temporal through Bevy's tone map and a UI camera, for comparison",
     ),
     flag(
         "--frame-pacing-timer",

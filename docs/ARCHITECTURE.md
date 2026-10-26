@@ -234,7 +234,9 @@ SQLite. The renderers (Bevy) have no SQLite: `engine` is the only library joinin
   `UpscaleStatus`, `UpscalingPlugin`, temporal contracts (`temporal::TemporalView`, `jitter`)
   and `DirectTonemapOutput`.
 - Invariants: Auto picks MetalFX Spatial where supported, otherwise Linear. MetalFX sits behind
-  the `metalfx` feature, which only `app_game` enables. Depends on no workspace crate.
+  the `metalfx` feature, which only `app_game` enables. A `DirectTonemapOutput` view's UI
+  pipelines target its output's format and draw in the tone map's pass, so Bevy's UI pass skips
+  it. Depends on no workspace crate.
 
 ### atmosphere
 
@@ -366,10 +368,9 @@ Owns the shell, workspaces, tools, working sets, saving, publication and the rec
 
 ## Rendering frame
 
-The game camera (`WorldViewCamera`) renders in HDR and tone-maps into an offscreen image at a
-share of the window's physical size (`resolution_scale`, 0.5 by default). MetalFX Temporal (the
-default) reconstructs at output size; the other upscalers take FXAA. World cameras do not
-multisample. In order:
+The game camera (`WorldViewCamera`) renders in HDR at a share of the window's physical size
+(`resolution_scale`, 0.5 by default). MetalFX Temporal (the default) reconstructs at output size;
+the other upscalers take FXAA. World cameras do not multisample. In order:
 
 1. Compute before the camera: grass trampling, candidate cache, placement and blade poses
    (each drawn blade bent by trampling and wind, this frame and last); ground prints
@@ -397,9 +398,12 @@ multisample. In order:
    histogram of every other pixel eased into the view's exposure. Run before the upscaler, they
    cost the rendered pixels, not the window's.
 7. Temporal resolve (MetalFX Temporal only); rain and ambient particles between
-   `EarlyPostProcess` and `PostProcess`; tone mapping.
-8. Upscaling to the window (MetalFX Spatial, or Linear during UI composition) under a UI camera
-   at native resolution.
+   `EarlyPostProcess` and `PostProcess`.
+8. Output. Under MetalFX Temporal the camera targets the window, and one pass tone-maps the image
+   onto it and draws the UI over it (`upscaling::DirectTonemapOutput`); no UI camera runs. The
+   other upscalers tone-map into an offscreen image that a UI camera at native resolution
+   upscales (MetalFX Spatial) or samples (Linear) under the UI. `--temporal-standard-output` and
+   the LOD lab's panel, whose egui draws on that camera, take the same path under Temporal.
 
 Every lit material, and the deferred lighting, binds the shared environment at slots 120–129
 (`EnvironmentParams`, cloud shadow, rain shelter, forest and terrain shadow, ground albedo). The

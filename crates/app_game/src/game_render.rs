@@ -2,10 +2,11 @@
 use bevy::{
     anti_alias::fxaa::Fxaa,
     camera::{ImageRenderTarget, RenderTarget},
+    ecs::system::SystemParam,
     image::ImageSampler,
     prelude::*,
     render::render_resource::{Extent3d, TextureFormat},
-    window::PrimaryWindow,
+    window::{PrimaryWindow, WindowRef},
 };
 
 use engine::{GameplaySystems, WorldViewCamera};
@@ -70,7 +71,18 @@ impl GameRenderSettings {
         self.upscaler == upscaling::UpscaleMethod::Linear
     }
 
-    fn target_size(&self, window: &Window) -> UVec2 {
+    fn temporal(&self) -> bool {
+        self.upscaler == upscaling::UpscaleMethod::MetalFxTemporal
+    }
+
+    /// The world camera owns the window: one pass tone-maps its image there and draws the UI
+    /// over it, so the UI camera and its composite of the world image stand down.
+    fn direct_output(&self) -> bool {
+        self.temporal() && self.direct_temporal_output
+    }
+
+    /// The world's rendered pixels.
+    pub(crate) fn target_size(&self, window: &Window) -> UVec2 {
         self.render_size.unwrap_or_else(|| {
             // Round up so odd output dimensions don't exceed the requested upscale ratio.
             (window.physical_size().as_vec2() * self.resolution_scale)
@@ -101,9 +113,9 @@ struct GameComposite;
 struct SavedUiVisibility(Visibility);
 
 #[derive(Resource)]
-pub(crate) struct GameRenderAssets {
-    pub(crate) target: Handle<Image>,
-    pub(crate) upscaled: Handle<Image>,
+struct GameRenderAssets {
+    target: Handle<Image>,
+    upscaled: Handle<Image>,
 }
 
 fn setup(
@@ -185,8 +197,27 @@ struct WorldCamera {
     status: Option<&'static upscaling::UpscaleStatus>,
 }
 
-// Disjoint camera/UI queries and saved root visibility.
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+/// What shows the world besides its camera: the UI camera, which draws the world image
+/// full-screen under the UI, and the UI roots that `show_ui` hides.
+#[derive(SystemParam)]
+struct Presentation<'w, 's> {
+    ui_camera: Single<'w, 's, (Entity, &'static mut Camera), With<GameUiCamera>>,
+    composite:
+        Single<'w, 's, (&'static mut ImageNode, &'static mut Visibility), With<GameComposite>>,
+    ui_roots: Query<'w, 's, UiRoot, UiRoots>,
+}
+
+/// The UI's roots, not the composite under them.
+type UiRoots = (With<Node>, Without<ChildOf>, Without<GameComposite>);
+
+#[derive(bevy::ecs::query::QueryData)]
+#[query_data(mutable)]
+struct UiRoot {
+    entity: Entity,
+    visibility: &'static mut Visibility,
+    saved: Option<&'static SavedUiVisibility>,
+}
+
 fn apply_settings(
     mut commands: Commands,
     s: Res<GameRenderSettings>,
@@ -194,53 +225,40 @@ fn apply_settings(
     mut images: ResMut<Assets<Image>>,
     window: Single<&Window, With<PrimaryWindow>>,
     camera: Single<WorldCamera, With<WorldViewCamera>>,
-    mut composite: Single<&mut ImageNode, With<GameComposite>>,
-    mut ui_roots: Query<
-        (Entity, &mut Visibility, Option<&SavedUiVisibility>),
-        (With<Node>, Without<ChildOf>, Without<GameComposite>),
-    >,
+    mut presentation: Presentation,
 ) {
     let size = s.target_size(&window);
     let linear = s.linear_composition();
-    let temporal = s.upscaler == upscaling::UpscaleMethod::MetalFxTemporal;
-    let target_scale = if temporal {
-        window.scale_factor()
-    } else if s.render_size.is_some() {
-        size.y as f32 / window.height().max(1.0)
-    } else {
-        window.scale_factor() * s.resolution_scale
-    };
+    let temporal = s.temporal();
+    let direct = s.direct_output();
+    let output_size = window.physical_size().max(UVec2::ONE);
 
-    // Linear filtering is already performed by the composite's image sampler.
-    // Avoid the redundant native-sized intermediate and fullscreen copy pass.
-    let upscale_size = if linear {
+    // Window-sized images only where a pass writes them: the spatial upscaler's output, and the
+    // world image the composite shows. The linear path's composite samples the scaled image.
+    let upscaled_size = if linear || temporal {
         UVec2::ONE
     } else {
-        window.physical_size().max(UVec2::ONE)
+        output_size
     };
-
-    if images.get(&assets.upscaled).expect("upscale target").size() != upscale_size {
-        images.get_mut(&assets.upscaled).unwrap().resize(Extent3d {
-            width: upscale_size.x,
-            height: upscale_size.y,
-            depth_or_array_layers: 1,
-        });
-    }
-
-    let world_target = &assets.target;
-    let image_size = if temporal {
-        window.physical_size().max(UVec2::ONE)
+    let image_size = if direct {
+        UVec2::ONE
+    } else if temporal {
+        output_size
     } else {
         size
     };
-    let presentation = if temporal || linear {
+    resize(&mut images, &assets.upscaled, upscaled_size);
+    resize(&mut images, &assets.target, image_size);
+    target_world(&mut commands, &s, &assets, &window, &camera);
+
+    let presented = if temporal || linear {
         &assets.target
     } else {
         &assets.upscaled
     };
 
-    if &composite.image != presentation {
-        composite.image = presentation.clone();
+    if presentation.composite.0.image != *presented {
+        presentation.composite.0.image = presented.clone();
     }
 
     if temporal {
@@ -253,7 +271,6 @@ fn apply_settings(
             commands
                 .entity(camera.entity)
                 .insert((request, bevy::camera::MainPassResolutionOverride(size)));
-            // The world camera has HDR effects only; UI is composited afterward.
             // Retain the original output path for matched performance comparisons.
             if s.direct_temporal_output {
                 commands
@@ -270,33 +287,6 @@ fn apply_settings(
             bevy::render::camera::MipBias,
             bevy::core_pipeline::prepass::MotionVectorPrepass,
         )>();
-    }
-
-    let needs_image_target = !matches!(camera.target, RenderTarget::Image(target)
-        if &target.handle == world_target && target.scale_factor == target_scale);
-
-    if needs_image_target {
-        // Preserve logical viewport dimensions (and tree LOD) while varying physical pixels.
-        commands
-            .entity(camera.entity)
-            .insert(RenderTarget::Image(ImageRenderTarget {
-                handle: world_target.clone(),
-                scale_factor: target_scale,
-            }));
-    }
-
-    if images
-        .get(&assets.target)
-        .expect("game render target")
-        .size()
-        != image_size
-    {
-        let mut image = images.get_mut(&assets.target).expect("game render target");
-        image.resize(Extent3d {
-            width: image_size.x,
-            height: image_size.y,
-            depth_or_array_layers: 1,
-        });
     }
 
     if linear {
@@ -336,19 +326,95 @@ fn apply_settings(
         commands.entity(camera.entity).insert(Fxaa::default());
     }
 
-    for (entity, mut visibility, saved) in &mut ui_roots {
-        if s.show_ui {
-            if let Some(saved) = saved {
-                *visibility = saved.0;
-                commands.entity(entity).remove::<SavedUiVisibility>();
-            }
+    presentation.assign_ui(&mut commands, direct, camera.entity);
+    presentation.show_ui(&mut commands, s.show_ui);
+}
+
+fn resize(images: &mut Assets<Image>, image: &Handle<Image>, size: UVec2) {
+    if images.get(image).expect("game render image").size() != size {
+        images.get_mut(image).unwrap().resize(Extent3d {
+            width: size.x,
+            height: size.y,
+            depth_or_array_layers: 1,
+        });
+    }
+}
+
+/// The world camera draws onto the window on the direct output, else into the world image.
+fn target_world(
+    commands: &mut Commands,
+    s: &GameRenderSettings,
+    assets: &GameRenderAssets,
+    window: &Window,
+    camera: &WorldCameraItem,
+) {
+    if s.direct_output() {
+        if !matches!(camera.target, RenderTarget::Window(WindowRef::Primary)) {
+            commands
+                .entity(camera.entity)
+                .insert(RenderTarget::Window(WindowRef::Primary));
+        }
+
+        return;
+    }
+
+    let scale = if s.temporal() {
+        window.scale_factor()
+    } else if s.render_size.is_some() {
+        s.target_size(window).y as f32 / window.height().max(1.0)
+    } else {
+        window.scale_factor() * s.resolution_scale
+    };
+    let current = matches!(camera.target, RenderTarget::Image(target)
+        if target.handle == assets.target && target.scale_factor == scale);
+
+    if !current {
+        // Preserve logical viewport dimensions (and tree LOD) while varying physical pixels.
+        commands
+            .entity(camera.entity)
+            .insert(RenderTarget::Image(ImageRenderTarget {
+                handle: assets.target.clone(),
+                scale_factor: scale,
+            }));
+    }
+}
+
+impl Presentation<'_, '_> {
+    /// The camera that draws the UI: the world camera on the direct output, else the UI camera
+    /// over its composite of the world image.
+    fn assign_ui(&mut self, commands: &mut Commands, direct: bool, world_camera: Entity) {
+        let (ui_camera, camera) = &mut *self.ui_camera;
+        camera.is_active = !direct;
+        *self.composite.1 = if direct {
+            Visibility::Hidden
         } else {
-            if saved.is_none() {
-                commands
-                    .entity(entity)
-                    .insert(SavedUiVisibility(*visibility));
+            Visibility::Inherited
+        };
+        let (drawing, idle) = if direct {
+            (world_camera, *ui_camera)
+        } else {
+            (*ui_camera, world_camera)
+        };
+        commands.entity(drawing).insert(IsDefaultUiCamera);
+        commands.entity(idle).remove::<IsDefaultUiCamera>();
+    }
+
+    fn show_ui(&mut self, commands: &mut Commands, show: bool) {
+        for mut root in &mut self.ui_roots {
+            if show {
+                if let Some(saved) = root.saved {
+                    *root.visibility = saved.0;
+                    commands.entity(root.entity).remove::<SavedUiVisibility>();
+                }
+            } else {
+                if root.saved.is_none() {
+                    commands
+                        .entity(root.entity)
+                        .insert(SavedUiVisibility(*root.visibility));
+                }
+
+                *root.visibility = Visibility::Hidden;
             }
-            *visibility = Visibility::Hidden;
         }
     }
 }
@@ -528,23 +594,35 @@ mod tests {
                 .input_size,
             UVec2::new(600, 450)
         );
-        assert_eq!(
-            app.world()
-                .resource::<Assets<Image>>()
-                .get(&target)
-                .unwrap()
-                .size(),
-            UVec2::new(1200, 900)
-        );
-        assert_eq!(
-            app.world().get::<ImageNode>(composite).unwrap().image,
-            target
-        );
         assert!(
             app.world()
                 .get::<bevy::core_pipeline::prepass::MotionVectorPrepass>(main)
                 .is_some()
         );
+
+        // The world camera owns the window and draws the UI; the UI camera and composite rest.
+        assert!(matches!(
+            app.world().get::<RenderTarget>(main).unwrap(),
+            RenderTarget::Window(WindowRef::Primary)
+        ));
+        assert!(!app.world().get::<Camera>(ui).unwrap().is_active);
+        assert!(app.world().get::<IsDefaultUiCamera>(main).is_some());
+        assert!(app.world().get::<IsDefaultUiCamera>(ui).is_none());
+        assert_eq!(
+            app.world().get::<Visibility>(composite),
+            Some(&Visibility::Hidden)
+        );
+
+        for image in [&target, &upscaled] {
+            assert_eq!(
+                app.world()
+                    .resource::<Assets<Image>>()
+                    .get(image)
+                    .unwrap()
+                    .size(),
+                UVec2::ONE
+            );
+        }
 
         // A resize updates the scene rectangle even without a settings change.
         app.world_mut()
@@ -602,6 +680,17 @@ mod tests {
         assert_eq!(
             app.world().get::<Visibility>(label),
             Some(&Visibility::Hidden)
+        );
+        assert_eq!(
+            app.world().get::<RenderTarget>(main).unwrap().as_image(),
+            Some(&target)
+        );
+        assert!(app.world().get::<Camera>(ui).unwrap().is_active);
+        assert!(app.world().get::<IsDefaultUiCamera>(ui).is_some());
+        assert!(app.world().get::<IsDefaultUiCamera>(main).is_none());
+        assert_eq!(
+            app.world().get::<Visibility>(composite),
+            Some(&Visibility::Inherited)
         );
 
         {
@@ -691,6 +780,63 @@ mod tests {
                 .size(),
             UVec2::new(1600, 1200)
         );
+    }
+
+    #[test]
+    fn standard_temporal_output_composites_the_world_image_on_the_ui_camera() {
+        let mut app = App::new();
+        app.init_resource::<Assets<Image>>()
+            .insert_resource(GameRenderSettings {
+                direct_temporal_output: false,
+                ..default()
+            })
+            .add_plugins((
+                bevy::extract::sync_world::SyncWorldPlugin::<bevy::render::RenderApp>::default(),
+                GameRenderPlugin,
+            ));
+        app.world_mut().spawn((
+            Window {
+                resolution: WindowResolution::new(1200, 900),
+                ..default()
+            },
+            PrimaryWindow,
+        ));
+        let main = app
+            .world_mut()
+            .spawn((Camera3d::default(), WorldViewCamera))
+            .id();
+        app.update();
+        let target = app.world().resource::<GameRenderAssets>().target.clone();
+        let ui = app
+            .world_mut()
+            .query_filtered::<Entity, With<GameUiCamera>>()
+            .single(app.world())
+            .unwrap();
+        let composite = app
+            .world_mut()
+            .query_filtered::<&ImageNode, With<GameComposite>>()
+            .single(app.world())
+            .unwrap();
+        assert_eq!(composite.image, target);
+        assert!(
+            app.world()
+                .get::<upscaling::DirectTonemapOutput>(main)
+                .is_none()
+        );
+        assert_eq!(
+            app.world().get::<RenderTarget>(main).unwrap().as_image(),
+            Some(&target)
+        );
+        assert_eq!(
+            app.world()
+                .resource::<Assets<Image>>()
+                .get(&target)
+                .unwrap()
+                .size(),
+            UVec2::new(1200, 900)
+        );
+        assert!(app.world().get::<Camera>(ui).unwrap().is_active);
+        assert!(app.world().get::<IsDefaultUiCamera>(ui).is_some());
     }
 
     #[test]

@@ -54,6 +54,15 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
   start view) and an image 2–8% brighter: Bevy's exposure curve is an 8-bit table, truncated and
   read by floor, that darkened by up to an eighth of a stop, and its bloom levels (11/10-bit
   floats) lost energy. Rain and ambient particles, drawn after reconstruction, no longer bloom.
+- **The UI draws in the tone map's pass, on the window.** *Kept* (October 26). Under Temporal a
+  UI camera cleared a 7.5 Mpx texture of its own (0.14 ms), drew the world image full-screen under
+  the UI (0.19) and was copied to the window (0.11). The world camera targets the window instead,
+  and one pass tone-maps onto it and draws the UI (`upscaling::DirectTonemapOutput`), whose
+  pipelines take the window's format; the UI adds about 0.03 ms to the tone map. GPU busy at
+  Maximum from `f447d04`: meadow 9.48 → 9.30 ms, start 10.43 → 10.12, forest-pine 10.14 → 9.86,
+  storm-road 9.93 → 9.72, mountain-hamlet 9.96 → 9.67, brook-mouth 8.99 → 8.83. The LOD lab's
+  panel and `--temporal-standard-output` keep the UI camera: egui draws only on a camera's own
+  texture.
 - **MetalFX Temporal's scaler takes full-size textures.** *Kept.* A region-sized scaler (`b2c8cdf`)
   saved 0.8 ms that MetalFX's internal wait absorbed, and its history went blocky in motion;
   reverted (`c70158a`). Temporal's ~4 ms is MetalFX's own.

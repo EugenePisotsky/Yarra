@@ -5,7 +5,7 @@ mod performance;
 mod timing;
 
 use crate::frame_pacing::{FramePacing, FrameRate};
-use crate::game_render::{GameRenderAssets, RESOLUTION_SCALES};
+use crate::game_render::{GameRenderSettings, RESOLUTION_SCALES};
 use crate::runtime_settings::{OBJECT_DETAIL_SCALES, RuntimeSettings, RuntimeSettingsApply, Scene};
 use bevy::{prelude::*, ui::Pressed, window::PrimaryWindow};
 use engine::{GamePointerInputBlocked, GameplaySystems};

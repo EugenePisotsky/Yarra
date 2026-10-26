@@ -11,7 +11,7 @@ use engine::WorldViewCamera;
 use terrain_render::TerrainMacroVariation;
 use vegetation_render::{VegetationDiagnostics, VegetationDiagnosticsSnapshot, VegetationSettings};
 
-use super::{GameRenderAssets, RuntimeSettings};
+use super::{GameRenderSettings, RuntimeSettings};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct PowerState {
@@ -112,7 +112,7 @@ pub(super) fn log_status(
     window: Single<(&Window, Option<&OnMonitor>), With<PrimaryWindow>>,
     monitors: Query<&Monitor>,
     camera: Single<&GlobalTransform, With<WorldViewCamera>>,
-    assets: Res<GameRenderAssets>,
+    render: Res<GameRenderSettings>,
     images: Res<Assets<Image>>,
     meshes: Res<Assets<Mesh>>,
     vegetation: Res<VegetationDiagnostics>,
@@ -154,10 +154,7 @@ pub(super) fn log_status(
         |_| "unavailable".into(),
         |duration| duration.as_millis().to_string(),
     );
-    let size = images
-        .get(&assets.target)
-        .map(Image::size)
-        .unwrap_or(UVec2::ZERO);
+    let size = render.target_size(window);
     let position = camera.translation();
     let rotation = camera.rotation();
     let snapshot = vegetation.snapshot();

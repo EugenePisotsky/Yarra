@@ -1,7 +1,7 @@
 //! The interactive LOD lab panel (egui on the game's UI camera): distance, bearing and pitch,
 //! what the tree draws, the sun and shadows, and what the game would draw there.
 use super::{LodLab, label, switches};
-use crate::game_render::GameUiCamera;
+use crate::game_render::{GameRenderSettings, GameUiCamera};
 use crate::runtime_settings::RuntimeSettings;
 use bevy::{prelude::*, window::PrimaryWindow};
 
@@ -12,6 +12,10 @@ use bevy_egui::{
 use engine::{AtmosphereState, LabRepresentation, LabTree, WorldSun};
 
 pub(super) fn install(app: &mut App) {
+    // The direct output draws the UI on the world camera and stands the UI camera down.
+    app.world_mut()
+        .resource_mut::<GameRenderSettings>()
+        .direct_temporal_output = false;
     app.insert_resource(EguiGlobalSettings {
         auto_create_primary_context: false,
         ..default()

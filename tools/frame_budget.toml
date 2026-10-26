@@ -12,7 +12,7 @@
 # against its line; a line over budget is optimised, or the excess ships as a quality tier.
 
 total_ms = 10.5
-frames_by = "temporal tone map to output"
+frames_by = "tone map and UI to output"
 time = "10:00"
 warmup_seconds = 20
 profile_seconds = 15
@@ -57,9 +57,10 @@ passes = ["^sky", "^atmosphere", "cloud", "shafts", "sun occlusion"]
 
 [[line]]
 name = "upscale and post"
-# MetalFX Temporal's own passes take about 2.2 ms; after them, at the 7.5 Mpx output, tone
-# mapping and UI take about 0.2 ms each and the copy to the window 0.1. Bloom and eye adaptation
-# run on the rendered image before it, 0.25 ms together.
+# MetalFX Temporal's own passes take about 2.2 ms; after them one pass tone-maps the 7.5 Mpx
+# output onto the window and draws the UI, 0.25 ms of fragment work that the even split charges
+# about 0.4. Bloom and eye adaptation run on the rendered image before it, 0.25 ms together. The
+# UI camera's passes (`ui`, `_2d`, `upscaling`) run only under --temporal-standard-output.
 ms = 3.0
 passes = ["MetalFX", "^upscaling$", "bloom", "eye adaptation", "tone map", "^ui$", "_2d$"]
 

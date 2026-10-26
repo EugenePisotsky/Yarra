@@ -56,3 +56,9 @@ date,commit,note,flags,view,frames,gpu_state,fps,cpu_main_ms,render_prep_ms,gpu_
 2026-10-26T01:22,f5ac211+,bloom and exposure before the upscaler,,storm-road,300,Maximum,84.1,1.81,2.63,9.93,2.39,0.90,0.10,0.40,0.27,1.63,3.26,0.11,0.48,0.38
 2026-10-26T01:22,f5ac211+,bloom and exposure before the upscaler,,mountain-hamlet,293,Maximum,84.4,1.99,2.58,9.96,2.72,0.93,0.10,0.27,0.38,1.85,3.15,0.13,0.06,0.36
 2026-10-26T01:22,f5ac211+,bloom and exposure before the upscaler,,brook-mouth,319,Maximum,92.7,2.32,3.42,8.99,1.67,0.91,0.11,0.44,0.40,1.52,3.20,0.11,0.07,0.56
+2026-10-26T11:22,f447d04+,UI drawn in the tone map pass on the window; no UI camera,,meadow,318,Maximum,89.1,2.07,3.05,9.30,1.53,1.06,0.13,0.13,1.18,1.26,3.06,0.12,0.08,0.74
+2026-10-26T11:22,f447d04+,UI drawn in the tone map pass on the window; no UI camera,,start,299,Maximum,84.2,2.08,3.06,10.12,2.37,1.08,0.13,0.13,1.18,1.27,3.01,0.11,0.08,0.75
+2026-10-26T11:22,f447d04+,UI drawn in the tone map pass on the window; no UI camera,,forest-pine,301,Maximum,85.1,2.27,3.38,9.86,1.86,1.29,0.19,0.60,0.56,1.38,3.03,0.12,0.14,0.67
+2026-10-26T11:22,f447d04+,UI drawn in the tone map pass on the window; no UI camera,,storm-road,298,Maximum,84.3,1.71,2.52,9.72,2.43,0.88,0.11,0.41,0.23,1.63,3.04,0.12,0.52,0.35
+2026-10-26T11:22,f447d04+,UI drawn in the tone map pass on the window; no UI camera,,mountain-hamlet,297,Maximum,84.4,1.82,2.38,9.67,2.73,0.91,0.10,0.28,0.30,1.83,2.96,0.13,0.06,0.36
+2026-10-26T11:22,f447d04+,UI drawn in the tone map pass on the window; no UI camera,,brook-mouth,337,Maximum,97.2,2.15,3.21,8.83,1.67,0.91,0.11,0.51,0.36,1.53,2.99,0.11,0.07,0.55

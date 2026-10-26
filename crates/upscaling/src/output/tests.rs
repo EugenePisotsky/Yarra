@@ -20,7 +20,7 @@ use std::{
 };
 
 #[test]
-#[ignore = "native GPU: compares direct output to Bevy tone map + blit, including HDR bloom/grades/resize"]
+#[ignore = "native GPU: compares direct output to Bevy tone map + UI + blit, including HDR bloom/grades/resize"]
 fn direct_output_matches_standard_postprocessing() {
     let mut app = App::new();
     app.add_plugins(
@@ -85,7 +85,19 @@ fn direct_output_matches_standard_postprocessing() {
             camera.insert(DirectTonemapOutput);
         }
 
-        cameras.push(camera.id());
+        let camera = camera.id();
+
+        // A translucent panel over the left half: the UI blends over the tone-mapped image.
+        app.world_mut().spawn((
+            Node {
+                width: percent(50),
+                height: percent(100),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.9, 0.3, 0.1, 0.5)),
+            UiTargetCamera(camera),
+        ));
+        cameras.push(camera);
         targets.push(target);
     }
 
@@ -192,6 +204,8 @@ fn direct_output_matches_standard_postprocessing() {
                 .any(|p| p[0..3] != [0, 0, 0]),
             "no scene colour"
         );
+        let row = reference.as_chunks::<4>().0;
+        assert_ne!(row[0], row[63], "no UI over the image");
         let max_error = reference
             .iter()
             .zip(&optimized)

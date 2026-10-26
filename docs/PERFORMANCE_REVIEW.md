@@ -316,7 +316,9 @@ the output end are over budget in every view. The atmosphere tables at the refer
 0.45 → 0.15 ms (`5fa39a1`). Bevy's bloom and exposure cannot run on the internal image before
 MetalFX (they read the whole window-sized target). *Done* (October 26): our own bloom and eye
 adaptation on the rendered image before the upscaler, 1.04 → 0.25 ms, −0.55 to −0.71 ms busy
-per view ([Decisions](DECISIONS.md)).
+per view ([Decisions](DECISIONS.md)). The UI then drew on a camera of its own over a full-screen
+copy of the world image. *Done* (October 26): it draws in the tone map's pass on the window, −0.16
+to −0.31 ms busy per view.
 
 1. **A frame budget and an unattended benchmark.** *Built* (October 25): `tools/frame_budget.toml`,
    `tools/bench.py`, the history in `tools/bench_history.csv`, and the cost rule in AGENTS.md
@@ -369,7 +371,8 @@ per view ([Decisions](DECISIONS.md)).
    costing about 0.3 ms nets −0.2 to −0.8 ms by view; the sky, clouds, sea, shafts and glare
    (0.6–0.8 ms) stay per pixel.
 8. **The output end and the frame time** (small to medium). Exposure histogram at internal
-   resolution (*done*, with bloom, October 26); find whether MetalFX's 1.4 ms wait is GPU idle or its own
+   resolution (*done*, with bloom, October 26); the UI in the tone map's pass (*done*, October
+   26); find whether MetalFX's 1.4 ms wait is GPU idle or its own
    work; dynamic resolution (the scaler takes a min/max range and its history survives size
    changes); quality presets (object detail, shadow LOD, grass range) chosen by the budget. Dynamic
    resolution helps fragment-bound views and clock drops, not vertex-bound ones. *Check first:* the
