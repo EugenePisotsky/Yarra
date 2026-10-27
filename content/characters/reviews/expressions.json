@@ -1,0 +1,157 @@
+{
+ "preset": "content/characters/presets/probe_female.json",
+ "views": [
+  "face_front",
+  "face_three_quarter"
+ ],
+ "variants": [
+  {
+   "label": "neutral"
+  },
+  {
+   "label": "smile",
+   "human": {
+    "targets": [
+     {
+      "target": "mouthSmileLeft",
+      "value": 0.8
+     },
+     {
+      "target": "mouthSmileRight",
+      "value": 0.8
+     },
+     {
+      "target": "cheekSquintLeft",
+      "value": 0.4
+     },
+     {
+      "target": "cheekSquintRight",
+      "value": 0.4
+     },
+     {
+      "target": "eyeSquintLeft",
+      "value": 0.2
+     },
+     {
+      "target": "eyeSquintRight",
+      "value": 0.2
+     }
+    ]
+   }
+  },
+  {
+   "label": "blink",
+   "human": {
+    "targets": [
+     {
+      "target": "eyeBlinkLeft",
+      "value": 1.0
+     },
+     {
+      "target": "eyeBlinkRight",
+      "value": 1.0
+     }
+    ]
+   }
+  },
+  {
+   "label": "jaw open",
+   "human": {
+    "targets": [
+     {
+      "target": "jawOpen",
+      "value": 0.6
+     }
+    ]
+   }
+  },
+  {
+   "label": "frown",
+   "human": {
+    "targets": [
+     {
+      "target": "browDownLeft",
+      "value": 0.7
+     },
+     {
+      "target": "browDownRight",
+      "value": 0.7
+     },
+     {
+      "target": "mouthFrownLeft",
+      "value": 0.7
+     },
+     {
+      "target": "mouthFrownRight",
+      "value": 0.7
+     }
+    ]
+   }
+  },
+  {
+   "label": "surprise",
+   "human": {
+    "targets": [
+     {
+      "target": "browInnerUp",
+      "value": 0.8
+     },
+     {
+      "target": "browOuterUpLeft",
+      "value": 0.7
+     },
+     {
+      "target": "browOuterUpRight",
+      "value": 0.7
+     },
+     {
+      "target": "eyeWideLeft",
+      "value": 0.6
+     },
+     {
+      "target": "eyeWideRight",
+      "value": 0.6
+     },
+     {
+      "target": "jawOpen",
+      "value": 0.3
+     }
+    ]
+   }
+  },
+  {
+   "label": "pucker",
+   "human": {
+    "targets": [
+     {
+      "target": "mouthPucker",
+      "value": 0.8
+     }
+    ]
+   }
+  },
+  {
+   "label": "sneer",
+   "human": {
+    "targets": [
+     {
+      "target": "noseSneerLeft",
+      "value": 0.8
+     },
+     {
+      "target": "noseSneerRight",
+      "value": 0.8
+     },
+     {
+      "target": "mouthUpperUpLeft",
+      "value": 0.4
+     },
+     {
+      "target": "mouthUpperUpRight",
+      "value": 0.4
+     }
+    ]
+   }
+  }
+ ]
+}

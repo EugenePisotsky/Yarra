@@ -1,0 +1,2866 @@
+{
+ "preset": "content/characters/presets/probe_female.json",
+ "views": [
+  "face_front",
+  "face_three_quarter",
+  "face_profile"
+ ],
+ "variants": [
+  {
+   "label": "preset face"
+  },
+  {
+   "label": "face 01",
+   "human": {
+    "targets": [
+     {
+      "target": "head-scale-horiz-incr",
+      "value": 0.58
+     },
+     {
+      "target": "head-scale-vert-incr",
+      "value": 0.652
+     },
+     {
+      "target": "head-fat-incr",
+      "value": 0.03
+     },
+     {
+      "target": "forehead-scale-vert-decr",
+      "value": 0.344
+     },
+     {
+      "target": "forehead-temple-decr",
+      "value": 0.491
+     },
+     {
+      "target": "eyebrows-trans-down",
+      "value": 0.46
+     },
+     {
+      "target": "l-eye-scale-decr",
+      "value": 0.647
+     },
+     {
+      "target": "r-eye-scale-decr",
+      "value": 0.647
+     },
+     {
+      "target": "l-eye-trans-out",
+      "value": 0.09
+     },
+     {
+      "target": "r-eye-trans-out",
+      "value": 0.09
+     },
+     {
+      "target": "l-eye-trans-up",
+      "value": 0.06
+     },
+     {
+      "target": "r-eye-trans-up",
+      "value": 0.06
+     },
+     {
+      "target": "l-eye-corner1-up",
+      "value": 0.246
+     },
+     {
+      "target": "r-eye-corner1-up",
+      "value": 0.246
+     },
+     {
+      "target": "l-eye-corner2-down",
+      "value": 0.411
+     },
+     {
+      "target": "r-eye-corner2-down",
+      "value": 0.411
+     },
+     {
+      "target": "l-eye-eyefold-angle-down",
+      "value": 0.029
+     },
+     {
+      "target": "r-eye-eyefold-angle-down",
+      "value": 0.029
+     },
+     {
+      "target": "l-eye-bag-decr",
+      "value": 0.678
+     },
+     {
+      "target": "r-eye-bag-decr",
+      "value": 0.678
+     },
+     {
+      "target": "nose-scale-horiz-incr",
+      "value": 0.242
+     },
+     {
+      "target": "nose-scale-vert-incr",
+      "value": 0.144
+     },
+     {
+      "target": "nose-scale-depth-incr",
+      "value": 0.9
+     },
+     {
+      "target": "nose-hump-incr",
+      "value": 0.091
+     },
+     {
+      "target": "nose-curve-concave",
+      "value": 0.065
+     },
+     {
+      "target": "nose-point-width-incr",
+      "value": 0.555
+     },
+     {
+      "target": "nose-nostrils-width-incr",
+      "value": 0.089
+     },
+     {
+      "target": "nose-point-up",
+      "value": 0.409
+     },
+     {
+      "target": "mouth-scale-horiz-decr",
+      "value": 0.164
+     },
+     {
+      "target": "mouth-lowerlip-volume-incr",
+      "value": 0.098
+     },
+     {
+      "target": "mouth-upperlip-volume-incr",
+      "value": 0.461
+     },
+     {
+      "target": "mouth-cupidsbow-incr",
+      "value": 0.313
+     },
+     {
+      "target": "mouth-angles-up",
+      "value": 0.058
+     },
+     {
+      "target": "mouth-trans-backward",
+      "value": 0.487
+     },
+     {
+      "target": "chin-prominent-incr",
+      "value": 0.2
+     },
+     {
+      "target": "chin-width-incr",
+      "value": 0.035
+     },
+     {
+      "target": "chin-height-incr",
+      "value": 0.324
+     },
+     {
+      "target": "chin-bones-incr",
+      "value": 0.097
+     },
+     {
+      "target": "chin-prognathism-incr",
+      "value": 0.49
+     },
+     {
+      "target": "l-cheek-bones-decr",
+      "value": 0.023
+     },
+     {
+      "target": "r-cheek-bones-decr",
+      "value": 0.023
+     },
+     {
+      "target": "l-cheek-volume-incr",
+      "value": 0.091
+     },
+     {
+      "target": "r-cheek-volume-incr",
+      "value": 0.091
+     },
+     {
+      "target": "l-cheek-inner-incr",
+      "value": 0.3
+     },
+     {
+      "target": "r-cheek-inner-incr",
+      "value": 0.3
+     }
+    ]
+   }
+  },
+  {
+   "label": "face 02",
+   "human": {
+    "targets": [
+     {
+      "target": "head-scale-horiz-decr",
+      "value": 0.489
+     },
+     {
+      "target": "head-scale-vert-decr",
+      "value": 0.181
+     },
+     {
+      "target": "head-fat-decr",
+      "value": 0.225
+     },
+     {
+      "target": "forehead-scale-vert-incr",
+      "value": 0.891
+     },
+     {
+      "target": "forehead-temple-decr",
+      "value": 0.042
+     },
+     {
+      "target": "eyebrows-angle-up",
+      "value": 0.293
+     },
+     {
+      "target": "eyebrows-trans-up",
+      "value": 0.279
+     },
+     {
+      "target": "l-eye-scale-decr",
+      "value": 0.126
+     },
+     {
+      "target": "r-eye-scale-decr",
+      "value": 0.126
+     },
+     {
+      "target": "l-eye-trans-in",
+      "value": 0.698
+     },
+     {
+      "target": "r-eye-trans-in",
+      "value": 0.698
+     },
+     {
+      "target": "l-eye-trans-up",
+      "value": 0.434
+     },
+     {
+      "target": "r-eye-trans-up",
+      "value": 0.434
+     },
+     {
+      "target": "l-eye-corner1-down",
+      "value": 0.183
+     },
+     {
+      "target": "r-eye-corner1-down",
+      "value": 0.183
+     },
+     {
+      "target": "l-eye-corner2-up",
+      "value": 0.323
+     },
+     {
+      "target": "r-eye-corner2-up",
+      "value": 0.323
+     },
+     {
+      "target": "l-eye-height2-decr",
+      "value": 0.587
+     },
+     {
+      "target": "r-eye-height2-decr",
+      "value": 0.587
+     },
+     {
+      "target": "l-eye-eyefold-angle-down",
+      "value": 0.197
+     },
+     {
+      "target": "r-eye-eyefold-angle-down",
+      "value": 0.197
+     },
+     {
+      "target": "l-eye-bag-incr",
+      "value": 0.566
+     },
+     {
+      "target": "r-eye-bag-incr",
+      "value": 0.566
+     },
+     {
+      "target": "nose-scale-horiz-incr",
+      "value": 0.644
+     },
+     {
+      "target": "nose-scale-vert-decr",
+      "value": 0.586
+     },
+     {
+      "target": "nose-scale-depth-decr",
+      "value": 0.6
+     },
+     {
+      "target": "nose-curve-convex",
+      "value": 0.328
+     },
+     {
+      "target": "nose-point-width-incr",
+      "value": 0.072
+     },
+     {
+      "target": "nose-nostrils-width-incr",
+      "value": 0.137
+     },
+     {
+      "target": "nose-point-down",
+      "value": 0.445
+     },
+     {
+      "target": "mouth-scale-horiz-incr",
+      "value": 0.264
+     },
+     {
+      "target": "mouth-lowerlip-volume-incr",
+      "value": 0.503
+     },
+     {
+      "target": "mouth-upperlip-volume-decr",
+      "value": 0.196
+     },
+     {
+      "target": "mouth-cupidsbow-decr",
+      "value": 0.645
+     },
+     {
+      "target": "mouth-angles-down",
+      "value": 0.341
+     },
+     {
+      "target": "mouth-trans-forward",
+      "value": 0.343
+     },
+     {
+      "target": "chin-prominent-decr",
+      "value": 0.78
+     },
+     {
+      "target": "chin-width-decr",
+      "value": 0.041
+     },
+     {
+      "target": "chin-height-decr",
+      "value": 0.446
+     },
+     {
+      "target": "chin-bones-decr",
+      "value": 0.059
+     },
+     {
+      "target": "chin-prognathism-decr",
+      "value": 0.11
+     },
+     {
+      "target": "l-cheek-volume-incr",
+      "value": 0.676
+     },
+     {
+      "target": "r-cheek-volume-incr",
+      "value": 0.676
+     },
+     {
+      "target": "l-cheek-inner-incr",
+      "value": 0.189
+     },
+     {
+      "target": "r-cheek-inner-incr",
+      "value": 0.189
+     }
+    ]
+   }
+  },
+  {
+   "label": "face 03",
+   "human": {
+    "targets": [
+     {
+      "target": "head-scale-horiz-incr",
+      "value": 0.6
+     },
+     {
+      "target": "head-scale-vert-decr",
+      "value": 0.064
+     },
+     {
+      "target": "head-fat-decr",
+      "value": 0.216
+     },
+     {
+      "target": "forehead-scale-vert-incr",
+      "value": 0.17
+     },
+     {
+      "target": "forehead-temple-decr",
+      "value": 0.9
+     },
+     {
+      "target": "eyebrows-trans-up",
+      "value": 0.072
+     },
+     {
+      "target": "l-eye-scale-decr",
+      "value": 0.556
+     },
+     {
+      "target": "r-eye-scale-decr",
+      "value": 0.556
+     },
+     {
+      "target": "l-eye-trans-out",
+      "value": 0.209
+     },
+     {
+      "target": "r-eye-trans-out",
+      "value": 0.209
+     },
+     {
+      "target": "l-eye-trans-down",
+      "value": 0.252
+     },
+     {
+      "target": "r-eye-trans-down",
+      "value": 0.252
+     },
+     {
+      "target": "l-eye-corner1-down",
+      "value": 0.9
+     },
+     {
+      "target": "r-eye-corner1-down",
+      "value": 0.9
+     },
+     {
+      "target": "l-eye-corner2-down",
+      "value": 0.096
+     },
+     {
+      "target": "r-eye-corner2-down",
+      "value": 0.096
+     },
+     {
+      "target": "l-eye-height2-decr",
+      "value": 0.44
+     },
+     {
+      "target": "r-eye-height2-decr",
+      "value": 0.44
+     },
+     {
+      "target": "l-eye-eyefold-angle-down",
+      "value": 0.234
+     },
+     {
+      "target": "r-eye-eyefold-angle-down",
+      "value": 0.234
+     },
+     {
+      "target": "l-eye-bag-decr",
+      "value": 0.069
+     },
+     {
+      "target": "r-eye-bag-decr",
+      "value": 0.069
+     },
+     {
+      "target": "nose-scale-horiz-incr",
+      "value": 0.563
+     },
+     {
+      "target": "nose-scale-vert-incr",
+      "value": 0.046
+     },
+     {
+      "target": "nose-hump-incr",
+      "value": 0.175
+     },
+     {
+      "target": "nose-curve-concave",
+      "value": 0.815
+     },
+     {
+      "target": "nose-point-width-incr",
+      "value": 0.558
+     },
+     {
+      "target": "nose-nostrils-width-decr",
+      "value": 0.485
+     },
+     {
+      "target": "nose-point-up",
+      "value": 0.198
+     },
+     {
+      "target": "mouth-scale-horiz-decr",
+      "value": 0.507
+     },
+     {
+      "target": "mouth-lowerlip-volume-decr",
+      "value": 0.439
+     },
+     {
+      "target": "mouth-upperlip-volume-decr",
+      "value": 0.178
+     },
+     {
+      "target": "mouth-cupidsbow-incr",
+      "value": 0.853
+     },
+     {
+      "target": "mouth-angles-up",
+      "value": 0.314
+     },
+     {
+      "target": "mouth-trans-backward",
+      "value": 0.272
+     },
+     {
+      "target": "chin-prominent-decr",
+      "value": 0.128
+     },
+     {
+      "target": "chin-width-decr",
+      "value": 0.518
+     },
+     {
+      "target": "chin-bones-decr",
+      "value": 0.258
+     },
+     {
+      "target": "chin-prognathism-incr",
+      "value": 0.325
+     },
+     {
+      "target": "l-cheek-bones-decr",
+      "value": 0.611
+     },
+     {
+      "target": "r-cheek-bones-decr",
+      "value": 0.611
+     },
+     {
+      "target": "l-cheek-volume-decr",
+      "value": 0.151
+     },
+     {
+      "target": "r-cheek-volume-decr",
+      "value": 0.151
+     },
+     {
+      "target": "l-cheek-inner-decr",
+      "value": 0.379
+     },
+     {
+      "target": "r-cheek-inner-decr",
+      "value": 0.379
+     }
+    ]
+   }
+  },
+  {
+   "label": "face 04",
+   "human": {
+    "targets": [
+     {
+      "target": "head-scale-horiz-decr",
+      "value": 0.323
+     },
+     {
+      "target": "head-scale-vert-incr",
+      "value": 0.32
+     },
+     {
+      "target": "head-fat-incr",
+      "value": 0.057
+     },
+     {
+      "target": "forehead-scale-vert-incr",
+      "value": 0.263
+     },
+     {
+      "target": "forehead-temple-incr",
+      "value": 0.535
+     },
+     {
+      "target": "eyebrows-angle-up",
+      "value": 0.517
+     },
+     {
+      "target": "eyebrows-trans-down",
+      "value": 0.617
+     },
+     {
+      "target": "l-eye-scale-incr",
+      "value": 0.242
+     },
+     {
+      "target": "r-eye-scale-incr",
+      "value": 0.242
+     },
+     {
+      "target": "l-eye-trans-in",
+      "value": 0.793
+     },
+     {
+      "target": "r-eye-trans-in",
+      "value": 0.793
+     },
+     {
+      "target": "l-eye-trans-down",
+      "value": 0.029
+     },
+     {
+      "target": "r-eye-trans-down",
+      "value": 0.029
+     },
+     {
+      "target": "l-eye-corner1-up",
+      "value": 0.864
+     },
+     {
+      "target": "r-eye-corner1-up",
+      "value": 0.864
+     },
+     {
+      "target": "l-eye-corner2-down",
+      "value": 0.087
+     },
+     {
+      "target": "r-eye-corner2-down",
+      "value": 0.087
+     },
+     {
+      "target": "l-eye-height2-decr",
+      "value": 0.166
+     },
+     {
+      "target": "r-eye-height2-decr",
+      "value": 0.166
+     },
+     {
+      "target": "l-eye-eyefold-angle-up",
+      "value": 0.077
+     },
+     {
+      "target": "r-eye-eyefold-angle-up",
+      "value": 0.077
+     },
+     {
+      "target": "nose-scale-vert-decr",
+      "value": 0.341
+     },
+     {
+      "target": "nose-scale-depth-incr",
+      "value": 0.487
+     },
+     {
+      "target": "nose-hump-incr",
+      "value": 0.4
+     },
+     {
+      "target": "nose-curve-concave",
+      "value": 0.096
+     },
+     {
+      "target": "nose-point-width-incr",
+      "value": 0.142
+     },
+     {
+      "target": "nose-nostrils-width-incr",
+      "value": 0.296
+     },
+     {
+      "target": "nose-point-up",
+      "value": 0.464
+     },
+     {
+      "target": "mouth-scale-horiz-incr",
+      "value": 0.177
+     },
+     {
+      "target": "mouth-lowerlip-volume-incr",
+      "value": 0.313
+     },
+     {
+      "target": "mouth-upperlip-volume-decr",
+      "value": 0.118
+     },
+     {
+      "target": "mouth-cupidsbow-decr",
+      "value": 0.481
+     },
+     {
+      "target": "mouth-angles-down",
+      "value": 0.223
+     },
+     {
+      "target": "mouth-trans-forward",
+      "value": 0.459
+     },
+     {
+      "target": "chin-prominent-incr",
+      "value": 0.44
+     },
+     {
+      "target": "chin-width-incr",
+      "value": 0.066
+     },
+     {
+      "target": "chin-height-decr",
+      "value": 0.255
+     },
+     {
+      "target": "chin-bones-incr",
+      "value": 0.138
+     },
+     {
+      "target": "chin-prognathism-incr",
+      "value": 0.749
+     },
+     {
+      "target": "l-cheek-bones-incr",
+      "value": 0.61
+     },
+     {
+      "target": "r-cheek-bones-incr",
+      "value": 0.61
+     },
+     {
+      "target": "l-cheek-volume-decr",
+      "value": 0.308
+     },
+     {
+      "target": "r-cheek-volume-decr",
+      "value": 0.308
+     }
+    ]
+   }
+  },
+  {
+   "label": "face 05",
+   "human": {
+    "targets": [
+     {
+      "target": "head-scale-horiz-decr",
+      "value": 0.653
+     },
+     {
+      "target": "head-scale-vert-decr",
+      "value": 0.511
+     },
+     {
+      "target": "head-fat-incr",
+      "value": 0.085
+     },
+     {
+      "target": "forehead-temple-incr",
+      "value": 0.434
+     },
+     {
+      "target": "eyebrows-angle-up",
+      "value": 0.57
+     },
+     {
+      "target": "eyebrows-trans-up",
+      "value": 0.376
+     },
+     {
+      "target": "l-eye-scale-incr",
+      "value": 0.594
+     },
+     {
+      "target": "r-eye-scale-incr",
+      "value": 0.594
+     },
+     {
+      "target": "l-eye-trans-in",
+      "value": 0.246
+     },
+     {
+      "target": "r-eye-trans-in",
+      "value": 0.246
+     },
+     {
+      "target": "l-eye-trans-down",
+      "value": 0.508
+     },
+     {
+      "target": "r-eye-trans-down",
+      "value": 0.508
+     },
+     {
+      "target": "l-eye-corner1-up",
+      "value": 0.225
+     },
+     {
+      "target": "r-eye-corner1-up",
+      "value": 0.225
+     },
+     {
+      "target": "l-eye-corner2-up",
+      "value": 0.9
+     },
+     {
+      "target": "r-eye-corner2-up",
+      "value": 0.9
+     },
+     {
+      "target": "l-eye-height2-incr",
+      "value": 0.161
+     },
+     {
+      "target": "r-eye-height2-incr",
+      "value": 0.161
+     },
+     {
+      "target": "l-eye-eyefold-angle-down",
+      "value": 0.518
+     },
+     {
+      "target": "r-eye-eyefold-angle-down",
+      "value": 0.518
+     },
+     {
+      "target": "l-eye-bag-incr",
+      "value": 0.109
+     },
+     {
+      "target": "r-eye-bag-incr",
+      "value": 0.109
+     },
+     {
+      "target": "nose-scale-horiz-incr",
+      "value": 0.642
+     },
+     {
+      "target": "nose-scale-vert-decr",
+      "value": 0.465
+     },
+     {
+      "target": "nose-scale-depth-incr",
+      "value": 0.362
+     },
+     {
+      "target": "nose-hump-decr",
+      "value": 0.275
+     },
+     {
+      "target": "nose-curve-convex",
+      "value": 0.573
+     },
+     {
+      "target": "nose-point-width-incr",
+      "value": 0.353
+     },
+     {
+      "target": "nose-nostrils-width-incr",
+      "value": 0.137
+     },
+     {
+      "target": "nose-point-up",
+      "value": 0.9
+     },
+     {
+      "target": "mouth-scale-horiz-decr",
+      "value": 0.184
+     },
+     {
+      "target": "mouth-lowerlip-volume-decr",
+      "value": 0.309
+     },
+     {
+      "target": "mouth-upperlip-volume-incr",
+      "value": 0.835
+     },
+     {
+      "target": "mouth-cupidsbow-decr",
+      "value": 0.394
+     },
+     {
+      "target": "mouth-angles-up",
+      "value": 0.9
+     },
+     {
+      "target": "chin-prominent-decr",
+      "value": 0.467
+     },
+     {
+      "target": "chin-height-incr",
+      "value": 0.059
+     },
+     {
+      "target": "chin-bones-incr",
+      "value": 0.091
+     },
+     {
+      "target": "chin-prognathism-decr",
+      "value": 0.086
+     },
+     {
+      "target": "l-cheek-bones-incr",
+      "value": 0.487
+     },
+     {
+      "target": "r-cheek-bones-incr",
+      "value": 0.487
+     },
+     {
+      "target": "l-cheek-volume-decr",
+      "value": 0.9
+     },
+     {
+      "target": "r-cheek-volume-decr",
+      "value": 0.9
+     },
+     {
+      "target": "l-cheek-inner-decr",
+      "value": 0.25
+     },
+     {
+      "target": "r-cheek-inner-decr",
+      "value": 0.25
+     }
+    ]
+   }
+  },
+  {
+   "label": "face 06",
+   "human": {
+    "targets": [
+     {
+      "target": "head-scale-horiz-decr",
+      "value": 0.118
+     },
+     {
+      "target": "head-scale-vert-incr",
+      "value": 0.819
+     },
+     {
+      "target": "head-fat-decr",
+      "value": 0.897
+     },
+     {
+      "target": "forehead-scale-vert-decr",
+      "value": 0.153
+     },
+     {
+      "target": "forehead-temple-decr",
+      "value": 0.514
+     },
+     {
+      "target": "eyebrows-angle-down",
+      "value": 0.299
+     },
+     {
+      "target": "eyebrows-trans-up",
+      "value": 0.288
+     },
+     {
+      "target": "l-eye-scale-incr",
+      "value": 0.185
+     },
+     {
+      "target": "r-eye-scale-incr",
+      "value": 0.185
+     },
+     {
+      "target": "l-eye-trans-out",
+      "value": 0.648
+     },
+     {
+      "target": "r-eye-trans-out",
+      "value": 0.648
+     },
+     {
+      "target": "l-eye-trans-down",
+      "value": 0.27
+     },
+     {
+      "target": "r-eye-trans-down",
+      "value": 0.27
+     },
+     {
+      "target": "l-eye-corner1-up",
+      "value": 0.121
+     },
+     {
+      "target": "r-eye-corner1-up",
+      "value": 0.121
+     },
+     {
+      "target": "l-eye-corner2-up",
+      "value": 0.528
+     },
+     {
+      "target": "r-eye-corner2-up",
+      "value": 0.528
+     },
+     {
+      "target": "l-eye-height2-incr",
+      "value": 0.407
+     },
+     {
+      "target": "r-eye-height2-incr",
+      "value": 0.407
+     },
+     {
+      "target": "l-eye-eyefold-angle-down",
+      "value": 0.151
+     },
+     {
+      "target": "r-eye-eyefold-angle-down",
+      "value": 0.151
+     },
+     {
+      "target": "l-eye-bag-incr",
+      "value": 0.508
+     },
+     {
+      "target": "r-eye-bag-incr",
+      "value": 0.508
+     },
+     {
+      "target": "nose-scale-horiz-decr",
+      "value": 0.416
+     },
+     {
+      "target": "nose-scale-vert-incr",
+      "value": 0.812
+     },
+     {
+      "target": "nose-scale-depth-incr",
+      "value": 0.069
+     },
+     {
+      "target": "nose-hump-decr",
+      "value": 0.051
+     },
+     {
+      "target": "nose-curve-convex",
+      "value": 0.122
+     },
+     {
+      "target": "nose-point-width-incr",
+      "value": 0.382
+     },
+     {
+      "target": "nose-nostrils-width-incr",
+      "value": 0.784
+     },
+     {
+      "target": "nose-point-down",
+      "value": 0.064
+     },
+     {
+      "target": "mouth-scale-horiz-decr",
+      "value": 0.165
+     },
+     {
+      "target": "mouth-lowerlip-volume-incr",
+      "value": 0.264
+     },
+     {
+      "target": "mouth-upperlip-volume-decr",
+      "value": 0.392
+     },
+     {
+      "target": "mouth-cupidsbow-decr",
+      "value": 0.763
+     },
+     {
+      "target": "mouth-angles-up",
+      "value": 0.376
+     },
+     {
+      "target": "mouth-trans-backward",
+      "value": 0.171
+     },
+     {
+      "target": "chin-prominent-incr",
+      "value": 0.507
+     },
+     {
+      "target": "chin-width-decr",
+      "value": 0.462
+     },
+     {
+      "target": "chin-height-decr",
+      "value": 0.9
+     },
+     {
+      "target": "chin-bones-incr",
+      "value": 0.127
+     },
+     {
+      "target": "chin-prognathism-incr",
+      "value": 0.07
+     },
+     {
+      "target": "l-cheek-bones-incr",
+      "value": 0.72
+     },
+     {
+      "target": "r-cheek-bones-incr",
+      "value": 0.72
+     },
+     {
+      "target": "l-cheek-volume-incr",
+      "value": 0.236
+     },
+     {
+      "target": "r-cheek-volume-incr",
+      "value": 0.236
+     },
+     {
+      "target": "l-cheek-inner-incr",
+      "value": 0.139
+     },
+     {
+      "target": "r-cheek-inner-incr",
+      "value": 0.139
+     }
+    ]
+   }
+  },
+  {
+   "label": "face 07",
+   "human": {
+    "targets": [
+     {
+      "target": "head-scale-horiz-incr",
+      "value": 0.264
+     },
+     {
+      "target": "head-scale-vert-decr",
+      "value": 0.165
+     },
+     {
+      "target": "head-fat-incr",
+      "value": 0.035
+     },
+     {
+      "target": "forehead-scale-vert-decr",
+      "value": 0.608
+     },
+     {
+      "target": "forehead-temple-incr",
+      "value": 0.234
+     },
+     {
+      "target": "eyebrows-angle-down",
+      "value": 0.362
+     },
+     {
+      "target": "eyebrows-trans-down",
+      "value": 0.201
+     },
+     {
+      "target": "l-eye-scale-incr",
+      "value": 0.315
+     },
+     {
+      "target": "r-eye-scale-incr",
+      "value": 0.315
+     },
+     {
+      "target": "l-eye-trans-out",
+      "value": 0.412
+     },
+     {
+      "target": "r-eye-trans-out",
+      "value": 0.412
+     },
+     {
+      "target": "l-eye-trans-down",
+      "value": 0.453
+     },
+     {
+      "target": "r-eye-trans-down",
+      "value": 0.453
+     },
+     {
+      "target": "l-eye-corner1-up",
+      "value": 0.9
+     },
+     {
+      "target": "r-eye-corner1-up",
+      "value": 0.9
+     },
+     {
+      "target": "l-eye-corner2-down",
+      "value": 0.266
+     },
+     {
+      "target": "r-eye-corner2-down",
+      "value": 0.266
+     },
+     {
+      "target": "l-eye-height2-incr",
+      "value": 0.376
+     },
+     {
+      "target": "r-eye-height2-incr",
+      "value": 0.376
+     },
+     {
+      "target": "l-eye-eyefold-angle-up",
+      "value": 0.428
+     },
+     {
+      "target": "r-eye-eyefold-angle-up",
+      "value": 0.428
+     },
+     {
+      "target": "l-eye-bag-incr",
+      "value": 0.101
+     },
+     {
+      "target": "r-eye-bag-incr",
+      "value": 0.101
+     },
+     {
+      "target": "nose-scale-horiz-incr",
+      "value": 0.077
+     },
+     {
+      "target": "nose-scale-vert-incr",
+      "value": 0.809
+     },
+     {
+      "target": "nose-scale-depth-incr",
+      "value": 0.401
+     },
+     {
+      "target": "nose-hump-incr",
+      "value": 0.2
+     },
+     {
+      "target": "nose-curve-concave",
+      "value": 0.821
+     },
+     {
+      "target": "nose-point-width-decr",
+      "value": 0.336
+     },
+     {
+      "target": "nose-nostrils-width-incr",
+      "value": 0.523
+     },
+     {
+      "target": "nose-point-up",
+      "value": 0.087
+     },
+     {
+      "target": "mouth-scale-horiz-decr",
+      "value": 0.43
+     },
+     {
+      "target": "mouth-lowerlip-volume-decr",
+      "value": 0.289
+     },
+     {
+      "target": "mouth-upperlip-volume-decr",
+      "value": 0.138
+     },
+     {
+      "target": "mouth-cupidsbow-incr",
+      "value": 0.309
+     },
+     {
+      "target": "mouth-angles-up",
+      "value": 0.174
+     },
+     {
+      "target": "mouth-trans-forward",
+      "value": 0.449
+     },
+     {
+      "target": "chin-prominent-decr",
+      "value": 0.368
+     },
+     {
+      "target": "chin-width-incr",
+      "value": 0.444
+     },
+     {
+      "target": "chin-height-decr",
+      "value": 0.226
+     },
+     {
+      "target": "chin-bones-decr",
+      "value": 0.135
+     },
+     {
+      "target": "chin-prognathism-incr",
+      "value": 0.78
+     },
+     {
+      "target": "l-cheek-bones-incr",
+      "value": 0.033
+     },
+     {
+      "target": "r-cheek-bones-incr",
+      "value": 0.033
+     },
+     {
+      "target": "l-cheek-volume-decr",
+      "value": 0.063
+     },
+     {
+      "target": "r-cheek-volume-decr",
+      "value": 0.063
+     },
+     {
+      "target": "l-cheek-inner-decr",
+      "value": 0.095
+     },
+     {
+      "target": "r-cheek-inner-decr",
+      "value": 0.095
+     }
+    ]
+   }
+  },
+  {
+   "label": "face 08",
+   "human": {
+    "targets": [
+     {
+      "target": "head-scale-horiz-decr",
+      "value": 0.173
+     },
+     {
+      "target": "head-scale-vert-incr",
+      "value": 0.702
+     },
+     {
+      "target": "head-fat-incr",
+      "value": 0.619
+     },
+     {
+      "target": "forehead-scale-vert-incr",
+      "value": 0.323
+     },
+     {
+      "target": "forehead-temple-incr",
+      "value": 0.083
+     },
+     {
+      "target": "eyebrows-angle-up",
+      "value": 0.469
+     },
+     {
+      "target": "eyebrows-trans-down",
+      "value": 0.035
+     },
+     {
+      "target": "l-eye-scale-incr",
+      "value": 0.204
+     },
+     {
+      "target": "r-eye-scale-incr",
+      "value": 0.204
+     },
+     {
+      "target": "l-eye-trans-out",
+      "value": 0.181
+     },
+     {
+      "target": "r-eye-trans-out",
+      "value": 0.181
+     },
+     {
+      "target": "l-eye-trans-up",
+      "value": 0.04
+     },
+     {
+      "target": "r-eye-trans-up",
+      "value": 0.04
+     },
+     {
+      "target": "l-eye-corner1-up",
+      "value": 0.742
+     },
+     {
+      "target": "r-eye-corner1-up",
+      "value": 0.742
+     },
+     {
+      "target": "l-eye-corner2-up",
+      "value": 0.79
+     },
+     {
+      "target": "r-eye-corner2-up",
+      "value": 0.79
+     },
+     {
+      "target": "l-eye-height2-incr",
+      "value": 0.596
+     },
+     {
+      "target": "r-eye-height2-incr",
+      "value": 0.596
+     },
+     {
+      "target": "l-eye-eyefold-angle-down",
+      "value": 0.861
+     },
+     {
+      "target": "r-eye-eyefold-angle-down",
+      "value": 0.861
+     },
+     {
+      "target": "l-eye-bag-incr",
+      "value": 0.826
+     },
+     {
+      "target": "r-eye-bag-incr",
+      "value": 0.826
+     },
+     {
+      "target": "nose-scale-horiz-incr",
+      "value": 0.316
+     },
+     {
+      "target": "nose-scale-vert-decr",
+      "value": 0.203
+     },
+     {
+      "target": "nose-hump-incr",
+      "value": 0.512
+     },
+     {
+      "target": "nose-curve-convex",
+      "value": 0.529
+     },
+     {
+      "target": "nose-point-width-incr",
+      "value": 0.385
+     },
+     {
+      "target": "nose-nostrils-width-incr",
+      "value": 0.063
+     },
+     {
+      "target": "mouth-scale-horiz-incr",
+      "value": 0.374
+     },
+     {
+      "target": "mouth-lowerlip-volume-decr",
+      "value": 0.041
+     },
+     {
+      "target": "mouth-upperlip-volume-decr",
+      "value": 0.404
+     },
+     {
+      "target": "mouth-cupidsbow-decr",
+      "value": 0.281
+     },
+     {
+      "target": "mouth-angles-down",
+      "value": 0.063
+     },
+     {
+      "target": "mouth-trans-forward",
+      "value": 0.15
+     },
+     {
+      "target": "chin-prominent-incr",
+      "value": 0.9
+     },
+     {
+      "target": "chin-width-decr",
+      "value": 0.616
+     },
+     {
+      "target": "chin-height-incr",
+      "value": 0.215
+     },
+     {
+      "target": "chin-bones-decr",
+      "value": 0.041
+     },
+     {
+      "target": "chin-prognathism-incr",
+      "value": 0.135
+     },
+     {
+      "target": "l-cheek-bones-incr",
+      "value": 0.609
+     },
+     {
+      "target": "r-cheek-bones-incr",
+      "value": 0.609
+     },
+     {
+      "target": "l-cheek-volume-incr",
+      "value": 0.559
+     },
+     {
+      "target": "r-cheek-volume-incr",
+      "value": 0.559
+     },
+     {
+      "target": "l-cheek-inner-decr",
+      "value": 0.071
+     },
+     {
+      "target": "r-cheek-inner-decr",
+      "value": 0.071
+     }
+    ]
+   }
+  },
+  {
+   "label": "face 09",
+   "human": {
+    "targets": [
+     {
+      "target": "head-scale-horiz-decr",
+      "value": 0.251
+     },
+     {
+      "target": "head-scale-vert-decr",
+      "value": 0.613
+     },
+     {
+      "target": "head-fat-decr",
+      "value": 0.032
+     },
+     {
+      "target": "forehead-scale-vert-incr",
+      "value": 0.561
+     },
+     {
+      "target": "forehead-temple-decr",
+      "value": 0.119
+     },
+     {
+      "target": "eyebrows-angle-up",
+      "value": 0.317
+     },
+     {
+      "target": "eyebrows-trans-up",
+      "value": 0.319
+     },
+     {
+      "target": "l-eye-scale-incr",
+      "value": 0.179
+     },
+     {
+      "target": "r-eye-scale-incr",
+      "value": 0.179
+     },
+     {
+      "target": "l-eye-trans-out",
+      "value": 0.488
+     },
+     {
+      "target": "r-eye-trans-out",
+      "value": 0.488
+     },
+     {
+      "target": "l-eye-trans-down",
+      "value": 0.051
+     },
+     {
+      "target": "r-eye-trans-down",
+      "value": 0.051
+     },
+     {
+      "target": "l-eye-corner1-down",
+      "value": 0.373
+     },
+     {
+      "target": "r-eye-corner1-down",
+      "value": 0.373
+     },
+     {
+      "target": "l-eye-corner2-down",
+      "value": 0.528
+     },
+     {
+      "target": "r-eye-corner2-down",
+      "value": 0.528
+     },
+     {
+      "target": "l-eye-height2-incr",
+      "value": 0.417
+     },
+     {
+      "target": "r-eye-height2-incr",
+      "value": 0.417
+     },
+     {
+      "target": "l-eye-eyefold-angle-down",
+      "value": 0.163
+     },
+     {
+      "target": "r-eye-eyefold-angle-down",
+      "value": 0.163
+     },
+     {
+      "target": "l-eye-bag-decr",
+      "value": 0.14
+     },
+     {
+      "target": "r-eye-bag-decr",
+      "value": 0.14
+     },
+     {
+      "target": "nose-scale-horiz-incr",
+      "value": 0.375
+     },
+     {
+      "target": "nose-scale-vert-decr",
+      "value": 0.355
+     },
+     {
+      "target": "nose-scale-depth-incr",
+      "value": 0.797
+     },
+     {
+      "target": "nose-hump-incr",
+      "value": 0.3
+     },
+     {
+      "target": "nose-curve-concave",
+      "value": 0.237
+     },
+     {
+      "target": "nose-point-width-decr",
+      "value": 0.285
+     },
+     {
+      "target": "nose-nostrils-width-incr",
+      "value": 0.487
+     },
+     {
+      "target": "nose-point-down",
+      "value": 0.533
+     },
+     {
+      "target": "mouth-scale-horiz-decr",
+      "value": 0.288
+     },
+     {
+      "target": "mouth-upperlip-volume-incr",
+      "value": 0.091
+     },
+     {
+      "target": "mouth-angles-up",
+      "value": 0.174
+     },
+     {
+      "target": "mouth-trans-backward",
+      "value": 0.164
+     },
+     {
+      "target": "chin-prominent-decr",
+      "value": 0.055
+     },
+     {
+      "target": "chin-width-incr",
+      "value": 0.569
+     },
+     {
+      "target": "chin-height-incr",
+      "value": 0.291
+     },
+     {
+      "target": "chin-bones-decr",
+      "value": 0.202
+     },
+     {
+      "target": "chin-prognathism-incr",
+      "value": 0.772
+     },
+     {
+      "target": "l-cheek-bones-decr",
+      "value": 0.896
+     },
+     {
+      "target": "r-cheek-bones-decr",
+      "value": 0.896
+     },
+     {
+      "target": "l-cheek-volume-incr",
+      "value": 0.038
+     },
+     {
+      "target": "r-cheek-volume-incr",
+      "value": 0.038
+     },
+     {
+      "target": "l-cheek-inner-incr",
+      "value": 0.301
+     },
+     {
+      "target": "r-cheek-inner-incr",
+      "value": 0.301
+     }
+    ]
+   }
+  },
+  {
+   "label": "face 10",
+   "human": {
+    "targets": [
+     {
+      "target": "head-scale-horiz-incr",
+      "value": 0.438
+     },
+     {
+      "target": "head-scale-vert-incr",
+      "value": 0.05
+     },
+     {
+      "target": "head-fat-decr",
+      "value": 0.173
+     },
+     {
+      "target": "forehead-scale-vert-incr",
+      "value": 0.264
+     },
+     {
+      "target": "forehead-temple-decr",
+      "value": 0.087
+     },
+     {
+      "target": "eyebrows-angle-up",
+      "value": 0.214
+     },
+     {
+      "target": "eyebrows-trans-down",
+      "value": 0.9
+     },
+     {
+      "target": "l-eye-scale-incr",
+      "value": 0.172
+     },
+     {
+      "target": "r-eye-scale-incr",
+      "value": 0.172
+     },
+     {
+      "target": "l-eye-trans-in",
+      "value": 0.356
+     },
+     {
+      "target": "r-eye-trans-in",
+      "value": 0.356
+     },
+     {
+      "target": "l-eye-trans-up",
+      "value": 0.423
+     },
+     {
+      "target": "r-eye-trans-up",
+      "value": 0.423
+     },
+     {
+      "target": "l-eye-corner1-up",
+      "value": 0.337
+     },
+     {
+      "target": "r-eye-corner1-up",
+      "value": 0.337
+     },
+     {
+      "target": "l-eye-corner2-up",
+      "value": 0.328
+     },
+     {
+      "target": "r-eye-corner2-up",
+      "value": 0.328
+     },
+     {
+      "target": "l-eye-height2-decr",
+      "value": 0.182
+     },
+     {
+      "target": "r-eye-height2-decr",
+      "value": 0.182
+     },
+     {
+      "target": "l-eye-eyefold-angle-up",
+      "value": 0.195
+     },
+     {
+      "target": "r-eye-eyefold-angle-up",
+      "value": 0.195
+     },
+     {
+      "target": "l-eye-bag-decr",
+      "value": 0.154
+     },
+     {
+      "target": "r-eye-bag-decr",
+      "value": 0.154
+     },
+     {
+      "target": "nose-scale-horiz-incr",
+      "value": 0.097
+     },
+     {
+      "target": "nose-scale-vert-decr",
+      "value": 0.061
+     },
+     {
+      "target": "nose-scale-depth-decr",
+      "value": 0.392
+     },
+     {
+      "target": "nose-hump-incr",
+      "value": 0.89
+     },
+     {
+      "target": "nose-curve-convex",
+      "value": 0.326
+     },
+     {
+      "target": "nose-point-width-decr",
+      "value": 0.9
+     },
+     {
+      "target": "nose-nostrils-width-incr",
+      "value": 0.402
+     },
+     {
+      "target": "nose-point-down",
+      "value": 0.627
+     },
+     {
+      "target": "mouth-scale-horiz-decr",
+      "value": 0.104
+     },
+     {
+      "target": "mouth-lowerlip-volume-decr",
+      "value": 0.262
+     },
+     {
+      "target": "mouth-upperlip-volume-decr",
+      "value": 0.241
+     },
+     {
+      "target": "mouth-cupidsbow-incr",
+      "value": 0.108
+     },
+     {
+      "target": "mouth-angles-down",
+      "value": 0.146
+     },
+     {
+      "target": "mouth-trans-backward",
+      "value": 0.652
+     },
+     {
+      "target": "chin-width-incr",
+      "value": 0.164
+     },
+     {
+      "target": "chin-height-incr",
+      "value": 0.796
+     },
+     {
+      "target": "chin-bones-decr",
+      "value": 0.186
+     },
+     {
+      "target": "chin-prognathism-decr",
+      "value": 0.535
+     },
+     {
+      "target": "l-cheek-bones-decr",
+      "value": 0.171
+     },
+     {
+      "target": "r-cheek-bones-decr",
+      "value": 0.171
+     },
+     {
+      "target": "l-cheek-volume-incr",
+      "value": 0.294
+     },
+     {
+      "target": "r-cheek-volume-incr",
+      "value": 0.294
+     },
+     {
+      "target": "l-cheek-inner-decr",
+      "value": 0.398
+     },
+     {
+      "target": "r-cheek-inner-decr",
+      "value": 0.398
+     }
+    ]
+   }
+  },
+  {
+   "label": "face 11",
+   "human": {
+    "targets": [
+     {
+      "target": "head-scale-horiz-decr",
+      "value": 0.324
+     },
+     {
+      "target": "head-scale-vert-incr",
+      "value": 0.249
+     },
+     {
+      "target": "forehead-scale-vert-incr",
+      "value": 0.1
+     },
+     {
+      "target": "forehead-temple-decr",
+      "value": 0.283
+     },
+     {
+      "target": "eyebrows-angle-down",
+      "value": 0.372
+     },
+     {
+      "target": "eyebrows-trans-down",
+      "value": 0.146
+     },
+     {
+      "target": "l-eye-scale-decr",
+      "value": 0.069
+     },
+     {
+      "target": "r-eye-scale-decr",
+      "value": 0.069
+     },
+     {
+      "target": "l-eye-trans-in",
+      "value": 0.15
+     },
+     {
+      "target": "r-eye-trans-in",
+      "value": 0.15
+     },
+     {
+      "target": "l-eye-trans-up",
+      "value": 0.194
+     },
+     {
+      "target": "r-eye-trans-up",
+      "value": 0.194
+     },
+     {
+      "target": "l-eye-corner1-up",
+      "value": 0.246
+     },
+     {
+      "target": "r-eye-corner1-up",
+      "value": 0.246
+     },
+     {
+      "target": "l-eye-corner2-up",
+      "value": 0.247
+     },
+     {
+      "target": "r-eye-corner2-up",
+      "value": 0.247
+     },
+     {
+      "target": "l-eye-height2-incr",
+      "value": 0.216
+     },
+     {
+      "target": "r-eye-height2-incr",
+      "value": 0.216
+     },
+     {
+      "target": "l-eye-eyefold-angle-down",
+      "value": 0.399
+     },
+     {
+      "target": "r-eye-eyefold-angle-down",
+      "value": 0.399
+     },
+     {
+      "target": "l-eye-bag-decr",
+      "value": 0.504
+     },
+     {
+      "target": "r-eye-bag-decr",
+      "value": 0.504
+     },
+     {
+      "target": "nose-scale-horiz-incr",
+      "value": 0.361
+     },
+     {
+      "target": "nose-scale-depth-incr",
+      "value": 0.055
+     },
+     {
+      "target": "nose-hump-decr",
+      "value": 0.522
+     },
+     {
+      "target": "nose-curve-concave",
+      "value": 0.095
+     },
+     {
+      "target": "nose-point-width-decr",
+      "value": 0.287
+     },
+     {
+      "target": "nose-nostrils-width-decr",
+      "value": 0.389
+     },
+     {
+      "target": "nose-point-down",
+      "value": 0.283
+     },
+     {
+      "target": "mouth-scale-horiz-decr",
+      "value": 0.672
+     },
+     {
+      "target": "mouth-lowerlip-volume-incr",
+      "value": 0.038
+     },
+     {
+      "target": "mouth-upperlip-volume-incr",
+      "value": 0.525
+     },
+     {
+      "target": "mouth-cupidsbow-decr",
+      "value": 0.319
+     },
+     {
+      "target": "mouth-angles-up",
+      "value": 0.043
+     },
+     {
+      "target": "mouth-trans-backward",
+      "value": 0.491
+     },
+     {
+      "target": "chin-prominent-incr",
+      "value": 0.302
+     },
+     {
+      "target": "chin-width-incr",
+      "value": 0.839
+     },
+     {
+      "target": "chin-height-decr",
+      "value": 0.555
+     },
+     {
+      "target": "chin-bones-decr",
+      "value": 0.102
+     },
+     {
+      "target": "chin-prognathism-incr",
+      "value": 0.641
+     },
+     {
+      "target": "l-cheek-bones-incr",
+      "value": 0.166
+     },
+     {
+      "target": "r-cheek-bones-incr",
+      "value": 0.166
+     },
+     {
+      "target": "l-cheek-volume-incr",
+      "value": 0.052
+     },
+     {
+      "target": "r-cheek-volume-incr",
+      "value": 0.052
+     },
+     {
+      "target": "l-cheek-inner-decr",
+      "value": 0.9
+     },
+     {
+      "target": "r-cheek-inner-decr",
+      "value": 0.9
+     }
+    ]
+   }
+  },
+  {
+   "label": "face 12",
+   "human": {
+    "targets": [
+     {
+      "target": "head-scale-horiz-decr",
+      "value": 0.068
+     },
+     {
+      "target": "head-scale-vert-incr",
+      "value": 0.413
+     },
+     {
+      "target": "head-fat-incr",
+      "value": 0.646
+     },
+     {
+      "target": "forehead-scale-vert-incr",
+      "value": 0.289
+     },
+     {
+      "target": "forehead-temple-decr",
+      "value": 0.261
+     },
+     {
+      "target": "eyebrows-angle-down",
+      "value": 0.309
+     },
+     {
+      "target": "eyebrows-trans-down",
+      "value": 0.819
+     },
+     {
+      "target": "l-eye-scale-decr",
+      "value": 0.484
+     },
+     {
+      "target": "r-eye-scale-decr",
+      "value": 0.484
+     },
+     {
+      "target": "l-eye-trans-out",
+      "value": 0.505
+     },
+     {
+      "target": "r-eye-trans-out",
+      "value": 0.505
+     },
+     {
+      "target": "l-eye-trans-down",
+      "value": 0.052
+     },
+     {
+      "target": "r-eye-trans-down",
+      "value": 0.052
+     },
+     {
+      "target": "l-eye-corner1-down",
+      "value": 0.602
+     },
+     {
+      "target": "r-eye-corner1-down",
+      "value": 0.602
+     },
+     {
+      "target": "l-eye-corner2-up",
+      "value": 0.594
+     },
+     {
+      "target": "r-eye-corner2-up",
+      "value": 0.594
+     },
+     {
+      "target": "l-eye-height2-decr",
+      "value": 0.753
+     },
+     {
+      "target": "r-eye-height2-decr",
+      "value": 0.753
+     },
+     {
+      "target": "l-eye-eyefold-angle-up",
+      "value": 0.567
+     },
+     {
+      "target": "r-eye-eyefold-angle-up",
+      "value": 0.567
+     },
+     {
+      "target": "l-eye-bag-decr",
+      "value": 0.145
+     },
+     {
+      "target": "r-eye-bag-decr",
+      "value": 0.145
+     },
+     {
+      "target": "nose-scale-horiz-incr",
+      "value": 0.153
+     },
+     {
+      "target": "nose-scale-vert-incr",
+      "value": 0.306
+     },
+     {
+      "target": "nose-scale-depth-incr",
+      "value": 0.118
+     },
+     {
+      "target": "nose-hump-incr",
+      "value": 0.572
+     },
+     {
+      "target": "nose-point-width-decr",
+      "value": 0.147
+     },
+     {
+      "target": "nose-nostrils-width-decr",
+      "value": 0.298
+     },
+     {
+      "target": "nose-point-down",
+      "value": 0.65
+     },
+     {
+      "target": "mouth-scale-horiz-decr",
+      "value": 0.313
+     },
+     {
+      "target": "mouth-lowerlip-volume-incr",
+      "value": 0.442
+     },
+     {
+      "target": "mouth-upperlip-volume-incr",
+      "value": 0.371
+     },
+     {
+      "target": "mouth-cupidsbow-incr",
+      "value": 0.626
+     },
+     {
+      "target": "mouth-angles-up",
+      "value": 0.9
+     },
+     {
+      "target": "mouth-trans-forward",
+      "value": 0.321
+     },
+     {
+      "target": "chin-prominent-incr",
+      "value": 0.225
+     },
+     {
+      "target": "chin-width-decr",
+      "value": 0.592
+     },
+     {
+      "target": "chin-height-decr",
+      "value": 0.109
+     },
+     {
+      "target": "chin-bones-incr",
+      "value": 0.9
+     },
+     {
+      "target": "chin-prognathism-incr",
+      "value": 0.238
+     },
+     {
+      "target": "l-cheek-bones-decr",
+      "value": 0.062
+     },
+     {
+      "target": "r-cheek-bones-decr",
+      "value": 0.062
+     },
+     {
+      "target": "l-cheek-volume-incr",
+      "value": 0.139
+     },
+     {
+      "target": "r-cheek-volume-incr",
+      "value": 0.139
+     },
+     {
+      "target": "l-cheek-inner-decr",
+      "value": 0.853
+     },
+     {
+      "target": "r-cheek-inner-decr",
+      "value": 0.853
+     }
+    ]
+   }
+  },
+  {
+   "label": "face 13",
+   "human": {
+    "targets": [
+     {
+      "target": "head-scale-horiz-decr",
+      "value": 0.375
+     },
+     {
+      "target": "head-scale-vert-decr",
+      "value": 0.589
+     },
+     {
+      "target": "head-fat-decr",
+      "value": 0.9
+     },
+     {
+      "target": "forehead-scale-vert-incr",
+      "value": 0.346
+     },
+     {
+      "target": "forehead-temple-incr",
+      "value": 0.435
+     },
+     {
+      "target": "eyebrows-angle-down",
+      "value": 0.079
+     },
+     {
+      "target": "eyebrows-trans-up",
+      "value": 0.156
+     },
+     {
+      "target": "l-eye-scale-decr",
+      "value": 0.453
+     },
+     {
+      "target": "r-eye-scale-decr",
+      "value": 0.453
+     },
+     {
+      "target": "l-eye-trans-out",
+      "value": 0.204
+     },
+     {
+      "target": "r-eye-trans-out",
+      "value": 0.204
+     },
+     {
+      "target": "l-eye-trans-up",
+      "value": 0.343
+     },
+     {
+      "target": "r-eye-trans-up",
+      "value": 0.343
+     },
+     {
+      "target": "l-eye-corner1-up",
+      "value": 0.691
+     },
+     {
+      "target": "r-eye-corner1-up",
+      "value": 0.691
+     },
+     {
+      "target": "l-eye-corner2-up",
+      "value": 0.702
+     },
+     {
+      "target": "r-eye-corner2-up",
+      "value": 0.702
+     },
+     {
+      "target": "l-eye-height2-incr",
+      "value": 0.219
+     },
+     {
+      "target": "r-eye-height2-incr",
+      "value": 0.219
+     },
+     {
+      "target": "l-eye-eyefold-angle-down",
+      "value": 0.057
+     },
+     {
+      "target": "r-eye-eyefold-angle-down",
+      "value": 0.057
+     },
+     {
+      "target": "l-eye-bag-decr",
+      "value": 0.372
+     },
+     {
+      "target": "r-eye-bag-decr",
+      "value": 0.372
+     },
+     {
+      "target": "nose-scale-horiz-decr",
+      "value": 0.273
+     },
+     {
+      "target": "nose-scale-vert-incr",
+      "value": 0.278
+     },
+     {
+      "target": "nose-scale-depth-incr",
+      "value": 0.255
+     },
+     {
+      "target": "nose-curve-convex",
+      "value": 0.749
+     },
+     {
+      "target": "nose-point-width-incr",
+      "value": 0.292
+     },
+     {
+      "target": "nose-point-down",
+      "value": 0.086
+     },
+     {
+      "target": "mouth-scale-horiz-incr",
+      "value": 0.035
+     },
+     {
+      "target": "mouth-lowerlip-volume-decr",
+      "value": 0.427
+     },
+     {
+      "target": "mouth-upperlip-volume-decr",
+      "value": 0.441
+     },
+     {
+      "target": "mouth-cupidsbow-incr",
+      "value": 0.156
+     },
+     {
+      "target": "mouth-angles-down",
+      "value": 0.263
+     },
+     {
+      "target": "mouth-trans-backward",
+      "value": 0.122
+     },
+     {
+      "target": "chin-prominent-incr",
+      "value": 0.549
+     },
+     {
+      "target": "chin-width-decr",
+      "value": 0.087
+     },
+     {
+      "target": "chin-height-incr",
+      "value": 0.591
+     },
+     {
+      "target": "chin-prognathism-incr",
+      "value": 0.683
+     },
+     {
+      "target": "l-cheek-bones-incr",
+      "value": 0.209
+     },
+     {
+      "target": "r-cheek-bones-incr",
+      "value": 0.209
+     },
+     {
+      "target": "l-cheek-volume-decr",
+      "value": 0.791
+     },
+     {
+      "target": "r-cheek-volume-decr",
+      "value": 0.791
+     },
+     {
+      "target": "l-cheek-inner-incr",
+      "value": 0.557
+     },
+     {
+      "target": "r-cheek-inner-incr",
+      "value": 0.557
+     }
+    ]
+   }
+  },
+  {
+   "label": "face 14",
+   "human": {
+    "targets": [
+     {
+      "target": "head-scale-horiz-decr",
+      "value": 0.093
+     },
+     {
+      "target": "head-scale-vert-decr",
+      "value": 0.884
+     },
+     {
+      "target": "head-fat-incr",
+      "value": 0.051
+     },
+     {
+      "target": "forehead-scale-vert-incr",
+      "value": 0.07
+     },
+     {
+      "target": "forehead-temple-decr",
+      "value": 0.581
+     },
+     {
+      "target": "eyebrows-angle-down",
+      "value": 0.273
+     },
+     {
+      "target": "eyebrows-trans-up",
+      "value": 0.246
+     },
+     {
+      "target": "l-eye-scale-incr",
+      "value": 0.636
+     },
+     {
+      "target": "r-eye-scale-incr",
+      "value": 0.636
+     },
+     {
+      "target": "l-eye-trans-out",
+      "value": 0.513
+     },
+     {
+      "target": "r-eye-trans-out",
+      "value": 0.513
+     },
+     {
+      "target": "l-eye-trans-up",
+      "value": 0.55
+     },
+     {
+      "target": "r-eye-trans-up",
+      "value": 0.55
+     },
+     {
+      "target": "l-eye-corner1-up",
+      "value": 0.504
+     },
+     {
+      "target": "r-eye-corner1-up",
+      "value": 0.504
+     },
+     {
+      "target": "l-eye-corner2-down",
+      "value": 0.9
+     },
+     {
+      "target": "r-eye-corner2-down",
+      "value": 0.9
+     },
+     {
+      "target": "l-eye-height2-decr",
+      "value": 0.327
+     },
+     {
+      "target": "r-eye-height2-decr",
+      "value": 0.327
+     },
+     {
+      "target": "l-eye-eyefold-angle-up",
+      "value": 0.084
+     },
+     {
+      "target": "r-eye-eyefold-angle-up",
+      "value": 0.084
+     },
+     {
+      "target": "l-eye-bag-decr",
+      "value": 0.9
+     },
+     {
+      "target": "r-eye-bag-decr",
+      "value": 0.9
+     },
+     {
+      "target": "nose-scale-horiz-incr",
+      "value": 0.347
+     },
+     {
+      "target": "nose-scale-vert-incr",
+      "value": 0.401
+     },
+     {
+      "target": "nose-scale-depth-decr",
+      "value": 0.349
+     },
+     {
+      "target": "nose-hump-decr",
+      "value": 0.171
+     },
+     {
+      "target": "nose-curve-concave",
+      "value": 0.423
+     },
+     {
+      "target": "mouth-scale-horiz-decr",
+      "value": 0.46
+     },
+     {
+      "target": "mouth-lowerlip-volume-incr",
+      "value": 0.174
+     },
+     {
+      "target": "mouth-upperlip-volume-decr",
+      "value": 0.153
+     },
+     {
+      "target": "mouth-cupidsbow-incr",
+      "value": 0.428
+     },
+     {
+      "target": "mouth-angles-up",
+      "value": 0.141
+     },
+     {
+      "target": "mouth-trans-backward",
+      "value": 0.668
+     },
+     {
+      "target": "chin-prominent-decr",
+      "value": 0.649
+     },
+     {
+      "target": "chin-width-incr",
+      "value": 0.031
+     },
+     {
+      "target": "chin-height-decr",
+      "value": 0.218
+     },
+     {
+      "target": "chin-bones-incr",
+      "value": 0.211
+     },
+     {
+      "target": "chin-prognathism-incr",
+      "value": 0.363
+     },
+     {
+      "target": "l-cheek-volume-decr",
+      "value": 0.758
+     },
+     {
+      "target": "r-cheek-volume-decr",
+      "value": 0.758
+     },
+     {
+      "target": "l-cheek-inner-decr",
+      "value": 0.538
+     },
+     {
+      "target": "r-cheek-inner-decr",
+      "value": 0.538
+     }
+    ]
+   }
+  },
+  {
+   "label": "face 15",
+   "human": {
+    "targets": [
+     {
+      "target": "head-scale-horiz-incr",
+      "value": 0.258
+     },
+     {
+      "target": "head-scale-vert-decr",
+      "value": 0.473
+     },
+     {
+      "target": "head-fat-incr",
+      "value": 0.499
+     },
+     {
+      "target": "forehead-scale-vert-decr",
+      "value": 0.041
+     },
+     {
+      "target": "forehead-temple-incr",
+      "value": 0.234
+     },
+     {
+      "target": "eyebrows-angle-down",
+      "value": 0.398
+     },
+     {
+      "target": "eyebrows-trans-down",
+      "value": 0.045
+     },
+     {
+      "target": "l-eye-scale-decr",
+      "value": 0.9
+     },
+     {
+      "target": "r-eye-scale-decr",
+      "value": 0.9
+     },
+     {
+      "target": "l-eye-trans-in",
+      "value": 0.094
+     },
+     {
+      "target": "r-eye-trans-in",
+      "value": 0.094
+     },
+     {
+      "target": "l-eye-trans-up",
+      "value": 0.259
+     },
+     {
+      "target": "r-eye-trans-up",
+      "value": 0.259
+     },
+     {
+      "target": "l-eye-corner1-down",
+      "value": 0.404
+     },
+     {
+      "target": "r-eye-corner1-down",
+      "value": 0.404
+     },
+     {
+      "target": "l-eye-corner2-down",
+      "value": 0.379
+     },
+     {
+      "target": "r-eye-corner2-down",
+      "value": 0.379
+     },
+     {
+      "target": "l-eye-height2-decr",
+      "value": 0.024
+     },
+     {
+      "target": "r-eye-height2-decr",
+      "value": 0.024
+     },
+     {
+      "target": "l-eye-eyefold-angle-up",
+      "value": 0.029
+     },
+     {
+      "target": "r-eye-eyefold-angle-up",
+      "value": 0.029
+     },
+     {
+      "target": "l-eye-bag-decr",
+      "value": 0.364
+     },
+     {
+      "target": "r-eye-bag-decr",
+      "value": 0.364
+     },
+     {
+      "target": "nose-scale-horiz-incr",
+      "value": 0.304
+     },
+     {
+      "target": "nose-scale-vert-decr",
+      "value": 0.741
+     },
+     {
+      "target": "nose-scale-depth-incr",
+      "value": 0.502
+     },
+     {
+      "target": "nose-hump-decr",
+      "value": 0.632
+     },
+     {
+      "target": "nose-curve-concave",
+      "value": 0.37
+     },
+     {
+      "target": "nose-point-width-incr",
+      "value": 0.599
+     },
+     {
+      "target": "nose-nostrils-width-decr",
+      "value": 0.448
+     },
+     {
+      "target": "nose-point-down",
+      "value": 0.744
+     },
+     {
+      "target": "mouth-scale-horiz-incr",
+      "value": 0.034
+     },
+     {
+      "target": "mouth-lowerlip-volume-decr",
+      "value": 0.414
+     },
+     {
+      "target": "mouth-upperlip-volume-decr",
+      "value": 0.502
+     },
+     {
+      "target": "mouth-cupidsbow-decr",
+      "value": 0.316
+     },
+     {
+      "target": "mouth-angles-down",
+      "value": 0.335
+     },
+     {
+      "target": "mouth-trans-backward",
+      "value": 0.439
+     },
+     {
+      "target": "chin-prominent-decr",
+      "value": 0.463
+     },
+     {
+      "target": "chin-width-incr",
+      "value": 0.725
+     },
+     {
+      "target": "chin-height-decr",
+      "value": 0.303
+     },
+     {
+      "target": "chin-bones-incr",
+      "value": 0.437
+     },
+     {
+      "target": "chin-prognathism-decr",
+      "value": 0.632
+     },
+     {
+      "target": "l-cheek-bones-incr",
+      "value": 0.245
+     },
+     {
+      "target": "r-cheek-bones-incr",
+      "value": 0.245
+     },
+     {
+      "target": "l-cheek-volume-decr",
+      "value": 0.563
+     },
+     {
+      "target": "r-cheek-volume-decr",
+      "value": 0.563
+     },
+     {
+      "target": "l-cheek-inner-decr",
+      "value": 0.206
+     },
+     {
+      "target": "r-cheek-inner-decr",
+      "value": 0.206
+     }
+    ]
+   }
+  }
+ ]
+}

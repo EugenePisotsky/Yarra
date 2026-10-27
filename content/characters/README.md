@@ -43,6 +43,27 @@ only at run time.
 To move to a newer MPFB, check its release notes, update `[mpfb]` in `mpfb.toml` to the version
 and archive hash the index lists, and rebuild the profile.
 
+## Reviews
+
+Looks are judged on contact sheets of fixed views under one light rig, rendered from review specs
+in `reviews/` (a preset, views, variants merged over it; see `scripts/render_views.py`):
+
+```sh
+content/characters/scripts/render_reviews.sh              # all; or: render_reviews.sh faces skins
+python3 content/characters/scripts/face_variants.py       # regenerate reviews/faces.json
+```
+
+Each review lands in `tmp/characters/<name>/`, a folder of PNGs per variant and `sheet.png`.
+Cycles renders them: EEVEE shows MPFB's procedural eyes as mirrors. A face picked from the faces
+sheet is kept by copying its `targets` into a preset in `presets/`.
+
+| Review | Shows |
+| --- | --- |
+| `layers` | plain MakeHuman, a plain game material, MPFB's subsurface skin and procedural eyes |
+| `skins` | the CC0 skins on one face |
+| `expressions` | ARKit face units combined into common expressions |
+| `faces` | faces drawn from 37 face sliders (`face_variants.py`, seeded) |
+
 ## The base
 
 - Base mesh (MakeHuman's hm08): 19,158 vertices, 13,380 of them the body, the rest helper

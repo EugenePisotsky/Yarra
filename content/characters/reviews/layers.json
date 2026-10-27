@@ -1,0 +1,28 @@
+{
+    "preset": "content/characters/presets/probe_female.json",
+    "views": ["face_front", "face_three_quarter", "face_profile", "body_front", "body_three_quarter", "body_back"],
+    "variants": [
+        {
+            "label": "1 MakeHuman plain",
+            "note": "the usual MakeHuman look: raw textured skin, low-poly eyes, basic brows, lashes, hair",
+            "human": {
+                "skin_material_type": "MAKESKIN",
+                "eyes": "low-poly/low-poly.mhclo",
+                "eyes_material_type": "MAKESKIN",
+                "eyebrows": "eyebrow001/eyebrow001.mhclo",
+                "eyelashes": "eyelashes01/eyelashes01.mhclo",
+                "hair": "bob01/bob01.mhclo"
+            }
+        },
+        {
+            "label": "2 game material",
+            "note": "one texture through a plain PBR material, as a game gets it with no skin shading",
+            "human": {"skin_material_type": "GAMEENGINE", "eyes_material_type": "GAMEENGINE"}
+        },
+        {
+            "label": "3 MPFB best",
+            "note": "subsurface skin with procedural pores, procedural eyes: what a game skin shader aims at",
+            "human": {"skin_material_type": "ENHANCED_SSS", "eyes_material_type": "PROCEDURAL_EYES"}
+        }
+    ]
+}

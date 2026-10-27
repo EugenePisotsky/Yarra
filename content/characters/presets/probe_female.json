@@ -1,0 +1,31 @@
+{
+    "clothes": ["female_sportsuit01/female_sportsuit01.mhclo", "shoes01/shoes01.mhclo"],
+    "color_adjustments": {},
+    "expressions": [],
+    "eyebrows": "mindfront_eyebrows_04/mindfront_eyebrows_04.mhclo",
+    "eyelashes": "mindfront_eyelashes_02/mindfront_eyelashes_02.mhclo",
+    "eyes": "high-poly/high-poly.mhclo",
+    "eyes_material_settings": {},
+    "eyes_material_type": "PROCEDURAL_EYES",
+    "hair": "ponytail01/ponytail01.mhclo",
+    "makeup": [],
+    "phenotype": {
+        "age": 0.5,
+        "cupsize": 0.5,
+        "firmness": 0.5,
+        "gender": 0.0,
+        "height": 0.5,
+        "muscle": 0.5,
+        "proportions": 0.5,
+        "race": {"african": 0.0, "asian": 0.0, "caucasian": 1.0},
+        "weight": 0.5
+    },
+    "proxy": "",
+    "rig": "",
+    "skin_material_settings": {},
+    "skin_material_type": "ENHANCED_SSS",
+    "skin_mhmat": "young_caucasian_female/young_caucasian_female.mhmat",
+    "targets": [],
+    "teeth": "teeth_base/teeth_base.mhclo",
+    "tongue": "tongue01/tongue01.mhclo"
+}

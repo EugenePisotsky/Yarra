@@ -1,0 +1,79 @@
+{
+ "preset": "content/characters/presets/probe_female.json",
+ "views": [
+  "face_front",
+  "face_three_quarter",
+  "body_front"
+ ],
+ "variants": [
+  {
+   "label": "young caucasian"
+  },
+  {
+   "label": "young caucasian 2",
+   "human": {
+    "skin_mhmat": "young_caucasian_female2/young_caucasian_female2.mhmat"
+   }
+  },
+  {
+   "label": "middle-aged caucasian",
+   "human": {
+    "skin_mhmat": "middleage_caucasian_female/middleage_caucasian_female.mhmat"
+   }
+  },
+  {
+   "label": "toigo freckles",
+   "human": {
+    "skin_mhmat": "toigo_light_skin_female_freckles/toigo_light_skin_female_freckles.mhmat"
+   }
+  },
+  {
+   "label": "toigo ginger",
+   "human": {
+    "skin_mhmat": "toigo_light_skin_female_ginger/toigo_light_skin_female_ginger.mhmat"
+   }
+  },
+  {
+   "label": "callharvey3d midtoned",
+   "human": {
+    "skin_mhmat": "callharvey3d_midtoned_female/callharvey3d_midtoned_female.mhmat"
+   }
+  },
+  {
+   "label": "darthfurby caucasian",
+   "human": {
+    "skin_mhmat": "darthfurby_caucasian_female/darthfurby_caucasian_female.mhmat"
+   }
+  },
+  {
+   "label": "skalldyrssuppe creamy",
+   "human": {
+    "skin_mhmat": "skalldyrssuppe_creamy_female/skalldyrssuppe_creamy_female.mhmat"
+   }
+  },
+  {
+   "label": "onlytheghosts eurasian",
+   "human": {
+    "skin_mhmat": "onlytheghosts_young_eurasian_female/onlytheghosts_young_eurasian_female.mhmat"
+   }
+  },
+  {
+   "label": "nyloseth zoey",
+   "human": {
+    "skin_mhmat": "nyloseth_zoeyskin/nyloseth_zoeyskin.mhmat"
+   }
+  },
+  {
+   "label": "bobby young hairless",
+   "human": {
+    "skin_mhmat": "bobby_03_young_female_hairless/bobby_03_young_female_hairless.mhmat"
+   }
+  },
+  {
+   "label": "flower-angel redhead",
+   "human": {
+    "skin_mhmat": "flower-angel_red_head_skin/flower-angel_red_head_skin.mhmat"
+   }
+  }
+ ]
+}
