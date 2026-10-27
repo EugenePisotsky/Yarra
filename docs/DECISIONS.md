@@ -333,7 +333,10 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
   0.6 s, dithered (`crossfade.wesl`), shadows doubled mid-fade. Distance crossfades drew
   two LODs across a band and popped shadows.
 - **Impostors from a texel per output pixel.** *Kept* (`d76b928`). Spruce 92 → 172 m, LOD2 drawn
-  from 240 px; the fixed 200 px hand-off magnified impostors ~2.6×.
+  from 240 px; the fixed 200 px hand-off magnified impostors ~2.6×. The hand-off stays the
+  Retina window's under every frame: following a frame shown enlarged (`c61b9c5`, reverted)
+  brought spruce impostors in to about 86 m under window 1x, and approaching a forest they
+  "looked like garbage" (user, October 27), for 0.28 ms at spruce-road.
 - **Impostor quality.** *Kept* (`4586161`, `d74df76`, `d04c6fa`). Ray-plane view reads, the view's
   mip bias, per-view mips with a gutter, baked from LOD0 (an LOD2 bake thinned crowns). Load normal
   atlases as linear: Bevy transcodes UASTC to sRGB.

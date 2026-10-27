@@ -67,12 +67,12 @@ pub use character_catalog::{
 
 pub use world_streaming::{
     ActiveWorldSpace, ClipmapStats, ClipmapTerrain, FLOATING_ORIGIN_THRESHOLD_CELLS,
-    GameplayObject, GeneratedEnvironmentObject, LiveTerrainPreview, LodOutputScale,
-    StreamedTerrainSurface, StreamedTerrainWear, StreamedVegetationFieldPage, StreamedVisualObject,
-    StreamingStats, TerrainPreviewRequest, VisualLodScale, WorldCatalog, WorldDetailDemand,
-    WorldGenerationReload, WorldOrigin, WorldRenderRoot, WorldSpaceInfo, WorldStreamingConfig,
-    WorldStreamingPlugin, WorldStreamingSystems, WorldViewCamera, WorldViewpoint,
-    sample_resident_terrain_surface, spawn_collection_visual,
+    GameplayObject, GeneratedEnvironmentObject, LiveTerrainPreview, StreamedTerrainSurface,
+    StreamedTerrainWear, StreamedVegetationFieldPage, StreamedVisualObject, StreamingStats,
+    TerrainPreviewRequest, VisualLodScale, WorldCatalog, WorldDetailDemand, WorldGenerationReload,
+    WorldOrigin, WorldRenderRoot, WorldSpaceInfo, WorldStreamingConfig, WorldStreamingPlugin,
+    WorldStreamingSystems, WorldViewCamera, WorldViewpoint, sample_resident_terrain_surface,
+    spawn_collection_visual,
 };
 
 mod ocean;

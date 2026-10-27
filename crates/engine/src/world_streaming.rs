@@ -38,8 +38,7 @@ mod valley_mist;
 mod world_space;
 
 pub use crate::object_lod::{
-    GeneratedEnvironmentObject, LodOutputScale, StreamedVisualObject, VisualLodScale,
-    spawn_collection_visual,
+    GeneratedEnvironmentObject, StreamedVisualObject, VisualLodScale, spawn_collection_visual,
 };
 
 pub use rebase::WorldRenderRoot;
