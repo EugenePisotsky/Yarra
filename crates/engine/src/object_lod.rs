@@ -14,6 +14,7 @@ use bevy::{
         ShadowLodOrigin,
         visibility::{VisibilityRange, VisibilitySystems},
     },
+    ecs::system::SystemParam,
     gltf::GltfAssetLabel,
     prelude::*,
     transform::TransformSystems,
@@ -39,6 +40,7 @@ impl Plugin for ObjectLodPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(crate::trees::impostor::TreeImpostorPlugin)
             .init_resource::<VisualLodScale>()
+            .init_resource::<LodOutputScale>()
             .init_resource::<LodProjection>()
             .add_observer(range_new_lod_scene)
             .add_observer(shadow_lods_follow_world_view)
@@ -165,15 +167,38 @@ impl Default for VisualLodScale {
     }
 }
 
+/// Output pixels per logical pixel of the window where the world is shown at another density
+/// than the window's own, as a frame the game fits in the window; None: the window's scale
+/// factor. Impostors take over where their texels meet these pixels.
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
+pub struct LodOutputScale(pub Option<f32>);
+
 /// Logical pixels per metre of object height at one metre from the camera (anywhere, for
 /// an orthographic camera), including [`VisualLodScale`]. Zero until the camera is known.
 #[derive(Resource, Clone, Copy, Debug, PartialEq)]
 pub(crate) struct LodProjection {
     pixels_per_metre: f32,
     orthographic: bool,
-    /// Output pixels per logical pixel: the window's scale factor, whatever the render scale
-    /// (an upscaler resolves to the output).
+    /// Output pixels per logical pixel, whatever the render scale (an upscaler resolves to the
+    /// output): [`LodOutputScale`], else the window's scale factor.
     output_scale: f32,
+}
+
+/// Where the world is shown, for its output pixels per logical pixel.
+#[derive(SystemParam)]
+struct Output<'w, 's> {
+    window: Query<'w, 's, &'static Window, With<PrimaryWindow>>,
+    frame: Res<'w, LodOutputScale>,
+}
+
+impl Output<'_, '_> {
+    fn scale(&self, camera: &Camera) -> f32 {
+        self.frame
+            .0
+            .or_else(|| self.window.single().map(Window::scale_factor).ok())
+            .or_else(|| camera.target_scaling_factor())
+            .unwrap_or(1.0)
+    }
 }
 
 impl Default for LodProjection {
@@ -338,7 +363,7 @@ fn update_object_lods(
     scenes: Query<(&LodScene, Option<&Children>)>,
     descendants: Query<&Children>,
     meshes: Query<(), With<Mesh3d>>,
-    window: Query<&Window, With<PrimaryWindow>>,
+    output: Output,
 ) {
     let Some(view) = view.current() else {
         return;
@@ -351,13 +376,7 @@ fn update_object_lods(
     let next = LodProjection {
         pixels_per_metre: 0.5 * viewport.y * clip.y_axis.y * lod_scale.0.clamp(0.25, 4.0),
         orthographic: clip.w_axis.w == 1.0,
-        // The game renders into an image at its render scale; the window is the output.
-        output_scale: window
-            .single()
-            .map(Window::scale_factor)
-            .ok()
-            .or_else(|| camera.target_scaling_factor())
-            .unwrap_or(1.0),
+        output_scale: output.scale(camera),
     };
 
     // Window size, display, field of view and Object detail change the switch distances;

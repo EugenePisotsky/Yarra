@@ -187,3 +187,14 @@ fn world_view_cameras_are_the_shadow_lod_origin() {
         .query_filtered::<Entity, (With<WorldViewCamera>, With<ShadowLodOrigin>)>();
     assert_eq!(cameras.iter(app.world()).count(), 1);
 }
+
+#[test]
+fn a_frame_sets_the_output_pixels_impostors_meet() {
+    let mut app = app(Transform::default());
+    app.update();
+    assert_eq!(app.world().resource::<LodProjection>().output_scale, 1.0);
+
+    app.world_mut().insert_resource(LodOutputScale(Some(0.5)));
+    app.update();
+    assert_eq!(app.world().resource::<LodProjection>().output_scale, 0.5);
+}

@@ -18,11 +18,12 @@ pub(crate) struct GameRenderPlugin;
 impl Plugin for GameRenderPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<GameRenderSettings>()
+            .init_resource::<engine::LodOutputScale>()
             .add_plugins(upscaling::UpscalingPlugin)
             .add_systems(PostStartup, setup.in_set(GameRenderSetup))
             .add_systems(
                 Update,
-                apply_settings
+                (apply_settings, output_density)
                     .in_set(GameRenderSystems)
                     .before(GameplaySystems::CameraInput),
             );
@@ -468,6 +469,21 @@ fn apply_settings(
     presentation.show_ui(&mut commands, s.show_ui);
 }
 
+/// The frame's pixels per logical pixel of the window, as fitted in it, which impostors' texels
+/// meet: a frame shown enlarged has fewer, so they take over nearer.
+fn output_density(
+    s: Res<GameRenderSettings>,
+    window: Single<&Window, With<PrimaryWindow>>,
+    mut output: ResMut<engine::LodOutputScale>,
+) {
+    let frame = s.output_size(&window).as_vec2();
+    let density = Some((frame / window.size().max(Vec2::ONE)).max_element());
+
+    if output.0 != density {
+        output.0 = density;
+    }
+}
+
 fn resize(images: &mut Assets<Image>, image: &Handle<Image>, size: UVec2) {
     if images.get(image).expect("game render image").size() != size {
         images.get_mut(image).unwrap().resize(Extent3d {
@@ -748,6 +764,10 @@ mod tests {
         );
         assert!(world.get::<upscaling::DirectTonemapOutput>(main).is_none());
         assert!(world.get::<ContrastAdaptiveSharpening>(main).is_some());
+        assert_eq!(
+            world.resource::<engine::LodOutputScale>().0,
+            Some(1920.0 / 1728.0)
+        );
         assert!(world.get::<Camera>(ui).unwrap().is_active);
         assert!(world.get::<IsDefaultUiCamera>(ui).is_some());
         let node = world.get::<Node>(composite).unwrap();
@@ -782,6 +802,7 @@ mod tests {
         );
         assert!(world.get::<upscaling::DirectTonemapOutput>(main).is_none());
         assert!(world.get::<ContrastAdaptiveSharpening>(main).is_some());
+        assert_eq!(world.resource::<engine::LodOutputScale>().0, Some(1.0));
         let node = world.get::<Node>(composite).unwrap();
         assert_eq!((node.width, node.height), (percent(100), percent(100)));
 
@@ -791,6 +812,7 @@ mod tests {
         let world = app.world();
         assert!(world.get::<upscaling::DirectTonemapOutput>(main).is_some());
         assert!(world.get::<ContrastAdaptiveSharpening>(main).is_none());
+        assert_eq!(world.resource::<engine::LodOutputScale>().0, Some(2.0));
         let node = world.get::<Node>(composite).unwrap();
         assert_eq!((node.width, node.height), (percent(100), percent(100)));
     }
