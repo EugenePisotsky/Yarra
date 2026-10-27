@@ -117,3 +117,17 @@ file = "content/reteya/views/mountain-hamlet.ron"
 [[view]]
 name = "brook-mouth"
 file = "content/reteya/views/brook-mouth.ron"
+
+# The user's play on the snow plateau around snow-lab, clear and zoomed in (saved in F1, 10-27):
+# a road between spruces at arm's length, under a spruce, a snow field before a tree line.
+[[view]]
+name = "spruce-road"
+file = "content/reteya/views/spruce-road.ron"
+
+[[view]]
+name = "spruce-under"
+file = "content/reteya/views/spruce-under.ron"
+
+[[view]]
+name = "snow-field"
+file = "content/reteya/views/snow-field.ron"
