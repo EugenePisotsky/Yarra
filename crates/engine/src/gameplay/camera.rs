@@ -7,6 +7,7 @@ use crate::{
 
 use bevy::{
     core_pipeline::prepass::{DeferredPrepass, DepthPrepass},
+    ecs::system::SystemParam,
     prelude::*,
     render::view::Msaa,
 };
@@ -122,12 +123,37 @@ fn normalized_camera_zoom(distance: f32) -> f32 {
 }
 
 fn camera_transform(object_position: Vec3, rig: &CameraRig) -> Transform {
-    let zoom = normalized_camera_zoom(rig.distance);
-    let pitch =
-        (CAMERA_NEAR_PITCH + (CAMERA_FAR_PITCH - CAMERA_NEAR_PITCH) * zoom + rig.pitch_offset)
-            .clamp(5.0_f32.to_radians(), 80.0_f32.to_radians());
     let focus = object_position + Vec3::Y * CAMERA_FOCUS_HEIGHT;
-    orbit_transform(focus, rig.yaw, pitch, rig.distance)
+    orbit_transform(focus, rig.yaw, camera_pitch(rig), rig.distance)
+}
+
+fn camera_pitch(rig: &CameraRig) -> f32 {
+    let zoom = normalized_camera_zoom(rig.distance);
+    (CAMERA_NEAR_PITCH + (CAMERA_FAR_PITCH - CAMERA_NEAR_PITCH) * zoom + rig.pitch_offset)
+        .clamp(5.0_f32.to_radians(), 80.0_f32.to_radians())
+}
+
+/// The game camera's view now, in the form a start view (`--start-view`) reproduces it.
+#[derive(SystemParam)]
+pub struct CurrentView<'w, 's> {
+    target: Query<'w, 's, &'static Transform, (With<CameraTarget>, Without<MainCamera>)>,
+    rig: Query<'w, 's, &'static CameraRig, With<MainCamera>>,
+}
+
+impl CurrentView<'_, '_> {
+    /// None without a game camera and the actor it follows.
+    pub fn bookmark(&self) -> Option<world::WorldViewBookmark> {
+        let target = self.target.single().ok()?;
+        let rig = self.rig.single().ok()?;
+        Some(world::WorldViewBookmark {
+            position: target.translation.to_array(),
+            yaw_degrees: rig.yaw.to_degrees(),
+            pitch_degrees: camera_pitch(rig).to_degrees(),
+            distance: rig.distance,
+            fog_visibility: crate::WORLD_VIEW_DISTANCE,
+            route: Vec::new(),
+        })
+    }
 }
 
 /// A camera `distance` metres from `focus` looking at it, `pitch` radians above it and `yaw`

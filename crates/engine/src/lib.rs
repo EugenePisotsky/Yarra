@@ -92,7 +92,7 @@ mod gameplay;
 pub use actor::{MoveIntent, PlayerControlled, TerrainGrounded};
 
 pub use gameplay::{
-    GameCameraPlugin, GameInputEnabled, GameInputPlugin, GamePointerInputBlocked, GameplayPlugin,
-    GameplayPlugins, GameplaySystems, MinimalGamePlugin, MovementTargetPlugin, PlayerMovementSpeed,
-    PlayerMovementSuspended, PlayerRoute, orbit_transform, standing_character,
+    CurrentView, GameCameraPlugin, GameInputEnabled, GameInputPlugin, GamePointerInputBlocked,
+    GameplayPlugin, GameplayPlugins, GameplaySystems, MinimalGamePlugin, MovementTargetPlugin,
+    PlayerMovementSpeed, PlayerMovementSuspended, PlayerRoute, orbit_transform, standing_character,
 };

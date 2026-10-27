@@ -5,7 +5,7 @@ mod performance;
 mod timing;
 
 use crate::frame_pacing::{FramePacing, FrameRate};
-use crate::game_render::{GameRenderSettings, PostAntiAliasing, RESOLUTION_SCALES, VILLAGE_FRAME};
+use crate::game_render::{GameRenderSettings, PostAntiAliasing, RESOLUTION_SCALES};
 use crate::runtime_settings::{OBJECT_DETAIL_SCALES, RuntimeSettings, RuntimeSettingsApply, Scene};
 use bevy::{prelude::*, ui::Pressed, window::PrimaryWindow};
 use engine::{GamePointerInputBlocked, GameplaySystems};
@@ -210,10 +210,7 @@ impl Control {
                 format!("Shadow map: {size} px")
             }
             Self::Scale => format!("Resolution: {}%", (100.0 * s.scale()).round() as u32),
-            Self::Frame => match s.frame {
-                Some(size) => format!("Frame: {}x{}", size.x, size.y),
-                None => "Frame: window".into(),
-            },
+            Self::Frame => format!("Frame: {}", s.frame.label()),
             Self::TemporalDebug => format!("Temporal view: {}", s.temporal_debug.label()),
             Self::Upscaler => format!("Upscaler: {}", s.upscaler.label()),
             Self::AntiAliasing => format!("Post-process AA: {}", s.anti_aliasing.label()),
@@ -317,12 +314,7 @@ fn buttons(
             Control::Scale => {
                 s.scale_index = (s.scale_index + 1) % RESOLUTION_SCALES.len();
             }
-            Control::Frame => {
-                s.frame = match s.frame {
-                    None => Some(VILLAGE_FRAME),
-                    Some(_) => None,
-                };
-            }
+            Control::Frame => s.frame = s.frame.next(),
             Control::TemporalDebug => {
                 s.temporal_debug = s.temporal_debug.next();
             }

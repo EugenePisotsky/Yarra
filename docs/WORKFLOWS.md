@@ -186,13 +186,19 @@ two-finger horizontal scroll or right stick orbits; wheel or pinch zooms.
 **F1** (or **Performance**) opens the panel, Escape closes it. Always shown: **FPS limit** (Follow
 display → 30 → 60 → 120), **Movement** (Normal / Fast 10×), **Reset launch settings**. Pages:
 Overview, Features (effects on/off), Quality, Weather (presets, clocks, time jumps), Wind
-(session-only), [Compare](#f1-compare), Advanced.
+(session-only), [Compare](#f1-compare), Advanced. Overview's **Save this view** writes the camera's
+view to `tmp/views/view-<time>.ron` for `--start-view`; a spot where the frame rate drops becomes a
+bench view by moving its file into `content/reteya/views/` and naming it in
+`tools/frame_budget.toml`. Quality's **Frame** is the window's pixels (MetalFX Temporal
+reconstructs the Retina screen), the window at 1x (resolved at its size in points and shown
+enlarged, as Village shows its 1920×1080; with Resolution 100% it renders what the default
+renders), or Village's 1920×1080.
 
 | For | Launch options |
 | --- | --- |
 | Where | `--start-view FILE`, `--world-db FILE` |
 | Time, weather | `--time HH:MM`, `--day-clock on\|off`, `--weather auto\|authored\|clear\|scattered\|overcast\|rain\|storm` (on snow ground, overcast, rain and storm are light snow, snow and a blizzard) |
-| Presentation | `--fps 0\|15..240` (default 60, 0 follows the display), `--resolution-scale 1\|0.75\|0.5\|0.33`, `--upscaler auto\|linear\|metalfx-spatial\|metalfx-temporal`, `--anti-aliasing auto\|fxaa\|smaa\|off`, `--frame window\|WIDTHxHEIGHT`, `--cloud-quality off\|balanced\|high`, `--tree-shadow-lod 0..2` |
+| Presentation | `--fps 0\|15..240` (default 60, 0 follows the display), `--resolution-scale 1\|0.75\|0.5\|0.33`, `--upscaler auto\|linear\|metalfx-spatial\|metalfx-temporal`, `--anti-aliasing auto\|fxaa\|smaa\|off`, `--frame window\|window-1x\|WIDTHxHEIGHT`, `--cloud-quality off\|balanced\|high`, `--tree-shadow-lod 0..2` |
 | Panel, logs | `--diagnostics off\|panel\|full` (default full), `--performance-open`, `--timing-log` |
 | Gameplay | `--story DIR` |
 
@@ -645,7 +651,7 @@ in step; `--help` prints the same with descriptions):
 
 | Purpose | Controls |
 | --- | --- |
-| Scene and presentation | `--world-db FILE`, `--start-view FILE`, `--story DIR`, `--fps 0\|15..240`, `--resolution-scale 1\|0.75\|0.5\|0.33`, `--time HH:MM`, `--day-clock on\|off`, `--weather auto\|authored\|clear\|scattered\|overcast\|rain\|storm`, `--upscaler auto\|linear\|metalfx-spatial\|metalfx-temporal`, `--anti-aliasing auto\|fxaa\|smaa\|off`, `--frame window\|WIDTHxHEIGHT`, `--cloud-quality off\|balanced\|high`, `--tree-shadow-lod 0..2` |
+| Scene and presentation | `--world-db FILE`, `--start-view FILE`, `--story DIR`, `--fps 0\|15..240`, `--resolution-scale 1\|0.75\|0.5\|0.33`, `--time HH:MM`, `--day-clock on\|off`, `--weather auto\|authored\|clear\|scattered\|overcast\|rain\|storm`, `--upscaler auto\|linear\|metalfx-spatial\|metalfx-temporal`, `--anti-aliasing auto\|fxaa\|smaa\|off`, `--frame window\|window-1x\|WIDTHxHEIGHT`, `--cloud-quality off\|balanced\|high`, `--tree-shadow-lod 0..2` |
 | Panel and logging | `--diagnostics off\|panel\|full`, `--performance-open`, `--render-audit`, `--render-console`, `--timing-log`, `--gpu-timing-detail`, `--gpu-timing-off`, `--metalfx-timing-log`, `--grass-counters` |
 | Scripted routes | `--render-repro NAME`, `--render-frames N`, `--render-snapshot PATH`, `--render-snapshot-frames N,N`, `--render-walk-speed MPS`, `--render-frame-clock`, `--render-temporal-view motion\|depth`, `--render-ui-off` |
 | Captures and checks | `--metal-capture PATH.gputrace` |

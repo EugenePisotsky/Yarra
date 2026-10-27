@@ -150,9 +150,9 @@ const FLAGS: &[Flag] = &[
     ),
     flag(
         "--frame",
-        "window|WIDTHxHEIGHT",
+        "window|window-1x|WIDTHxHEIGHT",
         Scene,
-        "Fixed frame the world renders for, letterboxed in the window (F1 changes it; default window)",
+        "Frame the world renders for: the window's pixels, its points (1x), or a fixed size letterboxed in it (F1 changes it; default window)",
     ),
     flag(
         "--cloud-quality",

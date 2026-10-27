@@ -202,3 +202,20 @@ fn completion_and_automatic_abort_reopen_panel_and_restore_controls_in_the_same_
         assert!(!app.world().resource::<PanelState>().open);
     }
 }
+
+#[test]
+fn a_saved_view_loads_as_a_start_view() {
+    let view = world::WorldViewBookmark {
+        position: [2910.0, 12.1, 3150.0],
+        yaw_degrees: 35.5,
+        pitch_degrees: 8.0,
+        distance: 9.7,
+        fog_visibility: engine::WORLD_VIEW_DISTANCE,
+        route: vec![],
+    };
+    let dir = std::env::temp_dir().join(format!("yarra-saved-view-{}", std::process::id()));
+    let path = write_view(&view, &dir).unwrap();
+    let loaded = engine::WorldStartView::load(Some(&path)).unwrap();
+    std::fs::remove_dir_all(&dir).unwrap();
+    assert_eq!(loaded.0, Some(view));
+}

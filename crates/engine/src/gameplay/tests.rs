@@ -340,6 +340,35 @@ fn world_start_from_the_runtime_moves_the_actor_and_frames_it() {
 }
 
 #[test]
+fn the_current_view_starts_the_camera_where_it_stands() {
+    use bevy::ecs::system::RunSystemOnce;
+
+    let mut app = headless_game(false, true, false);
+
+    {
+        let world = app.world_mut();
+        let mut rig = world
+            .query_filtered::<&mut camera::CameraRig, With<MainCamera>>()
+            .single_mut(world)
+            .unwrap();
+        (rig.yaw, rig.target_yaw, rig.distance, rig.target_distance) = (2.0, 2.0, 6.0, 6.0);
+    }
+
+    tick(&mut app);
+    let view = app
+        .world_mut()
+        .run_system_once(|current: CurrentView| current.bookmark())
+        .unwrap()
+        .unwrap();
+    view.validate().unwrap();
+
+    let expected = WorldStartView::camera_at(&view, Vec3::from_array(view.position));
+    let camera = camera_transform(&mut app);
+    assert!(camera.translation.distance(expected.translation) < 0.001);
+    assert!(camera.forward().distance(*expected.forward()) < 0.0001);
+}
+
+#[test]
 fn a_player_route_steers_through_its_points_at_the_requested_speed() {
     let mut app = headless_game(false, false, false);
     let (catalog, _) = test_world_resources(world::WorldSpaceId(1), world::CellCoord::ZERO, None);

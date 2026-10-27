@@ -126,8 +126,7 @@ pub(crate) struct RuntimeSettings {
     pub(crate) shadow_map: usize,
     pub(crate) scale_index: usize,
     pub(crate) upscaler: upscaling::UpscaleMethod,
-    /// `GameRenderSettings::frame`.
-    pub(crate) frame: Option<UVec2>,
+    pub(crate) frame: crate::game_render::Frame,
     pub(crate) anti_aliasing: crate::game_render::PostAntiAliasing,
     pub(crate) temporal_debug: upscaling::temporal::TemporalDebug,
     pub(crate) counters: bool,

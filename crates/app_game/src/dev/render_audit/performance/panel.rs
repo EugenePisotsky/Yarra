@@ -106,7 +106,50 @@ pub(super) fn install(app: &mut App) {
                 .chain()
                 .before(crate::dev::render_audit::buttons),
         )
+        .add_systems(Update, save_view)
         .add_systems(PostUpdate, (refresh, visibility).chain());
+}
+
+/// The button that writes the camera's view as a start view, for `--start-view` and the bench.
+#[derive(Component)]
+struct SaveView;
+
+/// Where saved views go; a bench view is one of them moved into `content/reteya/views/`.
+const SAVED_VIEWS: &str = "tmp/views";
+
+fn save_view(
+    clicks: Query<(), (With<SaveView>, Added<Pressed>)>,
+    current: engine::CurrentView,
+    mut session: ResMut<CaptureSession>,
+) {
+    if clicks.is_empty() {
+        return;
+    }
+
+    let saved = current
+        .bookmark()
+        .ok_or_else(|| "no game camera".to_string())
+        .and_then(|view| write_view(&view, std::path::Path::new(SAVED_VIEWS)));
+    session.message = match saved {
+        Ok(path) => format!("Saved the view to {}", path.display()),
+        Err(error) => format!("Saving the view failed: {error}"),
+    };
+}
+
+fn write_view(
+    view: &world::WorldViewBookmark,
+    dir: &std::path::Path,
+) -> Result<std::path::PathBuf, String> {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let path = dir.join(format!("view-{stamp}.ron"));
+    let text = ron::ser::to_string_pretty(view, ron::ser::PrettyConfig::default())
+        .map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    std::fs::write(&path, text + "\n").map_err(|e| e.to_string())?;
+    Ok(path)
 }
 
 fn initialize(
@@ -155,6 +198,8 @@ fn initialize(
                 for i in 0..60 { graph.spawn((Bar(i), Node { flex_grow: 1.0, height: px(1), ..default() }, BackgroundColor(Color::srgb(0.2, 0.75, 0.65)))); }
             });
             page.spawn((Text::new(""), font(13.0), Details));
+            page.spawn((Button, SaveView, button_node(), BackgroundColor(button_color())))
+                .with_child((Text::new(format!("Save this view to {SAVED_VIEWS}")), font(13.0)));
             page.spawn((Text::new("GPU elapsed uses asynchronous hardware timestamps around render commands, excluding presentation. CPU work sums measured systems; parallel jobs can overlap. Acquisition and submission may block. These numbers are not added into one frame total."), font(12.0)));
         });
 
