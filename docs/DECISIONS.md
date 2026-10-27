@@ -24,14 +24,19 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
   cannot multisample, and FXAA + TAA, as Village uses, looks good. MetalFX Temporal is the
   default; Spatial, Linear and the editor take FXAA. The MSAA colour-store pass, the crossfades'
   sample masks and the sky composite's per-sample classification went with it.
-- **Post-process anti-aliasing to choose, beside MetalFX.** *Kept as an option* (user, October 27:
-  "the biggest missing piece is actually anti aliasing"; Temporal at 50% stays the default).
-  `--anti-aliasing auto|fxaa|smaa|off` and F1: FXAA or SMAA after Bevy's tone map, beside
-  MetalFX Temporal's own as Village pairs FXAA with its TAA, which takes the composite path. On the
-  window's 7.5 Mpx the meadow goes 8.45 → 9.93 ms with FXAA (0.64) and 9.74 with SMAA (0.83), the
-  rest the composite path's tone map, copy and composite. Fine detail on the meadow's grass
-  (Laplacian variance): MetalFX alone 1751, + SMAA 1432, + FXAA 851, which smears thin blades;
-  in the 1920×1080 frame 411, 334 and 160.
+- **Post-process anti-aliasing to choose, beside MetalFX.** *Rejected* (`9c46373`, removed October
+  27; user: "completely useless they almost change nothing"). FXAA or SMAA after Bevy's tone map,
+  beside MetalFX Temporal's own as Village pairs FXAA with its TAA. On the window's 7.5 Mpx the
+  meadow went 8.45 → 9.93 ms with FXAA (0.64) and 9.74 with SMAA (0.83). Fine detail on the
+  meadow's grass (Laplacian variance): MetalFX alone 1751, + SMAA 1432, + FXAA 851, which smears
+  thin blades. FXAA stays on Linear and MetalFX Spatial, which resolve nothing over time.
+- **TAA at the rendered size, as an upscaler to choose.** *Trial* (October 27). `--upscaler taa`
+  and F1: in our temporal pass, in place of MetalFX's resolve and with its jitter, complete scene
+  motion and depth (`temporal.wgsl`), each pixel blends 10% into its history, reprojected by the
+  motion at the nearest depth around it, sampled Catmull-Rom and clipped to 1.25 standard
+  deviations of its 3×3 neighbourhood in tone-compressed YCoCg. It resolves the rendered size,
+  which the composite shows enlarged with Bevy's contrast adaptive sharpening (Village: FXAA +
+  TAA with CAS). Softer than MetalFX's 2× reconstruction; the look in motion is the user's call.
 - **Pacing by display link plus Metal's minimum presentation interval.** *Kept.* 99.7% of intervals
   on time against 81% with a timer; the Metal interval alone and higher thread QoS were rejected.
   Keep the wgpu-hal patch (`third_party/wgpu-hal/YARRA_PATCH.md`) until upstream has it.

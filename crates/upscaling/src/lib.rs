@@ -36,6 +36,9 @@ pub enum UpscaleMethod {
     Linear,
     MetalFxSpatial,
     MetalFxTemporal,
+    /// Temporal anti-aliasing at the rendered size (`temporal::TemporalResolve::Taa`), which the
+    /// output then shows enlarged.
+    Taa,
 }
 
 impl UpscaleMethod {
@@ -44,6 +47,7 @@ impl UpscaleMethod {
         Self::Linear,
         Self::MetalFxSpatial,
         Self::MetalFxTemporal,
+        Self::Taa,
     ];
 
     pub fn label(self) -> &'static str {
@@ -52,6 +56,7 @@ impl UpscaleMethod {
             Self::Linear => "Linear",
             Self::MetalFxSpatial => "MetalFX Spatial",
             Self::MetalFxTemporal => "MetalFX Temporal",
+            Self::Taa => "TAA",
         }
     }
 }

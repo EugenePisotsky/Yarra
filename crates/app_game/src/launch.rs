@@ -40,7 +40,6 @@ pub(crate) struct LaunchOptions {
     pub resolution_scale: Option<f32>,
     /// The frame at launch (`GameRenderSettings::frame`).
     pub frame: crate::game_render::Frame,
-    pub anti_aliasing: crate::game_render::PostAntiAliasing,
     pub lod_lab: Option<LodLabOptions>,
     pub look_capture: Option<crate::dev::look_capture::LookCaptureOptions>,
 }
@@ -140,6 +139,7 @@ impl LaunchOptions {
                     "metalfx-temporal",
                     upscaling::UpscaleMethod::MetalFxTemporal,
                 ),
+                ("taa", upscaling::UpscaleMethod::Taa),
             ],
         )?;
         let profile = crate::dev::profile::ProfileSettings::parse(&args, resolution_scale)?;
@@ -207,16 +207,6 @@ impl LaunchOptions {
             profile,
             repro,
             resolution_scale,
-            anti_aliasing: args.choice(
-                "--anti-aliasing",
-                "auto",
-                &[
-                    ("auto", crate::game_render::PostAntiAliasing::Auto),
-                    ("fxaa", crate::game_render::PostAntiAliasing::Fxaa),
-                    ("smaa", crate::game_render::PostAntiAliasing::Smaa),
-                    ("off", crate::game_render::PostAntiAliasing::Off),
-                ],
-            )?,
             frame: match args.value("--frame")?.unwrap_or("window") {
                 "window" => crate::game_render::Frame::Window,
                 "window-1x" => crate::game_render::Frame::WindowPoints,

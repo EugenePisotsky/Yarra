@@ -128,7 +128,7 @@ fn prepare(
         let output_size = UVec2::new(output.texture.width(), output.texture.height());
         let (mut active, mut reason) = state.capabilities.select(view.method);
 
-        if active == UpscaleMethod::MetalFxTemporal {
+        if matches!(active, UpscaleMethod::MetalFxTemporal | UpscaleMethod::Taa) {
             active = UpscaleMethod::Linear;
             reason =
                 Some("Temporal requires a TemporalView with HDR, depth and motion inputs".into());

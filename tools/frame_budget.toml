@@ -13,9 +13,9 @@
 # against its line; a line over budget is optimised, or the excess ships as a quality tier.
 
 total_ms = 10.5
-# Frames are counted by MetalFX Temporal's pass, which every presentation the bench runs has once
-# a frame.
-frames_by = "MetalFX Temporal"
+# Frames are counted by the temporal resolve, which every presentation the bench runs has once a
+# frame: MetalFX Temporal's pass, or TAA's.
+frames_by = ["MetalFX Temporal", "temporal anti-aliasing"]
 time = "10:00"
 warmup_seconds = 20
 profile_seconds = 15
@@ -69,11 +69,12 @@ name = "upscale and post"
 # output onto the window and draws the UI, 0.25 ms of fragment work that the even split charges
 # about 0.4. Bloom and eye adaptation run on the rendered image before it, 0.25 ms together. The
 # UI camera's passes (`ui`, `_2d`, `upscaling`) and Bevy's own tone map run only under
-# --temporal-standard-output, a fixed --frame, whose sharpening takes 0.06-0.09 ms, and
-# --anti-aliasing fxaa or smaa (0.64 and 0.83 ms on the window's 7.5 Mpx).
+# --temporal-standard-output, a fixed --frame and TAA, whose sharpening takes 0.06-0.09 ms;
+# FXAA only under the Linear and MetalFX Spatial upscalers.
 ms = 3.0
-passes = ["MetalFX", "^upscaling$", "bloom", "eye adaptation", "tone map", "^tonemapping$",
-    "^ui$", "_2d$", "contrast_adaptive_sharpening", "^fxaa$", "^SMAA"]
+passes = ["MetalFX", "^temporal anti-aliasing$", "^upscaling$", "bloom", "eye adaptation",
+    "tone map", "^tonemapping$",
+    "^ui$", "_2d$", "contrast_adaptive_sharpening", "^fxaa$"]
 
 [[line]]
 name = "world compute"

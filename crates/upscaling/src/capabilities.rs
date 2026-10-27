@@ -39,8 +39,8 @@ impl UpscalingCapabilities {
     }
 
     pub fn select(&self, requested: UpscaleMethod) -> (UpscaleMethod, Option<String>) {
-        if requested == UpscaleMethod::Linear {
-            return (UpscaleMethod::Linear, None);
+        if matches!(requested, UpscaleMethod::Linear | UpscaleMethod::Taa) {
+            return (requested, None);
         }
 
         let candidate = self.backends.iter().find(|c| {

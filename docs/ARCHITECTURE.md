@@ -375,9 +375,9 @@ Owns the shell, workspaces, tools, working sets, saving, publication and the rec
 The game camera (`WorldViewCamera`) renders in HDR at a share of its frame (`resolution_scale`,
 0.5 by default): the window's physical size, or a fixed frame (`GameRenderSettings::frame`,
 `--frame` or F1, 1920×1080 as Resident Evil Village was measured) shown letterboxed. MetalFX
-Temporal (the default) reconstructs at the frame's size; the other upscalers take FXAA, and
-`--anti-aliasing` (F1) sets FXAA, SMAA or none after the tone map, beside MetalFX too. World
-cameras do not multisample. In order:
+Temporal (the default) reconstructs at the frame's size; TAA (`--upscaler taa`, F1) anti-aliases
+the rendered pixels, which the composite shows enlarged and sharpened; Linear and MetalFX Spatial
+take FXAA. World cameras do not multisample. In order:
 
 1. Compute before the camera: grass trampling, candidate cache, placement and blade poses
    (each drawn blade bent by trampling and wind, this frame and last, with the rest of what its

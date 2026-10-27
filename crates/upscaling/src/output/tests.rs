@@ -77,6 +77,7 @@ fn direct_output_matches_standard_postprocessing() {
                 input_size: UVec2::splat(32),
                 reset_epoch: 0,
                 debug: crate::temporal::TemporalDebug::Bypass,
+                resolve: default(),
             },
             Bloom::default(),
         ));

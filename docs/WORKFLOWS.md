@@ -198,7 +198,7 @@ renders), or Village's 1920×1080.
 | --- | --- |
 | Where | `--start-view FILE`, `--world-db FILE` |
 | Time, weather | `--time HH:MM`, `--day-clock on\|off`, `--weather auto\|authored\|clear\|scattered\|overcast\|rain\|storm` (on snow ground, overcast, rain and storm are light snow, snow and a blizzard) |
-| Presentation | `--fps 0\|15..240` (default 60, 0 follows the display), `--resolution-scale 1\|0.75\|0.5\|0.33`, `--upscaler auto\|linear\|metalfx-spatial\|metalfx-temporal`, `--anti-aliasing auto\|fxaa\|smaa\|off`, `--frame window\|window-1x\|WIDTHxHEIGHT`, `--cloud-quality off\|balanced\|high`, `--tree-shadow-lod 0..2` |
+| Presentation | `--fps 0\|15..240` (default 60, 0 follows the display), `--resolution-scale 1\|0.75\|0.5\|0.33`, `--upscaler auto\|linear\|metalfx-spatial\|metalfx-temporal\|taa`, `--frame window\|window-1x\|WIDTHxHEIGHT`, `--cloud-quality off\|balanced\|high`, `--tree-shadow-lod 0..2` |
 | Panel, logs | `--diagnostics off\|panel\|full` (default full), `--performance-open`, `--timing-log` |
 | Gameplay | `--story DIR` |
 
@@ -651,7 +651,7 @@ in step; `--help` prints the same with descriptions):
 
 | Purpose | Controls |
 | --- | --- |
-| Scene and presentation | `--world-db FILE`, `--start-view FILE`, `--story DIR`, `--fps 0\|15..240`, `--resolution-scale 1\|0.75\|0.5\|0.33`, `--time HH:MM`, `--day-clock on\|off`, `--weather auto\|authored\|clear\|scattered\|overcast\|rain\|storm`, `--upscaler auto\|linear\|metalfx-spatial\|metalfx-temporal`, `--anti-aliasing auto\|fxaa\|smaa\|off`, `--frame window\|window-1x\|WIDTHxHEIGHT`, `--cloud-quality off\|balanced\|high`, `--tree-shadow-lod 0..2` |
+| Scene and presentation | `--world-db FILE`, `--start-view FILE`, `--story DIR`, `--fps 0\|15..240`, `--resolution-scale 1\|0.75\|0.5\|0.33`, `--time HH:MM`, `--day-clock on\|off`, `--weather auto\|authored\|clear\|scattered\|overcast\|rain\|storm`, `--upscaler auto\|linear\|metalfx-spatial\|metalfx-temporal\|taa`, `--frame window\|window-1x\|WIDTHxHEIGHT`, `--cloud-quality off\|balanced\|high`, `--tree-shadow-lod 0..2` |
 | Panel and logging | `--diagnostics off\|panel\|full`, `--performance-open`, `--render-audit`, `--render-console`, `--timing-log`, `--gpu-timing-detail`, `--gpu-timing-off`, `--metalfx-timing-log`, `--grass-counters` |
 | Scripted routes | `--render-repro NAME`, `--render-frames N`, `--render-snapshot PATH`, `--render-snapshot-frames N,N`, `--render-walk-speed MPS`, `--render-frame-clock`, `--render-temporal-view motion\|depth`, `--render-ui-off` |
 | Captures and checks | `--metal-capture PATH.gputrace` |

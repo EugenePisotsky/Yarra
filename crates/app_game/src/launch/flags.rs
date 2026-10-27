@@ -138,15 +138,9 @@ const FLAGS: &[Flag] = &[
     ),
     flag(
         "--upscaler",
-        "auto|linear|metalfx-spatial|metalfx-temporal",
+        "auto|linear|metalfx-spatial|metalfx-temporal|taa",
         Scene,
-        "World upscaler (default metalfx-temporal)",
-    ),
-    flag(
-        "--anti-aliasing",
-        "auto|fxaa|smaa|off",
-        Scene,
-        "After the tone map, beside MetalFX Temporal's own (default auto: none there, FXAA elsewhere)",
+        "World upscaler (default metalfx-temporal; taa resolves the rendered size, shown enlarged)",
     ),
     flag(
         "--frame",

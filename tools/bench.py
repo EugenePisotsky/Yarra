@@ -84,7 +84,6 @@ def record(view, extra, budget):
         "--profile-seconds", str(budget["profile_seconds"]),
         "--profile-warmup", str(budget["warmup_seconds"]),
         "--profile-fps", "0",
-        "--upscaler", "metalfx-temporal",
         "--day-clock", "off",
         "--time", budget["time"],
         "--weather", view.get("weather", "clear"),

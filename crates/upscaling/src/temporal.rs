@@ -63,6 +63,18 @@ pub struct TemporalView {
     /// Change on explicit camera cuts/world changes. Resize and large camera jumps also reset.
     pub reset_epoch: u64,
     pub debug: TemporalDebug,
+    pub resolve: TemporalResolve,
+}
+
+/// What turns a view's jittered frames into its image.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TemporalResolve {
+    /// MetalFX Temporal reconstructs the output, enlarging the input.
+    #[default]
+    MetalFx,
+    /// Temporal anti-aliasing (`taa` in `temporal.wgsl`) at the input's size: the output must be
+    /// as large as the input.
+    Taa,
 }
 
 #[derive(Component, Clone, Copy)]
@@ -139,8 +151,64 @@ struct History {
     epoch: u64,
     index: u32,
     motion: TemporalMotionTarget,
-    native: Result<backends::Temporal, String>,
+    resolve: TemporalResolve,
+    resolver: Resolver,
     last_pair: Option<[TextureId; 2]>,
+}
+
+enum Resolver {
+    MetalFx(Result<backends::Temporal, String>),
+    Taa(TaaHistory),
+}
+
+impl Resolver {
+    fn new(device: &RenderDevice, resolve: TemporalResolve, size: UVec2, output: UVec2) -> Self {
+        match resolve {
+            TemporalResolve::MetalFx => {
+                Self::MetalFx(backends::Temporal::new(device, size, output))
+            }
+            TemporalResolve::Taa => Self::Taa(TaaHistory::new(device, size)),
+        }
+    }
+
+    /// Whether frames are jittered for it: not for a MetalFX scaler that failed to start.
+    fn running(&self) -> bool {
+        !matches!(self, Self::MetalFx(Err(_)))
+    }
+}
+
+/// The image TAA blends each frame into: one texture holds last frame's while the other takes
+/// this frame's, in turn.
+struct TaaHistory {
+    views: [TextureView; 2],
+    read: usize,
+}
+
+impl TaaHistory {
+    fn new(device: &RenderDevice, size: UVec2) -> Self {
+        let view = || {
+            device
+                .create_texture(&TextureDescriptor {
+                    label: Some("temporal anti-aliasing history"),
+                    size: Extent3d {
+                        width: size.x,
+                        height: size.y,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: TextureDimension::D2,
+                    format: TextureFormat::Rgba16Float,
+                    usage: TextureUsages::TEXTURE_BINDING | TextureUsages::RENDER_ATTACHMENT,
+                    view_formats: &[],
+                })
+                .create_view(&default())
+        };
+        Self {
+            views: [view(), view()],
+            read: 0,
+        }
+    }
 }
 
 #[derive(Resource)]
@@ -150,7 +218,13 @@ struct State {
     motion_layout: wgpu::BindGroupLayout,
     display_pipeline: wgpu::RenderPipeline,
     display_layout: wgpu::BindGroupLayout,
+    taa: TaaPass,
     sampler: wgpu::Sampler,
+}
+
+struct TaaPass {
+    pipeline: wgpu::RenderPipeline,
+    layout: wgpu::BindGroupLayout,
 }
 
 impl FromWorld for State {
@@ -160,7 +234,17 @@ impl FromWorld for State {
             label: Some("temporal input preparation and diagnostics"),
             source: wgpu::ShaderSource::Wgsl(include_str!("temporal.wgsl").into()),
         });
-        let pipeline = |entry: &str, format| {
+        let pipeline = |entry: &str, formats: &[TextureFormat]| {
+            let targets: Vec<_> = formats
+                .iter()
+                .map(|&format| {
+                    Some(wgpu::ColorTargetState {
+                        format,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })
+                })
+                .collect();
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(entry),
                 layout: None,
@@ -174,11 +258,7 @@ impl FromWorld for State {
                     module: &shader,
                     entry_point: Some(entry),
                     compilation_options: default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
+                    targets: &targets,
                 }),
                 primitive: default(),
                 depth_stencil: None,
@@ -187,14 +267,21 @@ impl FromWorld for State {
                 cache: None,
             })
         };
-        let motion_pipeline = pipeline("motion", TextureFormat::Rg16Float);
-        let display_pipeline = pipeline("display", TextureFormat::Rgba16Float);
+        let motion_pipeline = pipeline("motion", &[TextureFormat::Rg16Float]);
+        let display_pipeline = pipeline("display", &[TextureFormat::Rgba16Float]);
+
+        // The view's image and the history it leaves for the next frame.
+        let taa_pipeline = pipeline("taa", &[TextureFormat::Rgba16Float; 2]);
         Self {
             histories: default(),
             motion_layout: motion_pipeline.get_bind_group_layout(0),
             motion_pipeline,
             display_layout: display_pipeline.get_bind_group_layout(0),
             display_pipeline,
+            taa: TaaPass {
+                layout: taa_pipeline.get_bind_group_layout(0),
+                pipeline: taa_pipeline,
+            },
             sampler: device.create_sampler(&wgpu::SamplerDescriptor {
                 mag_filter: wgpu::FilterMode::Linear,
                 min_filter: wgpu::FilterMode::Linear,
@@ -260,31 +347,25 @@ fn prepare(
         let position = view.world_from_view.translation();
         let forward = *view.world_from_view.forward();
         let clip = view.clip_from_view * view.world_from_view.to_matrix().inverse();
-        let h = state.histories.entry(entity).or_insert_with(|| {
-            make_history(
-                &device,
-                size,
-                output_size,
-                clip,
-                position,
-                forward,
-                request.reset_epoch,
-            )
-        });
+        let start = Start {
+            size,
+            output_size,
+            clip,
+            position,
+            forward,
+            epoch: request.reset_epoch,
+            resolve: request.resolve,
+        };
+        let h = state
+            .histories
+            .entry(entity)
+            .or_insert_with(|| make_history(&device, start));
 
-        if h.size != size || h.output_size != output_size {
-            *h = make_history(
-                &device,
-                size,
-                output_size,
-                clip,
-                position,
-                forward,
-                request.reset_epoch,
-            );
+        if h.size != size || h.output_size != output_size || h.resolve != request.resolve {
+            *h = make_history(&device, start);
         }
 
-        if let Ok(native) = &mut h.native {
+        if let Resolver::MetalFx(Ok(native)) = &mut h.resolver {
             native.set_timing(diagnostics.as_ref().is_some_and(|d| d.temporal_timing));
         }
 
@@ -306,7 +387,7 @@ fn prepare(
             );
         }
 
-        let offset = if h.native.is_ok() {
+        let offset = if h.resolver.running() {
             jitter(h.index)
         } else {
             Vec2::ZERO
@@ -344,15 +425,28 @@ fn prepare(
     }
 }
 
-fn make_history(
-    device: &RenderDevice,
+/// A view's camera and sizes when its history starts.
+#[derive(Clone, Copy)]
+struct Start {
     size: UVec2,
     output_size: UVec2,
     clip: Mat4,
     position: Vec3,
     forward: Vec3,
     epoch: u64,
-) -> History {
+    resolve: TemporalResolve,
+}
+
+fn make_history(device: &RenderDevice, start: Start) -> History {
+    let Start {
+        size,
+        output_size,
+        clip,
+        position,
+        forward,
+        epoch,
+        resolve,
+    } = start;
     let texture = device.create_texture(&TextureDescriptor {
         label: Some("complete scene temporal motion"),
         size: Extent3d {
@@ -379,7 +473,8 @@ fn make_history(
         epoch,
         index: 0,
         motion: TemporalMotionTarget { texture, view },
-        native: backends::Temporal::new(device, size, output_size),
+        resolve,
+        resolver: Resolver::new(device, resolve, size, output_size),
         last_pair: None,
     }
 }
@@ -488,6 +583,7 @@ fn resolve(
 ) {
     let entity = view.entity();
     let (main, request, frame, motion, target, depth) = view.into_inner();
+    let state = &mut *state;
     let Some(history) = state.histories.get_mut(&entity) else {
         return;
     };
@@ -507,41 +603,62 @@ fn resolve(
     }
 
     history.last_pair = Some(pair);
-    let mut failure = history.native.as_ref().err().cloned();
+    let mut failure = match &history.resolver {
+        Resolver::MetalFx(Err(error)) => Some(error.clone()),
+        _ => None,
+    };
 
-    if request.debug == TemporalDebug::Off
-        && let Ok(native) = &mut history.native
-    {
-        match native.encode(
-            ctx.render_device(),
-            Inputs {
-                color: pp.source_texture,
-                depth: depth.texture(),
-                motion: &motion.texture,
-                output: pp.destination_texture,
-                output_view: pp.destination,
-                size: frame.size,
-                jitter: frame.jitter,
-                reset,
-            },
-        ) {
-            Ok(buffers) => {
-                for b in buffers {
-                    ctx.add_command_buffer(b);
+    if request.debug == TemporalDebug::Off {
+        match &mut history.resolver {
+            Resolver::MetalFx(Ok(native)) => {
+                match native.encode(
+                    ctx.render_device(),
+                    Inputs {
+                        color: pp.source_texture,
+                        depth: depth.texture(),
+                        motion: &motion.texture,
+                        output: pp.destination_texture,
+                        output_view: pp.destination,
+                        size: frame.size,
+                        jitter: frame.jitter,
+                        reset,
+                    },
+                ) {
+                    Ok(buffers) => {
+                        for b in buffers {
+                            ctx.add_command_buffer(b);
+                        }
+                    }
+                    Err(error) => {
+                        failure = Some(error);
+                    }
                 }
             }
-            Err(error) => {
-                failure = Some(error);
+            Resolver::Taa(taa) => {
+                let inputs = TaaInputs {
+                    frame,
+                    reset,
+                    motion: &motion.view,
+                    depth: sampled_depth(depth),
+                    color: pp.source,
+                    output: pp.destination,
+                };
+                anti_alias(&state.taa, &state.sampler, taa, inputs, &mut ctx);
             }
+            Resolver::MetalFx(Err(_)) => {}
         }
     }
 
     if let Some(error) = &failure {
-        history.native = Err(error.clone());
+        history.resolver = Resolver::MetalFx(Err(error.clone()));
     }
 
     let output_size = history.output_size;
-    let native_active = history.native.is_ok();
+    let active = match history.resolver {
+        Resolver::MetalFx(Ok(_)) => UpscaleMethod::MetalFxTemporal,
+        Resolver::Taa(_) => UpscaleMethod::Taa,
+        Resolver::MetalFx(Err(_)) => UpscaleMethod::Linear,
+    };
 
     // Debugging consumes no history: the next normal frame must reset the scaler.
     if request.debug != TemporalDebug::Off {
@@ -606,12 +723,11 @@ fn resolve(
     bridge.0.lock().unwrap().statuses.insert(
         main.id(),
         UpscaleStatus {
-            requested: UpscaleMethod::MetalFxTemporal,
-            active: (request.debug == TemporalDebug::Off).then_some(if native_active {
-                UpscaleMethod::MetalFxTemporal
-            } else {
-                UpscaleMethod::Linear
-            }),
+            requested: match request.resolve {
+                TemporalResolve::MetalFx => UpscaleMethod::MetalFxTemporal,
+                TemporalResolve::Taa => UpscaleMethod::Taa,
+            },
+            active: (request.debug == TemporalDebug::Off).then_some(active),
             reason: failure.or_else(|| {
                 (request.debug != TemporalDebug::Off).then(|| request.debug.label().into())
             }),
@@ -619,6 +735,90 @@ fn resolve(
             output_size,
         },
     );
+}
+
+/// What one TAA resolve reads and writes besides its history.
+struct TaaInputs<'a> {
+    frame: &'a TemporalFrame,
+    reset: bool,
+    motion: &'a wgpu::TextureView,
+    depth: &'a wgpu::TextureView,
+    color: &'a wgpu::TextureView,
+    output: &'a wgpu::TextureView,
+}
+
+/// Blends this frame into the view's history (`taa` in `temporal.wgsl`), writing the view's
+/// image and the history the next frame reads.
+fn anti_alias(
+    pass: &TaaPass,
+    sampler: &wgpu::Sampler,
+    taa: &mut TaaHistory,
+    inputs: TaaInputs,
+    ctx: &mut RenderContext,
+) {
+    let device = ctx.render_device();
+    let mut parameters = params(inputs.frame, inputs.frame.size, TemporalDebug::Off);
+    parameters.jitter_debug[3] = f32::from(u8::from(inputs.reset));
+    let uniform = device.create_buffer_with_data(&BufferInitDescriptor {
+        label: Some("temporal anti-aliasing parameters"),
+        contents: bytemuck::bytes_of(&parameters),
+        usage: BufferUsages::UNIFORM,
+    });
+    let group = device
+        .wgpu_device()
+        .create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("temporal anti-aliasing inputs"),
+            layout: &pass.layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(inputs.motion),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(inputs.depth),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(inputs.color),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::Sampler(sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::TextureView(&taa.views[taa.read]),
+                },
+            ],
+        });
+    let attachment = |view| {
+        Some(wgpu::RenderPassColorAttachment {
+            view,
+            resolve_target: None,
+            depth_slice: None,
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                store: wgpu::StoreOp::Store,
+            },
+        })
+    };
+    let written = 1 - taa.read;
+    let mut render = ctx
+        .command_encoder()
+        .begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("temporal anti-aliasing"),
+            color_attachments: &[attachment(inputs.output), attachment(&taa.views[written])],
+            ..default()
+        });
+    render.set_pipeline(&pass.pipeline);
+    render.set_bind_group(0, &group, &[]);
+    render.draw(0..3, 0..1);
+    taa.read = written;
 }
 
 /// The view of the main pass depth that passes sample; since Bevy 0.20 a depth texture may carry
