@@ -116,11 +116,7 @@ impl PlayerRoute {
 
 /// Where a render-space translation lies in world XZ.
 fn world_xz(origin: &crate::WorldOrigin, catalog: &crate::WorldCatalog, translation: Vec3) -> Vec2 {
-    let size = origin
-        .space()
-        .and_then(|space| catalog.world_space(space))
-        .map_or(world::DEFAULT_CELL_SIZE, |space| space.cell_size);
-    let offset = origin.cell().origin(size);
+    let offset = origin.world_offset(Some(catalog));
     Vec2::new(
         (f64::from(translation.x) + offset[0]) as f32,
         (f64::from(translation.z) + offset[1]) as f32,

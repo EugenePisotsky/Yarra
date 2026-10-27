@@ -34,6 +34,16 @@ impl WorldOrigin {
         self.cell
     }
 
+    /// Where render space's origin lies in world XZ; before a world names its cell size, the
+    /// default stands in.
+    pub fn world_offset(&self, catalog: Option<&WorldCatalog>) -> [f64; 2] {
+        let size = self
+            .space
+            .and_then(|space| catalog?.world_space(space))
+            .map_or(world::DEFAULT_CELL_SIZE, |space| space.cell_size);
+        self.cell.origin(size)
+    }
+
     fn offset(&self, catalog: &WorldCatalog) -> Option<(WorldSpaceId, [f64; 2])> {
         let space = self.space?;
         let size = catalog.world_space(space)?.cell_size;

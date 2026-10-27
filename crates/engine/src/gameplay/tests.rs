@@ -355,14 +355,26 @@ fn the_current_view_starts_the_camera_where_it_stands() {
     }
 
     tick(&mut app);
+
+    // Render space's origin sits at world (32, -16), so the view is saved shifted by it.
+    let (catalog, origin) = test_world_resources(
+        world::WorldSpaceId(1),
+        world::CellCoord { x: 2, z: -1 },
+        None,
+    );
+    app.world_mut().insert_resource(catalog);
+    app.world_mut().insert_resource(origin);
     let view = app
         .world_mut()
         .run_system_once(|current: CurrentView| current.bookmark())
         .unwrap()
         .unwrap();
     view.validate().unwrap();
+    let player = player(&mut app);
+    let actor = app.world().get::<Transform>(player).unwrap().translation;
+    assert_eq!(view.position, [actor.x + 32., actor.y, actor.z - 16.]);
 
-    let expected = WorldStartView::camera_at(&view, Vec3::from_array(view.position));
+    let expected = WorldStartView::camera_at(&view, actor);
     let camera = camera_transform(&mut app);
     assert!(camera.translation.distance(expected.translation) < 0.001);
     assert!(camera.forward().distance(*expected.forward()) < 0.0001);

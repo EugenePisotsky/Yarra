@@ -2,7 +2,8 @@
 use super::GameplaySystems;
 
 use crate::{
-    WorldEnvironmentCamera, WorldRenderRoot, WorldStartView, WorldViewCamera, actor::CameraTarget,
+    WorldCatalog, WorldEnvironmentCamera, WorldOrigin, WorldRenderRoot, WorldStartView,
+    WorldViewCamera, actor::CameraTarget,
 };
 
 use bevy::{
@@ -133,20 +134,30 @@ fn camera_pitch(rig: &CameraRig) -> f32 {
         .clamp(5.0_f32.to_radians(), 80.0_f32.to_radians())
 }
 
-/// The game camera's view now, in the form a start view (`--start-view`) reproduces it.
+/// The game camera's view now, in the form a start view (`--start-view`) reproduces it. Its
+/// position is in world space: render space's origin follows the player (floating origin).
 #[derive(SystemParam)]
 pub struct CurrentView<'w, 's> {
     target: Query<'w, 's, &'static Transform, (With<CameraTarget>, Without<MainCamera>)>,
     rig: Query<'w, 's, &'static CameraRig, With<MainCamera>>,
+    origin: Option<Res<'w, WorldOrigin>>,
+    catalog: Option<Res<'w, WorldCatalog>>,
 }
 
 impl CurrentView<'_, '_> {
     /// None without a game camera and the actor it follows.
     pub fn bookmark(&self) -> Option<world::WorldViewBookmark> {
-        let target = self.target.single().ok()?;
+        let target = self.target.single().ok()?.translation;
         let rig = self.rig.single().ok()?;
+        let [x, z] = self.origin.as_deref().map_or([0.0; 2], |origin| {
+            origin.world_offset(self.catalog.as_deref())
+        });
         Some(world::WorldViewBookmark {
-            position: target.translation.to_array(),
+            position: [
+                (f64::from(target.x) + x) as f32,
+                target.y,
+                (f64::from(target.z) + z) as f32,
+            ],
             yaw_degrees: rig.yaw.to_degrees(),
             pitch_degrees: camera_pitch(rig).to_degrees(),
             distance: rig.distance,
