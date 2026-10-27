@@ -557,28 +557,33 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
 - **A frame budget of 10.5 ms GPU at the play setup, measured at Maximum.** *Kept* (October 25).
   Its lines, one per group of passes, are in `tools/frame_budget.toml`; `tools/bench.py` measures
   six views against them and keeps the history ([Workflows](WORKFLOWS.md#benchmark-and-frame-budget)).
-  Runs repeat only at the GPU's Maximum state, but minutes of play hold it at Medium (1.2–1.4× as
-  long), so the budget is what holds 60 fps there, about 14 ms (user: Village, run ten minutes,
-  was at Medium too and must be the target in either case). The play setup's 1728×1084 is about
-  what a PS5 renders at 50% of 4K.
+  Runs repeat only at the GPU's top clock, but minutes of play heat the Mac down to about three
+  quarters of it (below), where a frame takes about 1.35× as long, so the budget is what holds 60
+  fps there, about 14 ms (user: Village must be the target in either case). The play setup's
+  1728×1084 is about what a PS5 renders at 50% of 4K.
 - **The target is PS5-class hardware at 60 fps; the MacBook is where the work happens.** *Kept*
   (user, October 23). Low settings for phones and handhelds (iPhone, Switch 2, Steam Deck) may
   follow. Optimise real work wherever measuring finds it; a drop that is only the Mac's GPU clock
   is not a goal in itself.
-- **A Mac lowers its GPU's performance state after minutes of near-full load.** *Kept* (October
-  23). Jogging from the start into the meadow before the gorge, every pass took twice as long,
-  fixed-size ones too, with the GPU in its Medium state the whole time. Standing there from a
-  fresh start it stayed at Maximum, 12.5 ms a frame. Streaming CPU (1.6 against 1.4 cores),
-  memory and the frame's work were unchanged. Read the performance state before chasing a drop;
-  headroom below the frame budget is the lever.
-- **The game runs as an app macOS knows is a game.** *Trial* (October 27). Village runs with Game
-  Mode on and, the user finds, never leaves its fast clocks however long it runs; ours left them
-  after a minute. macOS gives Game Mode only to a fullscreen app whose bundle names a game category
-  (`LSApplicationCategoryType`): a bare binary is not one, and an Info.plist embedded in the
-  executable was not enough. `cargo run` and the bench start the game from `Yarra.app` beside its
-  binary (`tools/cargo_runner_macos.sh`, `crates/app_game/Info.plist`); `gamepolicyd` logs "Game
-  mode enabled" within a second of fullscreen, whether started by cargo or by `open`. Whether it
-  keeps the clocks up in long play is the user's test.
+- **Heat lowers a Mac's clocks after minutes of play, in every game.** *Kept* (October 23,
+  measured October 27). After 2–4 minutes of near-full load macOS raises its thermal pressure and
+  lowers the GPU's clock and the CPU's; a Metal System Trace shows it as the Medium performance
+  state, with every pass slower at once and the frame's work unchanged. Over ten minutes of play
+  ([Workflows](WORKFLOWS.md#long-play-and-heat), `tools/power_history.csv`), Village and ours both
+  ended at about three quarters of the GPU's 1398 MHz (1035 and 1050 MHz over the last five
+  minutes) on about 25 W of GPU power. Village draws more while cool (35 + 14 W of GPU and CPU
+  against our 29 + 7), so it reached Heavy pressure sooner (2:18 against 3:49) and stayed there;
+  our first clamp went deeper (720–800 MHz) and then recovered. Village holds 100 fps through it
+  because it renders about 130 at the top clock. While cool our GPU idles about 4% of each frame
+  and macOS gives it 1260 MHz; Village keeps it 99.8% busy at 1397. Read the state before chasing
+  a drop; headroom below the frame budget is the lever.
+- **The game runs as an app macOS knows is a game.** *Kept* (October 27). macOS gives Game Mode,
+  which puts a game ahead of background work, only to a fullscreen app whose bundle names a game
+  category (`LSApplicationCategoryType`): a bare binary is not one, and an Info.plist embedded in
+  the executable was not enough. `cargo run` and the bench start the game from `Yarra.app` beside
+  its binary (`tools/cargo_runner_macos.sh`, `crates/app_game/Info.plist`); `gamepolicyd` logs
+  "Game mode enabled" within a second of fullscreen, whether started by cargo or by `open`. Game
+  Mode does not keep the clocks up: Village runs with it and slows from heat like ours (above).
 - **The Metal HUD's GPU time is not a cost.** *Kept.* macOS clocks the GPU to the load (light scenes
   ran passes 2× slower). Budget in clock-free counts; time passes in Metal System Trace against a
   reference pass.

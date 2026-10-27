@@ -35,7 +35,10 @@ window (composited) at 100% scale with MSAA 4×.
 | Yarra, meadow, terrain and sky only | 102 | 8.2 | | | |
 | Yarra, meadow with grass | 75 | 12.2 | | | |
 
-In play, Village never went below 80 fps (12.5 ms) and mostly held 90–100. On PS5 it runs at 60
+In play, Village never went below 80 fps (12.5 ms) and mostly held 90–100. Heat slows its GPU
+as it slows ours, to about three quarters of the top clock after minutes of play
+([Decisions](DECISIONS.md#performance--measurement-method)); it holds those frame rates because
+it has the headroom, about 130 fps at the top clock. On PS5 it runs at 60
 fps at 4K checkerboard, about 4.1 Mpx shaded a frame (Digital Foundry). What the numbers show:
 
 - **Our empty frame costs what Village's densest frame costs.** Terrain and sky alone run at

@@ -1,0 +1,3 @@
+date,game,note,play_s,first_pressure_s,heavy_pct,cool,hot,play_w,cool_w,hot_w,sustained_mhz,sustained_of_top
+2026-10-27T02:02,Yarra 872af45,"default cargo run (fullscreen 50% + Temporal, uncapped, from Yarra.app), dense areas; on AC charging, energy mode Automatic",56-576,229,29,"1260 MHz, 95.6% busy","815 MHz, 99.5% busy",24.6 + 6.5,29.1 + 7.4,15.6 + 4.8,1050,0.75
+2026-10-27T02:18,RE Village,"fights with enemies, fire, cut scenes; user saw mostly 100+ fps, 120-140 in lighter scenes, worst ~75; on AC charging, energy mode Automatic",16-595,138,76,"1397 MHz, 99.8% busy","1119 MHz, 99.1% busy",24.6 + 8.7,35.2 + 13.9,21.2 + 7.1,1035,0.74

@@ -444,11 +444,11 @@ starting it.
 - Heat moves results 5–30% within a run: alternate A/B/A/B, and do not trace while Houdini or a
   build runs (`pgrep -fl houdini`).
 - **A slowdown in every pass at once is the GPU's clock, not the frame's work.** After minutes of
-  near-full load (a jog through the forest into the meadow) macOS holds the GPU in its Medium
-  performance state, which runs each pass about twice as long; standing still, it returns to
-  Maximum within a minute or two. Read the state from the same Metal System Trace (below) before
-  chasing a drop, and compare costs at Maximum. Fixed-size passes (`atmosphere_luts`) show the
-  clock; MetalFX slows less, so a ratio to it understates a drop.
+  near-full load macOS raises its thermal pressure and lowers the GPU's clock, in every game
+  ([Long play and heat](#long-play-and-heat)): a trace shows it as the Medium performance state,
+  and at its deepest each pass runs about twice as long. Read the state from the same Metal System
+  Trace (below) before chasing a drop, and compare costs at Maximum. Fixed-size passes
+  (`atmosphere_luts`) show the clock; MetalFX slows less, so a ratio to it understates a drop.
 - The Mac is the working machine, not the target (PS5-class hardware at 60 fps): look for
   headroom and real work, not perfect play on the Mac.
 
@@ -475,6 +475,29 @@ judge sub-0.3 ms changes by an A/B/A of that view. Flags after `--` reach every 
 `--profile-objects off` (trees and rocks) splits the opaque line, leaving the terrain;
 `--profile-terrain off` does not, since the forests the terrain hid are then drawn instead.
 Traces stay in `tmp/bench/` until the next run.
+
+### Long play and heat
+
+```sh
+sudo powermetrics --samplers cpu_power,gpu_power,thermal -i 5000 -n 120 -o tmp/power/yarra.txt
+python3 tools/power_report.py tmp/power/yarra.txt:56-576 --samples
+python3 tools/power_report.py tmp/power/yarra.txt:56-576 --record --note "scene and setup"
+python3 tools/power_report.py tmp/power/village.txt:16-595 --record --game "RE Village" --note "..."
+```
+
+The bench measures a cool Mac at the GPU's top clock. Minutes of play heat it, and macOS then
+lowers the GPU's and the CPU's clocks, so what the player feels is the frame at the clock heat
+allows. `powermetrics` logs every 5 s the thermal pressure (Nominal, Moderate, Heavy), the GPU's
+clock, busy share and power, and the CPU's power. Start it, then the game, after the Mac has idled
+about ten minutes, on the power source and energy mode of the run it is compared to
+(`pmset -g batt`, `pmset -g | grep powermode`), and play the full ten minutes; `-o` writes a file,
+since a terminal's scrollback drops samples. `tools/power_report.py` summarises a log over its play
+(the range after the path, in seconds, leaves out loading and the moments after): when the
+pressure first rose, how much of the play ran under Heavy, the GPU while cool and while hot, and
+its clock over the last five minutes as a share of the top clock, which is the factor between the
+bench and long play. `--record` appends the summary to `tools/power_history.csv` under `--game`
+(Yarra and the checked-out commit by default); compare a change in long play against the row of
+the same scene before it.
 
 ### Look captures
 
