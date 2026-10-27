@@ -17,3 +17,5 @@ __pycache__/
 .DS_Store
 **/xcuserdata/
 **/com.apple.DeveloperTools/
+# Tools installed beside the checkout: the Blender profile holding MPFB and its asset packs.
+/.tools/

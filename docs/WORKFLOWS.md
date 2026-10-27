@@ -20,7 +20,7 @@ Apple silicon Mac. [Architecture](ARCHITECTURE.md) says which crate owns what;
 | `sqlite3` | `install_world.sh`, database copies |
 | Khronos KTX 4.4.2 (`ktx`) | terrain textures, vegetation imports |
 | Xcode | Metal, `xctrace`, iOS |
-| Houdini (`hython`, in `/Applications/Houdini/Current/Frameworks/Houdini.framework/Versions/Current/Resources/bin`), Blender, `luau-analyze` | terrain and tree authoring, detail props, script type checks |
+| Houdini (`hython`, in `/Applications/Houdini/Current/Frameworks/Houdini.framework/Versions/Current/Resources/bin`), Blender, `luau-analyze` | terrain and tree authoring, detail props, characters, script type checks |
 
 ```sh
 rustup toolchain install 1.99.0 --profile minimal --component clippy,rustfmt
@@ -394,6 +394,16 @@ uv run tools/render_world_map.py assets/local/worlds/reteya-v13/heightfield.json
 
 About 25 s and 3 GB. `content/maps/reteya.map.json` holds the title, compass and named features;
 `--no-lettering` leaves names for the game to draw; brushes and fonts are in `assets/local/map/`.
+
+## Characters
+
+Characters are built from MPFB (the MakeHuman plugin for Blender) in a Blender profile of their
+own, so the user's Blender and its add-ons stay out of it; see
+[content/characters](../content/characters/README.md).
+
+```sh
+python3 content/characters/scripts/setup_blender.py      # MPFB + packs into .tools/blender
+```
 
 ## Checks before committing
 

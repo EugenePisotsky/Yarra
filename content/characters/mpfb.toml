@@ -1,0 +1,54 @@
+# MPFB and the MakeHuman asset packs the character builds use, pinned by hash.
+# scripts/setup_blender.py installs them into the Blender profile .tools/blender: MPFB through
+# Blender's extension client, the packs downloaded into .tools/downloads/<id>/. Every pack is CC0
+# (each pack's manifest gives the licence per asset); MPFB's code is GPL-3.0-or-later and stays in
+# that profile, out of the game.
+
+# The version and archive hash extensions.blender.org lists; the setup refuses any other.
+[mpfb]
+version = "2.0.18"
+sha256 = "c075b3e9b94b8e5556a5f03f4653602d02ea306de08126e8f55ed6dee28a2dad"
+
+# The base skins, eyes, eyebrows, eyelashes, teeth, tongue, hair, clothes and topologies.
+[[pack]]
+id = "makehuman_system_assets"
+url = "https://files2.makehumancommunity.org/asset_packs/makehuman_system_assets/makehuman_system_assets_cc0.zip"
+sha256 = "b542127a8e25547c7c29c19f2d1d2adb9a664c80396ecd694095dbc8028a0107"
+
+# The 52 ARKit face shapes MPFB's expressions are made of.
+[[pack]]
+id = "faceunits01"
+url = "https://files2.makehumancommunity.org/functional/faceunits01.zip"
+sha256 = "d113107bd7eb59f3af4df6fc0ec29bfcc593f496d0b336aec14f086a80ce7146"
+
+# 22 mouth shapes for speech.
+[[pack]]
+id = "visemes01"
+url = "https://files2.makehumancommunity.org/functional/visemes01.zip"
+sha256 = "f61f4f36bb4fe43486efa2a644eea9d6760e510bde10eecc97a4ddf28424e4d3"
+
+# Community skins, the CC0 share of each pack.
+[[pack]]
+id = "skins01"
+url = "https://files2.makehumancommunity.org/asset_packs/skins01/skins01_cc0.zip"
+sha256 = "7495ab99287053bd19ff1636114e64b608994d9f7437fea6cc75ea387f96dba9"
+
+[[pack]]
+id = "skins02"
+url = "https://files2.makehumancommunity.org/asset_packs/skins02/skins02_cc0.zip"
+sha256 = "1613f1ef3afca53094511d26620ed7cf1d2dedc29ed3d384d60bdebe250698ae"
+
+[[pack]]
+id = "skins03"
+url = "https://files2.makehumancommunity.org/asset_packs/skins03/skins03_cc0.zip"
+sha256 = "be159362000e008d996366e3dd5977a40854e20ac6da98be267560c31f7e3fc5"
+
+[[pack]]
+id = "eyebrows01"
+url = "https://files2.makehumancommunity.org/asset_packs/eyebrows01/eyebrows01_cc0.zip"
+sha256 = "5425891dce613bef85c7117f7843cd49d57d1fb28127e76d77d2a2eaccb4fe78"
+
+[[pack]]
+id = "eyelashes01"
+url = "https://files2.makehumancommunity.org/asset_packs/eyelashes01/eyelashes01_cc0.zip"
+sha256 = "b7b5eb97cfb930d93e8c067885801443bcab2dcbbe6c2c2cfff7ad87992077e8"

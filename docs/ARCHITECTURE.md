@@ -553,7 +553,7 @@ resets. Change a format, bump its constant and rebuild (Reteya from its inputs).
 | Editor journal | `JOURNAL_SCHEMA_VERSION`, `app_editor/src/journal.rs` | 15 |
 | Heightfield manifest | `VERSION`, `world_cook/src/heightfield_import.rs` | 2 |
 | Asset import catalog | literal in `AssetImportCatalog::validate` | 1 |
-| Character catalog | literal in `engine/src/character_catalog.rs` | 2 |
+| Character catalog | literal in `engine/src/character_catalog.rs` | 3 |
 | Impostor descriptor | literal in `engine/src/trees/impostor.rs` | 3 |
 
 The SQLite formats keep their version in `PRAGMA user_version`; bundles and language packs also
