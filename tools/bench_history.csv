@@ -102,3 +102,4 @@ date,commit,note,flags,view,frames,gpu_state,fps,cpu_main_ms,render_prep_ms,gpu_
 2026-10-27T18:08,82d78fb+,"window 1x at 100%, impostors meet the frame's pixels",--frame window-1x --resolution-scale 1,spruce-road,316,Maximum,88.1,1.91,2.19,9.96,3.67,0.84,0.20,1.48,0.23,1.31,1.59,0.18,0.15,0.31
 2026-10-27T19:10,fcc2eb2+,"TAA at the rendered size, shown enlarged with CAS",--upscaler taa,meadow,464,Maximum,135.7,2.37,2.85,6.11,1.51,0.92,0.08,0.14,0.69,0.99,1.08,0.13,0.12,0.44
 2026-10-27T19:10,fcc2eb2+,"TAA at the rendered size, shown enlarged with CAS",--upscaler taa,spruce-road,350,Maximum,97.5,1.89,2.15,9.49,3.88,0.77,0.22,1.45,0.24,1.33,0.94,0.15,0.20,0.30
+2026-10-27T20:11,4fe21df+,"MetalFX Temporal to 75% of the window, shown enlarged with CAS",--upscale-target 0.75,spruce-road,266,Maximum,72.4,1.95,2.32,11.82,4.47,0.91,0.20,1.36,0.29,1.33,2.55,0.16,0.16,0.38

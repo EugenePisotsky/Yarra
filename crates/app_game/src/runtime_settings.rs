@@ -2,7 +2,8 @@
 //! CLI setup, reproductions and F1 edit the same snapshot. This module owns no panel,
 //! capture state, timing probes or argument parsing; it also works without diagnostics.
 use crate::game_render::{
-    GameRenderSettings, GameRenderSetup, GameRenderSystems, RESOLUTION_SCALES, scale_index,
+    GameRenderSettings, GameRenderSetup, GameRenderSystems, RESOLUTION_SCALES, UPSCALE_TARGETS,
+    scale_index,
 };
 
 use crate::launch::LaunchOptions;
@@ -35,6 +36,10 @@ impl Plugin for RuntimeSettingsPlugin {
         let settings = RuntimeSettings {
             upscaler: options.upscaler,
             frame: options.frame,
+            upscale_target: options.upscale_target.map_or_else(
+                || RuntimeSettings::default().upscale_target,
+                |share| target_index(share).expect("launch validates the upscale target"),
+            ),
             counters: options.counters,
             gpu_pass_timings: options.gpu_detail,
             scale_index: options.resolution_scale.map_or_else(
@@ -126,6 +131,8 @@ pub(crate) struct RuntimeSettings {
     pub(crate) scale_index: usize,
     pub(crate) upscaler: upscaling::UpscaleMethod,
     pub(crate) frame: crate::game_render::Frame,
+    /// Index into `UPSCALE_TARGETS`.
+    pub(crate) upscale_target: usize,
     pub(crate) temporal_debug: upscaling::temporal::TemporalDebug,
     pub(crate) counters: bool,
     pub(crate) gpu_pass_timings: bool,
@@ -167,6 +174,8 @@ impl Default for RuntimeSettings {
                 .expect("game scale is available in runtime settings"),
             upscaler: render.upscaler,
             frame: render.frame,
+            upscale_target: target_index(render.upscale_target)
+                .expect("the game's upscale target is in UPSCALE_TARGETS"),
             temporal_debug: render.temporal_debug,
             // Statistics atomics are explicit on every platform, including audit startup.
             counters: false,
@@ -199,6 +208,10 @@ impl RuntimeSettings {
         RESOLUTION_SCALES[self.scale_index]
     }
 
+    pub(crate) fn upscale_target(&self) -> f32 {
+        UPSCALE_TARGETS[self.upscale_target]
+    }
+
     pub(crate) fn grass_mode(&self) -> VegetationProfileMode {
         if matches!(self.scene, Scene::Clear | Scene::Ground) {
             VegetationProfileMode::Disabled
@@ -206,6 +219,13 @@ impl RuntimeSettings {
             self.grass
         }
     }
+}
+
+/// Index of an upscale target in `UPSCALE_TARGETS`.
+fn target_index(share: f32) -> Option<usize> {
+    UPSCALE_TARGETS
+        .iter()
+        .position(|&s| (s - share).abs() < 1e-3)
 }
 
 #[derive(Component)]
@@ -229,6 +249,7 @@ fn sync_render_settings(
             temporal_debug: s.temporal_debug,
             render_size: profile.as_ref().and_then(|p| p.size),
             frame: s.frame,
+            upscale_target: s.upscale_target(),
             show_ui: s.show_ui,
         });
     }

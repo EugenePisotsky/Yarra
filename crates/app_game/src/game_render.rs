@@ -35,30 +35,29 @@ pub(crate) struct GameRenderSystems;
 
 pub(crate) const RESOLUTION_SCALES: [f32; 4] = [1.0, 0.75, 0.5, 1.0 / 3.0];
 
-/// The fixed frame F1 offers: Resident Evil Village's, as it was measured on this Mac.
-pub(crate) const VILLAGE_FRAME: UVec2 = UVec2::new(1920, 1080);
+/// The fixed frame F1 offers, letterboxed in a 16:10 window.
+pub(crate) const FULL_HD_FRAME: UVec2 = UVec2::new(1920, 1080);
 
-/// The frame the world is rendered for and shown in; the render scale applies to it.
+/// The shares of the window's pixels an upscaler may resolve to, which the window then shows
+/// enlarged: below its pixels, less is reconstructed (at 50% of a Retina window, as many pixels
+/// as a 1x screen of its size has).
+pub(crate) const UPSCALE_TARGETS: [f32; 3] = [1.0, 0.75, 0.5];
+
+/// The frame the world is rendered for and shown in.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum Frame {
-    /// The window's own pixels: on a Retina screen MetalFX Temporal reconstructs all of them.
+    /// The window, at the upscale target's share of its pixels.
     #[default]
     Window,
-    /// The window's size in points, as on a 1x screen: the world is resolved at that size and
-    /// the window shows it enlarged, as Village shows its 1920×1080 on a larger screen, which
-    /// spares the reconstruction of the screen's own pixels.
-    WindowPoints,
-    /// A fixed size letterboxed in the window, as Resident Evil Village shows its fullscreen
-    /// 1920×1080 (docs/PERFORMANCE_REVIEW.md).
+    /// A fixed size letterboxed in the window; the render scale applies to it.
     Fixed(UVec2),
 }
 
 impl Frame {
-    /// F1's order: the window's pixels, its points, Village's frame.
+    /// F1's order: the window, the full HD frame.
     pub(crate) fn next(self) -> Self {
         match self {
-            Self::Window => Self::WindowPoints,
-            Self::WindowPoints => Self::Fixed(VILLAGE_FRAME),
+            Self::Window => Self::Fixed(FULL_HD_FRAME),
             Self::Fixed(_) => Self::Window,
         }
     }
@@ -66,7 +65,6 @@ impl Frame {
     pub(crate) fn label(self) -> String {
         match self {
             Self::Window => "window".into(),
-            Self::WindowPoints => "window 1x".into(),
             Self::Fixed(size) => format!("{}x{}", size.x, size.y),
         }
     }
@@ -87,6 +85,9 @@ pub(crate) struct GameRenderSettings {
     /// Explicit internal pixel dimensions for controlled profiling, independent of Retina scaling.
     pub(crate) render_size: Option<UVec2>,
     pub(crate) frame: Frame,
+    /// The share of the window's pixels the upscaler writes, one of `UPSCALE_TARGETS`, under
+    /// `Frame::Window`. The render scale stays a share of the window's pixels.
+    pub(crate) upscale_target: f32,
     pub(crate) show_ui: bool,
     pub(crate) direct_temporal_output: bool,
 }
@@ -99,6 +100,7 @@ impl Default for GameRenderSettings {
             upscaler: upscaling::UpscaleMethod::MetalFxTemporal,
             render_size: None,
             frame: Frame::Window,
+            upscale_target: 1.0,
             show_ui: true,
             direct_temporal_output: true,
         }
@@ -124,31 +126,46 @@ impl GameRenderSettings {
     }
 
     /// The world camera owns the window: one pass tone-maps its image there and draws the UI
-    /// over it, so the UI camera and its composite of the world image stand down. Another frame
-    /// needs the composite to fit it in the window, and TAA its rendered size shown enlarged.
+    /// over it, so the UI camera and its composite of the world image stand down. A fixed frame
+    /// or a lower upscale target needs the composite to fit it in the window, and TAA its rendered
+    /// size shown enlarged.
     fn direct_output(&self) -> bool {
         self.upscaler == upscaling::UpscaleMethod::MetalFxTemporal
             && self.direct_temporal_output
             && self.frame == Frame::Window
+            && self.upscale_target == 1.0
+    }
+
+    /// Whether the window shows the world's image enlarged, which sharpening then keeps the
+    /// detail of.
+    fn enlarged(&self) -> bool {
+        self.frame != Frame::Window || self.upscale_target < 1.0 || self.taa()
     }
 
     /// The frame the world is shown in, in pixels.
     pub(crate) fn output_size(&self, window: &Window) -> UVec2 {
         match self.frame {
-            Frame::Window => window.physical_size(),
-            Frame::WindowPoints => window.size().round().as_uvec2(),
+            Frame::Window => (window.physical_size().as_vec2() * self.upscale_target)
+                .round()
+                .as_uvec2(),
             Frame::Fixed(size) => size,
         }
         .max(UVec2::ONE)
     }
 
-    /// The world's rendered pixels.
+    /// The world's rendered pixels: the render scale's share of the window's pixels, or of a
+    /// fixed frame's, never more than the upscaler writes.
     pub(crate) fn target_size(&self, window: &Window) -> UVec2 {
         self.render_size.unwrap_or_else(|| {
+            let base = match self.frame {
+                Frame::Window => window.physical_size(),
+                Frame::Fixed(size) => size,
+            };
             // Round up so odd output dimensions don't exceed the requested upscale ratio.
-            (self.output_size(window).as_vec2() * self.resolution_scale)
+            (base.as_vec2() * self.resolution_scale)
                 .ceil()
                 .as_uvec2()
+                .min(self.output_size(window))
                 .max(UVec2::ONE)
         })
     }
@@ -415,9 +432,8 @@ fn apply_settings(
         commands.entity(camera.entity).insert(Fxaa::default());
     }
 
-    // A frame smaller than the window's pixels, or TAA's rendered size, is shown enlarged, so it
-    // keeps the detail its anti-aliasing softened as Village's does, by sharpening.
-    if s.frame != Frame::Window || s.taa() {
+    // An image shown enlarged keeps the detail its anti-aliasing softened by sharpening.
+    if s.enlarged() {
         commands
             .entity(camera.entity)
             .insert(ContrastAdaptiveSharpening::default());
@@ -661,7 +677,7 @@ mod tests {
         let mut app = App::new();
         app.init_resource::<Assets<Image>>()
             .insert_resource(GameRenderSettings {
-                frame: Frame::Fixed(VILLAGE_FRAME),
+                frame: Frame::Fixed(FULL_HD_FRAME),
                 resolution_scale: 1.0,
                 ..default()
             })
@@ -700,14 +716,14 @@ mod tests {
                 .get(&target)
                 .unwrap()
                 .size(),
-            VILLAGE_FRAME
+            FULL_HD_FRAME
         );
         assert_eq!(
             world
                 .get::<upscaling::temporal::TemporalView>(main)
                 .unwrap()
                 .input_size,
-            VILLAGE_FRAME
+            FULL_HD_FRAME
         );
         assert!(world.get::<upscaling::DirectTonemapOutput>(main).is_none());
         assert!(world.get::<ContrastAdaptiveSharpening>(main).is_some());
@@ -723,33 +739,46 @@ mod tests {
         assert!((share(node.height) - 100.0 / shape).abs() < 1e-3);
         assert!((share(node.top) - (100.0 - 100.0 / shape) * 0.5).abs() < 1e-3);
 
-        // The window's points: half its pixels each way, sharpened and filling the window.
-        world.resource_mut::<GameRenderSettings>().frame = Frame::WindowPoints;
-        app.update();
-        let world = app.world_mut();
-        let points = UVec2::new(1728, 1084);
-        assert_eq!(
-            world
-                .resource::<Assets<Image>>()
-                .get(&target)
-                .unwrap()
-                .size(),
-            points
-        );
-        assert_eq!(
-            world
-                .get::<upscaling::temporal::TemporalView>(main)
-                .unwrap()
-                .input_size,
-            points
-        );
-        assert!(world.get::<upscaling::DirectTonemapOutput>(main).is_none());
-        assert!(world.get::<ContrastAdaptiveSharpening>(main).is_some());
-        let node = world.get::<Node>(composite).unwrap();
-        assert_eq!((node.width, node.height), (percent(100), percent(100)));
+        // Upscale targets below the window's pixels: half its pixels rendered, resolved to 75% or
+        // 50% of them (1:1, as on a 1x screen), sharpened and filling the window.
+        for (share, output) in [
+            (0.75, UVec2::new(2592, 1626)),
+            (0.5, UVec2::new(1728, 1084)),
+        ] {
+            let mut settings = app.world_mut().resource_mut::<GameRenderSettings>();
+            (
+                settings.frame,
+                settings.upscale_target,
+                settings.resolution_scale,
+            ) = (Frame::Window, share, 0.5);
+            app.update();
+            let world = app.world();
+            assert_eq!(
+                world
+                    .resource::<Assets<Image>>()
+                    .get(&target)
+                    .unwrap()
+                    .size(),
+                output,
+                "{share}"
+            );
+            assert_eq!(
+                world
+                    .get::<upscaling::temporal::TemporalView>(main)
+                    .unwrap()
+                    .input_size,
+                UVec2::new(1728, 1084)
+            );
+            assert!(world.get::<upscaling::DirectTonemapOutput>(main).is_none());
+            assert!(world.get::<ContrastAdaptiveSharpening>(main).is_some());
+            let node = world.get::<Node>(composite).unwrap();
+            assert_eq!((node.width, node.height), (percent(100), percent(100)));
+        }
 
         // Back to the window's own pixels: the direct output, unsharpened and whole.
-        world.resource_mut::<GameRenderSettings>().frame = Frame::Window;
+        app.world_mut()
+            .resource_mut::<GameRenderSettings>()
+            .upscale_target = 1.0;
         app.update();
         let world = app.world();
         assert!(world.get::<upscaling::DirectTonemapOutput>(main).is_some());

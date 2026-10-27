@@ -144,9 +144,15 @@ const FLAGS: &[Flag] = &[
     ),
     flag(
         "--frame",
-        "window|window-1x|WIDTHxHEIGHT",
+        "window|WIDTHxHEIGHT",
         Scene,
-        "Frame the world renders for: the window's pixels, its points (1x), or a fixed size letterboxed in it (F1 changes it; default window)",
+        "Frame the world renders for: the window, or a fixed size letterboxed in it (F1 changes it; default window)",
+    ),
+    flag(
+        "--upscale-target",
+        "1|0.75|0.5",
+        Scene,
+        "Share of the window's pixels the upscaler resolves to, shown enlarged below 1 (F1 changes it; default 1)",
     ),
     flag(
         "--cloud-quality",

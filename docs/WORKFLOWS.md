@@ -189,16 +189,17 @@ Overview, Features (effects on/off), Quality, Weather (presets, clocks, time jum
 (session-only), [Compare](#f1-compare), Advanced. Overview's **Save this view** writes the camera's
 view to `tmp/views/view-<time>.ron` for `--start-view`; a spot where the frame rate drops becomes a
 bench view by moving its file into `content/reteya/views/` and naming it in
-`tools/frame_budget.toml`. Quality's **Frame** is the window's pixels (MetalFX Temporal
-reconstructs the Retina screen), the window at 1x (resolved at its size in points and shown
-enlarged, as Village shows its 1920×1080; with Resolution 100% it renders what the default
-renders), or Village's 1920×1080.
+`tools/frame_budget.toml`. On Quality, **Resolution** is the share of the window's pixels
+rendered; **Upscale target** the share the upscaler resolves to (100%, 75%, or 50%, as many as a 1x
+screen has, so Resolution 50% resolves 1:1), which the window shows enlarged and sharpened below
+100%; **Upscaler** MetalFX Temporal (default), TAA (resolves the rendered pixels), MetalFX Spatial
+or Linear; **Frame** the window or a fixed 1920×1080 letterboxed in it.
 
 | For | Launch options |
 | --- | --- |
 | Where | `--start-view FILE`, `--world-db FILE` |
 | Time, weather | `--time HH:MM`, `--day-clock on\|off`, `--weather auto\|authored\|clear\|scattered\|overcast\|rain\|storm` (on snow ground, overcast, rain and storm are light snow, snow and a blizzard) |
-| Presentation | `--fps 0\|15..240` (default 60, 0 follows the display), `--resolution-scale 1\|0.75\|0.5\|0.33`, `--upscaler auto\|linear\|metalfx-spatial\|metalfx-temporal\|taa`, `--frame window\|window-1x\|WIDTHxHEIGHT`, `--cloud-quality off\|balanced\|high`, `--tree-shadow-lod 0..2` |
+| Presentation | `--fps 0\|15..240` (default 60, 0 follows the display), `--resolution-scale 1\|0.75\|0.5\|0.33`, `--upscaler auto\|linear\|metalfx-spatial\|metalfx-temporal\|taa`, `--frame window\|WIDTHxHEIGHT`, `--upscale-target 1\|0.75\|0.5`, `--cloud-quality off\|balanced\|high`, `--tree-shadow-lod 0..2` |
 | Panel, logs | `--diagnostics off\|panel\|full` (default full), `--performance-open`, `--timing-log` |
 | Gameplay | `--story DIR` |
 
@@ -488,7 +489,7 @@ Traces stay in `tmp/bench/` until the next run.
 sudo powermetrics --samplers cpu_power,gpu_power,thermal -i 5000 -n 120 -o tmp/power/yarra.txt
 python3 tools/power_report.py tmp/power/yarra.txt:56-576 --samples
 python3 tools/power_report.py tmp/power/yarra.txt:56-576 --record --note "scene and setup"
-python3 tools/power_report.py tmp/power/village.txt:16-595 --record --game "RE Village" --note "..."
+python3 tools/power_report.py tmp/power/other.txt:16-595 --record --game "another game" --note "..."
 ```
 
 The bench measures a cool Mac at the GPU's top clock. Minutes of play heat it, and macOS then
@@ -651,7 +652,7 @@ in step; `--help` prints the same with descriptions):
 
 | Purpose | Controls |
 | --- | --- |
-| Scene and presentation | `--world-db FILE`, `--start-view FILE`, `--story DIR`, `--fps 0\|15..240`, `--resolution-scale 1\|0.75\|0.5\|0.33`, `--time HH:MM`, `--day-clock on\|off`, `--weather auto\|authored\|clear\|scattered\|overcast\|rain\|storm`, `--upscaler auto\|linear\|metalfx-spatial\|metalfx-temporal\|taa`, `--frame window\|window-1x\|WIDTHxHEIGHT`, `--cloud-quality off\|balanced\|high`, `--tree-shadow-lod 0..2` |
+| Scene and presentation | `--world-db FILE`, `--start-view FILE`, `--story DIR`, `--fps 0\|15..240`, `--resolution-scale 1\|0.75\|0.5\|0.33`, `--time HH:MM`, `--day-clock on\|off`, `--weather auto\|authored\|clear\|scattered\|overcast\|rain\|storm`, `--upscaler auto\|linear\|metalfx-spatial\|metalfx-temporal\|taa`, `--frame window\|WIDTHxHEIGHT`, `--upscale-target 1\|0.75\|0.5`, `--cloud-quality off\|balanced\|high`, `--tree-shadow-lod 0..2` |
 | Panel and logging | `--diagnostics off\|panel\|full`, `--performance-open`, `--render-audit`, `--render-console`, `--timing-log`, `--gpu-timing-detail`, `--gpu-timing-off`, `--metalfx-timing-log`, `--grass-counters` |
 | Scripted routes | `--render-repro NAME`, `--render-frames N`, `--render-snapshot PATH`, `--render-snapshot-frames N,N`, `--render-walk-speed MPS`, `--render-frame-clock`, `--render-temporal-view motion\|depth`, `--render-ui-off` |
 | Captures and checks | `--metal-capture PATH.gputrace` |

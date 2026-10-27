@@ -86,11 +86,13 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
   mountain-hamlet 9.06 → 7.86, brook-mouth 8.49 → 7.37, with 11% more pixels rendered: MetalFX
   takes 1.0 ms instead of 2.35 and the composite at the window's size 0.27. The image is softer
   than the 2× reconstruction; the default waits for the user's comparison in play.
-- **The window at 1x.** *Trial* (October 27). `--frame window-1x` or F1's Frame with Resolution
-  100% renders the play setup's own 1728×1084, resolves it at that size and shows it enlarged,
-  sparing MetalFX's reconstruction of the 7.5 Mpx screen: its passes take about 2.2 ms there and
-  1.0 at 1:1, as the 1920×1080 frame measured. If the user takes its look over the 2×
-  reconstruction's, the window's output becomes that size, which also drops the composite.
+- **An upscale target below the window's pixels.** *Kept as an option* (user, October 27: "upscales
+  not to 100% but to 75% optionally"). `--upscale-target 1|0.75|0.5` and F1: the upscaler resolves
+  to that share of the window's pixels, Resolution stays a share of the window's, and the composite
+  shows the image enlarged with contrast adaptive sharpening. MetalFX's passes take about 2.2 ms
+  reconstructing the 7.5 Mpx Retina window, 1.0 at 1:1 on 2 Mpx. At 50%, the play setup's 1728×1084
+  resolved 1:1, spruce-road goes 12.35 → 10.24 ms. It replaced a "window at 1x" frame that needed
+  Resolution 100% to render the same pixels.
 - **MetalFX Temporal's scaler takes full-size textures.** *Kept.* A region-sized scaler (`b2c8cdf`)
   saved 0.8 ms that MetalFX's internal wait absorbed, and its history went blocky in motion;
   reverted (`c70158a`). Temporal's ~4 ms is MetalFX's own.
@@ -340,7 +342,7 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
 - **Impostors from a texel per output pixel.** *Kept* (`d76b928`). Spruce 92 → 172 m, LOD2 drawn
   from 240 px; the fixed 200 px hand-off magnified impostors ~2.6×. The hand-off stays the
   Retina window's under every frame: following a frame shown enlarged (`c61b9c5`, reverted)
-  brought spruce impostors in to about 86 m under window 1x, and approaching a forest they
+  brought spruce impostors in to about 86 m at a 50% upscale target, and approaching a forest they
   "looked like garbage" (user, October 27), for 0.28 ms at spruce-road.
 - **Impostor quality.** *Kept* (`4586161`, `d74df76`, `d04c6fa`). Ray-plane view reads, the view's
   mip bias, per-view mips with a gutter, baked from LOD0 (an LOD2 bake thinned crowns). Load normal

@@ -40,6 +40,8 @@ pub(crate) struct LaunchOptions {
     pub resolution_scale: Option<f32>,
     /// The frame at launch (`GameRenderSettings::frame`).
     pub frame: crate::game_render::Frame,
+    /// The upscale target at launch (one of `UPSCALE_TARGETS`).
+    pub upscale_target: Option<f32>,
     pub lod_lab: Option<LodLabOptions>,
     pub look_capture: Option<crate::dev::look_capture::LookCaptureOptions>,
 }
@@ -209,11 +211,11 @@ impl LaunchOptions {
             resolution_scale,
             frame: match args.value("--frame")?.unwrap_or("window") {
                 "window" => crate::game_render::Frame::Window,
-                "window-1x" => crate::game_render::Frame::WindowPoints,
                 size => crate::game_render::Frame::Fixed(crate::dev::profile::dimensions(
                     size, "--frame",
                 )?),
             },
+            upscale_target: upscale_target(&args)?,
             lod_lab: LodLabOptions::parse(&args)?,
             look_capture: look_capture(&args)?,
         })
@@ -282,6 +284,17 @@ fn resolution_scale(args: &Args) -> Result<Option<f32>, String> {
             "0.5" => Ok(0.5),
             "0.33" => Ok(1.0 / 3.0),
             _ => Err("--resolution-scale requires 1, 0.75, 0.5 or 0.33".into()),
+        })
+        .transpose()
+}
+
+fn upscale_target(args: &Args) -> Result<Option<f32>, String> {
+    args.value("--upscale-target")?
+        .map(|v| match v {
+            "1" | "1.0" => Ok(1.0),
+            "0.75" => Ok(0.75),
+            "0.5" => Ok(0.5),
+            _ => Err("--upscale-target requires 1, 0.75 or 0.5".into()),
         })
         .transpose()
 }

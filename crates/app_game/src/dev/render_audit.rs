@@ -93,6 +93,7 @@ enum Control {
     Shadows,
     ShadowMap,
     Scale,
+    UpscaleTarget,
     Frame,
     Upscaler,
     TemporalDebug,
@@ -137,6 +138,7 @@ impl Control {
 
     const QUALITY: &[Control] = &[
         Control::Scale,
+        Control::UpscaleTarget,
         Control::Frame,
         Control::Upscaler,
         Control::TemporalDebug,
@@ -208,6 +210,12 @@ impl Control {
                 format!("Shadow map: {size} px")
             }
             Self::Scale => format!("Resolution: {}%", (100.0 * s.scale()).round() as u32),
+            Self::UpscaleTarget => {
+                format!(
+                    "Upscale target: {}%",
+                    (100.0 * s.upscale_target()).round() as u32
+                )
+            }
             Self::Frame => format!("Frame: {}", s.frame.label()),
             Self::TemporalDebug => format!("Temporal view: {}", s.temporal_debug.label()),
             Self::Upscaler => format!("Upscaler: {}", s.upscaler.label()),
@@ -310,6 +318,10 @@ fn buttons(
             }
             Control::Scale => {
                 s.scale_index = (s.scale_index + 1) % RESOLUTION_SCALES.len();
+            }
+            Control::UpscaleTarget => {
+                s.upscale_target =
+                    (s.upscale_target + 1) % crate::game_render::UPSCALE_TARGETS.len();
             }
             Control::Frame => s.frame = s.frame.next(),
             Control::TemporalDebug => {

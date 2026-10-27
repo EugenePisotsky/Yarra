@@ -4,7 +4,7 @@ Record a log while playing, ten minutes from a cool Mac (docs/WORKFLOWS.md, Long
 
     sudo powermetrics --samplers cpu_power,gpu_power,thermal -i 5000 -n 120 -o tmp/power/yarra.txt
 
-then `python3 tools/power_report.py tmp/power/yarra.txt:56-576 [tmp/power/village.txt:16-595]`.
+then `python3 tools/power_report.py tmp/power/yarra.txt:56-576 [tmp/power/other.txt:16-595]`.
 The range after a log is its play in seconds from the first sample, leaving out loading and the
 moments after play. Each log is summarised: when macOS first raised its thermal pressure, how much
 of the play ran under Heavy pressure, the GPU's clock, busy share and power while the Mac was cool
