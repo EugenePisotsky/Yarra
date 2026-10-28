@@ -1,11 +1,11 @@
-//! The character probe (`--character-probe ASSET`): a model under assets/ stands ahead of the
-//! player at the start, facing the camera, so a character can be judged in the game's own light
-//! next to the one it plays. It stands in its rest pose; `content/characters/scripts/export_glb.py`
-//! makes one from an MPFB preset.
+//! The character probe (`--character-probe PROFILE`): a character catalog profile stands ahead of
+//! the player at the start, facing the camera and playing its idle, so a character can be judged
+//! in the game's own light next to the one the player plays.
+//! `content/characters/scripts/export_glb.py` makes one from an MPFB preset.
 use crate::launch::LaunchOptions;
 
-use bevy::{gltf::GltfAssetLabel, prelude::*};
-use engine::{TerrainGrounded, WorldRenderRoot, WorldStartAdopted, WorldStartView};
+use bevy::prelude::*;
+use engine::{WorldStartAdopted, WorldStartView};
 use world::WorldViewBookmark;
 
 /// How far ahead of the start's focus the model stands and how far to the camera's right,
@@ -15,13 +15,13 @@ const AHEAD_M: f32 = 2.4;
 const ASIDE_M: f32 = 0.9;
 
 #[derive(Resource)]
-struct ProbeAsset(String);
+struct ProbeProfile(String);
 
 #[derive(Component)]
 struct CharacterProbe;
 
 pub(crate) fn install(app: &mut App) {
-    let Some(asset) = app
+    let Some(profile) = app
         .world()
         .resource::<LaunchOptions>()
         .character_probe
@@ -29,18 +29,18 @@ pub(crate) fn install(app: &mut App) {
     else {
         return;
     };
-    app.insert_resource(ProbeAsset(asset))
+    app.insert_resource(ProbeProfile(profile))
         .add_systems(Update, place_probe);
 }
 
-/// Stands the model at the start view, or moves it to the one the world adopts.
+/// Stands the character at the start view, or again at the one the world adopts: its motor keeps
+/// the facing it was spawned with, so a moved probe is a new one.
 fn place_probe(
     mut commands: Commands,
-    asset: Res<ProbeAsset>,
-    asset_server: Res<AssetServer>,
+    profile: Res<ProbeProfile>,
     start: Res<WorldStartView>,
     mut adopted: MessageReader<WorldStartAdopted>,
-    mut probe: Query<&mut Transform, With<CharacterProbe>>,
+    probe: Query<Entity, With<CharacterProbe>>,
 ) {
     let view = match adopted.read().last() {
         Some(WorldStartAdopted(view)) => view,
@@ -50,22 +50,14 @@ fn place_probe(
         },
         None => return,
     };
-    let stand = stand(view);
 
-    if let Ok(mut transform) = probe.single_mut() {
-        *transform = stand;
-        return;
+    for entity in &probe {
+        commands.entity(entity).despawn();
     }
 
-    let scene = GltfAssetLabel::Scene(0).from_asset(asset.0.clone());
     commands.spawn((
-        stand,
-        Visibility::Inherited,
-        WorldAssetRoot(asset_server.load(scene)),
-        TerrainGrounded,
-        WorldRenderRoot,
+        engine::standing_character(stand(view), profile.0.clone(), "Character probe"),
         CharacterProbe,
-        Name::new("Character probe"),
     ));
 }
 

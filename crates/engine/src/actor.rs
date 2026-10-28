@@ -300,8 +300,17 @@ pub(crate) fn advance_character_motors(
 }
 
 impl CharacterMotor {
+    /// A motor at rest that keeps its actor turned towards `facing` (x and z on the ground).
+    pub(crate) fn facing(facing: Vec2) -> Self {
+        Self {
+            facing,
+            ..default()
+        }
+    }
+
+    /// Stops the motor. The actor keeps facing the way it faced.
     pub(crate) fn reset(&mut self) {
-        *self = Self::default();
+        *self = Self::facing(self.facing);
     }
 
     fn update_direct(
@@ -681,6 +690,48 @@ mod tests {
                     .is_none()
             );
         }
+    }
+
+    #[test]
+    fn a_placed_actor_keeps_its_facing_while_its_ground_streams_in() {
+        let space = world::WorldSpaceId(1);
+        let mut app = App::new();
+        let mut time = Time::<()>::default();
+        time.advance_by(std::time::Duration::from_secs_f32(DELTA_SECONDS));
+        app.insert_resource(time)
+            .insert_resource(
+                crate::world_streaming::test_world_resources(space, world::CellCoord::ZERO, None).1,
+            )
+            .add_systems(Update, advance_character_motors);
+        let far = world::CellCoord { x: 5, z: 5 };
+        app.world_mut()
+            .insert_resource(crate::ClipmapTerrain::test_flat(space, far, 16., 0.));
+        let place = Transform::from_xyz(8., 0., 8.).with_rotation(Quat::from_rotation_y(2.0));
+        let actor = app
+            .world_mut()
+            .spawn((
+                place,
+                MoveIntent::default(),
+                test_config(),
+                CharacterMotor::facing((place.rotation * Vec3::Z).xz()),
+                CharacterMotion::default(),
+                TerrainGrounded,
+            ))
+            .id();
+        app.update();
+        app.world_mut()
+            .insert_resource(crate::ClipmapTerrain::test_flat(
+                space,
+                world::CellCoord::ZERO,
+                16.,
+                0.,
+            ));
+        app.update();
+        let forward = app.world().get::<Transform>(actor).unwrap().rotation * Vec3::Z;
+        assert!(
+            forward.distance(place.rotation * Vec3::Z) < 1e-5,
+            "faces {forward}"
+        );
     }
 
     #[test]

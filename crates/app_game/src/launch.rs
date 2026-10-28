@@ -43,7 +43,7 @@ pub(crate) struct LaunchOptions {
     /// The upscale target at launch (one of `UPSCALE_TARGETS`).
     pub upscale_target: Option<f32>,
     pub lod_lab: Option<LodLabOptions>,
-    /// A model under assets/ standing ahead of the player ([`crate::dev::character_probe`]).
+    /// A character catalog profile standing ahead of the player ([`crate::dev::character_probe`]).
     pub character_probe: Option<String>,
     pub look_capture: Option<crate::dev::look_capture::LookCaptureOptions>,
 }

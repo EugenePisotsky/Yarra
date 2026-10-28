@@ -6,8 +6,9 @@ use super::{Bark, DUMMY, GUARD, HERO, MIRA, Panel, Story};
 use bevy::prelude::*;
 
 use engine::{
-    GameplaySystems, MoveIntent, PlayerControlled, PlayerMovementSuspended, TerrainGrounded,
-    WorldCatalog, WorldOrigin, WorldRenderRoot, WorldStartAdopted, WorldStartView,
+    DEFAULT_CHARACTER_PRESENTATION_ID, GameplaySystems, MoveIntent, PlayerControlled,
+    PlayerMovementSuspended, TerrainGrounded, WorldCatalog, WorldOrigin, WorldRenderRoot,
+    WorldStartAdopted, WorldStartView,
 };
 
 use game_types::{ActorId, AreaId};
@@ -216,14 +217,27 @@ fn spawn(
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     let hidden = Vec3::new(0.0, UNGROUNDED, 0.0);
+    let unplaced = Transform::from_translation(hidden);
     commands
-        .spawn(engine::standing_character(hidden, "Gate guard"))
+        .spawn(engine::standing_character(
+            unplaced,
+            DEFAULT_CHARACTER_PRESENTATION_ID,
+            "Gate guard",
+        ))
         .insert((Guard, Actor(GUARD)));
     commands
-        .spawn(engine::standing_character(hidden, "Companion"))
+        .spawn(engine::standing_character(
+            unplaced,
+            DEFAULT_CHARACTER_PRESENTATION_ID,
+            "Companion",
+        ))
         .insert((Companion, Actor(MIRA)));
     commands
-        .spawn(engine::standing_character(hidden, "Training dummy"))
+        .spawn(engine::standing_character(
+            unplaced,
+            DEFAULT_CHARACTER_PRESENTATION_ID,
+            "Training dummy",
+        ))
         .insert((Dummy, Actor(DUMMY)));
     let stone = materials.add(StandardMaterial {
         base_color: Color::srgb(0.45, 0.44, 0.42),

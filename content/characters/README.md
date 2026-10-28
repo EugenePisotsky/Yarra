@@ -60,6 +60,7 @@ sheet is kept by copying its `targets` into a preset in `presets/`.
 | Review | Shows |
 | --- | --- |
 | `bodies` | the bought body the game plays now beside MPFB bodies, in clay at one scale |
+| `outfits` | MPFB's female outfits and shoes on the fitted body |
 | `layers` | plain MakeHuman, a plain game material, MPFB's subsurface skin and procedural eyes |
 | `skins` | the CC0 skins on one face |
 | `expressions` | ARKit face units combined into common expressions |
@@ -90,20 +91,35 @@ sculpted target's job. The overlay draws both bodies as fitted (the other red, M
 
 ## In the game
 
-A preset exported as a static model stands ahead of the player with `--character-probe`, facing
-the camera, in its rest pose (no rig or morph targets yet):
+A preset is exported rigged, on MPFB's game-engine skeleton (53 bones; body, garments and hair
+skinned by MPFB's weights), with the bought body's Idle, Walk and Jog retargeted onto it:
 
 ```sh
 BLENDER_USER_RESOURCES=$PWD/.tools/blender /Applications/Blender.app/Contents/MacOS/Blender -b \
   --python-exit-code 1 --python content/characters/scripts/export_glb.py -- \
-  content/characters/presets/probe_female.json assets/local/characters/probe_female/probe_female.glb
-cargo run --release -p yarra-app-game -- \
-  --character-probe local/characters/probe_female/probe_female.glb
+  content/characters/presets/fitted_body.json assets/local/characters/fitted_body/fitted_body.glb \
+  assets/local/characters/female_main/female_main_locomotion.glb
+cargo run --release -p yarra-app-game -- --character-probe presentations/female/mpfb_fitted
 ```
 
-The export bakes the sliders into the mesh, removes MPFB's helpers and the skin under clothes,
-uses one plain PBR material per part, and cuts hair and lash textures out at half alpha (glTF
-MASK) while skin and eyes stay opaque.
+The character catalog (`assets/catalogs/character_presentations.catalog.ron`) holds that glb as
+the profile `presentations/female/mpfb_fitted`. `--character-probe` stands a profile ahead of the
+player, facing the camera and playing its idle; the editor's Animation workspace plays its walk
+and jog. The glb's clips come from bought animations, so it stays in `assets/local` like
+female_main's.
+
+The export bakes the sliders into the mesh, removes MPFB's helpers and the skin under clothes, and
+uses one plain PBR material per part; textures with holes (the ponytail's, the eyes', the
+teeth's) are cut out at half alpha (glTF MASK), the rest stay opaque. With clips it prints the
+measures the catalog's `feet` takes: the ankle and toe joints' lowest heights over the clips and
+the sole's reach behind the ankle and ahead of the toes.
+
+`retarget.py` turns each game-engine bone by one source bone's world-space turn, measured from a
+reference pose: the target posed so its limbs point where the source's do at rest, since MPFB holds
+its arms lower and its fingers curled. Only turns carry over, with the pelvis's rise and sway
+scaled by hip height; the target's own bone lengths place its joints. Side by side in the same
+clips (October 28) the poses match, fists and head turns included; the toes dip about 1 cm lower
+than the source's own (which dips 4 mm below the ground walking).
 
 ## The base
 

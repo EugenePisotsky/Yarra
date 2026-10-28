@@ -5,6 +5,11 @@
             id: "skeletons/yarra_humanoid_v1",
             name: "Yarra Humanoid V1",
         ),
+        // MPFB's 53-bone skeleton for game engines, fitted to each MPFB body.
+        (
+            id: "skeletons/mpfb_game_engine",
+            name: "MPFB Game Engine",
+        ),
     ],
     models: [
         (
@@ -33,6 +38,33 @@
                 wade_floor_m: 0.12,
             ),
         ),
+        // MPFB's body fitted to female_main, with female_main's clips retargeted
+        // (content/characters/scripts/export_glb.py).
+        (
+            id: "models/mpfb_fitted",
+            name: "MPFB Fitted",
+            skeleton: "skeletons/mpfb_game_engine",
+            visual: (
+                asset: "local/characters/fitted_body/fitted_body.glb",
+                scene: 0,
+                translation_m: (0.0, 0.0, 0.0),
+                yaw_degrees: 0.0,
+                uniform_scale: 1.0,
+            ),
+            // The export's measures: the joints' lowest heights over the clips, the shoe's reach
+            // at rest.
+            feet: (
+                joints: [("foot_l", "ball_l"), ("foot_r", "ball_r")],
+                ankle_height_m: 0.067,
+                toe_height_m: 0.01,
+                heel_behind_ankle_m: 0.064,
+                toe_ahead_m: 0.082,
+                heel_radius_m: 0.04,
+                ball_radius_m: 0.045,
+                wade_radius_m: 0.14,
+                wade_floor_m: 0.12,
+            ),
+        ),
     ],
     animation_banks: [
         (
@@ -40,6 +72,12 @@
             name: "Female Main Locomotion",
             skeleton: "skeletons/yarra_humanoid_v1",
             asset: "local/characters/female_main/female_main_locomotion.glb",
+        ),
+        (
+            id: "banks/mpfb_fitted/locomotion",
+            name: "MPFB Fitted Locomotion",
+            skeleton: "skeletons/mpfb_game_engine",
+            asset: "local/characters/fitted_body/fitted_body.glb",
         ),
     ],
     clips: [
@@ -61,6 +99,27 @@
             id: "clips/female_main/jog/loop",
             name: "Jog",
             bank: "banks/female_main/locomotion",
+            animation: "Jog",
+            playback: Loop,
+        ),
+        (
+            id: "clips/mpfb_fitted/idle/base",
+            name: "Idle",
+            bank: "banks/mpfb_fitted/locomotion",
+            animation: "Idle",
+            playback: Loop,
+        ),
+        (
+            id: "clips/mpfb_fitted/walk/loop",
+            name: "Walk",
+            bank: "banks/mpfb_fitted/locomotion",
+            animation: "Walk",
+            playback: Loop,
+        ),
+        (
+            id: "clips/mpfb_fitted/jog/loop",
+            name: "Jog",
+            bank: "banks/mpfb_fitted/locomotion",
             animation: "Jog",
             playback: Loop,
         ),
@@ -95,6 +154,35 @@
                 jog_turn_rate_radians: 5.497787,
             ),
         ),
+        (
+            id: "movement/mpfb_fitted/standing",
+            name: "MPFB Fitted Standing",
+            skeleton: "skeletons/mpfb_game_engine",
+            idle_clip: "clips/mpfb_fitted/idle/base",
+            walk: (
+                clip: "clips/mpfb_fitted/walk/loop",
+                speed_mps: 1.9686075,
+            ),
+            jog: (
+                clip: "clips/mpfb_fitted/jog/loop",
+                speed_mps: 2.941954,
+            ),
+            tuning: (
+                input_dead_zone: 0.18,
+                input_response_exponent: 1.0,
+                walk_to_jog_threshold: 0.72,
+                jog_to_walk_threshold: 0.60,
+                walk_acceleration_seconds: 0.22,
+                jog_acceleration_seconds: 0.22,
+                release_seconds: 0.16,
+                gait_blend_seconds: 0.24,
+                arrival_radius_m: 0.01,
+                start_blend_seconds: 0.22,
+                stop_blend_seconds: 0.26,
+                walk_turn_rate_radians: 7.0685835,
+                jog_turn_rate_radians: 5.497787,
+            ),
+        ),
     ],
     profiles: [
         (
@@ -106,6 +194,18 @@
                 (
                     context: "standing",
                     movement_set: "movement/female_main/standing",
+                ),
+            ],
+        ),
+        (
+            id: "presentations/female/mpfb_fitted",
+            name: "Female MPFB Fitted",
+            model: "models/mpfb_fitted",
+            default_movement_context: "standing",
+            movement_sets: [
+                (
+                    context: "standing",
+                    movement_set: "movement/mpfb_fitted/standing",
                 ),
             ],
         ),

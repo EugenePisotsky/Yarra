@@ -32,16 +32,21 @@ pub(super) fn spawn_player(mut commands: Commands, start_view: Res<WorldStartVie
     ));
 }
 
-/// A grounded, presented actor that stands where it is placed until something gives it a
-/// movement intent. For NPCs placed by a gameplay adapter.
-pub fn standing_character(translation: Vec3, name: &'static str) -> impl Bundle {
+/// A grounded actor presented as a character catalog profile, standing where it is placed and
+/// facing the way it is turned until something gives it a movement intent. For NPCs placed by a
+/// gameplay adapter and the game's character probe.
+pub fn standing_character(
+    place: Transform,
+    presentation: impl Into<String>,
+    name: &'static str,
+) -> impl Bundle {
     (
-        Transform::from_translation(translation),
+        place,
         Visibility::Inherited,
         MoveIntent::default(),
-        CharacterMotor::default(),
+        CharacterMotor::facing((place.rotation * Vec3::Z).xz()),
         CharacterMotion::default(),
-        CharacterPresentationRef::new(DEFAULT_CHARACTER_PRESENTATION_ID),
+        CharacterPresentationRef::new(presentation),
         TerrainGrounded,
         WorldRenderRoot,
         Name::new(name),

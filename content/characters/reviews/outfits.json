@@ -1,0 +1,36 @@
+{
+ "preset": "content/characters/presets/fitted_body.json",
+ "views": [
+  "body_front",
+  "body_three_quarter",
+  "body_profile"
+ ],
+ "variants": [
+  {
+   "label": "sport suit, leather shoes",
+   "note": "the outfit of the look probe",
+   "human": {"clothes": ["female_sportsuit01/female_sportsuit01.mhclo", "shoes01/shoes01.mhclo"]}
+  },
+  {
+   "label": "sport suit, sneakers",
+   "human": {"clothes": ["female_sportsuit01/female_sportsuit01.mhclo", "shoes05/shoes05.mhclo"]}
+  },
+  {
+   "label": "jeans and t-shirt",
+   "note": "the fitted preset's outfit",
+   "human": {"clothes": ["female_casualsuit01/female_casualsuit01.mhclo", "shoes05/shoes05.mhclo"]}
+  },
+  {
+   "label": "shorts and t-shirt",
+   "human": {"clothes": ["female_casualsuit02/female_casualsuit02.mhclo", "shoes06/shoes06.mhclo"]}
+  },
+  {
+   "label": "blouse and skirt",
+   "human": {"clothes": ["female_elegantsuit01/female_elegantsuit01.mhclo", "shoes04/shoes04.mhclo"]}
+  },
+  {
+   "label": "no clothes",
+   "human": {"clothes": []}
+  }
+ ]
+}

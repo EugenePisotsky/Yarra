@@ -108,9 +108,9 @@ const FLAGS: &[Flag] = &[
     ),
     flag(
         "--character-probe",
-        "ASSET",
+        "PROFILE",
         Scene,
-        "A model under assets/ stands ahead of the player, facing the camera, to judge characters",
+        "A character catalog profile stands ahead of the player, facing the camera, to judge it",
     ),
     flag(
         "--fps",
