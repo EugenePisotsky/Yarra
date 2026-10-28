@@ -107,6 +107,12 @@ const FLAGS: &[Flag] = &[
         "Authored gameplay project; adds a guard and gate near the start",
     ),
     flag(
+        "--character-probe",
+        "ASSET",
+        Scene,
+        "A model under assets/ stands ahead of the player, facing the camera, to judge characters",
+    ),
+    flag(
         "--fps",
         "0|15..240",
         Scene,

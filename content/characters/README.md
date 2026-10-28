@@ -59,10 +59,28 @@ sheet is kept by copying its `targets` into a preset in `presets/`.
 
 | Review | Shows |
 | --- | --- |
+| `bodies` | the bought body the game plays now beside MPFB bodies, in clay at one scale |
 | `layers` | plain MakeHuman, a plain game material, MPFB's subsurface skin and procedural eyes |
 | `skins` | the CC0 skins on one face |
 | `expressions` | ARKit face units combined into common expressions |
 | `faces` | faces drawn from 37 face sliders (`face_variants.py`, seeded) |
+
+## In the game
+
+A preset exported as a static model stands ahead of the player with `--character-probe`, facing
+the camera, in its rest pose (no rig or morph targets yet):
+
+```sh
+BLENDER_USER_RESOURCES=$PWD/.tools/blender /Applications/Blender.app/Contents/MacOS/Blender -b \
+  --python-exit-code 1 --python content/characters/scripts/export_glb.py -- \
+  content/characters/presets/probe_female.json assets/local/characters/probe_female/probe_female.glb
+cargo run --release -p yarra-app-game -- \
+  --character-probe local/characters/probe_female/probe_female.glb
+```
+
+The export bakes the sliders into the mesh, removes MPFB's helpers and the skin under clothes,
+uses one plain PBR material per part, and cuts hair and lash textures out at half alpha (glTF
+MASK) while skin and eyes stay opaque.
 
 ## The base
 

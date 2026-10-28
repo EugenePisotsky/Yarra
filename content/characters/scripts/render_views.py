@@ -1,16 +1,20 @@
-"""Renders review views of MPFB characters under one fixed light rig, for contact sheets.
+"""Renders review views of characters under one fixed light rig, for contact sheets.
 
 blender -b --python-exit-code 1 --python render_views.py -- SPEC.json OUT_DIR
 
 SPEC names a preset (MPFB's saved-human JSON), the views, the variants and optionally the engine
-("CYCLES", the default, or "EEVEE"):
+("CYCLES", the default, or "EEVEE"), "clay": true (one grey material on everything, so only
+shapes compare) and "body_frame_m" (every body view frames this height from the feet, so heights
+compare):
   {"preset": "content/characters/presets/probe_female.json",
    "views": ["face_front", "face_three_quarter", "body_front"],
    "variants": [{"label": "default"},
                 {"label": "freckles", "human": {"skin_mhmat": "toigo.../....mhmat"}}]}
 A variant's "human" is merged over the preset: objects key by key, anything else replaced, so
 "targets" (sliders and ARKit face units alike, {"target": name, "value": w}) replace the preset's.
-Writes OUT_DIR/<label>/<view>.png and OUT_DIR/manifest.json; sheet.py lays them out.
+A variant with "import": PATH (a glTF file, from the repository root) shows that model in its rest
+pose instead, facing glTF's front. Writes OUT_DIR/<label>/<view>.png and OUT_DIR/manifest.json;
+sheet.py lays them out.
 """
 import json
 import math
@@ -22,10 +26,7 @@ from mathutils import Vector
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from mpfb_services import service
-
-HumanService = service("humanservice", "HumanService")
-ObjectService = service("objectservice", "ObjectService")
+from mpfb_services import build_human, merged
 
 ROOT = Path(__file__).resolve().parents[3]
 STUDIO = Path(bpy.utils.system_resource("DATAFILES", path="studiolights/world"))
@@ -38,8 +39,12 @@ VIEWS = {
     "face_profile": ("face", 90, (800, 800)),
     "body_front": ("body", 0, (560, 1000)),
     "body_three_quarter": ("body", 35, (560, 1000)),
+    "body_profile": ("body", 90, (560, 1000)),
     "body_back": ("body", 180, (560, 1000)),
 }
+
+# Where the eyes lie below the top of an imported model's head, metres.
+EYES_BELOW_TOP = 0.115
 
 # Lens (mm) and the height framed, metres (face) or as a share of the character's height (body).
 FACE_LENS, FACE_HEIGHT = 85.0, 0.30
@@ -47,27 +52,39 @@ BODY_LENS, BODY_MARGIN = 50.0, 1.08
 SENSOR_HEIGHT = 24.0
 
 
-def merged(base, override):
-    out = dict(base)
-
-    for key, value in override.items():
-        if isinstance(value, dict) and isinstance(out.get(key), dict):
-            out[key] = merged(out[key], value)
-        else:
-            out[key] = value
-
-    return out
-
-
 def clear_scene():
     bpy.data.batch_remove(list(bpy.data.objects))
     bpy.data.orphans_purge(do_local_ids=True, do_linked_ids=True, do_recursive=True)
 
 
-def build_human(info):
-    settings = HumanService.get_default_deserialization_settings()
-    settings["material_instances"] = "NEVER"
-    return HumanService.deserialize_from_dict(info, settings)
+def import_model(path):
+    """A glTF model's meshes in their rest pose. In a skinned model only the skinned meshes show;
+    other meshes in the file (helpers such as female_main's stray icosphere) are hidden."""
+    bpy.ops.import_scene.gltf(filepath=str(ROOT / path))
+
+    for armature in bpy.data.armatures:
+        armature.pose_position = "REST"
+
+    meshes = [obj for obj in bpy.data.objects if obj.type == "MESH"]
+    skinned = [obj for obj in meshes if any(m.type == "ARMATURE" for m in obj.modifiers)]
+    shown = skinned or meshes
+
+    for obj in meshes:
+        obj.hide_render = obj not in shown
+
+    return shown, None
+
+
+def clay(parts):
+    material = bpy.data.materials.new("clay")
+    material.diffuse_color = (0.5, 0.5, 0.5, 1.0)
+    shader = material.node_tree.nodes["Principled BSDF"]
+    shader.inputs["Base Color"].default_value = (0.5, 0.5, 0.5, 1.0)
+    shader.inputs["Roughness"].default_value = 0.6
+
+    for obj in parts:
+        obj.data.materials.clear()
+        obj.data.materials.append(material)
 
 
 def world_bounds(objects):
@@ -83,21 +100,23 @@ def world_bounds(objects):
     return low, high
 
 
-def drawn_parts(basemesh):
-    return [obj for obj in (basemesh, *ObjectService.get_list_of_children(basemesh)) if obj.type == "MESH"]
-
-
-def framing(basemesh):
+def framing(parts, eyes):
     """Where the face and the body are, and the character's front as a unit vector in XY. The
-    body takes its garments: MPFB hides the skin under them."""
-    eyes = ObjectService.find_object_of_type_amongst_nearest_relatives(basemesh, "Eyes")
-    eye_low, eye_high = world_bounds([eyes])
-    body_low, body_high = world_bounds(drawn_parts(basemesh))
-    eye_centre = (eye_low + eye_high) / 2
+    body takes its garments: MPFB hides the skin under them. Without eyes the model faces
+    glTF's front (-Y in Blender) and its eyes are taken to lie EYES_BELOW_TOP under its top."""
+    body_low, body_high = world_bounds(parts)
     body_centre = (body_low + body_high) / 2
-    front = Vector((0.0, eye_centre.y - body_centre.y, 0.0)).normalized()
+
+    if eyes is None:
+        front = Vector((0.0, -1.0, 0.0))
+        eye_centre = Vector((body_centre.x, body_centre.y, body_high.z - EYES_BELOW_TOP)) + front * 0.05
+    else:
+        eye_low, eye_high = world_bounds([eyes])
+        eye_centre = (eye_low + eye_high) / 2
+        front = Vector((0.0, eye_centre.y - body_centre.y, 0.0)).normalized()
+
     face = eye_centre + Vector((0.0, 0.0, -0.035)) - front * 0.05
-    return face, body_centre, body_high.z - body_low.z, front
+    return face, body_centre, body_low.z, body_high.z - body_low.z, front
 
 
 def place_camera(camera, target, front, angle, distance):
@@ -173,16 +192,24 @@ def render_settings(engine):
     scene.view_settings.view_transform = "AgX"
 
 
-def mesh_counts(basemesh):
+def mesh_counts(parts):
     """Vertices of each drawn part as rendered (helpers masked, subdivision applied)."""
     depsgraph = bpy.context.evaluated_depsgraph_get()
-    return {obj.name: len(obj.evaluated_get(depsgraph).data.vertices) for obj in drawn_parts(basemesh)}
+    return {obj.name: len(obj.evaluated_get(depsgraph).data.vertices) for obj in parts}
 
 
-def render_variant(preset, variant, views, out):
+def render_variant(preset, variant, spec, out):
     clear_scene()
-    basemesh = build_human(merged(preset, variant.get("human", {})))
-    face, body, height, front = framing(basemesh)
+
+    if "import" in variant:
+        parts, eyes = import_model(variant["import"])
+    else:
+        _, parts, eyes = build_human(merged(preset, variant.get("human", {})))
+
+    if spec.get("clay"):
+        clay(parts)
+
+    face, body, feet, height, front = framing(parts, eyes)
     light_rig(front)
 
     camera = bpy.data.objects.new("camera", bpy.data.cameras.new("camera"))
@@ -193,13 +220,17 @@ def render_variant(preset, variant, views, out):
     folder = out / variant["label"]
     folder.mkdir(parents=True, exist_ok=True)
 
-    for view in views:
+    for view in spec["views"]:
         subject, angle, (width, pixels_high) = VIEWS[view]
 
         if subject == "face":
             lens, target, framed = FACE_LENS, face, FACE_HEIGHT
         else:
             lens, target, framed = BODY_LENS, body, height * BODY_MARGIN
+
+            if "body_frame_m" in spec:
+                framed = spec["body_frame_m"]
+                target = Vector((body.x, body.y, feet + framed / 2))
 
         camera.data.lens = lens
         distance = framed / 2 * lens / (SENSOR_HEIGHT / 2)
@@ -209,7 +240,7 @@ def render_variant(preset, variant, views, out):
         scene.render.filepath = str(folder / f"{view}.png")
         bpy.ops.render.render(write_still=True)
 
-    return mesh_counts(basemesh)
+    return mesh_counts(parts)
 
 
 def main():
@@ -222,7 +253,7 @@ def main():
     rendered = []
 
     for variant in spec["variants"]:
-        counts = render_variant(preset, variant, views, out)
+        counts = render_variant(preset, variant, spec, out)
         rendered.append({"label": variant["label"], "note": variant.get("note", ""), "vertices": counts})
         print(f"RENDERED {variant['label']} {counts}")
 
