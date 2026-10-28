@@ -12,9 +12,9 @@ compare):
                 {"label": "freckles", "human": {"skin_mhmat": "toigo.../....mhmat"}}]}
 A variant's "human" is merged over the preset: objects key by key, anything else replaced, so
 "targets" (sliders and ARKit face units alike, {"target": name, "value": w}) replace the preset's.
-A variant with "import": PATH (a glTF file, from the repository root) shows that model in its rest
-pose instead, facing glTF's front. Writes OUT_DIR/<label>/<view>.png and OUT_DIR/manifest.json;
-sheet.py lays them out.
+A variant's own "preset" replaces the spec's. A variant with "import": PATH (a glTF file, from the
+repository root) shows that model in its rest pose instead, facing glTF's front. Writes
+OUT_DIR/<label>/<view>.png and OUT_DIR/manifest.json; sheet.py lays them out.
 """
 import json
 import math
@@ -42,6 +42,8 @@ VIEWS = {
     "body_profile": ("body", 90, (560, 1000)),
     "body_back": ("body", 180, (560, 1000)),
 }
+
+FRONT = Vector((0.0, -1.0, 0.0))
 
 # Where the eyes lie below the top of an imported model's head, metres.
 EYES_BELOW_TOP = 0.115
@@ -101,22 +103,20 @@ def world_bounds(objects):
 
 
 def framing(parts, eyes):
-    """Where the face and the body are, and the character's front as a unit vector in XY. The
-    body takes its garments: MPFB hides the skin under them. Without eyes the model faces
-    glTF's front (-Y in Blender) and its eyes are taken to lie EYES_BELOW_TOP under its top."""
+    """Where the face and the body are. MPFB's characters and imported glTF models face -Y. The
+    body takes its garments: MPFB hides the skin under them. Without eyes, a model's eyes are taken
+    to lie EYES_BELOW_TOP under its top."""
     body_low, body_high = world_bounds(parts)
     body_centre = (body_low + body_high) / 2
 
     if eyes is None:
-        front = Vector((0.0, -1.0, 0.0))
-        eye_centre = Vector((body_centre.x, body_centre.y, body_high.z - EYES_BELOW_TOP)) + front * 0.05
+        eye_centre = Vector((body_centre.x, body_centre.y, body_high.z - EYES_BELOW_TOP)) + FRONT * 0.05
     else:
         eye_low, eye_high = world_bounds([eyes])
         eye_centre = (eye_low + eye_high) / 2
-        front = Vector((0.0, eye_centre.y - body_centre.y, 0.0)).normalized()
 
-    face = eye_centre + Vector((0.0, 0.0, -0.035)) - front * 0.05
-    return face, body_centre, body_low.z, body_high.z - body_low.z, front
+    face = eye_centre + Vector((0.0, 0.0, -0.035)) - FRONT * 0.05
+    return face, body_centre, body_low.z, body_high.z - body_low.z
 
 
 def place_camera(camera, target, front, angle, distance):
@@ -204,13 +204,16 @@ def render_variant(preset, variant, spec, out):
     if "import" in variant:
         parts, eyes = import_model(variant["import"])
     else:
+        if "preset" in variant:
+            preset = json.loads((ROOT / variant["preset"]).read_text())
+
         _, parts, eyes = build_human(merged(preset, variant.get("human", {})))
 
     if spec.get("clay"):
         clay(parts)
 
-    face, body, feet, height, front = framing(parts, eyes)
-    light_rig(front)
+    face, body, feet, height = framing(parts, eyes)
+    light_rig(FRONT)
 
     camera = bpy.data.objects.new("camera", bpy.data.cameras.new("camera"))
     camera.data.sensor_fit = "VERTICAL"
@@ -234,7 +237,7 @@ def render_variant(preset, variant, spec, out):
 
         camera.data.lens = lens
         distance = framed / 2 * lens / (SENSOR_HEIGHT / 2)
-        place_camera(camera, target, front, angle, distance)
+        place_camera(camera, target, FRONT, angle, distance)
         scene = bpy.context.scene
         scene.render.resolution_x, scene.render.resolution_y = width, pixels_high
         scene.render.filepath = str(folder / f"{view}.png")

@@ -1,0 +1,347 @@
+{
+ "clothes": [
+  "female_sportsuit01/female_sportsuit01.mhclo",
+  "shoes01/shoes01.mhclo"
+ ],
+ "color_adjustments": {},
+ "expressions": [],
+ "eyebrows": "mindfront_eyebrows_04/mindfront_eyebrows_04.mhclo",
+ "eyelashes": "mindfront_eyelashes_02/mindfront_eyelashes_02.mhclo",
+ "eyes": "high-poly/high-poly.mhclo",
+ "eyes_material_settings": {},
+ "eyes_material_type": "PROCEDURAL_EYES",
+ "hair": "ponytail01/ponytail01.mhclo",
+ "makeup": [],
+ "phenotype": {
+  "age": 0.5,
+  "cupsize": 0.4802620854471737,
+  "firmness": 0.6873479967631844,
+  "gender": 0.0,
+  "height": 0.6495284138821504,
+  "muscle": 0.6978398095742083,
+  "proportions": 0.4554515261920568,
+  "race": {
+   "african": 0.0,
+   "asian": 0.0,
+   "caucasian": 1.0
+  },
+  "weight": 0.5422028709651434
+ },
+ "proxy": "",
+ "rig": "",
+ "skin_material_settings": {},
+ "skin_material_type": "ENHANCED_SSS",
+ "skin_mhmat": "young_caucasian_female/young_caucasian_female.mhmat",
+ "targets": [
+  {
+   "target": "measure-bust-circ-incr",
+   "value": 0.034
+  },
+  {
+   "target": "measure-underbust-circ-incr",
+   "value": 0.328
+  },
+  {
+   "target": "measure-waist-circ-decr",
+   "value": 0.51
+  },
+  {
+   "target": "measure-hips-circ-decr",
+   "value": 0.109
+  },
+  {
+   "target": "measure-frontchest-dist-incr",
+   "value": 0.169
+  },
+  {
+   "target": "measure-shoulder-dist-decr",
+   "value": 0.401
+  },
+  {
+   "target": "measure-napetowaist-dist-decr",
+   "value": 0.409
+  },
+  {
+   "target": "measure-waisttohip-dist-decr",
+   "value": 0.131
+  },
+  {
+   "target": "torso-muscle-dorsi-incr",
+   "value": 0.157
+  },
+  {
+   "target": "torso-muscle-pectoral-incr",
+   "value": 0.24
+  },
+  {
+   "target": "torso-scale-depth-incr",
+   "value": 0.031
+  },
+  {
+   "target": "torso-scale-horiz-decr",
+   "value": 0.617
+  },
+  {
+   "target": "torso-scale-vert-decr",
+   "value": 0.346
+  },
+  {
+   "target": "torso-vshape-decr",
+   "value": 0.453
+  },
+  {
+   "target": "hip-scale-depth-incr",
+   "value": 0.011
+  },
+  {
+   "target": "hip-scale-horiz-incr",
+   "value": 0.029
+  },
+  {
+   "target": "hip-scale-vert-decr",
+   "value": 0.171
+  },
+  {
+   "target": "hip-waist-up",
+   "value": 0.143
+  },
+  {
+   "target": "stomach-pregnant-incr",
+   "value": 0.175
+  },
+  {
+   "target": "buttocks-volume-decr",
+   "value": 0.029
+  },
+  {
+   "target": "breast-dist-decr",
+   "value": 0.018
+  },
+  {
+   "target": "breast-point-incr",
+   "value": 0.037
+  },
+  {
+   "target": "breast-trans-up",
+   "value": 0.143
+  },
+  {
+   "target": "breast-volume-vert-up",
+   "value": 0.158
+  },
+  {
+   "target": "l-upperleg-fat-decr",
+   "value": 0.211
+  },
+  {
+   "target": "r-upperleg-fat-decr",
+   "value": 0.211
+  },
+  {
+   "target": "l-upperleg-muscle-decr",
+   "value": 0.132
+  },
+  {
+   "target": "r-upperleg-muscle-decr",
+   "value": 0.132
+  },
+  {
+   "target": "l-upperleg-scale-depth-decr",
+   "value": 0.057
+  },
+  {
+   "target": "r-upperleg-scale-depth-decr",
+   "value": 0.057
+  },
+  {
+   "target": "l-upperleg-scale-horiz-decr",
+   "value": 0.108
+  },
+  {
+   "target": "r-upperleg-scale-horiz-decr",
+   "value": 0.108
+  },
+  {
+   "target": "l-lowerleg-fat-decr",
+   "value": 0.039
+  },
+  {
+   "target": "r-lowerleg-fat-decr",
+   "value": 0.039
+  },
+  {
+   "target": "l-lowerleg-muscle-incr",
+   "value": 0.282
+  },
+  {
+   "target": "r-lowerleg-muscle-incr",
+   "value": 0.282
+  },
+  {
+   "target": "l-lowerleg-scale-depth-decr",
+   "value": 0.105
+  },
+  {
+   "target": "r-lowerleg-scale-depth-decr",
+   "value": 0.105
+  },
+  {
+   "target": "l-lowerleg-scale-horiz-decr",
+   "value": 0.23
+  },
+  {
+   "target": "r-lowerleg-scale-horiz-decr",
+   "value": 0.23
+  },
+  {
+   "target": "l-leg-valgus-incr",
+   "value": 0.064
+  },
+  {
+   "target": "r-leg-valgus-incr",
+   "value": 0.064
+  },
+  {
+   "target": "measure-thigh-circ-incr",
+   "value": 0.063
+  },
+  {
+   "target": "measure-knee-circ-decr",
+   "value": 0.184
+  },
+  {
+   "target": "measure-calf-circ-decr",
+   "value": 0.099
+  },
+  {
+   "target": "measure-upperleg-height-incr",
+   "value": 0.569
+  },
+  {
+   "target": "measure-lowerleg-height-decr",
+   "value": 0.995
+  },
+  {
+   "target": "measure-neck-circ-incr",
+   "value": 0.039
+  },
+  {
+   "target": "measure-neck-height-decr",
+   "value": 0.105
+  },
+  {
+   "target": "neck-scale-horiz-incr",
+   "value": 0.101
+  },
+  {
+   "target": "head-scale-depth-decr",
+   "value": 0.316
+  },
+  {
+   "target": "head-scale-horiz-decr",
+   "value": 0.367
+  },
+  {
+   "target": "head-scale-vert-decr",
+   "value": 0.25
+  },
+  {
+   "target": "torso-trans-forward",
+   "value": 0.347
+  },
+  {
+   "target": "hip-trans-forward",
+   "value": 0.65
+  },
+  {
+   "target": "head-trans-backward",
+   "value": 0.509
+  },
+  {
+   "target": "measure-upperarm-length-decr",
+   "value": 0.685
+  },
+  {
+   "target": "measure-lowerarm-length-decr",
+   "value": 0.061
+  },
+  {
+   "target": "measure-upperarm-circ-decr",
+   "value": 0.154
+  },
+  {
+   "target": "l-upperarm-fat-incr",
+   "value": 0.026
+  },
+  {
+   "target": "r-upperarm-fat-incr",
+   "value": 0.026
+  },
+  {
+   "target": "l-upperarm-muscle-incr",
+   "value": 0.096
+  },
+  {
+   "target": "r-upperarm-muscle-incr",
+   "value": 0.096
+  },
+  {
+   "target": "l-upperarm-scale-depth-decr",
+   "value": 0.039
+  },
+  {
+   "target": "r-upperarm-scale-depth-decr",
+   "value": 0.039
+  },
+  {
+   "target": "l-upperarm-scale-horiz-decr",
+   "value": 0.145
+  },
+  {
+   "target": "r-upperarm-scale-horiz-decr",
+   "value": 0.145
+  },
+  {
+   "target": "l-upperarm-shoulder-muscle-incr",
+   "value": 0.096
+  },
+  {
+   "target": "r-upperarm-shoulder-muscle-incr",
+   "value": 0.096
+  },
+  {
+   "target": "l-lowerarm-fat-decr",
+   "value": 0.031
+  },
+  {
+   "target": "r-lowerarm-fat-decr",
+   "value": 0.031
+  },
+  {
+   "target": "l-lowerarm-muscle-decr",
+   "value": 0.067
+  },
+  {
+   "target": "r-lowerarm-muscle-decr",
+   "value": 0.067
+  },
+  {
+   "target": "l-lowerarm-scale-depth-decr",
+   "value": 0.057
+  },
+  {
+   "target": "r-lowerarm-scale-depth-decr",
+   "value": 0.057
+  },
+  {
+   "target": "l-lowerarm-scale-horiz-incr",
+   "value": 0.048
+  },
+  {
+   "target": "r-lowerarm-scale-horiz-incr",
+   "value": 0.048
+  }
+ ],
+ "teeth": "teeth_base/teeth_base.mhclo",
+ "tongue": "tongue01/tongue01.mhclo"
+}

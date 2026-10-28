@@ -8,8 +8,11 @@ import sys
 
 
 def service(module, name):
-    suffix = f"mpfb.services.{module}"
+    return mpfb_attribute(f"mpfb.services.{module}", name)
 
+
+def mpfb_attribute(suffix, name):
+    """`name` from the loaded MPFB module whose path ends in `suffix`."""
     for loaded in list(sys.modules):
         if loaded.endswith(suffix):
             return getattr(importlib.import_module(loaded), name)

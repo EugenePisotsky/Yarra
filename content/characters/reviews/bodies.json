@@ -2,17 +2,74 @@
  "preset": "content/characters/presets/probe_female.json",
  "clay": true,
  "body_frame_m": 1.95,
- "views": ["body_front", "body_three_quarter", "body_profile", "body_back"],
+ "views": [
+  "body_front",
+  "body_three_quarter",
+  "body_profile",
+  "body_back"
+ ],
  "variants": [
-  {"label": "current in-game body", "note": "female_main: the bought body the game draws now",
-   "import": "assets/local/characters/female_main/female_main_locomotion.glb"},
-  {"label": "MPFB average", "note": "every macro slider at its middle",
-   "human": {"clothes": [], "hair": ""}},
-  {"label": "MPFB idealised", "note": "proportions 1 (idealised), a little taller and leaner",
-   "human": {"clothes": [], "hair": "", "phenotype": {"proportions": 1.0, "height": 0.65, "weight": 0.45}}},
-  {"label": "MPFB athletic", "note": "proportions 1, muscle 0.75, weight 0.4, height 0.7",
-   "human": {"clothes": [], "hair": "", "phenotype": {"proportions": 1.0, "muscle": 0.75, "weight": 0.4, "height": 0.7}}},
-  {"label": "MPFB curvy", "note": "proportions 0.8, weight 0.62, cup 0.7",
-   "human": {"clothes": [], "hair": "", "phenotype": {"proportions": 0.8, "weight": 0.62, "cupsize": 0.7}}}
+  {
+   "label": "current in-game body",
+   "note": "female_main: the bought body the game draws now",
+   "import": "assets/local/characters/female_main/female_main_locomotion.glb"
+  },
+  {
+   "label": "MPFB fitted to it",
+   "note": "fit_body.py: MPFB's sliders fitted to the bought body's surface",
+   "preset": "content/characters/presets/fitted_body.json",
+   "human": {
+    "clothes": [],
+    "hair": ""
+   }
+  },
+  {
+   "label": "MPFB average",
+   "note": "every macro slider at its middle",
+   "human": {
+    "clothes": [],
+    "hair": ""
+   }
+  },
+  {
+   "label": "MPFB idealised",
+   "note": "proportions 1 (idealised), a little taller and leaner",
+   "human": {
+    "clothes": [],
+    "hair": "",
+    "phenotype": {
+     "proportions": 1.0,
+     "height": 0.65,
+     "weight": 0.45
+    }
+   }
+  },
+  {
+   "label": "MPFB athletic",
+   "note": "proportions 1, muscle 0.75, weight 0.4, height 0.7",
+   "human": {
+    "clothes": [],
+    "hair": "",
+    "phenotype": {
+     "proportions": 1.0,
+     "muscle": 0.75,
+     "weight": 0.4,
+     "height": 0.7
+    }
+   }
+  },
+  {
+   "label": "MPFB curvy",
+   "note": "proportions 0.8, weight 0.62, cup 0.7",
+   "human": {
+    "clothes": [],
+    "hair": "",
+    "phenotype": {
+     "proportions": 0.8,
+     "weight": 0.62,
+     "cupsize": 0.7
+    }
+   }
+  }
  ]
 }

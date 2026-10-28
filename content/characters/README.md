@@ -65,6 +65,29 @@ sheet is kept by copying its `targets` into a preset in `presets/`.
 | `expressions` | ARKit face units combined into common expressions |
 | `faces` | faces drawn from 37 face sliders (`face_variants.py`, seeded) |
 
+## Fitting a body to another model
+
+`fit_body.py` finds the MPFB sliders that make its body match another body's surface and writes
+them into a preset: only slider values, nothing of the other mesh.
+
+```sh
+BLENDER_USER_RESOURCES=$PWD/.tools/blender /Applications/Blender.app/Contents/MacOS/Blender -b \
+  --python-exit-code 1 --python content/characters/scripts/fit_body.py -- \
+  assets/local/characters/female_main/female_main_locomotion.glb \
+  content/characters/presets/probe_female.json content/characters/presets/fitted_body.json \
+  tmp/characters/fit_points.npz
+uv run --with numpy --with pillow python content/characters/scripts/overlay.py \
+  tmp/characters/fit_points.npz tmp/characters/fit_overlay.png
+```
+
+It fits six macro sliders and about 60 region sliders (torso, hips, legs, arms, neck, head size
+and posture) by point-to-plane ICP with Levenberg-Marquardt steps, about 20 s. MPFB's arms are
+turned to the other body's at shoulder and elbow as part of the fit, since the two hold them
+differently; hands are left out. `fitted_body.json` is the game's bought body (female_main)
+fitted this way (October 28): mean distance head 3.4, torso 5.1, legs 6.5, arms 6.6 mm. What
+sliders cannot give is surface definition (collarbones, abdomen, knees): a normal map or a
+sculpted target's job. The overlay draws both bodies as fitted (the other red, MPFB cyan).
+
 ## In the game
 
 A preset exported as a static model stands ahead of the player with `--character-probe`, facing
