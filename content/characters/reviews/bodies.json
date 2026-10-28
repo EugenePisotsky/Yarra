@@ -24,6 +24,16 @@
    }
   },
   {
+   "label": "MPFB wrapped onto it",
+   "note": "wrap_body.py: the fitted body moved onto the bought body's surface, head, hands and feet MPFB's",
+   "preset": "content/characters/presets/fitted_body.json",
+   "human": {
+    "clothes": [],
+    "hair": "",
+    "wrap": "assets/local/characters/fitted_body/wrap.npz"
+   }
+  },
+  {
    "label": "MPFB average",
    "note": "every macro slider at its middle",
    "human": {

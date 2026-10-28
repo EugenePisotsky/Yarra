@@ -5,6 +5,11 @@ the end of its module's name.
 """
 import importlib
 import sys
+from pathlib import Path
+
+import numpy as np
+
+ROOT = Path(__file__).resolve().parents[3]
 
 
 def service(module, name):
@@ -35,15 +40,44 @@ def merged(base, override):
 
 def build_human(info, subdivision=1):
     """A human from MPFB's saved-human JSON: its basemesh, its drawn parts and its eyes. A rigged
-    human's parts are the rig's children, the basemesh among them."""
+    human's parts are the rig's children, the basemesh among them. A preset's "wrap" (a file
+    wrap_body.py wrote, from the repository root) moves the base mesh, and the rig and parts are
+    refitted to it."""
     human = service("humanservice", "HumanService")
     objects = service("objectservice", "ObjectService")
     settings = human.get_default_deserialization_settings()
     settings["material_instances"] = "NEVER"
     settings["subdiv_levels"] = subdivision
+    info = dict(info)
+    wrap = info.pop("wrap", None)
     basemesh = human.deserialize_from_dict(info, settings)
     eyes = objects.find_object_of_type_amongst_nearest_relatives(basemesh, "Eyes")
     rig = basemesh.parent if basemesh.parent and basemesh.parent.type == "ARMATURE" else None
     children = [obj for obj in objects.get_list_of_children(rig or basemesh) if obj != basemesh]
     parts = [obj for obj in (basemesh, *children) if obj.type == "MESH"]
+
+    if wrap:
+        apply_wrap(basemesh, rig, parts, ROOT / wrap)
+
     return basemesh, parts, eyes
+
+
+def apply_wrap(basemesh, rig, parts, path):
+    """The wrap's offsets as a shape key over the sliders; the rig's joints and the parts then
+    fitted again to the moved base mesh (its joint cubes and helpers moved with it)."""
+    offsets = np.load(path)["offsets"]
+    local = offsets @ np.linalg.inv(np.array(basemesh.matrix_world)[:3, :3]).T
+    key = basemesh.shape_key_add(name="wrap", from_mix=False)
+    positions = np.empty(len(key.data) * 3)
+    key.data.foreach_get("co", positions)
+    key.data.foreach_set("co", (positions.reshape(-1, 3) + local).ravel())
+    key.value = 1.0
+
+    if rig:
+        service("rigservice", "RigService").refit_existing_armature(rig, basemesh)
+
+    clothes = service("clothesservice", "ClothesService")
+
+    for part in parts:
+        if part != basemesh:
+            clothes.fit_clothes_to_human(part, basemesh)

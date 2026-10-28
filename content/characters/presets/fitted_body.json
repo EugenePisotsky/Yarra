@@ -5,8 +5,8 @@
  ],
  "color_adjustments": {},
  "expressions": [],
- "eyebrows": "mindfront_eyebrows_04/mindfront_eyebrows_04.mhclo",
- "eyelashes": "mindfront_eyelashes_02/mindfront_eyelashes_02.mhclo",
+ "eyebrows": "eyebrow011/eyebrow011.mhclo",
+ "eyelashes": "eyelashes01/eyelashes01.mhclo",
  "eyes": "high-poly/high-poly.mhclo",
  "eyes_material_settings": {},
  "eyes_material_type": "PROCEDURAL_EYES",
@@ -343,5 +343,6 @@
   }
  ],
  "teeth": "teeth_base/teeth_base.mhclo",
- "tongue": "tongue01/tongue01.mhclo"
+ "tongue": "tongue01/tongue01.mhclo",
+ "wrap": "assets/local/characters/fitted_body/wrap.npz"
 }

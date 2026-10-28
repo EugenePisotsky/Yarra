@@ -55,9 +55,9 @@
             // at rest.
             feet: (
                 joints: [("foot_l", "ball_l"), ("foot_r", "ball_r")],
-                ankle_height_m: 0.067,
-                toe_height_m: 0.01,
-                heel_behind_ankle_m: 0.064,
+                ankle_height_m: 0.061,
+                toe_height_m: 0.012,
+                heel_behind_ankle_m: 0.063,
                 toe_ahead_m: 0.082,
                 heel_radius_m: 0.04,
                 ball_radius_m: 0.045,

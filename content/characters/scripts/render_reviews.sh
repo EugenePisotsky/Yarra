@@ -6,7 +6,7 @@ setopt pipefail errexit
 cd "${0:A:h}/../../.."
 reviews=(${@:-${(f)"$(ls content/characters/reviews | sed 's/\.json$//')"}})
 # Variants side by side on a sheet's row: one view per variant reads best in a grid.
-typeset -A columns=(bodies 1 outfits 1 layers 1 skins 3 expressions 4 faces 3)
+typeset -A columns=(bodies 1 outfits 1 brows 4 layers 1 skins 3 expressions 4 faces 3)
 
 for review in $reviews; do
   out=tmp/characters/$review

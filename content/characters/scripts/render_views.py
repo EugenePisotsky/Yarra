@@ -26,9 +26,8 @@ from mathutils import Vector
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from mpfb_services import build_human, merged
+from mpfb_services import ROOT, build_human, merged
 
-ROOT = Path(__file__).resolve().parents[3]
 STUDIO = Path(bpy.utils.system_resource("DATAFILES", path="studiolights/world"))
 
 # Each view: what it frames, the camera's angle round the character from the front, degrees

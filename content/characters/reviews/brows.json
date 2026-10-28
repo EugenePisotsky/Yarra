@@ -1,0 +1,133 @@
+{
+ "preset": "content/characters/presets/fitted_body.json",
+ "views": [
+  "face_front",
+  "face_three_quarter"
+ ],
+ "variants": [
+  {
+   "label": "modelled (mindfront 04, 02)",
+   "note": "the preset's: 20,130 + 16,992 vertices"
+  },
+  {
+   "label": "eyebrow001",
+   "note": "cards, with eyelashes01",
+   "human": {
+    "eyebrows": "eyebrow001/eyebrow001.mhclo",
+    "eyelashes": "eyelashes01/eyelashes01.mhclo"
+   }
+  },
+  {
+   "label": "eyebrow002",
+   "note": "cards, with eyelashes01",
+   "human": {
+    "eyebrows": "eyebrow002/eyebrow002.mhclo",
+    "eyelashes": "eyelashes01/eyelashes01.mhclo"
+   }
+  },
+  {
+   "label": "eyebrow003",
+   "note": "cards, with eyelashes01",
+   "human": {
+    "eyebrows": "eyebrow003/eyebrow003.mhclo",
+    "eyelashes": "eyelashes01/eyelashes01.mhclo"
+   }
+  },
+  {
+   "label": "eyebrow004",
+   "note": "cards, with eyelashes01",
+   "human": {
+    "eyebrows": "eyebrow004/eyebrow004.mhclo",
+    "eyelashes": "eyelashes01/eyelashes01.mhclo"
+   }
+  },
+  {
+   "label": "eyebrow005",
+   "note": "cards, with eyelashes01",
+   "human": {
+    "eyebrows": "eyebrow005/eyebrow005.mhclo",
+    "eyelashes": "eyelashes01/eyelashes01.mhclo"
+   }
+  },
+  {
+   "label": "eyebrow006",
+   "note": "cards, with eyelashes01",
+   "human": {
+    "eyebrows": "eyebrow006/eyebrow006.mhclo",
+    "eyelashes": "eyelashes01/eyelashes01.mhclo"
+   }
+  },
+  {
+   "label": "eyebrow007",
+   "note": "cards, with eyelashes01",
+   "human": {
+    "eyebrows": "eyebrow007/eyebrow007.mhclo",
+    "eyelashes": "eyelashes01/eyelashes01.mhclo"
+   }
+  },
+  {
+   "label": "eyebrow008",
+   "note": "cards, with eyelashes01",
+   "human": {
+    "eyebrows": "eyebrow008/eyebrow008.mhclo",
+    "eyelashes": "eyelashes01/eyelashes01.mhclo"
+   }
+  },
+  {
+   "label": "eyebrow009",
+   "note": "cards, with eyelashes01",
+   "human": {
+    "eyebrows": "eyebrow009/eyebrow009.mhclo",
+    "eyelashes": "eyelashes01/eyelashes01.mhclo"
+   }
+  },
+  {
+   "label": "eyebrow010",
+   "note": "cards, with eyelashes01",
+   "human": {
+    "eyebrows": "eyebrow010/eyebrow010.mhclo",
+    "eyelashes": "eyelashes01/eyelashes01.mhclo"
+   }
+  },
+  {
+   "label": "eyebrow011",
+   "note": "cards, with eyelashes01",
+   "human": {
+    "eyebrows": "eyebrow011/eyebrow011.mhclo",
+    "eyelashes": "eyelashes01/eyelashes01.mhclo"
+   }
+  },
+  {
+   "label": "eyebrow012",
+   "note": "cards, with eyelashes01",
+   "human": {
+    "eyebrows": "eyebrow012/eyebrow012.mhclo",
+    "eyelashes": "eyelashes01/eyelashes01.mhclo"
+   }
+  },
+  {
+   "label": "eyelashes02",
+   "note": "cards, with eyebrow001",
+   "human": {
+    "eyebrows": "eyebrow001/eyebrow001.mhclo",
+    "eyelashes": "eyelashes02/eyelashes02.mhclo"
+   }
+  },
+  {
+   "label": "eyelashes03",
+   "note": "cards, with eyebrow001",
+   "human": {
+    "eyebrows": "eyebrow001/eyebrow001.mhclo",
+    "eyelashes": "eyelashes03/eyelashes03.mhclo"
+   }
+  },
+  {
+   "label": "eyelashes04",
+   "note": "cards, with eyebrow001",
+   "human": {
+    "eyebrows": "eyebrow001/eyebrow001.mhclo",
+    "eyelashes": "eyelashes04/eyelashes04.mhclo"
+   }
+  }
+ ]
+}

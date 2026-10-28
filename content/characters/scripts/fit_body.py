@@ -250,12 +250,14 @@ def arm_axes(positions, segments, outward):
 
 
 def load_model(path):
-    """The model's world positions, triangles and arm weights, its objects then removed."""
+    """The model's world positions, triangles, arm weights and joints (bone heads), its objects
+    then removed."""
     bpy.ops.import_scene.gltf(filepath=str(path))
 
     for armature in bpy.data.armatures:
         armature.pose_position = "REST"
 
+    rig = next(o for o in bpy.data.objects if o.type == "ARMATURE")
     body = next(o for o in bpy.data.objects if o.type == "MESH" and any(m.type == "ARMATURE" for m in o.modifiers))
     shaped = body.evaluated_get(bpy.context.evaluated_depsgraph_get()).data
     shaped.calc_loop_triangles()
@@ -265,6 +267,7 @@ def load_model(path):
         "positions": local @ matrix[:3, :3].T + matrix[:3, 3],
         "triangles": np.array([t.vertices[:] for t in shaped.loop_triangles]),
         "segments": arm_segments(body, MODEL_ARM, len(shaped.vertices)),
+        "joints": {bone.name: np.array(rig.matrix_world @ bone.head_local) for bone in rig.data.bones},
     }
     bpy.data.batch_remove(list(bpy.data.objects))
     return model
@@ -277,6 +280,8 @@ class Human:
         parts = {"clothes": [], "hair": "", "eyebrows": "", "eyelashes": "", "teeth": "", "tongue": "", "proxy": ""}
         info = merged(preset, parts)
         info["targets"] = []
+        # A wrap (wrap_body.py) lies over the fitted sliders: the fit sees MPFB's own shape.
+        info.pop("wrap", None)
         self.basemesh, _, _ = build_human(info, subdivision=0)
         HumanService.add_builtin_rig(self.basemesh, "default")
         matrix = np.array(self.basemesh.matrix_world)
@@ -435,15 +440,24 @@ class Fit:
                     normals.append(normal)
 
         matched = (np.array(index), np.array(points), np.array(normals))
-        return {"base": base, "placed": placed, "tilt": tilt, "pivot": pivot, "posed": posed, "turns": turns, "matched": matched}
+        return {
+            "base": base,
+            "body": body,
+            "placed": placed,
+            "tilt": tilt,
+            "pivot": pivot,
+            "posed": posed,
+            "turns": turns,
+            "matched": matched,
+        }
 
     def cost(self, posed, matched, values):
         index, points, normals = matched
         gap = np.einsum("ij,ij->i", posed[index] - points, normals)
         return float(np.mean(gap**2) + SLIDER_PULL * np.sum(values**2)), gap
 
-    def run(self, macros):
-        state = (macros, np.zeros(len(SLIDERS)), 0.0, 0.0)
+    def run(self, state):
+        """Fits from a state: (macros, region slider values, depth shift, lean)."""
         damping = 1e-3
         fitted = self.evaluate(state)
 
@@ -480,10 +494,27 @@ class Fit:
 
         return state, fitted
 
+    def run_placement(self, state, steps):
+        """Fits only the placement (depth shift, lean) and the arms' turns, the sliders held."""
+        fitted = self.evaluate(state)
+
+        for _ in range(steps):
+            self.refine_arms(fitted)
+            fitted = self.evaluate(state)
+            _, gap = self.cost(fitted["posed"], fitted["matched"], state[1])
+            change = np.linalg.lstsq(self.gaps(self.placement(state, fitted), fitted), -gap, rcond=None)[0]
+            macros, values, shift, lean = state
+            lean += float(np.clip(change[1], -LEAN_MOVE, LEAN_MOVE))
+            state = (macros, values, shift + float(change[0]), lean)
+            fitted = self.evaluate(state)
+
+        report(steps, state, fitted, self.cost(fitted["posed"], fitted["matched"], state[1])[1])
+        return state, fitted
+
     def system(self, state, fitted, gap):
         """Each unknown's effect on each match's gap: macros by finite differences."""
-        macros, values, shift, _ = state
-        base, index, normals = fitted["base"], fitted["matched"][0], fitted["matched"][2]
+        macros, values, _, _ = state
+        base = fitted["base"]
         columns = []
 
         for name in macros:
@@ -492,13 +523,19 @@ class Fit:
 
         self.human.with_macros(macros)
         columns += [self.human.column(s, v) for s, v in zip(SLIDERS, values)]
-        columns = [c @ fitted["tilt"].T for c in columns]
-        columns.append(np.tile([0.0, 1.0, 0.0], (len(base), 1)))
-        about = fitted["placed"] - fitted["pivot"] - np.array([0.0, shift, 0.0])
-        columns.append(np.cross(np.array([1.0, 0.0, 0.0]), about))
+        columns = [c @ fitted["tilt"].T for c in columns] + self.placement(state, fitted)
+        return self.gaps(columns, fitted), -gap
+
+    def placement(self, state, fitted):
+        """The depth shift's and the lean's effect on each vertex."""
+        about = fitted["placed"] - fitted["pivot"] - np.array([0.0, state[2], 0.0])
+        return [np.tile([0.0, 1.0, 0.0], (len(about), 1)), np.cross(np.array([1.0, 0.0, 0.0]), about)]
+
+    def gaps(self, columns, fitted):
+        """Each column's effect on each match's gap, once the arms turn."""
+        index, normals = fitted["matched"][0], fitted["matched"][2]
         turned = [np.einsum("nij,nj->ni", fitted["turns"][index], c[index]) for c in columns]
-        a = np.stack([np.einsum("ij,ij->i", c, normals) for c in turned], axis=1)
-        return a, -gap
+        return np.stack([np.einsum("ij,ij->i", c, normals) for c in turned], axis=1)
 
     def solve(self, a, b, values, damping):
         count = len(a)
@@ -575,7 +612,7 @@ def main():
     model = load_model(model_path)
     human = Human(preset)
     fit = Fit(human, model)
-    (macros, values, shift, lean), fitted = fit.run(dict(MACROS))
+    (macros, values, shift, lean), fitted = fit.run((dict(MACROS), np.zeros(len(SLIDERS)), 0.0, 0.0))
     out = merged(preset, {"phenotype": macros})
     out["targets"] = targets(values)
     out_path.write_text(json.dumps(out, indent=1) + "\n")
@@ -593,4 +630,5 @@ def main():
         print(f"FIT slider {positive if value > 0 else negative:36} {value:+.2f}")
 
 
-main()
+if __name__ == "__main__":
+    main()
