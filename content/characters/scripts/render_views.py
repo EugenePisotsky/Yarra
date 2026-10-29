@@ -36,6 +36,12 @@ VIEWS = {
     "face_front": ("face", 0, (800, 800)),
     "face_three_quarter": ("face", 35, (800, 800)),
     "face_profile": ("face", 90, (800, 800)),
+    "eyes_front": ("eyes", 0, (800, 400)),
+    "eyes_three_quarter": ("eyes", 35, (800, 400)),
+    "nose_front": ("nose", 0, (800, 500)),
+    "nose_three_quarter": ("nose", 35, (800, 500)),
+    "mouth_front": ("mouth", 0, (800, 500)),
+    "mouth_three_quarter": ("mouth", 35, (800, 500)),
     "body_front": ("body", 0, (560, 1000)),
     "body_three_quarter": ("body", 35, (560, 1000)),
     "body_profile": ("body", 90, (560, 1000)),
@@ -49,6 +55,9 @@ EYES_BELOW_TOP = 0.115
 
 # Lens (mm) and the height framed, metres (face) or as a share of the character's height (body).
 FACE_LENS, FACE_HEIGHT = 85.0, 0.30
+
+# Close views of one feature: the height framed and its centre's rise above the face's, metres.
+FEATURES = {"eyes": (0.08, 0.035), "nose": (0.10, 0.0), "mouth": (0.10, -0.045)}
 BODY_LENS, BODY_MARGIN = 50.0, 1.08
 SENSOR_HEIGHT = 24.0
 
@@ -211,38 +220,52 @@ def render_variant(preset, variant, spec, out):
     if spec.get("clay"):
         clay(parts)
 
-    face, body, feet, height = framing(parts, eyes)
+    placement = framing(parts, eyes)
     light_rig(FRONT)
+    camera = add_camera()
+    folder = out / variant["label"]
+    folder.mkdir(parents=True, exist_ok=True)
 
+    for view in spec["views"]:
+        render_view(camera, view, placement, folder / f"{view}.png", spec.get("body_frame_m"))
+
+    return mesh_counts(parts)
+
+
+def add_camera():
     camera = bpy.data.objects.new("camera", bpy.data.cameras.new("camera"))
     camera.data.sensor_fit = "VERTICAL"
     camera.data.sensor_height = SENSOR_HEIGHT
     bpy.context.scene.collection.objects.link(camera)
     bpy.context.scene.camera = camera
-    folder = out / variant["label"]
-    folder.mkdir(parents=True, exist_ok=True)
+    return camera
 
-    for view in spec["views"]:
-        subject, angle, (width, pixels_high) = VIEWS[view]
 
-        if subject == "face":
-            lens, target, framed = FACE_LENS, face, FACE_HEIGHT
-        else:
-            lens, target, framed = BODY_LENS, body, height * BODY_MARGIN
+def render_view(camera, view, placement, path, body_frame=None):
+    """Renders a view of a character placed as framing() found it. A body_frame (metres) frames
+    that height from the feet instead of the character's own."""
+    face, body, feet, height = placement
+    subject, angle, (width, pixels_high) = VIEWS[view]
 
-            if "body_frame_m" in spec:
-                framed = spec["body_frame_m"]
-                target = Vector((body.x, body.y, feet + framed / 2))
+    if subject == "face":
+        lens, target, framed = FACE_LENS, face, FACE_HEIGHT
+    elif subject in FEATURES:
+        framed, rise = FEATURES[subject]
+        lens, target = FACE_LENS, face + Vector((0.0, 0.0, rise))
+    else:
+        lens, target, framed = BODY_LENS, body, height * BODY_MARGIN
 
-        camera.data.lens = lens
-        distance = framed / 2 * lens / (SENSOR_HEIGHT / 2)
-        place_camera(camera, target, FRONT, angle, distance)
-        scene = bpy.context.scene
-        scene.render.resolution_x, scene.render.resolution_y = width, pixels_high
-        scene.render.filepath = str(folder / f"{view}.png")
-        bpy.ops.render.render(write_still=True)
+        if body_frame:
+            framed = body_frame
+            target = Vector((body.x, body.y, feet + framed / 2))
 
-    return mesh_counts(parts)
+    camera.data.lens = lens
+    distance = framed / 2 * lens / (SENSOR_HEIGHT / 2)
+    place_camera(camera, target, FRONT, angle, distance)
+    scene = bpy.context.scene
+    scene.render.resolution_x, scene.render.resolution_y = width, pixels_high
+    scene.render.filepath = str(path)
+    bpy.ops.render.render(write_still=True)
 
 
 def main():
@@ -264,4 +287,5 @@ def main():
     print(f"RENDER_DONE {len(rendered)} variants")
 
 
-main()
+if __name__ == "__main__":
+    main()

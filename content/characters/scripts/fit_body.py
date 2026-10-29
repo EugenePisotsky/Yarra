@@ -30,7 +30,7 @@ from mathutils.bvhtree import BVHTree
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from mpfb_services import build_human, merged, mpfb_attribute, service
+from mpfb_services import build_human, merged, mpfb_attribute, service, sides
 
 HumanService = service("humanservice", "HumanService")
 TargetService = service("targetservice", "TargetService")
@@ -146,10 +146,6 @@ LEFT = (".l", ".L")
 RIGHT = (".r", ".R")
 
 MIRROR = np.diag([-1.0, 1.0, 1.0])
-
-
-def sides(name):
-    return [f"l-{name[2:]}", f"r-{name[2:]}"] if name.startswith("l-") else [name]
 
 
 def matches(name, pattern, suffixes):

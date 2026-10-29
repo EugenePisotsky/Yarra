@@ -38,6 +38,11 @@ def merged(base, override):
     return out
 
 
+def sides(name):
+    """The targets a slider name stands for: an "l-" name moves both sides."""
+    return [f"l-{name[2:]}", f"r-{name[2:]}"] if name.startswith("l-") else [name]
+
+
 def build_human(info, subdivision=1):
     """A human from MPFB's saved-human JSON: its basemesh, its drawn parts and its eyes. A rigged
     human's parts are the rig's children, the basemesh among them. A preset's "wrap" (a file

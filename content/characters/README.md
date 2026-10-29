@@ -67,6 +67,28 @@ sheet is kept by copying its `targets` into a preset in `presets/`.
 | `expressions` | ARKit face units combined into common expressions |
 | `faces` | faces drawn from 37 face sliders (`face_variants.py`, seeded) |
 
+## Face sliders
+
+`face_sliders.json` lists the face sliders characters are shaped with, by feature group: each a
+pair of MPFB targets (the first for negative values, none for a slider that only goes one way;
+an `l-` name moves both sides) and the view that shows it best. It began as 100 candidates from
+MPFB's 350 or so face and head targets; the audit renders every slider at both ends beside the
+preset's face, and the list keeps the sliders worth offering, with their limits.
+
+```sh
+BLENDER_USER_RESOURCES=$PWD/.tools/blender /Applications/Blender.app/Contents/MacOS/Blender -b \
+  --python-exit-code 1 --python content/characters/scripts/slider_audit.py -- \
+  content/characters/face_sliders.json tmp/characters/sliders            # or name GROUPs
+for m in tmp/characters/sliders/*/manifest.json; do
+  uv run -q --with pillow python content/characters/scripts/sheet.py $(dirname $m) --columns 2 --height 300
+done
+```
+
+The human is built once (about 18 minutes for all 100); each slider's targets go on over the
+preset's and the eyes, brows, lashes, teeth and hair are fitted to the face again, as the game
+will do when a slider moves. Fine features (lids, folds, nostrils, lips) are judged in close views
+of the eyes, nose or mouth: whole-face views show them too small.
+
 ## Fitting a body to another model
 
 `fit_body.py` finds the MPFB sliders that make its body match another body's surface and writes

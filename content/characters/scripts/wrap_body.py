@@ -29,7 +29,8 @@ from mathutils.kdtree import KDTree
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from fit_body import BODY_VERTICES, MACROS, SLIDERS, Fit, Human, TargetService, load_model, sides
+from fit_body import BODY_VERTICES, MACROS, SLIDERS, Fit, Human, TargetService, load_model
+from mpfb_services import sides
 
 # Joints placed at MODEL's: MPFB's joint cube, MODEL's bone whose head is the joint (the point its
 # clips turn the limb about), and the MPFB arm segment that turns with the limb below it in the
