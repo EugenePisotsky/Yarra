@@ -18,6 +18,8 @@ use bevy::{
 };
 use serde::Deserialize;
 
+use crate::character_face::CharacterAppearance;
+
 const VERSION: u32 = 1;
 
 /// Each exported vertex's base-mesh or part vertex. The files name it `_SOURCE_VERTEX`.
@@ -38,13 +40,6 @@ impl Plugin for CharacterKitPlugin {
                 (bind_kit_meshes, mark_changed_appearances, build_kit_meshes).chain(),
             );
     }
-}
-
-/// A character's face: each face slider's value by its label. Sliders it leaves out stay at 0;
-/// values are held to each slider's range.
-#[derive(Component, Clone, Debug, Default, PartialEq)]
-pub struct CharacterAppearance {
-    pub sliders: BTreeMap<String, f32>,
 }
 
 /// A face slider: one end's offsets per base-mesh vertex for a value of -1, the other's for +1.
@@ -114,6 +109,11 @@ pub struct CharacterKit {
 impl CharacterKit {
     pub fn sliders(&self) -> &[FaceSlider] {
         &self.sliders
+    }
+
+    /// The top of the base mesh's head over its feet, metres.
+    pub fn height(&self) -> f32 {
+        self.base.iter().map(|p| p.y).fold(f32::MIN, f32::max)
     }
 
     /// The base mesh with the sliders at these values.
@@ -315,9 +315,15 @@ impl AssetLoader for CharacterKitLoader {
     }
 }
 
-/// On a character visual whose meshes its kit builds.
+/// On a character visual (a child of its actor) whose meshes its kit builds.
 #[derive(Component)]
-pub(crate) struct CharacterKitRef(pub(crate) Handle<CharacterKit>);
+pub struct CharacterKitRef(pub(crate) Handle<CharacterKit>);
+
+impl CharacterKitRef {
+    pub fn kit(&self) -> &Handle<CharacterKit> {
+        &self.0
+    }
+}
 
 /// A mesh of a kit-built visual: its name in the kit, the exported mesh, the one built from it.
 #[derive(Component)]

@@ -1,11 +1,12 @@
 //! The character probe (`--character-probe PROFILE`): a character catalog profile stands ahead of
 //! the player at the start, facing the camera and playing its idle, so a character can be judged
 //! in the game's own light next to the one the player plays.
-//! `content/characters/scripts/export_glb.py` makes one from an MPFB preset.
+//! `content/characters/scripts/export_glb.py` makes one from an MPFB preset. With
+//! `--character-face NAME` it wears a kept face (`engine::CharacterAppearance::load`).
 use crate::launch::LaunchOptions;
 
 use bevy::prelude::*;
-use engine::{WorldStartAdopted, WorldStartView};
+use engine::{CharacterAppearance, WorldStartAdopted, WorldStartView};
 use world::WorldViewBookmark;
 
 /// How far ahead of the start's focus the model stands and how far to the camera's right,
@@ -15,21 +16,25 @@ const AHEAD_M: f32 = 2.4;
 const ASIDE_M: f32 = 0.9;
 
 #[derive(Resource)]
-struct ProbeProfile(String);
+struct ProbeProfile {
+    profile: String,
+    face: CharacterAppearance,
+}
 
 #[derive(Component)]
 struct CharacterProbe;
 
 pub(crate) fn install(app: &mut App) {
-    let Some(profile) = app
-        .world()
-        .resource::<LaunchOptions>()
-        .character_probe
-        .clone()
-    else {
+    let options = app.world().resource::<LaunchOptions>();
+    let Some(profile) = options.character_probe.clone() else {
         return;
     };
-    app.insert_resource(ProbeProfile(profile))
+    let face = match options.character_face.as_deref() {
+        Some(name) => CharacterAppearance::load(name)
+            .unwrap_or_else(|error| panic!("--character-face: {error}")),
+        None => CharacterAppearance::default(),
+    };
+    app.insert_resource(ProbeProfile { profile, face })
         .add_systems(Update, place_probe);
 }
 
@@ -56,7 +61,8 @@ fn place_probe(
     }
 
     commands.spawn((
-        engine::standing_character(stand(view), profile.0.clone(), "Character probe"),
+        engine::standing_character(stand(view), profile.profile.clone(), "Character probe"),
+        profile.face.clone(),
         CharacterProbe,
     ));
 }

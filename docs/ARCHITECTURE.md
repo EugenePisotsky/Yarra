@@ -519,7 +519,8 @@ from the game's pipeline log, refreshed when pipelines change); `--each-flag`, `
 
 ## The editor
 
-- **Workspaces** (`EditorWorkspace`): World; Animation (character previews); Presets
+- **Workspaces** (`EditorWorkspace`): World; Animation (character previews, and faces on kit
+  models: sliders by group, kept faces); Presets
   (environment presets, collections, road styles), the last two under an isolated atmosphere.
   Each owns its cameras, UI and systems; project workers and save completion stay in the shell.
 - **Tools** register an `EditorToolDescriptor` naming their workspace and the source domains
@@ -558,6 +559,7 @@ resets. Change a format, bump its constant and rebuild (Reteya from its inputs).
 | Asset import catalog | literal in `AssetImportCatalog::validate` | 1 |
 | Character catalog | literal in `engine/src/character_catalog.rs` | 4 |
 | Character kit | `VERSION`, `engine/src/character_kit.rs` | 1 |
+| Character face (`.face.ron`) | `FACE_VERSION`, `engine/src/character_face.rs` | 1 |
 | Impostor descriptor | literal in `engine/src/trees/impostor.rs` | 3 |
 
 The SQLite formats keep their version in `PRAGMA user_version`; bundles and language packs also

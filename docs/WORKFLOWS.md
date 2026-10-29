@@ -662,7 +662,7 @@ in step; `--help` prints the same with descriptions):
 
 | Purpose | Controls |
 | --- | --- |
-| Scene and presentation | `--world-db FILE`, `--start-view FILE`, `--story DIR`, `--character-probe PROFILE`, `--fps 0\|15..240`, `--resolution-scale 1\|0.75\|0.5\|0.33`, `--time HH:MM`, `--day-clock on\|off`, `--weather auto\|authored\|clear\|scattered\|overcast\|rain\|storm`, `--upscaler auto\|linear\|metalfx-spatial\|metalfx-temporal\|taa`, `--frame window\|WIDTHxHEIGHT`, `--upscale-target 1\|0.75\|0.5`, `--cloud-quality off\|balanced\|high`, `--tree-shadow-lod 0..2` |
+| Scene and presentation | `--world-db FILE`, `--start-view FILE`, `--story DIR`, `--character-probe PROFILE`, `--character-face NAME`, `--fps 0\|15..240`, `--resolution-scale 1\|0.75\|0.5\|0.33`, `--time HH:MM`, `--day-clock on\|off`, `--weather auto\|authored\|clear\|scattered\|overcast\|rain\|storm`, `--upscaler auto\|linear\|metalfx-spatial\|metalfx-temporal\|taa`, `--frame window\|WIDTHxHEIGHT`, `--upscale-target 1\|0.75\|0.5`, `--cloud-quality off\|balanced\|high`, `--tree-shadow-lod 0..2` |
 | Panel and logging | `--diagnostics off\|panel\|full`, `--performance-open`, `--render-audit`, `--render-console`, `--timing-log`, `--gpu-timing-detail`, `--gpu-timing-off`, `--metalfx-timing-log`, `--grass-counters` |
 | Scripted routes | `--render-repro NAME`, `--render-frames N`, `--render-snapshot PATH`, `--render-snapshot-frames N,N`, `--render-walk-speed MPS`, `--render-frame-clock`, `--render-temporal-view motion\|depth`, `--render-ui-off` |
 | Captures and checks | `--metal-capture PATH.gputrace` |

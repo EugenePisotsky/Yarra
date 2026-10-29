@@ -45,6 +45,8 @@ pub(crate) struct LaunchOptions {
     pub lod_lab: Option<LodLabOptions>,
     /// A character catalog profile standing ahead of the player ([`crate::dev::character_probe`]).
     pub character_probe: Option<String>,
+    /// The kept face the probe wears.
+    pub character_face: Option<String>,
     pub look_capture: Option<crate::dev::look_capture::LookCaptureOptions>,
 }
 
@@ -220,6 +222,7 @@ impl LaunchOptions {
             upscale_target: upscale_target(&args)?,
             lod_lab: LodLabOptions::parse(&args)?,
             character_probe: args.value("--character-probe")?.map(str::to_owned),
+            character_face: args.value("--character-face")?.map(str::to_owned),
             look_capture: look_capture(&args)?,
         })
     }

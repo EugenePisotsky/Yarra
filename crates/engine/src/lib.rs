@@ -13,9 +13,11 @@ pub use terrain_raycast::raycast_resident_terrain;
 
 mod character;
 mod character_catalog;
+mod character_face;
 mod character_kit;
 
-pub use character_kit::{CharacterAppearance, CharacterKit, FaceSlider};
+pub use character_face::{CharacterAppearance, saved_faces};
+pub use character_kit::{CharacterKit, CharacterKitRef, FaceSlider};
 
 mod gltf;
 

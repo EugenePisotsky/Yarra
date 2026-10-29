@@ -7,10 +7,12 @@ use bevy::{
 use bevy_egui::{EguiPrimaryContextPass, egui};
 
 use engine::{
-    CharacterPresentationCatalogSummary, CharacterPresentationPreview,
+    CharacterAppearance, CharacterPresentationCatalogSummary, CharacterPresentationPreview,
     CharacterPresentationPreviewPlugin, CharacterPreviewClip, CharacterPreviewClipRole,
     DEFAULT_CHARACTER_PRESENTATION_ID, load_character_presentation_catalog_summary,
 };
+
+mod face;
 
 use super::{EditorWorkspace, SavedDaylight, animation_workspace_active};
 use crate::shell::{EditorUiFrame, EditorUiSet};
@@ -26,6 +28,7 @@ impl Plugin for AnimationWorkspacePlugin {
             .init_resource::<AnimationWorkspaceState>()
             .init_resource::<AnimationPreviewSyncState>()
             .init_resource::<AnimationLighting>()
+            .init_resource::<face::FaceEditor>()
             .add_systems(Startup, setup_animation_workspace)
             .add_systems(
                 OnEnter(EditorWorkspace::Animation),
@@ -37,7 +40,12 @@ impl Plugin for AnimationWorkspacePlugin {
             )
             .add_systems(
                 Update,
-                (advance_animation_transport, sync_animation_preview)
+                (
+                    advance_animation_transport,
+                    sync_animation_preview,
+                    face::sync_face,
+                    face::frame_camera,
+                )
                     .chain()
                     .run_if(animation_workspace_active),
             )
@@ -49,7 +57,8 @@ impl Plugin for AnimationWorkspacePlugin {
             )
             .add_systems(
                 EguiPrimaryContextPass,
-                animation_workspace_ui
+                (animation_workspace_ui, face::face_panel_ui)
+                    .chain()
                     .run_if(animation_workspace_active)
                     .in_set(EditorUiSet::Workspace),
             );
@@ -68,7 +77,7 @@ pub(crate) fn setup_animation_workspace(mut commands: Commands) {
             clear_color: ClearColorConfig::Custom(Color::srgb(0.075, 0.08, 0.09)),
             ..default()
         },
-        Transform::from_xyz(0.0, 1.4, 4.0).looking_at(Vec3::Y, Vec3::Y),
+        face::Framing::Body.view(0.0),
         AnimationWorkspaceCamera,
         vegetation_render::VegetationViewDisabled,
         Name::new("Animation workspace camera"),
@@ -77,6 +86,7 @@ pub(crate) fn setup_animation_workspace(mut commands: Commands) {
         Transform::default(),
         Visibility::Hidden,
         CharacterPresentationPreview::new(DEFAULT_CHARACTER_PRESENTATION_ID),
+        CharacterAppearance::default(),
         AnimationPreviewActor,
         Name::new("Animation workspace presentation actor"),
     ));

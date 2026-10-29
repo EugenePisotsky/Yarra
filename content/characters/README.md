@@ -173,7 +173,13 @@ the body matches exactly because the export bakes its shape keys before MPFB rem
 The character catalog (`assets/catalogs/character_presentations.catalog.ron`) holds that glb and
 its kit as the profile `presentations/female/mpfb_fitted`; the engine builds the character's
 meshes from the kit when it spawns and when its `CharacterAppearance` changes
-(`engine/src/character_kit.rs`). `--character-probe` stands a profile ahead of the
+(`engine/src/character_kit.rs`).
+
+Faces are made in the editor's Animation workspace: with a kit model's profile chosen, the face
+panel offers its sliders by group (choices as a pick and a strength, details folded away),
+framings of the face, a random face around the model's own, and keeps faces by name in
+`assets/characters/faces/<name>.face.ron` (`engine/src/character_face.rs`). The game's probe
+wears one with `--character-face NAME`. `--character-probe` stands a profile ahead of the
 player, facing the camera and playing its idle; the editor's Animation workspace plays its walk
 and jog. The glb's clips come from bought animations, so it stays in `assets/local` like
 female_main's.

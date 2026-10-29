@@ -113,6 +113,12 @@ const FLAGS: &[Flag] = &[
         "A character catalog profile stands ahead of the player, facing the camera, to judge it",
     ),
     flag(
+        "--character-face",
+        "NAME",
+        Scene,
+        "The probe wears a kept face (assets/characters/faces/NAME.face.ron)",
+    ),
+    flag(
         "--fps",
         "0|15..240",
         Scene,
