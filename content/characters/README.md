@@ -71,9 +71,18 @@ sheet is kept by copying its `targets` into a preset in `presets/`.
 
 `face_sliders.json` lists the face sliders characters are shaped with, by feature group: each a
 pair of MPFB targets (the first for negative values, none for a slider that only goes one way;
-an `l-` name moves both sides) and the view that shows it best. It began as 100 candidates from
-MPFB's 350 or so face and head targets; the audit renders every slider at both ends beside the
-preset's face, and the list keeps the sliders worth offering, with their limits.
+an `l-` name moves both sides), the range players may move it in, and the view that shows it
+best. Sliders sharing a `choice` exclude each other (face shape, ear shape: the creator offers
+one and its strength); `detail` marks those hard to see at a face's full framing, which the
+creator keeps in a section of their own. The audit renders every slider at both ends of its range
+beside the preset's face.
+
+The list (October 30) keeps 93 of 100 candidates from MPFB's 350 or so face and head targets.
+Subtle is not redundant: a slider is dropped only when another moves the same vertices the same
+way (nose base and nose length, 0.96 alike; oval and round head, 0.88; ear wing and ears sticking
+out; septum and nostril angle; cupid's bow width and upper lip width; bag height and cheek height;
+ear thickness and round ears). Most others look believable to between half and two thirds of
+their full range, where the limits stand; pointed ears go all the way, for elves.
 
 ```sh
 BLENDER_USER_RESOURCES=$PWD/.tools/blender /Applications/Blender.app/Contents/MacOS/Blender -b \
@@ -152,8 +161,19 @@ BLENDER_USER_RESOURCES=$PWD/.tools/blender /Applications/Blender.app/Contents/Ma
 cargo run --release -p yarra-app-game -- --character-probe presentations/female/mpfb_fitted
 ```
 
-The character catalog (`assets/catalogs/character_presentations.catalog.ron`) holds that glb as
-the profile `presentations/female/mpfb_fitted`. `--character-probe` stands a profile ahead of the
+Beside the glb the export writes its kit (`kit.py`, `fitted_body.kit.json`, 4 MB), which the game
+reshapes the face and fits the parts with: the base mesh as exported (every vertex, helpers too),
+each face slider's offsets at both ends, and every part's MHCLO fitting (three base-mesh
+vertices, weights and an offset scaled by the base mesh's size along each axis), in glTF's
+space. Each exported vertex names its base-mesh or part vertex in a `_SOURCE_VERTEX` attribute.
+The export checks that fitting from the kit puts every part where MPFB did (within 0.0003 mm);
+the body matches exactly because the export bakes its shape keys before MPFB removes the helpers
+(MPFB's own bake rebuilds every key through copies and moves vertices up to 0.1 mm).
+
+The character catalog (`assets/catalogs/character_presentations.catalog.ron`) holds that glb and
+its kit as the profile `presentations/female/mpfb_fitted`; the engine builds the character's
+meshes from the kit when it spawns and when its `CharacterAppearance` changes
+(`engine/src/character_kit.rs`). `--character-probe` stands a profile ahead of the
 player, facing the camera and playing its idle; the editor's Animation workspace plays its walk
 and jog. The glb's clips come from bought animations, so it stays in `assets/local` like
 female_main's.

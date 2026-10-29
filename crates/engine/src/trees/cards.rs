@@ -177,11 +177,10 @@ pub(super) fn max_card_swing(mesh: &bevy::mesh::Mesh) -> f32 {
         .fold(0., f32::max)
 }
 
-/// Bevy's glTF loader with the branch card attributes registered. Applications install it
-/// in place of the default `GltfPlugin`. The files name them `_CARD_PIVOT` and so on;
-/// gltf-json 1.4 strips the underscore before Bevy looks the name up.
-pub fn tree_gltf_plugin() -> GltfPlugin {
-    GltfPlugin::default()
+/// The glTF loader with the branch card attributes registered. The files name them
+/// `_CARD_PIVOT` and so on; gltf-json 1.4 strips the underscore before Bevy looks the name up.
+pub(crate) fn with_card_attributes(plugin: GltfPlugin) -> GltfPlugin {
+    plugin
         .add_custom_vertex_attribute("CARD_PIVOT", CARD_PIVOT)
         .add_custom_vertex_attribute("CARD_AXIS", CARD_AXIS)
         .add_custom_vertex_attribute("CARD_NORMAL", CARD_NORMAL)

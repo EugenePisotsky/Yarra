@@ -34,7 +34,7 @@ fn wind_depth_prepass_preserves_colour_coverage() {
     let mut app = App::new();
     app.add_plugins(
         DefaultPlugins
-            .set(tree_gltf_plugin())
+            .set(crate::gltf_plugin())
             .set(AssetPlugin {
                 file_path: format!("{}/../../assets", env!("CARGO_MANIFEST_DIR")),
                 ..default()

@@ -26,7 +26,7 @@ mod touch;
 mod tuning;
 mod wind;
 
-pub use cards::tree_gltf_plugin;
+pub(crate) use cards::with_card_attributes;
 pub use gpu::TreeInstancing;
 pub(crate) use gpu::{DrawnOnGpu, object_key};
 

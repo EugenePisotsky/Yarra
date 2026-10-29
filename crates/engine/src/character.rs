@@ -17,6 +17,7 @@ use crate::{
         AnimationBankDefinition, CharacterModelDefinition, CharacterPresentationCatalog,
         MovementSetDefinition,
     },
+    character_kit::{CharacterKitPlugin, CharacterKitRef},
 };
 
 pub(crate) struct CharacterPresentationPlugin;
@@ -25,7 +26,8 @@ impl Plugin for CharacterPresentationPlugin {
     fn build(&self, app: &mut App) {
         let catalog = CharacterPresentationCatalog::load()
             .unwrap_or_else(|error| panic!("invalid character presentation catalog: {error}"));
-        app.insert_resource(CharacterCatalogResource(catalog))
+        app.add_plugins(CharacterKitPlugin)
+            .insert_resource(CharacterCatalogResource(catalog))
             .init_resource::<CharacterAssetCache>()
             .add_systems(
                 Update,
@@ -419,7 +421,7 @@ fn resolve_character_presentations(
         ));
 
         let visual = &resolved.model.visual;
-        commands.spawn((
+        let mut spawned = commands.spawn((
             WorldAssetRoot(scene),
             Transform {
                 translation: Vec3::from_array(visual.translation_m),
@@ -434,6 +436,10 @@ fn resolve_character_presentations(
                 presentation_ref.profile_id
             )),
         ));
+
+        if let Some(kit) = &visual.kit {
+            spawned.insert(CharacterKitRef(asset_server.load(kit.clone())));
+        }
     }
 }
 

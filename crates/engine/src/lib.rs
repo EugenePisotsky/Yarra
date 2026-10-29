@@ -13,6 +13,14 @@ pub use terrain_raycast::raycast_resident_terrain;
 
 mod character;
 mod character_catalog;
+mod character_kit;
+
+pub use character_kit::{CharacterAppearance, CharacterKit, FaceSlider};
+
+mod gltf;
+
+pub use gltf::gltf_plugin;
+
 mod object_lod;
 
 pub use object_lod::{ObjectFootprint, ObjectLodPlugin};
@@ -22,7 +30,6 @@ mod trees;
 pub use trees::{
     LabAsset, LabBand, LabRepresentation, LabTree, LabVariant, LodLabPlugin, TreeInstancing,
     TreeTouch, TreeWindPlugin, TreeWindResponse, TreeWindSystems, TreeWindTuning, spawn_lab_tree,
-    tree_gltf_plugin,
 };
 
 mod day_clock;

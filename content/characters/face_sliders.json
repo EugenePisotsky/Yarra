@@ -1,855 +1,118 @@
 {
  "preset": "content/characters/presets/fitted_body.json",
  "groups": [
-  {
-   "name": "head",
-   "sliders": [
-    {
-     "label": "head width",
-     "targets": [
-      "head-scale-horiz-decr",
-      "head-scale-horiz-incr"
-     ],
-     "view": "face_front"
-    },
-    {
-     "label": "head height",
-     "targets": [
-      "head-scale-vert-decr",
-      "head-scale-vert-incr"
-     ],
-     "view": "face_front"
-    },
-    {
-     "label": "head depth",
-     "targets": [
-      "head-scale-depth-decr",
-      "head-scale-depth-incr"
-     ],
-     "view": "face_profile"
-    },
-    {
-     "label": "back of skull",
-     "targets": [
-      "head-back-scale-depth-decr",
-      "head-back-scale-depth-incr"
-     ],
-     "view": "face_profile"
-    },
-    {
-     "label": "face fat",
-     "targets": [
-      "head-fat-decr",
-      "head-fat-incr"
-     ],
-     "view": "face_three_quarter"
-    },
-    {
-     "label": "oval head",
-     "targets": [
-      null,
-      "head-oval"
-     ],
-     "view": "face_front"
-    },
-    {
-     "label": "round head",
-     "targets": [
-      null,
-      "head-round"
-     ],
-     "view": "face_front"
-    },
-    {
-     "label": "square head",
-     "targets": [
-      null,
-      "head-square"
-     ],
-     "view": "face_front"
-    },
-    {
-     "label": "rectangular head",
-     "targets": [
-      null,
-      "head-rectangular"
-     ],
-     "view": "face_front"
-    },
-    {
-     "label": "triangular head",
-     "targets": [
-      null,
-      "head-triangular"
-     ],
-     "view": "face_front"
-    },
-    {
-     "label": "inverted triangle head",
-     "targets": [
-      null,
-      "head-invertedtriangular"
-     ],
-     "view": "face_front"
-    },
-    {
-     "label": "diamond head",
-     "targets": [
-      null,
-      "head-diamond"
-     ],
-     "view": "face_front"
-    }
-   ]
-  },
-  {
-   "name": "forehead",
-   "sliders": [
-    {
-     "label": "forehead height",
-     "targets": [
-      "forehead-scale-vert-decr",
-      "forehead-scale-vert-incr"
-     ],
-     "view": "face_front"
-    },
-    {
-     "label": "temples",
-     "targets": [
-      "forehead-temple-decr",
-      "forehead-temple-incr"
-     ],
-     "view": "face_front"
-    },
-    {
-     "label": "forehead slope",
-     "targets": [
-      "forehead-trans-backward",
-      "forehead-trans-forward"
-     ],
-     "view": "face_profile"
-    },
-    {
-     "label": "forehead bulge",
-     "targets": [
-      "forehead-nubian-decr",
-      "forehead-nubian-incr"
-     ],
-     "view": "face_profile"
-    }
-   ]
-  },
-  {
-   "name": "brows",
-   "sliders": [
-    {
-     "label": "brow angle",
-     "targets": [
-      "eyebrows-angle-down",
-      "eyebrows-angle-up"
-     ],
-     "view": "face_front"
-    },
-    {
-     "label": "brow height",
-     "targets": [
-      "eyebrows-trans-down",
-      "eyebrows-trans-up"
-     ],
-     "view": "face_front"
-    },
-    {
-     "label": "brow ridge",
-     "targets": [
-      "eyebrows-trans-backward",
-      "eyebrows-trans-forward"
-     ],
-     "view": "face_profile"
-    }
-   ]
-  },
-  {
-   "name": "eyes",
-   "sliders": [
-    {
-     "label": "eye spacing",
-     "targets": [
-      "l-eye-trans-in",
-      "l-eye-trans-out"
-     ],
-     "view": "face_front"
-    },
-    {
-     "label": "eye height",
-     "targets": [
-      "l-eye-trans-down",
-      "l-eye-trans-up"
-     ],
-     "view": "face_front"
-    },
-    {
-     "label": "eye size",
-     "targets": [
-      "l-eye-scale-decr",
-      "l-eye-scale-incr"
-     ],
-     "view": "face_front"
-    },
-    {
-     "label": "eye depth 1",
-     "targets": [
-      "l-eye-push1-in",
-      "l-eye-push1-out"
-     ],
-     "view": "face_profile"
-    },
-    {
-     "label": "eye depth 2",
-     "targets": [
-      "l-eye-push2-in",
-      "l-eye-push2-out"
-     ],
-     "view": "face_profile"
-    },
-    {
-     "label": "lid opening inner",
-     "targets": [
-      "l-eye-height1-decr",
-      "l-eye-height1-incr"
-     ],
-     "view": "eyes_front"
-    },
-    {
-     "label": "lid opening middle",
-     "targets": [
-      "l-eye-height2-decr",
-      "l-eye-height2-incr"
-     ],
-     "view": "eyes_front"
-    },
-    {
-     "label": "lid opening outer",
-     "targets": [
-      "l-eye-height3-decr",
-      "l-eye-height3-incr"
-     ],
-     "view": "eyes_front"
-    },
-    {
-     "label": "inner corner",
-     "targets": [
-      "l-eye-corner1-down",
-      "l-eye-corner1-up"
-     ],
-     "view": "eyes_front"
-    },
-    {
-     "label": "outer corner",
-     "targets": [
-      "l-eye-corner2-down",
-      "l-eye-corner2-up"
-     ],
-     "view": "eyes_front"
-    },
-    {
-     "label": "inner fold",
-     "targets": [
-      "l-eye-epicanthus-in",
-      "l-eye-epicanthus-out"
-     ],
-     "view": "eyes_front"
-    },
-    {
-     "label": "lid fold angle",
-     "targets": [
-      "l-eye-eyefold-angle-down",
-      "l-eye-eyefold-angle-up"
-     ],
-     "view": "eyes_front"
-    },
-    {
-     "label": "lid fold height",
-     "targets": [
-      "l-eye-eyefold-down",
-      "l-eye-eyefold-up"
-     ],
-     "view": "eyes_front"
-    },
-    {
-     "label": "lid fold shape",
-     "targets": [
-      "l-eye-eyefold-concave",
-      "l-eye-eyefold-convex"
-     ],
-     "view": "eyes_three_quarter"
-    },
-    {
-     "label": "under-eye bags",
-     "targets": [
-      "l-eye-bag-decr",
-      "l-eye-bag-incr"
-     ],
-     "view": "eyes_three_quarter"
-    },
-    {
-     "label": "bag height",
-     "targets": [
-      "l-eye-bag-height-decr",
-      "l-eye-bag-height-incr"
-     ],
-     "view": "eyes_three_quarter"
-    },
-    {
-     "label": "bag depth",
-     "targets": [
-      "l-eye-bag-in",
-      "l-eye-bag-out"
-     ],
-     "view": "eyes_three_quarter"
-    }
-   ]
-  },
-  {
-   "name": "nose",
-   "sliders": [
-    {
-     "label": "nose width",
-     "targets": [
-      "nose-scale-horiz-decr",
-      "nose-scale-horiz-incr"
-     ],
-     "view": "face_front"
-    },
-    {
-     "label": "nose length",
-     "targets": [
-      "nose-scale-vert-decr",
-      "nose-scale-vert-incr"
-     ],
-     "view": "face_front"
-    },
-    {
-     "label": "nose depth",
-     "targets": [
-      "nose-scale-depth-decr",
-      "nose-scale-depth-incr"
-     ],
-     "view": "face_profile"
-    },
-    {
-     "label": "nose height",
-     "targets": [
-      "nose-trans-down",
-      "nose-trans-up"
-     ],
-     "view": "face_front"
-    },
-    {
-     "label": "nose forward",
-     "targets": [
-      "nose-trans-backward",
-      "nose-trans-forward"
-     ],
-     "view": "face_profile"
-    },
-    {
-     "label": "bridge hump",
-     "targets": [
-      "nose-hump-decr",
-      "nose-hump-incr"
-     ],
-     "view": "face_profile"
-    },
-    {
-     "label": "bridge curve",
-     "targets": [
-      "nose-curve-concave",
-      "nose-curve-convex"
-     ],
-     "view": "face_profile"
-    },
-    {
-     "label": "greek nose",
-     "targets": [
-      "nose-greek-decr",
-      "nose-greek-incr"
-     ],
-     "view": "face_profile"
-    },
-    {
-     "label": "bridge width",
-     "targets": [
-      "nose-width1-decr",
-      "nose-width1-incr"
-     ],
-     "view": "nose_front"
-    },
-    {
-     "label": "middle width",
-     "targets": [
-      "nose-width2-decr",
-      "nose-width2-incr"
-     ],
-     "view": "nose_front"
-    },
-    {
-     "label": "lower width",
-     "targets": [
-      "nose-width3-decr",
-      "nose-width3-incr"
-     ],
-     "view": "nose_front"
-    },
-    {
-     "label": "tip width",
-     "targets": [
-      "nose-point-width-decr",
-      "nose-point-width-incr"
-     ],
-     "view": "nose_front"
-    },
-    {
-     "label": "tip height",
-     "targets": [
-      "nose-point-down",
-      "nose-point-up"
-     ],
-     "view": "face_profile"
-    },
-    {
-     "label": "nostril width",
-     "targets": [
-      "nose-nostrils-width-decr",
-      "nose-nostrils-width-incr"
-     ],
-     "view": "nose_front"
-    },
-    {
-     "label": "nostril angle",
-     "targets": [
-      "nose-nostrils-angle-down",
-      "nose-nostrils-angle-up"
-     ],
-     "view": "nose_three_quarter"
-    },
-    {
-     "label": "nostril flare",
-     "targets": [
-      "nose-flaring-decr",
-      "nose-flaring-incr"
-     ],
-     "view": "nose_front"
-    },
-    {
-     "label": "septum angle",
-     "targets": [
-      "nose-septumangle-decr",
-      "nose-septumangle-incr"
-     ],
-     "view": "face_profile"
-    },
-    {
-     "label": "nose base",
-     "targets": [
-      "nose-base-down",
-      "nose-base-up"
-     ],
-     "view": "face_profile"
-    },
-    {
-     "label": "nose volume",
-     "targets": [
-      "nose-volume-decr",
-      "nose-volume-incr"
-     ],
-     "view": "nose_three_quarter"
-    },
-    {
-     "label": "nose compression",
-     "targets": [
-      "nose-compression-compress",
-      "nose-compression-uncompress"
-     ],
-     "view": "nose_three_quarter"
-    }
-   ]
-  },
-  {
-   "name": "mouth",
-   "sliders": [
-    {
-     "label": "mouth width",
-     "targets": [
-      "mouth-scale-horiz-decr",
-      "mouth-scale-horiz-incr"
-     ],
-     "view": "face_front"
-    },
-    {
-     "label": "mouth height",
-     "targets": [
-      "mouth-scale-vert-decr",
-      "mouth-scale-vert-incr"
-     ],
-     "view": "face_front"
-    },
-    {
-     "label": "mouth depth",
-     "targets": [
-      "mouth-scale-depth-decr",
-      "mouth-scale-depth-incr"
-     ],
-     "view": "face_profile"
-    },
-    {
-     "label": "mouth position",
-     "targets": [
-      "mouth-trans-down",
-      "mouth-trans-up"
-     ],
-     "view": "face_front"
-    },
-    {
-     "label": "mouth forward",
-     "targets": [
-      "mouth-trans-backward",
-      "mouth-trans-forward"
-     ],
-     "view": "face_profile"
-    },
-    {
-     "label": "upper lip fullness",
-     "targets": [
-      "mouth-upperlip-volume-decr",
-      "mouth-upperlip-volume-incr"
-     ],
-     "view": "mouth_three_quarter"
-    },
-    {
-     "label": "lower lip fullness",
-     "targets": [
-      "mouth-lowerlip-volume-decr",
-      "mouth-lowerlip-volume-incr"
-     ],
-     "view": "mouth_three_quarter"
-    },
-    {
-     "label": "upper lip height",
-     "targets": [
-      "mouth-upperlip-height-decr",
-      "mouth-upperlip-height-incr"
-     ],
-     "view": "mouth_front"
-    },
-    {
-     "label": "lower lip height",
-     "targets": [
-      "mouth-lowerlip-height-decr",
-      "mouth-lowerlip-height-incr"
-     ],
-     "view": "mouth_front"
-    },
-    {
-     "label": "upper lip width",
-     "targets": [
-      "mouth-upperlip-width-decr",
-      "mouth-upperlip-width-incr"
-     ],
-     "view": "mouth_front"
-    },
-    {
-     "label": "lower lip width",
-     "targets": [
-      "mouth-lowerlip-width-decr",
-      "mouth-lowerlip-width-incr"
-     ],
-     "view": "mouth_front"
-    },
-    {
-     "label": "cupid's bow",
-     "targets": [
-      "mouth-cupidsbow-decr",
-      "mouth-cupidsbow-incr"
-     ],
-     "view": "mouth_front"
-    },
-    {
-     "label": "cupid's bow width",
-     "targets": [
-      "mouth-cupidsbow-width-decr",
-      "mouth-cupidsbow-width-incr"
-     ],
-     "view": "mouth_front"
-    },
-    {
-     "label": "mouth corners",
-     "targets": [
-      "mouth-angles-down",
-      "mouth-angles-up"
-     ],
-     "view": "mouth_front"
-    },
-    {
-     "label": "philtrum",
-     "targets": [
-      "mouth-philtrum-volume-decr",
-      "mouth-philtrum-volume-incr"
-     ],
-     "view": "mouth_three_quarter"
-    },
-    {
-     "label": "laugh lines",
-     "targets": [
-      "mouth-laugh-lines-in",
-      "mouth-laugh-lines-out"
-     ],
-     "view": "mouth_three_quarter"
-    },
-    {
-     "label": "dimples",
-     "targets": [
-      "mouth-dimples-in",
-      "mouth-dimples-out"
-     ],
-     "view": "mouth_three_quarter"
-    }
-   ]
-  },
-  {
-   "name": "jaw",
-   "sliders": [
-    {
-     "label": "chin width",
-     "targets": [
-      "chin-width-decr",
-      "chin-width-incr"
-     ],
-     "view": "face_front"
-    },
-    {
-     "label": "chin height",
-     "targets": [
-      "chin-height-decr",
-      "chin-height-incr"
-     ],
-     "view": "face_front"
-    },
-    {
-     "label": "chin prominence",
-     "targets": [
-      "chin-prominent-decr",
-      "chin-prominent-incr"
-     ],
-     "view": "face_profile"
-    },
-    {
-     "label": "jaw forward",
-     "targets": [
-      "chin-prognathism-decr",
-      "chin-prognathism-incr"
-     ],
-     "view": "face_profile"
-    },
-    {
-     "label": "jaw width",
-     "targets": [
-      "chin-bones-decr",
-      "chin-bones-incr"
-     ],
-     "view": "face_front"
-    },
-    {
-     "label": "chin cleft",
-     "targets": [
-      "chin-cleft-decr",
-      "chin-cleft-incr"
-     ],
-     "view": "face_three_quarter"
-    },
-    {
-     "label": "jaw drop",
-     "targets": [
-      "chin-jaw-drop-decr",
-      "chin-jaw-drop-incr"
-     ],
-     "view": "face_profile"
-    },
-    {
-     "label": "pointed chin",
-     "targets": [
-      null,
-      "chin-triangle"
-     ],
-     "view": "face_front"
-    }
-   ]
-  },
-  {
-   "name": "cheeks",
-   "sliders": [
-    {
-     "label": "cheekbones",
-     "targets": [
-      "l-cheek-bones-decr",
-      "l-cheek-bones-incr"
-     ],
-     "view": "face_three_quarter"
-    },
-    {
-     "label": "cheek fullness",
-     "targets": [
-      "l-cheek-volume-decr",
-      "l-cheek-volume-incr"
-     ],
-     "view": "face_three_quarter"
-    },
-    {
-     "label": "inner cheeks",
-     "targets": [
-      "l-cheek-inner-decr",
-      "l-cheek-inner-incr"
-     ],
-     "view": "face_three_quarter"
-    },
-    {
-     "label": "cheek height",
-     "targets": [
-      "l-cheek-trans-down",
-      "l-cheek-trans-up"
-     ],
-     "view": "face_three_quarter"
-    }
-   ]
-  },
-  {
-   "name": "ears",
-   "sliders": [
-    {
-     "label": "ear size",
-     "targets": [
-      "l-ear-scale-decr",
-      "l-ear-scale-incr"
-     ],
-     "view": "face_profile"
-    },
-    {
-     "label": "ear height",
-     "targets": [
-      "l-ear-scale-vert-decr",
-      "l-ear-scale-vert-incr"
-     ],
-     "view": "face_profile"
-    },
-    {
-     "label": "ear thickness",
-     "targets": [
-      "l-ear-scale-depth-decr",
-      "l-ear-scale-depth-incr"
-     ],
-     "view": "face_front"
-    },
-    {
-     "label": "ear position",
-     "targets": [
-      "l-ear-trans-down",
-      "l-ear-trans-up"
-     ],
-     "view": "face_profile"
-    },
-    {
-     "label": "ear forward",
-     "targets": [
-      "l-ear-trans-backward",
-      "l-ear-trans-forward"
-     ],
-     "view": "face_profile"
-    },
-    {
-     "label": "ear rotation",
-     "targets": [
-      "l-ear-rot-backward",
-      "l-ear-rot-forward"
-     ],
-     "view": "face_profile"
-    },
-    {
-     "label": "ears sticking out",
-     "targets": [
-      "l-ear-flap-decr",
-      "l-ear-flap-incr"
-     ],
-     "view": "face_front"
-    },
-    {
-     "label": "ear wing",
-     "targets": [
-      "l-ear-wing-decr",
-      "l-ear-wing-incr"
-     ],
-     "view": "face_front"
-    },
-    {
-     "label": "earlobe",
-     "targets": [
-      "l-ear-lobe-decr",
-      "l-ear-lobe-incr"
-     ],
-     "view": "face_profile"
-    },
-    {
-     "label": "pointed ears",
-     "targets": [
-      null,
-      "l-ear-shape-pointed"
-     ],
-     "view": "face_profile"
-    },
-    {
-     "label": "round ears",
-     "targets": [
-      null,
-      "l-ear-shape-round"
-     ],
-     "view": "face_profile"
-    },
-    {
-     "label": "square ears",
-     "targets": [
-      null,
-      "l-ear-shape-square"
-     ],
-     "view": "face_profile"
-    },
-    {
-     "label": "triangular ears",
-     "targets": [
-      null,
-      "l-ear-shape-triangle"
-     ],
-     "view": "face_profile"
-    }
-   ]
-  },
-  {
-   "name": "neck",
-   "sliders": [
-    {
-     "label": "neck width",
-     "targets": [
-      "neck-scale-horiz-decr",
-      "neck-scale-horiz-incr"
-     ],
-     "view": "face_front"
-    },
-    {
-     "label": "double chin",
-     "targets": [
-      "neck-double-decr",
-      "neck-double-incr"
-     ],
-     "view": "face_profile"
-    }
-   ]
-  }
+  {"name": "head", "sliders": [
+   {"label": "head width", "targets": ["head-scale-horiz-decr", "head-scale-horiz-incr"], "range": [-0.6, 0.6], "view": "face_front"},
+   {"label": "head height", "targets": ["head-scale-vert-decr", "head-scale-vert-incr"], "range": [-0.6, 0.6], "view": "face_front"},
+   {"label": "head depth", "targets": ["head-scale-depth-decr", "head-scale-depth-incr"], "range": [-0.7, 0.7], "detail": true, "view": "face_profile"},
+   {"label": "back of skull", "targets": ["head-back-scale-depth-decr", "head-back-scale-depth-incr"], "range": [-0.7, 0.7], "detail": true, "view": "face_profile"},
+   {"label": "face fat", "targets": ["head-fat-decr", "head-fat-incr"], "range": [-0.7, 0.7], "view": "face_three_quarter"},
+   {"label": "round head", "targets": [null, "head-round"], "range": [0.0, 0.7], "choice": "face shape", "view": "face_front"},
+   {"label": "square head", "targets": [null, "head-square"], "range": [0.0, 0.7], "choice": "face shape", "view": "face_front"},
+   {"label": "rectangular head", "targets": [null, "head-rectangular"], "range": [0.0, 0.7], "choice": "face shape", "view": "face_front"},
+   {"label": "triangular head", "targets": [null, "head-triangular"], "range": [0.0, 0.7], "choice": "face shape", "view": "face_front"},
+   {"label": "inverted triangle head", "targets": [null, "head-invertedtriangular"], "range": [0.0, 0.7], "choice": "face shape", "view": "face_front"},
+   {"label": "diamond head", "targets": [null, "head-diamond"], "range": [0.0, 0.7], "choice": "face shape", "view": "face_front"}
+  ]},
+  {"name": "forehead", "sliders": [
+   {"label": "forehead height", "targets": ["forehead-scale-vert-decr", "forehead-scale-vert-incr"], "range": [-0.7, 0.7], "view": "face_front"},
+   {"label": "temples", "targets": ["forehead-temple-decr", "forehead-temple-incr"], "range": [-0.7, 0.7], "detail": true, "view": "face_front"},
+   {"label": "forehead slope", "targets": ["forehead-trans-backward", "forehead-trans-forward"], "range": [-0.7, 0.7], "view": "face_profile"},
+   {"label": "forehead bulge", "targets": ["forehead-nubian-decr", "forehead-nubian-incr"], "range": [-0.7, 0.7], "view": "face_profile"}
+  ]},
+  {"name": "brows", "sliders": [
+   {"label": "brow angle", "targets": ["eyebrows-angle-down", "eyebrows-angle-up"], "range": [-0.5, 0.7], "view": "face_front"},
+   {"label": "brow height", "targets": ["eyebrows-trans-down", "eyebrows-trans-up"], "range": [-0.7, 0.7], "view": "face_front"},
+   {"label": "brow ridge", "targets": ["eyebrows-trans-backward", "eyebrows-trans-forward"], "range": [-0.7, 0.6], "view": "face_profile"}
+  ]},
+  {"name": "eyes", "sliders": [
+   {"label": "eye spacing", "targets": ["l-eye-trans-in", "l-eye-trans-out"], "range": [-0.7, 0.7], "view": "face_front"},
+   {"label": "eye height", "targets": ["l-eye-trans-down", "l-eye-trans-up"], "range": [-0.7, 0.7], "view": "face_front"},
+   {"label": "eye size", "targets": ["l-eye-scale-decr", "l-eye-scale-incr"], "range": [-0.7, 0.5], "view": "face_front"},
+   {"label": "eye depth 1", "targets": ["l-eye-push1-in", "l-eye-push1-out"], "range": [-0.7, 0.7], "detail": true, "view": "face_profile"},
+   {"label": "eye depth 2", "targets": ["l-eye-push2-in", "l-eye-push2-out"], "range": [-0.7, 0.7], "detail": true, "view": "face_profile"},
+   {"label": "lid opening inner", "targets": ["l-eye-height1-decr", "l-eye-height1-incr"], "range": [-0.7, 0.7], "view": "eyes_front"},
+   {"label": "lid opening middle", "targets": ["l-eye-height2-decr", "l-eye-height2-incr"], "range": [-0.7, 0.7], "view": "eyes_front"},
+   {"label": "lid opening outer", "targets": ["l-eye-height3-decr", "l-eye-height3-incr"], "range": [-0.7, 0.7], "view": "eyes_front"},
+   {"label": "inner corner", "targets": ["l-eye-corner1-down", "l-eye-corner1-up"], "range": [-0.7, 0.7], "detail": true, "view": "eyes_front"},
+   {"label": "outer corner", "targets": ["l-eye-corner2-down", "l-eye-corner2-up"], "range": [-0.7, 0.7], "view": "eyes_front"},
+   {"label": "inner fold", "targets": ["l-eye-epicanthus-in", "l-eye-epicanthus-out"], "range": [-0.7, 0.7], "view": "eyes_front"},
+   {"label": "lid fold angle", "targets": ["l-eye-eyefold-angle-down", "l-eye-eyefold-angle-up"], "range": [-0.7, 0.7], "detail": true, "view": "eyes_front"},
+   {"label": "lid fold height", "targets": ["l-eye-eyefold-down", "l-eye-eyefold-up"], "range": [-0.7, 0.7], "detail": true, "view": "eyes_front"},
+   {"label": "lid fold shape", "targets": ["l-eye-eyefold-concave", "l-eye-eyefold-convex"], "range": [-0.5, 0.7], "detail": true, "view": "eyes_three_quarter"},
+   {"label": "under-eye bags", "targets": ["l-eye-bag-decr", "l-eye-bag-incr"], "range": [-0.7, 0.7], "view": "eyes_three_quarter"},
+   {"label": "bag depth", "targets": ["l-eye-bag-in", "l-eye-bag-out"], "range": [-0.7, 0.7], "detail": true, "view": "eyes_three_quarter"}
+  ]},
+  {"name": "nose", "sliders": [
+   {"label": "nose width", "targets": ["nose-scale-horiz-decr", "nose-scale-horiz-incr"], "range": [-0.7, 0.7], "view": "face_front"},
+   {"label": "nose length", "targets": ["nose-scale-vert-decr", "nose-scale-vert-incr"], "range": [-0.7, 0.7], "view": "face_front"},
+   {"label": "nose depth", "targets": ["nose-scale-depth-decr", "nose-scale-depth-incr"], "range": [-0.7, 0.5], "view": "face_profile"},
+   {"label": "nose height", "targets": ["nose-trans-down", "nose-trans-up"], "range": [-0.7, 0.7], "view": "face_front"},
+   {"label": "nose forward", "targets": ["nose-trans-backward", "nose-trans-forward"], "range": [-0.7, 0.7], "view": "face_profile"},
+   {"label": "bridge hump", "targets": ["nose-hump-decr", "nose-hump-incr"], "range": [-0.7, 0.7], "view": "face_profile"},
+   {"label": "bridge curve", "targets": ["nose-curve-concave", "nose-curve-convex"], "range": [-0.7, 0.7], "view": "face_profile"},
+   {"label": "greek nose", "targets": ["nose-greek-decr", "nose-greek-incr"], "range": [-0.7, 0.7], "detail": true, "view": "face_profile"},
+   {"label": "bridge width", "targets": ["nose-width1-decr", "nose-width1-incr"], "range": [-0.7, 0.7], "detail": true, "view": "nose_front"},
+   {"label": "middle width", "targets": ["nose-width2-decr", "nose-width2-incr"], "range": [-0.7, 0.7], "detail": true, "view": "nose_front"},
+   {"label": "lower width", "targets": ["nose-width3-decr", "nose-width3-incr"], "range": [-0.7, 0.7], "view": "nose_front"},
+   {"label": "tip width", "targets": ["nose-point-width-decr", "nose-point-width-incr"], "range": [-0.7, 0.7], "view": "nose_front"},
+   {"label": "tip height", "targets": ["nose-point-down", "nose-point-up"], "range": [-0.5, 0.7], "view": "face_profile"},
+   {"label": "nostril width", "targets": ["nose-nostrils-width-decr", "nose-nostrils-width-incr"], "range": [-0.7, 0.7], "view": "nose_front"},
+   {"label": "nostril angle", "targets": ["nose-nostrils-angle-down", "nose-nostrils-angle-up"], "range": [-0.7, 0.7], "view": "nose_three_quarter"},
+   {"label": "nostril flare", "targets": ["nose-flaring-decr", "nose-flaring-incr"], "range": [-0.7, 0.5], "view": "nose_front"},
+   {"label": "nose volume", "targets": ["nose-volume-decr", "nose-volume-incr"], "range": [-0.7, 0.7], "view": "nose_three_quarter"},
+   {"label": "nose compression", "targets": ["nose-compression-compress", "nose-compression-uncompress"], "range": [-0.7, 0.7], "detail": true, "view": "nose_three_quarter"}
+  ]},
+  {"name": "mouth", "sliders": [
+   {"label": "mouth width", "targets": ["mouth-scale-horiz-decr", "mouth-scale-horiz-incr"], "range": [-0.7, 0.7], "view": "face_front"},
+   {"label": "mouth height", "targets": ["mouth-scale-vert-decr", "mouth-scale-vert-incr"], "range": [-0.7, 0.7], "view": "face_front"},
+   {"label": "mouth depth", "targets": ["mouth-scale-depth-decr", "mouth-scale-depth-incr"], "range": [-0.7, 0.7], "view": "face_profile"},
+   {"label": "mouth position", "targets": ["mouth-trans-down", "mouth-trans-up"], "range": [-0.7, 0.7], "view": "face_front"},
+   {"label": "mouth forward", "targets": ["mouth-trans-backward", "mouth-trans-forward"], "range": [-0.7, 0.7], "view": "face_profile"},
+   {"label": "upper lip fullness", "targets": ["mouth-upperlip-volume-decr", "mouth-upperlip-volume-incr"], "range": [-0.7, 0.7], "view": "mouth_three_quarter"},
+   {"label": "lower lip fullness", "targets": ["mouth-lowerlip-volume-decr", "mouth-lowerlip-volume-incr"], "range": [-0.7, 0.7], "view": "mouth_three_quarter"},
+   {"label": "upper lip height", "targets": ["mouth-upperlip-height-decr", "mouth-upperlip-height-incr"], "range": [-0.7, 0.7], "view": "mouth_front"},
+   {"label": "lower lip height", "targets": ["mouth-lowerlip-height-decr", "mouth-lowerlip-height-incr"], "range": [-0.7, 0.6], "view": "mouth_front"},
+   {"label": "upper lip width", "targets": ["mouth-upperlip-width-decr", "mouth-upperlip-width-incr"], "range": [-0.7, 0.6], "view": "mouth_front"},
+   {"label": "lower lip width", "targets": ["mouth-lowerlip-width-decr", "mouth-lowerlip-width-incr"], "range": [-0.7, 0.7], "view": "mouth_front"},
+   {"label": "cupid's bow", "targets": ["mouth-cupidsbow-decr", "mouth-cupidsbow-incr"], "range": [-0.7, 0.7], "view": "mouth_front"},
+   {"label": "mouth corners", "targets": ["mouth-angles-down", "mouth-angles-up"], "range": [-0.3, 0.3], "view": "mouth_front"},
+   {"label": "philtrum", "targets": ["mouth-philtrum-volume-decr", "mouth-philtrum-volume-incr"], "range": [-0.7, 0.7], "view": "mouth_three_quarter"},
+   {"label": "laugh lines", "targets": ["mouth-laugh-lines-in", "mouth-laugh-lines-out"], "range": [-0.7, 0.7], "view": "mouth_three_quarter"},
+   {"label": "dimples", "targets": ["mouth-dimples-in", "mouth-dimples-out"], "range": [-0.7, 0.7], "view": "mouth_three_quarter"}
+  ]},
+  {"name": "jaw", "sliders": [
+   {"label": "chin width", "targets": ["chin-width-decr", "chin-width-incr"], "range": [-0.7, 0.7], "view": "face_front"},
+   {"label": "chin height", "targets": ["chin-height-decr", "chin-height-incr"], "range": [-0.7, 0.7], "view": "face_front"},
+   {"label": "chin prominence", "targets": ["chin-prominent-decr", "chin-prominent-incr"], "range": [-0.7, 0.7], "view": "face_profile"},
+   {"label": "jaw forward", "targets": ["chin-prognathism-decr", "chin-prognathism-incr"], "range": [-0.7, 0.5], "view": "face_profile"},
+   {"label": "jaw width", "targets": ["chin-bones-decr", "chin-bones-incr"], "range": [-0.7, 0.7], "view": "face_front"},
+   {"label": "chin cleft", "targets": ["chin-cleft-decr", "chin-cleft-incr"], "range": [-0.7, 0.7], "detail": true, "view": "face_three_quarter"},
+   {"label": "jaw drop", "targets": ["chin-jaw-drop-decr", "chin-jaw-drop-incr"], "range": [-0.7, 0.7], "detail": true, "view": "face_profile"},
+   {"label": "pointed chin", "targets": [null, "chin-triangle"], "range": [0.0, 0.7], "view": "face_front"}
+  ]},
+  {"name": "cheeks", "sliders": [
+   {"label": "cheekbones", "targets": ["l-cheek-bones-decr", "l-cheek-bones-incr"], "range": [-0.7, 0.7], "view": "face_three_quarter"},
+   {"label": "cheek fullness", "targets": ["l-cheek-volume-decr", "l-cheek-volume-incr"], "range": [-0.7, 0.7], "view": "face_three_quarter"},
+   {"label": "inner cheeks", "targets": ["l-cheek-inner-decr", "l-cheek-inner-incr"], "range": [-0.7, 0.7], "detail": true, "view": "face_three_quarter"},
+   {"label": "cheek height", "targets": ["l-cheek-trans-down", "l-cheek-trans-up"], "range": [-0.7, 0.7], "detail": true, "view": "face_three_quarter"}
+  ]},
+  {"name": "ears", "sliders": [
+   {"label": "ear size", "targets": ["l-ear-scale-decr", "l-ear-scale-incr"], "range": [-0.7, 0.7], "view": "face_profile"},
+   {"label": "ear height", "targets": ["l-ear-scale-vert-decr", "l-ear-scale-vert-incr"], "range": [-0.7, 0.7], "view": "face_profile"},
+   {"label": "ear position", "targets": ["l-ear-trans-down", "l-ear-trans-up"], "range": [-0.7, 0.7], "view": "face_profile"},
+   {"label": "ear forward", "targets": ["l-ear-trans-backward", "l-ear-trans-forward"], "range": [-0.7, 0.7], "view": "face_profile"},
+   {"label": "ear rotation", "targets": ["l-ear-rot-backward", "l-ear-rot-forward"], "range": [-0.7, 0.7], "view": "face_profile"},
+   {"label": "ears sticking out", "targets": ["l-ear-flap-decr", "l-ear-flap-incr"], "range": [-0.7, 0.7], "view": "face_front"},
+   {"label": "earlobe", "targets": ["l-ear-lobe-decr", "l-ear-lobe-incr"], "range": [-0.7, 0.7], "view": "face_profile"},
+   {"label": "pointed ears", "targets": [null, "l-ear-shape-pointed"], "range": [0.0, 1.0], "choice": "ear shape", "view": "face_profile"},
+   {"label": "round ears", "targets": [null, "l-ear-shape-round"], "range": [0.0, 0.7], "choice": "ear shape", "view": "face_profile"},
+   {"label": "square ears", "targets": [null, "l-ear-shape-square"], "range": [0.0, 0.7], "choice": "ear shape", "view": "face_profile"},
+   {"label": "triangular ears", "targets": [null, "l-ear-shape-triangle"], "range": [0.0, 0.7], "choice": "ear shape", "view": "face_profile"}
+  ]},
+  {"name": "neck", "sliders": [
+   {"label": "neck width", "targets": ["neck-scale-horiz-decr", "neck-scale-horiz-incr"], "range": [-0.7, 0.7], "view": "face_front"},
+   {"label": "double chin", "targets": ["neck-double-decr", "neck-double-incr"], "range": [-0.7, 0.7], "view": "face_profile"}
+  ]}
  ]
 }

@@ -1,5 +1,5 @@
 (
-    schema_version: 3,
+    schema_version: 4,
     skeletons: [
         (
             id: "skeletons/yarra_humanoid_v1",
@@ -50,6 +50,7 @@
                 translation_m: (0.0, 0.0, 0.0),
                 yaw_degrees: 0.0,
                 uniform_scale: 1.0,
+                kit: Some("local/characters/fitted_body/fitted_body.kit.json"),
             ),
             // The export's measures: the joints' lowest heights over the clips, the shoe's reach
             // at rest.

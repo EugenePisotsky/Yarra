@@ -94,7 +94,7 @@ fn check_lods(paths: Vec<String>) {
     let mut app = App::new();
     app.add_plugins(
         DefaultPlugins
-            .set(tree_gltf_plugin())
+            .set(crate::gltf_plugin())
             .set(AssetPlugin {
                 file_path: format!("{}/../../assets", env!("CARGO_MANIFEST_DIR")),
                 ..default()

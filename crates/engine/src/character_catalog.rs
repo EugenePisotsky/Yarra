@@ -74,6 +74,9 @@ pub(crate) struct CharacterVisualDefinition {
     pub(crate) translation_m: [f32; 3],
     pub(crate) yaw_degrees: f32,
     pub(crate) uniform_scale: f32,
+    /// The kit its face is reshaped and its parts fitted with (`character_kit`), if any.
+    #[serde(default)]
+    pub(crate) kit: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -313,7 +316,7 @@ impl CharacterPresentationCatalog {
     }
 
     fn validate(&self) -> Result<(), String> {
-        if self.schema_version != 3 {
+        if self.schema_version != 4 {
             return Err(format!(
                 "unsupported character presentation catalog schema {}",
                 self.schema_version
@@ -384,6 +387,10 @@ impl CharacterPresentationCatalog {
             }
 
             validate_asset_path("model", &model.id, &model.visual.asset)?;
+
+            if let Some(kit) = &model.visual.kit {
+                validate_asset_path("model kit", &model.id, kit)?;
+            }
 
             if model
                 .visual

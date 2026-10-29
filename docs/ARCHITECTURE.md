@@ -327,7 +327,10 @@ SQLite. The renderers (Bevy) have no SQLite: `engine` is the only library joinin
 - Actors: `GameplayPlugins` (player, camera, input, destination marker), `GameplaySystems`,
   `MoveIntent`, and `MinimalGamePlugin` (environment, terrain, streaming and actors). Characters'
   feet (`feet`, joints and soles from the character catalog) list their presses on the ground,
-  and each leg the channel it wades through deep snow around its ankle.
+  and each leg the channel it wades through deep snow around its ankle. A catalog model with a
+  kit (`character_kit`) has its meshes built from it when its scene spawns and when the actor's
+  `CharacterAppearance` (face slider values) changes: the base mesh shaped by the sliders, each
+  part fitted to it again, normals turned with the surface.
 - Time and weather: `GameDayClock`, `GameWeather`, `GameLightning`. The mountains run a weather
   sequence of their own (`WeatherSettings::mountains`), blended in by the share of snow ground
   around the camera (`SnowGround`, from the resident leaves under a soft layer,
@@ -553,7 +556,8 @@ resets. Change a format, bump its constant and rebuild (Reteya from its inputs).
 | Editor journal | `JOURNAL_SCHEMA_VERSION`, `app_editor/src/journal.rs` | 15 |
 | Heightfield manifest | `VERSION`, `world_cook/src/heightfield_import.rs` | 2 |
 | Asset import catalog | literal in `AssetImportCatalog::validate` | 1 |
-| Character catalog | literal in `engine/src/character_catalog.rs` | 3 |
+| Character catalog | literal in `engine/src/character_catalog.rs` | 4 |
+| Character kit | `VERSION`, `engine/src/character_kit.rs` | 1 |
 | Impostor descriptor | literal in `engine/src/trees/impostor.rs` | 3 |
 
 The SQLite formats keep their version in `PRAGMA user_version`; bundles and language packs also

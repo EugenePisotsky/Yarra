@@ -1,10 +1,11 @@
-"""Exports a preset as a rigged glTF character for the game.
+"""Exports a preset as a rigged glTF character for the game, with its kit.
 
 blender -b --python-exit-code 1 --python export_glb.py -- PRESET.json OUT.glb [CLIPS.glb]
 
 The preset's character on MPFB's game-engine skeleton (53 bones), as one glb with its textures:
 body, garments and hair skinned by MPFB's weights, helpers removed, the body under clothes cut
-away, sliders baked in, no subdivision, no morph targets yet. With CLIPS (female_main's locomotion
+away, sliders baked in, no subdivision, no morph targets. Beside it, OUT.kit.json holds what the
+game reshapes the face and fits the parts with (kit.py). With CLIPS (female_main's locomotion
 glb), its Idle, Walk and Jog are retargeted onto the skeleton under the same names (retarget.py),
 and the joint heights the game's feet need are printed.
 
@@ -21,6 +22,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+import kit
 from mpfb_services import build_human, service
 from retarget import retarget
 
@@ -122,8 +124,11 @@ def main():
     info = dict(json.loads(preset_path.read_text()), **GAME)
     basemesh, parts, _ = build_human(info, subdivision=0)
     rig = basemesh.parent
-    ExportService.bake_modifiers_remove_helpers(basemesh, bake_masks=True, remove_helpers=True)
+    character_kit = kit.record(basemesh, parts)
+    # Shape keys first: with none left MPFB only applies its masks, where with keys it rebuilds
+    # every key through copies and the body moves up to 0.1 mm off the kit's base.
     bake_shape_keys(basemesh)
+    ExportService.bake_modifiers_remove_helpers(basemesh, bake_masks=True, remove_helpers=True)
     materials = {slot.material for obj in parts for slot in obj.material_slots if slot.material}
 
     for material in sorted(materials, key=lambda m: m.name):
@@ -147,6 +152,7 @@ def main():
         obj.select_set(True)
         print(f"PART {obj.name} {len(obj.data.vertices)} vertices")
 
+    kit.name_meshes(basemesh, parts)
     out.parent.mkdir(parents=True, exist_ok=True)
     bpy.ops.export_scene.gltf(
         filepath=str(out),
@@ -159,8 +165,11 @@ def main():
         export_morph=False,
         # MPFB's meshes carry colour layers the game does not read.
         export_vertex_color="NONE",
+        # The kit's _SOURCE_VERTEX.
+        export_attributes=True,
     )
     print(f"EXPORTED {out} {out.stat().st_size / 1e6:.1f} MB")
+    kit.write(character_kit, out.with_suffix(".kit.json"))
 
 
 main()
