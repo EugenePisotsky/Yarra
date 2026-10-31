@@ -55,6 +55,9 @@ def build_human(info, subdivision=1):
     settings["subdiv_levels"] = subdivision
     info = dict(info)
     wrap = info.pop("wrap", None)
+    # A preset's "skin" and "eye_model" are the export's (export_glb.py).
+    info.pop("skin", None)
+    info.pop("eye_model", None)
     basemesh = human.deserialize_from_dict(info, settings)
     eyes = objects.find_object_of_type_amongst_nearest_relatives(basemesh, "Eyes")
     rig = basemesh.parent if basemesh.parent and basemesh.parent.type == "ARMATURE" else None

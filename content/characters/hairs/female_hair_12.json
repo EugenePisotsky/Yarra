@@ -1,0 +1,16 @@
+{
+ "styles": [
+  {"id": "hair12", "label": "Swept back"},
+  {"id": "hair8", "label": "Straight bob"},
+  {"id": "hair3", "label": "Wavy crop"},
+  {"id": "hair6", "label": "Layered bob"},
+  {"id": "hair10", "label": "Short curls"},
+  {"id": "hair2", "label": "Curly shag"},
+  {"id": "hair4", "label": "Bun and fringe"},
+  {"id": "hair11", "label": "Half up"},
+  {"id": "hair7", "label": "Long curls"},
+  {"id": "hair1", "label": "Long waves"},
+  {"id": "hair5", "label": "Long straight"},
+  {"id": "hair9", "label": "Long with fringe"}
+ ]
+}

@@ -11,7 +11,11 @@ and the joint heights the game's feet need are printed.
 
 Materials are MPFB's game-engine kind (one Principled BSDF each); a texture with real
 transparency (hair, eyebrows, eyelashes) is cut out at half alpha, which glTF exports as MASK, and
-any other texture's alpha is dropped, so skin and eyes stay opaque.
+any other texture's alpha is dropped, so skin and eyes stay opaque. A preset's "skin" (a skin file,
+content/characters/skins/) puts the head on its own material and layout, its textures in skin/
+beside the glb (skin_bake.py, skin_export.py). A preset's "eye_model" (what eye_mesh.py wrote) gives it
+the eyes of fit_parts.py and eye_bake.py in place of MPFB's. Hair styles are not in the glb: the kit
+names them (hair_fit.py, engine/src/character_hair.rs), and a preset wearing them has "hair": "".
 """
 import json
 import sys
@@ -22,8 +26,10 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+import fit_parts
 import kit
-from mpfb_services import build_human, service
+import skin_export
+from mpfb_services import ROOT, build_human, service
 from retarget import retarget
 
 ExportService = service("exportservice", "ExportService")
@@ -124,11 +130,21 @@ def main():
     info = dict(json.loads(preset_path.read_text()), **GAME)
     basemesh, parts, _ = build_human(info, subdivision=0)
     rig = basemesh.parent
-    character_kit = kit.record(basemesh, parts)
+    eye_model = ROOT / info["eye_model"] if "eye_model" in info else None
+    placed = fit_parts.apply(basemesh, parts, kit.base_positions(basemesh), eye_model, info.get("skin"))
+    character_kit = kit.record(basemesh, parts, placed)
+
+    if "skin" in info:
+        character_kit["skin_layers"] = skin_export.layers(out)
+
     # Shape keys first: with none left MPFB only applies its masks, where with keys it rebuilds
     # every key through copies and the body moves up to 0.1 mm off the kit's base.
     bake_shape_keys(basemesh)
     ExportService.bake_modifiers_remove_helpers(basemesh, bake_masks=True, remove_helpers=True)
+
+    if "skin" in info:
+        skin_export.apply(basemesh, info["skin"])
+
     materials = {slot.material for obj in parts for slot in obj.material_slots if slot.material}
 
     for material in sorted(materials, key=lambda m: m.name):
@@ -168,6 +184,10 @@ def main():
         # The kit's _SOURCE_VERTEX.
         export_attributes=True,
     )
+
+    if "skin" in info:
+        skin_export.rewrite(out)
+
     print(f"EXPORTED {out} {out.stat().st_size / 1e6:.1f} MB")
     kit.write(character_kit, out.with_suffix(".kit.json"))
 

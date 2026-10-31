@@ -5,7 +5,14 @@ the world-space turn of one source bone, measured from a reference pose: the tar
 limbs point where the source's do at rest. The two rests differ (MPFB holds its arms lower and its
 fingers curled), and turning both from poses that agree keeps the limbs where the source puts
 them. Only turns carry over, and the pelvis's rise and sway scaled by leg length: the target's own
-bone lengths place its joints. export_glb.py calls it.
+bone lengths place its joints.
+
+The spines differ more: the source has five bones and a short neck where the target has three and
+a long one, so a bone's turn would swing a longer lever and carry the head and shoulders too far.
+Each target spine bone and the neck therefore keep the source's twist but aim at where the next
+joint belongs: the point of the source's spine at that joint's rest height, plus how far the
+joint stands from that point at rest. The pelvis keeps the source's turn, or the feet would slide
+with no IK to hold them. export_glb.py calls it.
 """
 from collections import namedtuple
 
@@ -57,6 +64,12 @@ def source_bones():
             }
 
     return bones
+
+
+# The target's spine bones, feet to skull, and the source's spine joints the same way; the source's
+# spine runs on to its head bone's tail.
+TARGET_SPINE = ("spine_01", "spine_02", "spine_03", "neck_01", "head")
+SOURCE_SPINE = ("spine_02.x", "spine_03.x", "spine_04.x", "spine_05.x", "neck.x", "head.x")
 
 
 def aims():
@@ -157,6 +170,41 @@ class Retarget:
         self.stride = hip.z / source_hip.z
         self.pelvis = target.matrix_world @ target.data.bones["pelvis"].head_local
         self.source_root = source.matrix_world @ source.data.bones["root.x"].head_local
+        self.spine = {}
+
+        for name, toward in zip(TARGET_SPINE, TARGET_SPINE[1:]):
+            joint = target.matrix_world @ target.data.bones[name].head_local
+            next_joint = target.matrix_world @ target.data.bones[toward].head_local
+            spot = self.spine_spot(toward)
+            self.spine[name] = ((next_joint - joint).normalized(), spot, next_joint - self.spine_point(spot, rest=True))
+
+    def spine_spot(self, name):
+        """Where on the source's spine the target joint's rest height falls: a segment and the
+        share along it."""
+        height = (self.target.matrix_world @ self.target.data.bones[name].head_local).z
+        joints = [self.spine_ends(index, rest=True)[0].z for index in range(len(SOURCE_SPINE))]
+        joints.append(self.spine_ends(len(SOURCE_SPINE) - 1, rest=True)[1].z)
+
+        for index in range(len(SOURCE_SPINE)):
+            if height <= joints[index + 1] or index == len(SOURCE_SPINE) - 1:
+                return index, (height - joints[index]) / (joints[index + 1] - joints[index])
+
+    def spine_ends(self, index, rest=False):
+        """A segment of the source's spine: a bone's head and the next bone's, or the last's tail."""
+        source = self.source
+        bones = source.data.bones if rest else source.pose.bones
+        head = "head_local" if rest else "head"
+        tail = "tail_local" if rest else "tail"
+        start = source.matrix_world @ getattr(bones[SOURCE_SPINE[index]], head)
+
+        if index + 1 < len(SOURCE_SPINE):
+            return start, source.matrix_world @ getattr(bones[SOURCE_SPINE[index + 1]], head)
+
+        return start, source.matrix_world @ getattr(bones[SOURCE_SPINE[index]], tail)
+
+    def spine_point(self, spot, rest=False):
+        start, end = self.spine_ends(spot[0], rest)
+        return start.lerp(end, spot[1])
 
     def pose(self):
         """The target's bones' matrix_basis for the source's current pose, and their heads'
@@ -188,6 +236,12 @@ class Retarget:
             if name == "pelvis":
                 root = source.matrix_world @ source.pose.bones["root.x"].head
                 head = to_target @ (self.pelvis + (root - self.source_root) * self.stride)
+
+            if name in self.spine:
+                line, spot, offset = self.spine[name]
+                have = rotation @ self.reference[name].inverted() @ line
+                wanted = self.spine_point(spot) + offset - target.matrix_world @ head
+                rotation = have.rotation_difference(wanted.normalized()) @ rotation
 
             rotations[name] = rotation
             posed[name] = Matrix.Translation(head) @ (world_turn.inverted() @ rotation).to_matrix().to_4x4()

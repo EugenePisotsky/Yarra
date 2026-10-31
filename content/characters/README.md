@@ -175,14 +175,21 @@ its kit as the profile `presentations/female/mpfb_fitted`; the engine builds the
 meshes from the kit when it spawns and when its `CharacterAppearance` changes
 (`engine/src/character_kit.rs`).
 
-Faces are made in the editor's Animation workspace: with a kit model's profile chosen, the face
-panel offers its sliders by group (choices as a pick and a strength, details folded away),
-framings of the face, a random face around the model's own, and keeps faces by name in
+Faces are made in the editor's Character workspace: with a kit model's profile chosen, the face
+panel offers the brow's style and colour, makeup, its sliders by group (choices as a pick and a
+strength, details folded away), a random face around the model's own, and keeps faces by name in
 `assets/characters/faces/<name>.face.ron` (`engine/src/character_face.rs`). The game's probe
 wears one with `--character-face NAME`. `--character-probe` stands a profile ahead of the
-player, facing the camera and playing its idle; the editor's Animation workspace plays its walk
-and jog. The glb's clips come from bought animations, so it stays in `assets/local` like
+player, facing the camera and playing its idle; the editor's Character workspace plays its walk
+and jog beside any other profile. `--character-portrait DIR` then saves fixed views of the probe,
+its face to the sun, and exits. The glb's clips come from bought animations, so it stays in `assets/local` like
 female_main's.
+
+Spine and neck do not take the source's turns alone: they aim at where the next joint belongs, the
+point of the source's spine at that joint's rest height, because the two rigs' spine bones differ
+in number and length. Measured against the source over the clips, the head's world position differs
+by 1-8 mm (RMS, means removed), and its side-to-side sway relative to the pelvis is 6.1 cm in the walk against the
+source's 6.0 (8.4 with turns alone) and 7.4 in the jog against 7.7 (11.0).
 
 The fitted character costs about what female_main does: 23,461 vertices and 39,832 triangles
 against 19,183 and 36,004, using MPFB's card eyebrows and eyelashes (124 and 250 vertices; the
@@ -195,6 +202,113 @@ uses one plain PBR material per part; textures with holes (the ponytail's, the e
 teeth's) are cut out at half alpha (glTF MASK), the rest stay opaque. With clips it prints the
 measures the catalog's `feet` takes: the ankle and toe joints' lowest heights over the clips and
 the sole's reach behind the ankle and ahead of the toes.
+
+A preset's `"skin"` (a skin file in `content/characters/skins/`) gives the head its own material
+and layout. MakeHuman's atlas spends its head island on the scalp and neck, leaving a mouth 66
+texels of 2K; laid out as a scan is (`head_layout.py`: a thin-plate spline through the skin file's
+pairs of island points and scan pixels), a mouth has about 560 of the head's 4K. The bought scan and
+what is baked from it stay out of the repository; the skin file holds only coordinates and tone.
+
+```sh
+BLENDER_USER_RESOURCES=$PWD/.tools/blender /Applications/Blender.app/Contents/MacOS/Blender -b \
+  --python-exit-code 1 --python content/characters/scripts/head_mesh.py -- \
+  content/characters/presets/fitted_body.json assets/local/characters/head_mesh.npz
+uv run --with numpy --with scipy --with pillow --with tifffile python \
+  content/characters/scripts/skin_bake.py content/characters/skins/face07.json \
+  ~/Downloads/texturingxyz__multichannelfaces_07 \
+  .tools/blender/extensions/.user/blender_org/mpfb/data/skins/young_caucasian_female/young_lightskinned_female_diffuse.png \
+  assets/local/characters/head_mesh.npz assets/local/characters/fitted_body/skin \
+  --cache tmp/characters/skin07/clean
+```
+
+`skin_bake.py` takes the scan's brows and lashes out of its colour and height, sets its level to
+the skin file's tone, and writes `skin/*.ktx2` beside the glb, with mipmaps (about 6 minutes). Head
+and body meet in one colour: near their seam the head takes the body's colour there, by real
+distance from it. The insides of the mouth and eye sockets are dark, and the lips' and lids' inner
+edges shaded, since no shadow map resolves them. The export gives the glb stand-in images and
+rewrites its materials to name those files (`skin_export.py`). Head colour and normal are 4K (BC7 on desktop, 1 byte a texel: about 21 MiB
+each with mipmaps), its occlusion-roughness 2K (5 MiB). The body's colour is the atlas at the same tone.
+
+`fit_parts.py` replaces the parts MakeHuman's own do not make good enough. Its eye is one cut-out
+texture on one surface, which reads as a doll's. A preset's `"eye_model"` puts three surfaces of
+revolution in its place, fitted by MakeHuman's eye vertices so they follow the same sliders: an
+opaque sclera and a recessed iris, and over them a wet layer with the cornea's bulge, which adds
+reflections and takes its alpha from the shade the lids throw and a soft ring at the limbus. The
+iris has no normal map: its relief turns each fibre bright or dark by the light's direction. Its
+lashes are thick cut-out cards; strands take their place, 130 per eye, tapered ribbons rooted on the
+lid's edge, fanned, curled and gathered in loose clumps, over a soft dark strip along each lid that
+reads as the line of their roots. Each is bound to the triangle of skin at its root so lid sliders
+carry it, and they draw with soft edges. A vertex shader keeps them at least a pixel wide, faded by
+as much, since thinner ones fall between the samples at the game's render scale and break into specks
+(`shaders/lighting/lash_strand.wesl`). The eye textures come from a bought pack
+([licences](../../docs/ASSET_LICENSES.md)), kept out of the repository like the scan:
+
+```sh
+BLENDER_USER_RESOURCES=$PWD/.tools/blender /Applications/Blender.app/Contents/MacOS/Blender -b \
+  --python-exit-code 1 --python content/characters/scripts/eye_mesh.py -- \
+  ~/Downloads/Eye3dModels/eye.blend assets/local/characters/fitted_body/eye_mesh.npz
+uv run --with numpy --with scipy --with pillow --with tifffile python \
+  content/characters/scripts/eye_bake.py ~/Downloads/EyePack 5 \
+  assets/local/characters/fitted_body/eye_mesh.npz assets/local/characters/fitted_body/skin
+```
+
+The number picks the pack's iris. The eyes take 3,460 vertices against MakeHuman's 1,064 and one
+blended draw, the lashes 2,256 vertices and 1,728 triangles against 250 vertices and another blended
+draw; the textures take 6 MiB.
+
+Brows and makeup are not parts: the skin paints them as it draws (`engine/src/character_skin.rs`,
+`shaders/lighting/skin_layers.wesl`), from masks in the head's layout, with a colour and strength
+each from the character's face file. A brow therefore follows every face slider, and its hairs
+resolve into soft coverage in the mipmaps. A preset leaves out MakeHuman's (`"eyebrows": ""`).
+
+```sh
+uv run --with numpy --with scipy --with pillow --with tifffile python \
+  content/characters/scripts/skin_layers_bake.py content/characters/skins/face07.json \
+  ~/Downloads/eyebrows assets/local/characters/head_mesh.npz assets/local/characters/fitted_body/skin
+```
+
+It takes about a minute. Each brow of the bought pack is unbent through its plane's UVs and taken apart into
+its centre line and thickness. The line is laid along the crest of the head's own brow ridge (level
+from the nose, falling towards the temple), rising from a lower inner end to a peak two-thirds out
+and keeping a third of its drawn arch, by arc length over the forehead; the hairs lie about it at a
+little over half their drawn thickness, both sides from the one brow. Run the export afterwards,
+which copies `skin/skin_layers.json` into the kit. A brow mask is 3072x640 (2.6 MiB with mipmaps, only the
+worn one loaded), the makeup mask 2048x2048 (5.3 MiB): eyeshadow, liner, blush and lipstick. The
+hairline mask (2048x2048, 5.3 MiB) is the worn hair's cover of the head: found by projecting the hair's
+cards onto the skin (not the ears, which the skin file names), solid under them so no skin shows
+between them, then fine strands and a soft haze over the skin in front of them, painted in the hair's
+colour. Their cut-out edge then reads as hair. It belongs to one hairstyle: a hairstyle choice will need
+a mask each. Each head costs three texture samples in the G-buffer, on its own pixels only, and has
+its own material.
+
+A character's hair is a style its kit offers, not a part of its glb: a preset wearing styles has
+`"hair": ""`, and `content/characters/hairs/female_hair_12.json` names the styles and their labels, in
+the order the Face panel offers them. Each is a folder in `assets/local/characters/hairs/`, bought
+([licences](../../docs/ASSET_LICENSES.md)) and kept out of the repository. `hair_pack.py` reads the
+pack's meshes once; `hair_fit.py` makes a style of one hair:
+
+```sh
+BLENDER_USER_RESOURCES=$PWD/.tools/blender /Applications/Blender.app/Contents/MacOS/Blender -b \
+  --python-exit-code 1 --python content/characters/scripts/hair_pack.py -- \
+  ~/Downloads/hairstyles/Blender+2.83.blend assets/local/characters/hairs/pack.npz
+uv run --with numpy --with scipy --with pillow --with tifffile python \
+  content/characters/scripts/hair_fit.py assets/local/characters/hairs/pack.npz hair8 \
+  <hair8's folder from hair8.rar> content/characters/skins/face07.json \
+  assets/local/characters/head_mesh.npz assets/local/characters/hairs
+```
+
+About 2 minutes a style. It lays the hair on the head, by a scale and shift over the skull and then the
+smooth field of what is left between the pack's head and ours (6.4 mm apart on average), binds each
+vertex to the triangle of skin nearest it so sliders carry it, and bakes the hairline mask. Use each
+hair's own textures from its archive: a card's UVs fit no other. Run the export afterwards: it lists
+the styles built in the kit.
+
+The game loads only the style worn (`engine/src/character_hair.rs`), keeping the old one until the new
+is ready, about 11 MiB of textures, 5 MiB of hairline mask and its mesh. Its mesh hangs off the head
+joint, unskinned, so long hair does not follow the shoulders and passes through them. The textures are
+grey, each character's hair colour tinting them, and the cards cut out at a threshold that changes per
+pixel and per frame, which the temporal upscaler averages into soft edges; one fixed threshold at half
+resolution reads as straw. A face's `hair_style` is a label, or `None` for a bare head.
 
 `retarget.py` turns each game-engine bone by one source bone's world-space turn, measured from a
 reference pose: the target posed so its limbs point where the source's do at rest, since MPFB holds

@@ -5,12 +5,12 @@
  ],
  "color_adjustments": {},
  "expressions": [],
- "eyebrows": "eyebrow011/eyebrow011.mhclo",
+ "eyebrows": "",
  "eyelashes": "eyelashes01/eyelashes01.mhclo",
  "eyes": "high-poly/high-poly.mhclo",
  "eyes_material_settings": {},
  "eyes_material_type": "PROCEDURAL_EYES",
- "hair": "ponytail01/ponytail01.mhclo",
+ "hair": "",
  "makeup": [],
  "phenotype": {
   "age": 0.5,
@@ -344,5 +344,7 @@
  ],
  "teeth": "teeth_base/teeth_base.mhclo",
  "tongue": "tongue01/tongue01.mhclo",
- "wrap": "assets/local/characters/fitted_body/wrap.npz"
+ "wrap": "assets/local/characters/fitted_body/wrap.npz",
+ "skin": "content/characters/skins/face07.json",
+ "eye_model": "assets/local/characters/fitted_body/eye_mesh.npz"
 }

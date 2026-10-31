@@ -9,7 +9,8 @@ MakeHuman's axes are glTF's at a tenth of the scale, so a part's offsets are its
 
 - "base": every base-mesh vertex as exported, helpers included (eyes and teeth fit to helpers);
 - "sliders": face_sliders.json's sliders, each end's offsets per base-mesh vertex it moves;
-- "parts": each part's fitting, by its mesh's name in the glb.
+- "parts": each part's fitting, by its mesh's name in the glb;
+- "skin_layers": the masks its skin paints with, if it has any (skin_export.py).
 
 Each exported vertex names its base-mesh or part vertex in a _SOURCE_VERTEX attribute, since glTF
 splits vertices along seams. The game reads the kit in engine/src/character_kit.rs.
@@ -21,7 +22,7 @@ import numpy as np
 
 from mpfb_services import ROOT, mpfb_attribute, service, sides
 
-VERSION = 1
+VERSION = 4
 
 SLIDERS = ROOT / "content/characters/face_sliders.json"
 
@@ -157,18 +158,20 @@ def mark_sources(objects):
         attribute.data.foreach_set("value", np.arange(len(obj.data.vertices), dtype=np.float32))
 
 
-def record(basemesh, parts):
+def record(basemesh, parts, placed=None):
     """The kit of a built human, taken before the export removes its helpers; marks each vertex's
-    source. Refuses a part the kit would fit elsewhere than MPFB did."""
+    source. `placed` holds the fittings of parts the export placed itself (fit_parts.py). Refuses a
+    part the kit would fit elsewhere than it stands."""
     base = base_positions(basemesh)
     fits = {}
+    placed = placed or {}
 
     for part in parts:
         if part == basemesh:
             continue
 
         name = part_name(part)
-        fits[name] = fitting(part)
+        fits[name] = placed.get(name) or fitting(part)
         error = np.abs(fitted(base, fits[name]) - in_gltf(part, coordinates(part.data.vertices))).max()
         print(f"KIT {name} fitted again within {error * 1000:.4f} mm")
 
