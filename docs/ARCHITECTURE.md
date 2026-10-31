@@ -427,7 +427,7 @@ editor uses the same renderers, with FXAA.
 ### Deferred lighting
 
 Every camera that shows the world is deferred (`DepthPrepass` and `DeferredPrepass`): the game's,
-and the editor's world, Presets and Animation cameras. Bevy skips deferred materials in the main
+and the editor's world, Presets and Character cameras. Bevy skips deferred materials in the main
 pass of every view, so a camera without a G-buffer would show no terrain, objects or trees.
 
 - **The G-buffer** is Bevy's `Rgba32Uint` target in our packing. Its y word's top byte names the
@@ -436,6 +436,13 @@ pass of every view, so a camera without a G-buffer would show no terrain, object
   (`shaders/vegetation/draw/gbuffer.wesl`). A material's model follows from its shader definitions
   (`SHADED_MODEL`). Impostors also store the lift from their quad's depth to the crown surface
   they are lit at.
+- **Character skin** (`engine::character_skin`): a kit head draws with its own material over the
+  environment one, which mixes brow and makeup masks into its surface before the G-buffer
+  (`shaders/lighting/skin_layers.wesl`, `CHARACTER_SKIN`). Head and body write `MODEL_SKIN`
+  (`SKIN_LIGHTING`), a branch of the shared kernel; hair cards (`engine::character_hair`, a style per
+  folder, the worn one loaded, on the head joint) cut out stochastically with softened strand
+  normals (`HAIR_CARDS`), and carry `EnvironmentMaterialOptIn` so a style picked in the isolated
+  Character workspace draws as in the game; lash strands have their own vertex shader (`shaders/lighting/lash_strand.wesl`).
 - **Writers.** Grass draws first, in its own pass before Bevy's prepasses (Bevy's deferred
   prepass system is private, so nothing can be ordered between it and the depth prepass). Its
   pass binds an empty group in the view's slot, because the view's group holds the G-buffer for
@@ -519,8 +526,8 @@ from the game's pipeline log, refreshed when pipelines change); `--each-flag`, `
 
 ## The editor
 
-- **Workspaces** (`EditorWorkspace`): World; Animation (character previews, and faces on kit
-  models: sliders by group, kept faces); Presets
+- **Workspaces** (`EditorWorkspace`): World; Character (character previews, and faces on kit
+  models: hair styles, brows, makeup, sliders by group, kept faces); Presets
   (environment presets, collections, road styles), the last two under an isolated atmosphere.
   Each owns its cameras, UI and systems; project workers and save completion stay in the shell.
 - **Tools** register an `EditorToolDescriptor` naming their workspace and the source domains

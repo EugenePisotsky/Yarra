@@ -135,10 +135,10 @@ mod tests {
             registry.active(EditorWorkspace::World).map(|tool| tool.id),
             Some(OBJECT_TOOL.id)
         );
-        assert!(registry.active(EditorWorkspace::Animation).is_none());
+        assert!(registry.active(EditorWorkspace::Character).is_none());
         assert!(registry.set_active(EditorWorkspace::World, ENVIRONMENT_TOOL.id));
         assert!(!registry.set_active(EditorWorkspace::World, ENVIRONMENT_TOOL.id));
-        assert!(!registry.set_active(EditorWorkspace::Animation, OBJECT_TOOL.id));
+        assert!(!registry.set_active(EditorWorkspace::Character, OBJECT_TOOL.id));
         assert_eq!(
             registry.active(EditorWorkspace::World).map(|tool| tool.id),
             Some(ENVIRONMENT_TOOL.id)

@@ -532,6 +532,37 @@ trees come only from the YarraVegetation kit and are drawn on the GPU in game an
 - **Gameplay areas publish outside the content hash.** *Kept.* Repainting an area never recooks
   terrain.
 
+## Characters
+
+- **Brows and makeup are painted by the skin.** *Kept* (October 30). Masks in the head's layout,
+  mixed in the G-buffer, a colour and strength each per character. They follow every face slider,
+  soften in the mipmaps and cost a head's own pixels two samples. *Rejected:* brow cards, which sat
+  under the skin, had hard cut-out edges and need fitting to each slider; baking a texture per
+  character, 4K of memory each.
+- **A brow's line follows the head's ridge.** *Kept* (October 31). A bought brow is drawn for a flat
+  face at a generous size. Placed by height with its drawn arch it stands off the skull like a
+  rainbow; centre line and thickness are set apart, the line on the measured ridge. Measure such
+  things over skin triangles: MakeHuman's helpers stand in front of the face.
+- **Generated lash strands.** *Kept* (October 30). Bought and MakeHuman cards are hard cut-outs at
+  low resolution, which is what made lashes look wrong. Soft-edged ribbons rooted on the lid's edge,
+  over a dark strip that stays visible when strands thin out with distance, take 2,256 vertices.
+- **The hairline is painted in the skin.** *Kept* (October 31). Hair cards end in a hard cut-out over
+  bare skin. A mask per hairstyle, solid under the cards with strands and a haze in front of them,
+  hides that edge for one more sample. Strands alone read as a comb; the haze is what softens them.
+- **Skin has its own lighting model.** *Kept* (October 31). `MODEL_SKIN` in the shared kernel: direct
+  diffuse with a softer normal and a wider wrap in red than blue, a reddened shadow edge, and sky light
+  on a deepened albedo. A shaded face otherwise reads cold blue-grey. In the meadow with her in view,
+  GPU busy went 8.65 to 8.69 ms and the deferred lighting line 1.03 to 1.10. *Not built:* screen-space
+  subsurface blur.
+- **Hair styles are assets of their own, on the head joint.** *Kept* (October 31). A glb holding every
+  style would load them all; a folder per style loads only the one worn, and turning rigidly with the
+  head they need no skinning. Cards cut out stochastically, which a temporal upscaler softens. In the
+  meadow with her in view, GPU busy is 8.65 ms with 12k triangles of hair and 8.94 with 58k, against 8.69
+  with MakeHuman's ponytail (a close-up was not measured). Licence of the bought styles still open.
+- **The iris has no normal map.** *Kept* (October 30). A bought iris's relief turns each fibre bright
+  or dark by the light's direction. Judge a surface that differs only when lit by its normals first:
+  the rays in the eye that once looked like relief or shadows were a fan of reversed triangles.
+
 ## Editor
 
 - **The editor draws what the game draws.** *Kept* (`6e5ab71`, `392d819`, `9cf8c56`). v2 terrain

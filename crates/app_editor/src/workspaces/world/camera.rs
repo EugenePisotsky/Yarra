@@ -363,8 +363,8 @@ mod tests {
             setup_editor_shell, sync_workspace_cameras,
         },
         workspaces::{
-            AnimationWorkspaceCamera, EditorWorkspace, EditorWorkspacesPlugin,
-            animation::setup_animation_workspace,
+            CharacterWorkspaceCamera, EditorWorkspace, EditorWorkspacesPlugin,
+            character::setup_character_workspace,
         },
     };
 
@@ -420,7 +420,7 @@ mod tests {
             .id();
         let fallback_camera = app
             .world_mut()
-            .spawn((Camera::default(), AnimationWorkspaceCamera))
+            .spawn((Camera::default(), CharacterWorkspaceCamera))
             .id();
 
         app.update();
@@ -434,7 +434,7 @@ mod tests {
 
         app.world_mut()
             .resource_mut::<NextState<EditorWorkspace>>()
-            .set(EditorWorkspace::Animation);
+            .set(EditorWorkspace::Character);
         app.update();
         assert!(!app.world().get::<Camera>(world_camera).unwrap().is_active);
         assert!(
@@ -471,7 +471,7 @@ mod tests {
                 (
                     setup_editor_shell,
                     setup_world_workspace,
-                    setup_animation_workspace,
+                    setup_character_workspace,
                 ),
             );
         app.update();
@@ -482,7 +482,7 @@ mod tests {
             .single(world)
             .unwrap();
         let fallback_msaa = *world
-            .query_filtered::<&Msaa, With<AnimationWorkspaceCamera>>()
+            .query_filtered::<&Msaa, With<CharacterWorkspaceCamera>>()
             .single(world)
             .unwrap();
         let ui_msaa = *world

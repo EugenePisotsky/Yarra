@@ -27,7 +27,7 @@ use crate::{
     publication::RuntimePublicationPlugin,
     tools::EditorToolsPlugin,
     workspaces::{
-        AnimationWorkspaceCamera, AnimationWorkspacePlugin, EditorFramePacing, EditorWorkspace,
+        CharacterWorkspaceCamera, CharacterWorkspacePlugin, EditorFramePacing, EditorWorkspace,
         EditorWorkspacesPlugin, PresetWorkspaceCamera, PresetWorkspacePlugin, WorldWorkspacePlugin,
     },
 };
@@ -85,7 +85,7 @@ pub(crate) fn run() -> std::result::Result<(), String> {
             EditorToolsPlugin,
             EditorWorkspacesPlugin,
             WorldWorkspacePlugin,
-            AnimationWorkspacePlugin,
+            CharacterWorkspacePlugin,
             WorldStreamingPlugin::editor(runtime_database.clone()),
             ProjectEditorStorePlugin::new(project_database.clone()),
             ProjectListingsPlugin::new(project_database.clone()),
@@ -227,14 +227,14 @@ pub(crate) fn sync_workspace_cameras(
         (
             Without<PresetWorkspaceCamera>,
             With<WorldViewCamera>,
-            Without<AnimationWorkspaceCamera>,
+            Without<CharacterWorkspaceCamera>,
         ),
     >,
     mut animation_cameras: Query<
         &mut Camera,
         (
             Without<PresetWorkspaceCamera>,
-            With<AnimationWorkspaceCamera>,
+            With<CharacterWorkspaceCamera>,
             Without<WorldViewCamera>,
         ),
     >,
@@ -243,7 +243,7 @@ pub(crate) fn sync_workspace_cameras(
         (
             With<PresetWorkspaceCamera>,
             Without<WorldViewCamera>,
-            Without<AnimationWorkspaceCamera>,
+            Without<CharacterWorkspaceCamera>,
         ),
     >,
 ) {
@@ -258,7 +258,7 @@ pub(crate) fn sync_workspace_cameras(
     }
 
     for mut camera in &mut animation_cameras {
-        camera.is_active = *workspace.get() == EditorWorkspace::Animation;
+        camera.is_active = *workspace.get() == EditorWorkspace::Character;
     }
 }
 
@@ -424,10 +424,10 @@ mod window_registry_tests {
         default_open: true,
     };
 
-    const ANIMATION_WINDOW: EditorWindowDescriptor = EditorWindowDescriptor {
-        id: EditorWindowId("test.animation"),
-        workspace: EditorWorkspace::Animation,
-        label: "Animation browser",
+    const CHARACTER_WINDOW: EditorWindowDescriptor = EditorWindowDescriptor {
+        id: EditorWindowId("test.character"),
+        workspace: EditorWorkspace::Character,
+        label: "Character browser",
         default_open: false,
     };
 
@@ -435,7 +435,7 @@ mod window_registry_tests {
     fn floating_window_visibility_is_typed_and_workspace_scoped() {
         let mut registry = EditorWindowRegistry::default();
         registry.register(WORLD_WINDOW);
-        registry.register(ANIMATION_WINDOW);
+        registry.register(CHARACTER_WINDOW);
 
         assert_eq!(
             registry
@@ -444,11 +444,11 @@ mod window_registry_tests {
             vec![WORLD_WINDOW]
         );
         assert!(registry.is_open(WORLD_WINDOW.id));
-        assert!(!registry.is_open(ANIMATION_WINDOW.id));
+        assert!(!registry.is_open(CHARACTER_WINDOW.id));
 
         registry.set_open(WORLD_WINDOW.id, false);
-        registry.set_open(ANIMATION_WINDOW.id, true);
+        registry.set_open(CHARACTER_WINDOW.id, true);
         assert!(!registry.is_open(WORLD_WINDOW.id));
-        assert!(registry.is_open(ANIMATION_WINDOW.id));
+        assert!(registry.is_open(CHARACTER_WINDOW.id));
     }
 }

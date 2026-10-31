@@ -5,7 +5,7 @@
 //! workers and save completion remain shell-level services so in-flight work can finish while the
 //! user visits another workspace.
 
-mod animation;
+mod character;
 pub(crate) mod presets;
 
 pub(crate) use presets::{PresetWorkspaceCamera, PresetWorkspacePlugin};
@@ -16,24 +16,24 @@ use std::collections::HashSet;
 
 use bevy::prelude::*;
 
-pub(crate) use animation::{AnimationWorkspaceCamera, AnimationWorkspacePlugin};
+pub(crate) use character::{CharacterWorkspaceCamera, CharacterWorkspacePlugin};
 pub(crate) use world::WorldWorkspacePlugin;
 
 #[derive(States, Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum EditorWorkspace {
     #[default]
     World,
-    Animation,
+    Character,
     Presets,
 }
 
 impl EditorWorkspace {
-    pub(crate) const ALL: [Self; 3] = [Self::World, Self::Animation, Self::Presets];
+    pub(crate) const ALL: [Self; 3] = [Self::World, Self::Character, Self::Presets];
 
     pub(crate) const fn label(self) -> &'static str {
         match self {
             Self::World => "World",
-            Self::Animation => "Animation",
+            Self::Character => "Character",
             Self::Presets => "Presets",
         }
     }
@@ -46,11 +46,11 @@ impl Plugin for EditorWorkspacesPlugin {
         app.init_state::<EditorWorkspace>()
             .init_resource::<EditorFramePacing>()
             .add_systems(
-                OnEnter(EditorWorkspace::Animation),
+                OnEnter(EditorWorkspace::Character),
                 request_full_rate_preview,
             )
             .add_systems(
-                OnExit(EditorWorkspace::Animation),
+                OnExit(EditorWorkspace::Character),
                 release_full_rate_preview,
             );
     }
@@ -59,7 +59,7 @@ impl Plugin for EditorWorkspacesPlugin {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum FramePacingOwner {
     AtmospherePreview,
-    AnimationWorkspace,
+    CharacterWorkspace,
 }
 
 #[derive(Resource, Default)]
@@ -82,15 +82,15 @@ impl EditorFramePacing {
 }
 
 fn request_full_rate_preview(mut pacing: ResMut<EditorFramePacing>) {
-    pacing.request(FramePacingOwner::AnimationWorkspace);
+    pacing.request(FramePacingOwner::CharacterWorkspace);
 }
 
 fn release_full_rate_preview(mut pacing: ResMut<EditorFramePacing>) {
-    pacing.release(FramePacingOwner::AnimationWorkspace);
+    pacing.release(FramePacingOwner::CharacterWorkspace);
 }
 
 /// The world's sun and ambient light, saved by a workspace that lights its own preview
-/// (Animation, Presets) and given back when it is left.
+/// (Character, Presets) and given back when it is left.
 pub(crate) struct SavedDaylight {
     transform: Transform,
     light: DirectionalLight,
@@ -126,8 +126,8 @@ pub(crate) fn world_workspace_active(workspace: Res<State<EditorWorkspace>>) -> 
     *workspace.get() == EditorWorkspace::World
 }
 
-pub(crate) fn animation_workspace_active(workspace: Res<State<EditorWorkspace>>) -> bool {
-    *workspace.get() == EditorWorkspace::Animation
+pub(crate) fn character_workspace_active(workspace: Res<State<EditorWorkspace>>) -> bool {
+    *workspace.get() == EditorWorkspace::Character
 }
 
 #[cfg(test)]
@@ -139,12 +139,12 @@ mod tests {
         assert_eq!(EditorWorkspace::default(), EditorWorkspace::World);
         assert_eq!(
             EditorWorkspace::ALL.map(EditorWorkspace::label),
-            ["World", "Animation", "Presets"]
+            ["World", "Character", "Presets"]
         );
     }
 
     #[test]
-    fn animation_workspace_owns_the_full_rate_preview_request() {
+    fn character_workspace_owns_the_full_rate_preview_request() {
         let mut app = App::new();
         app.add_plugins(bevy::state::app::StatesPlugin)
             .add_plugins(EditorWorkspacesPlugin);
@@ -157,7 +157,7 @@ mod tests {
 
         app.world_mut()
             .resource_mut::<NextState<EditorWorkspace>>()
-            .set(EditorWorkspace::Animation);
+            .set(EditorWorkspace::Character);
         app.update();
         assert!(
             app.world()

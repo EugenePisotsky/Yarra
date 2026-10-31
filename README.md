@@ -13,6 +13,7 @@ with RON/Fluent/Luau content.
 | [Workflows](docs/WORKFLOWS.md) | Commands: setup, the world, editor, game, content, checks, measuring |
 | [Decisions](docs/DECISIONS.md) | What was kept and what was rejected, and why |
 | [Backlog](docs/BACKLOG.md) | Open work |
+| [Asset licences](docs/ASSET_LICENSES.md) | What bought assets still need settled before shipping |
 | [AGENTS.md](AGENTS.md) | Code style and the checks to run (for people and coding agents) |
 
 Update these instead of adding reports; history is in Git.

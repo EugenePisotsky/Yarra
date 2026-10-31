@@ -42,6 +42,7 @@ Nothing cooks until they are restored. Back `assets/local/` up.
 | `yarra_*/` (13 packs) | trees, shrubs, ground cover | [Creating and revising trees](#creating-and-revising-trees) |
 | `details/*.glb` | stones, pebbles, cobbles, twigs | [Grass and ground details](#grass-and-ground-details) |
 | `characters/female_main/` | player model | backup; check `shasum -a 256` against `assets/packs/characters/female_main.toml` |
+| `characters/fitted_body/` | the MPFB character: glb, kit, wrap, skin, eye and brow textures | `content/characters/README.md`, from the bought packs in [Asset licences](ASSET_LICENSES.md) |
 | `map/` | map brushes and fonts | [download](../assets/README.md#map-symbols-and-lettering) |
 
 ### Terrain surfaces
@@ -155,7 +156,9 @@ zooms, right mouse + WASD/QE flies.
   - *Atmosphere*: sky, weather presets and sequence, fog and mist; the preview is not saved.
 - **Presets**: shared ground, grass and object presets and road styles in an isolated preview.
   An unapplied draft blocks saving.
-- **Animation**: previews character models and clips.
+- **Character**: a catalog character on a neutral stage with its own lights: clips on a timeline
+  (play, step, scrub), another character beside it to compare, brows, makeup and face sliders. Left drag orbits,
+  right or middle drag pans, scroll zooms, a double click returns to the framing.
 
 **Save** (Cmd+S) writes source changes to the project. **Save & Publish** also cooks, validates
 and atomically replaces the runtime, which the game reads (**Publish** when nothing is unsaved;
@@ -662,7 +665,7 @@ in step; `--help` prints the same with descriptions):
 
 | Purpose | Controls |
 | --- | --- |
-| Scene and presentation | `--world-db FILE`, `--start-view FILE`, `--story DIR`, `--character-probe PROFILE`, `--character-face NAME`, `--fps 0\|15..240`, `--resolution-scale 1\|0.75\|0.5\|0.33`, `--time HH:MM`, `--day-clock on\|off`, `--weather auto\|authored\|clear\|scattered\|overcast\|rain\|storm`, `--upscaler auto\|linear\|metalfx-spatial\|metalfx-temporal\|taa`, `--frame window\|WIDTHxHEIGHT`, `--upscale-target 1\|0.75\|0.5`, `--cloud-quality off\|balanced\|high`, `--tree-shadow-lod 0..2` |
+| Scene and presentation | `--world-db FILE`, `--start-view FILE`, `--story DIR`, `--character-probe PROFILE`, `--character-face NAME`, `--character-portrait DIR`, `--fps 0\|15..240`, `--resolution-scale 1\|0.75\|0.5\|0.33`, `--time HH:MM`, `--day-clock on\|off`, `--weather auto\|authored\|clear\|scattered\|overcast\|rain\|storm`, `--upscaler auto\|linear\|metalfx-spatial\|metalfx-temporal\|taa`, `--frame window\|WIDTHxHEIGHT`, `--upscale-target 1\|0.75\|0.5`, `--cloud-quality off\|balanced\|high`, `--tree-shadow-lod 0..2` |
 | Panel and logging | `--diagnostics off\|panel\|full`, `--performance-open`, `--render-audit`, `--render-console`, `--timing-log`, `--gpu-timing-detail`, `--gpu-timing-off`, `--metalfx-timing-log`, `--grass-counters` |
 | Scripted routes | `--render-repro NAME`, `--render-frames N`, `--render-snapshot PATH`, `--render-snapshot-frames N,N`, `--render-walk-speed MPS`, `--render-frame-clock`, `--render-temporal-view motion\|depth`, `--render-ui-off` |
 | Captures and checks | `--metal-capture PATH.gputrace` |

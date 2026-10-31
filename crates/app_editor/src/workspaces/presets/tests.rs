@@ -282,13 +282,13 @@ fn preset_workspace_restores_scene_lighting_wind_and_camera_ownership() {
         .id();
     let other = app
         .world_mut()
-        .spawn((Camera::default(), super::super::AnimationWorkspaceCamera))
+        .spawn((Camera::default(), super::super::CharacterWorkspaceCamera))
         .id();
     app.update();
 
     for destination in [
         EditorWorkspace::World,
-        EditorWorkspace::Animation,
+        EditorWorkspace::Character,
         EditorWorkspace::World,
     ] {
         app.world_mut()

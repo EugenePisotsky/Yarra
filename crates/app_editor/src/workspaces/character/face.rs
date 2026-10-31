@@ -1,68 +1,28 @@
-//! The face panel: the preview character's face sliders, read from its kit, and the faces kept
-//! as files (`engine::saved_faces`).
+//! The face panel: the character's face sliders, read from its kit, and the faces kept as files
+//! (`engine::saved_faces`).
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use bevy::prelude::*;
 use bevy_egui::egui;
-use engine::{CharacterAppearance, CharacterKit, CharacterKitRef, FaceSlider, saved_faces};
+use engine::{
+    CharacterAppearance, CharacterKit, CharacterKitRef, FaceSlider, NO_HAIR, SkinLayers, SkinLook,
+    SkinPaint, saved_faces,
+};
 
-use super::{AnimationPreviewActor, AnimationWorkspaceCamera};
+use super::PreviewActor;
 use crate::shell::EditorUiFrame;
-
-/// The face framings: how far from the face the camera stands and how far below the top of the
-/// head it looks, metres.
-const FACE_DISTANCE: f32 = 0.55;
-
-const FACE_DROP: f32 = 0.15;
 
 /// The share of each slider's range a random face reaches: sliders, details.
 const RANDOM_REACH: f32 = 0.6;
 
 const RANDOM_DETAIL_REACH: f32 = 0.3;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(super) enum Framing {
-    #[default]
-    Body,
-    Face,
-    ThreeQuarter,
-    Profile,
-}
-
-impl Framing {
-    const ALL: [Self; 4] = [Self::Body, Self::Face, Self::ThreeQuarter, Self::Profile];
-
-    fn label(self) -> &'static str {
-        match self {
-            Self::Body => "Body",
-            Self::Face => "Face",
-            Self::ThreeQuarter => "¾",
-            Self::Profile => "Profile",
-        }
-    }
-
-    /// The camera for this framing of a character standing at the origin facing +Z.
-    pub(super) fn view(self, height: f32) -> Transform {
-        let turn: f32 = match self {
-            Self::Body => return Transform::from_xyz(0.0, 1.4, 4.0).looking_at(Vec3::Y, Vec3::Y),
-            Self::Face => 0.0,
-            Self::ThreeQuarter => 35.0,
-            Self::Profile => 90.0,
-        };
-        let face = Vec3::new(0.0, height - FACE_DROP, 0.0);
-        let direction = Quat::from_rotation_y(turn.to_radians()) * Vec3::Z;
-        Transform::from_translation(face + direction * FACE_DISTANCE).looking_at(face, Vec3::Y)
-    }
-}
-
 #[derive(Resource)]
 pub(super) struct FaceEditor {
     appearance: CharacterAppearance,
     name: String,
     status: String,
-    framing: Framing,
-    framed: Option<Framing>,
     random: u64,
 }
 
@@ -75,8 +35,6 @@ impl Default for FaceEditor {
             appearance: CharacterAppearance::default(),
             name: String::new(),
             status: String::new(),
-            framing: Framing::Body,
-            framed: None,
             random: seed | 1,
         }
     }
@@ -94,7 +52,10 @@ impl FaceEditor {
     /// A face around the model's own: every slider somewhere in the middle of its range, each
     /// choice either left out or one of its options.
     fn randomize(&mut self, sliders: &[FaceSlider]) {
-        let mut face = CharacterAppearance::default();
+        let mut face = CharacterAppearance {
+            look: self.appearance.look.clone(),
+            ..default()
+        };
 
         for slider in sliders.iter().filter(|slider| slider.choice.is_none()) {
             let reach = if slider.detail {
@@ -122,31 +83,9 @@ impl FaceEditor {
 
 pub(super) fn sync_face(
     editor: Res<FaceEditor>,
-    mut actor: Single<&mut CharacterAppearance, With<AnimationPreviewActor>>,
+    mut actor: Single<&mut CharacterAppearance, With<PreviewActor>>,
 ) {
     actor.set_if_neq(editor.appearance.clone());
-}
-
-pub(super) fn frame_camera(
-    mut editor: ResMut<FaceEditor>,
-    kits: Res<Assets<CharacterKit>>,
-    refs: Query<(&CharacterKitRef, &ChildOf)>,
-    actor: Single<Entity, With<AnimationPreviewActor>>,
-    mut camera: Single<&mut Transform, With<AnimationWorkspaceCamera>>,
-) {
-    if editor.framed == Some(editor.framing) {
-        return;
-    }
-
-    // The body framing stands back from any character; the others wait for the kit's height.
-    let height = match preview_kit(*actor, &refs, &kits) {
-        Some(kit) => kit.height(),
-        None if editor.framing == Framing::Body => 0.0,
-        None => return,
-    };
-
-    **camera = editor.framing.view(height);
-    editor.framed = Some(editor.framing);
 }
 
 fn preview_kit<'a>(
@@ -159,12 +98,12 @@ fn preview_kit<'a>(
         .and_then(|(kit, _)| kits.get(kit.kit()))
 }
 
-pub(super) fn face_panel_ui(
+pub(super) fn face_panel(
     mut frame: ResMut<EditorUiFrame>,
     mut editor: ResMut<FaceEditor>,
     kits: Res<Assets<CharacterKit>>,
     refs: Query<(&CharacterKitRef, &ChildOf)>,
-    actor: Single<Entity, With<AnimationPreviewActor>>,
+    actor: Single<Entity, With<PreviewActor>>,
 ) {
     let Some(workspace_ui) = frame.0.as_mut() else {
         return;
@@ -172,11 +111,11 @@ pub(super) fn face_panel_ui(
     let kit = preview_kit(*actor, &refs, &kits);
 
     egui::Panel::right("face_panel")
-        .default_size(360.0)
+        .default_size(320.0)
+        .min_size(220.0)
         .resizable(true)
         .show(workspace_ui, |ui| {
             ui.heading("Face");
-            framing_row(ui, &mut editor);
 
             let Some(kit) = kit else {
                 ui.weak(
@@ -188,17 +127,13 @@ pub(super) fn face_panel_ui(
             file_rows(ui, &mut editor, kit.sliders());
             ui.separator();
             egui::ScrollArea::vertical().show(ui, |ui| {
+                if let Some(layers) = kit.skin_layers() {
+                    look_groups(ui, &mut editor.appearance.look, layers);
+                }
+
                 slider_groups(ui, &mut editor.appearance, kit.sliders());
             });
         });
-}
-
-fn framing_row(ui: &mut egui::Ui, editor: &mut FaceEditor) {
-    ui.horizontal(|ui| {
-        for framing in Framing::ALL {
-            ui.selectable_value(&mut editor.framing, framing, framing.label());
-        }
-    });
 }
 
 fn file_rows(ui: &mut egui::Ui, editor: &mut FaceEditor, sliders: &[FaceSlider]) {
@@ -243,6 +178,63 @@ fn file_rows(ui: &mut egui::Ui, editor: &mut FaceEditor, sliders: &[FaceSlider])
     if !editor.status.is_empty() {
         ui.weak(&editor.status);
     }
+}
+
+/// What the skin paints: the brow and its colour, and makeup.
+fn look_groups(ui: &mut egui::Ui, look: &mut SkinLook, layers: &SkinLayers) {
+    egui::CollapsingHeader::new("brow style").show(ui, |ui| {
+        let chosen = layers
+            .brows
+            .iter()
+            .find(|brow| brow.label == look.brow)
+            .or_else(|| layers.brows.first());
+        egui::ComboBox::from_id_salt("brow_shape")
+            .selected_text(chosen.map_or("none", |brow| brow.label.as_str()))
+            .show_ui(ui, |ui| {
+                for brow in &layers.brows {
+                    ui.selectable_value(&mut look.brow, brow.label.clone(), &brow.label);
+                }
+            });
+        paint_row(ui, &mut look.brow_paint, "colour");
+    });
+    egui::CollapsingHeader::new("hair").show(ui, |ui| {
+        let chosen = if look.hair_style == NO_HAIR {
+            NO_HAIR
+        } else {
+            layers
+                .hairs
+                .iter()
+                .find(|hair| hair.label == look.hair_style)
+                .or_else(|| layers.hairs.first())
+                .map_or(NO_HAIR, |hair| hair.label.as_str())
+        };
+        egui::ComboBox::from_id_salt("hair_style")
+            .selected_text(chosen)
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut look.hair_style, NO_HAIR.to_owned(), NO_HAIR);
+
+                for hair in &layers.hairs {
+                    ui.selectable_value(&mut look.hair_style, hair.label.clone(), &hair.label);
+                }
+            });
+        ui.horizontal(|ui| {
+            ui.color_edit_button_rgb(&mut look.hair.color);
+            ui.label("colour");
+        });
+    });
+    egui::CollapsingHeader::new("makeup").show(ui, |ui| {
+        paint_row(ui, &mut look.eyeshadow, "eyeshadow");
+        paint_row(ui, &mut look.liner, "liner");
+        paint_row(ui, &mut look.blush, "blush");
+        paint_row(ui, &mut look.lipstick, "lipstick");
+    });
+}
+
+fn paint_row(ui: &mut egui::Ui, paint: &mut SkinPaint, text: &str) {
+    ui.horizontal(|ui| {
+        ui.color_edit_button_rgb(&mut paint.color);
+        ui.add(egui::Slider::new(&mut paint.strength, 0.0..=1.0).text(text));
+    });
 }
 
 fn slider_groups(ui: &mut egui::Ui, face: &mut CharacterAppearance, sliders: &[FaceSlider]) {
@@ -368,20 +360,5 @@ fn slider_row(ui: &mut egui::Ui, face: &mut CharacterAppearance, slider: &FaceSl
         } else {
             face.sliders.insert(slider.label.clone(), value);
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn framings_look_at_the_face_from_their_side() {
-        let height = 1.75;
-        let face = Framing::Face.view(height);
-        assert!((face.translation.z - FACE_DISTANCE).abs() < 1e-5);
-        let profile = Framing::Profile.view(height);
-        assert!((profile.translation.x - FACE_DISTANCE).abs() < 1e-5);
-        assert!(profile.forward().x < -0.99);
     }
 }
