@@ -14,10 +14,15 @@ pub use terrain_raycast::raycast_resident_terrain;
 mod character;
 mod character_catalog;
 mod character_face;
+mod character_hair;
 mod character_kit;
+mod character_skin;
 
-pub use character_face::{CharacterAppearance, saved_faces};
-pub use character_kit::{CharacterKit, CharacterKitRef, FaceSlider};
+pub use character_face::{CharacterAppearance, SkinLook, SkinPaint, saved_faces};
+pub use character_hair::NO_HAIR;
+pub use character_kit::{
+    BrowShape, CharacterKit, CharacterKitRef, FaceSlider, HairShape, SkinLayers,
+};
 
 mod gltf;
 
@@ -66,6 +71,7 @@ pub use atmosphere::{
 
 pub use character::{
     CharacterPresentationPreview, CharacterPresentationPreviewPlugin, CharacterPreviewClip,
+    CharacterPreviewPlayhead,
 };
 
 pub use character_catalog::{

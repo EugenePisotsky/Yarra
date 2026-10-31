@@ -28,6 +28,8 @@ import bevy_pbr::render::pbr_functions::visibility_range_dither;
 
 @if(TREE_BARK_BLEND) import package::shaders::tree::bark::blend_upper_bark;
 @if(TREE_SNOW) import package::shaders::tree::snow;
+@if(CHARACTER_SKIN) import package::shaders::lighting::skin_layers;
+@if(HAIR_CARDS) import package::shaders::frame::frame_count;
 
 @if(MESHLET_MESH_MATERIAL_PASS)
 import bevy_pbr::meshlet::visibility_buffer_resolve::resolve_vertex_output;
@@ -37,6 +39,23 @@ import bevy_core_pipeline::oit::draw::oit_draw;
 
 @if(FORWARD_DECAL)
 import bevy_pbr::decal::forward::get_forward_decal_info;
+
+// Hair cards cut out at a threshold that changes per pixel and per frame, over this range of alpha:
+// the temporal upscaler averages it into the soft edge a card's hairs have, which one fixed threshold
+// at this resolution turns to straw.
+const HAIR_CUT_RANGE: vec2<f32> = vec2(0.12, 0.72);
+
+// A card's normal map bends each painted strand up to 30 degrees, which breaks a highlight into white
+// flecks that read as metal. This share of the card's own normal keeps the strands' shading and joins
+// their highlights into a band.
+const HAIR_SOFT_NORMAL: f32 = 0.5;
+
+// Interleaved gradient noise (Jimenez 2014).
+fn hair_threshold(pixel: vec2<f32>, frame: u32) -> f32 {
+    let p = pixel + 5.588238 * f32(frame % 64u);
+    let noise = fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715))));
+    return mix(HAIR_CUT_RANGE.x, HAIR_CUT_RANGE.y, noise);
+}
 
 @fragment
 fn fragment(
@@ -140,6 +159,20 @@ fn fragment(
 @if(TREE_SNOW && TREE_BARK_SKY && VERTEX_COLORS && VERTEX_UVS_B)
     snow::settle(&pbr_input, snow::bark_cover(normalize(in.world_normal).y,
         clamp(in.color.r, 0.0, 1.0), in.world_position.xyz) * in.uv_b.x, 1.0);
+
+    // What a character's skin paints over itself: brows and makeup (character_skin.rs).
+@if(CHARACTER_SKIN)
+    skin_layers::paint(&pbr_input, in.uv, in.world_normal);
+
+@if(HAIR_CARDS) {
+    let shown = pbr_input.material.base_color.a >= hair_threshold(in.position.xy, frame_count());
+    pbr_input.material.base_color.a = f32(shown);
+    pbr_input.N = normalize(mix(pbr_input.N, pbr_input.world_normal, HAIR_SOFT_NORMAL));
+}
+
+    // Skin reflects less than Bevy's default dielectric, 2.8% head-on.
+@if(SKIN_LIGHTING)
+    pbr_input.material.reflectance = vec3(0.42);
 
     // alpha discard
     pbr_input.material.base_color = alpha_discard(

@@ -1,23 +1,79 @@
-//! A character's face: its face slider values (`character_kit` shapes the face from them), and
-//! faces kept as files, `assets/characters/faces/<name>.face.ron`.
+//! A character's face: its face slider values (`character_kit` shapes the face from them), what its
+//! skin paints (`character_skin`), and faces kept as files,
+//! `assets/characters/faces/<name>.face.ron`.
 
 use std::{collections::BTreeMap, fs, path::PathBuf};
 
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-const FACE_VERSION: u32 = 1;
+const FACE_VERSION: u32 = 5;
 
 /// Where faces are kept, under the asset root.
 const FACES: &str = "characters/faces";
 
 const FACE_EXTENSION: &str = ".face.ron";
 
-/// A character's face: each face slider's value by its label. Sliders it leaves out stay at 0;
-/// values are held to each slider's range.
+/// A colour painted over the skin, sRGB, and how strongly.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SkinPaint {
+    pub color: [f32; 3],
+    pub strength: f32,
+}
+
+impl SkinPaint {
+    const fn unworn(color: [f32; 3]) -> Self {
+        Self {
+            color,
+            strength: 0.0,
+        }
+    }
+}
+
+/// What a character's skin paints. A brow is its label in the kit; an unknown one (or a kit's
+/// empty default) takes the kit's first.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SkinLook {
+    pub brow: String,
+    pub brow_paint: SkinPaint,
+    /// The hair style by its label in the kit: an unknown one (or a kit's empty default) takes the
+    /// kit's first, and `NO_HAIR` wears none.
+    pub hair_style: String,
+    /// The hair's colour, over its grey cards and the skin under and in front of them.
+    pub hair: SkinPaint,
+    pub eyeshadow: SkinPaint,
+    pub liner: SkinPaint,
+    pub blush: SkinPaint,
+    pub lipstick: SkinPaint,
+}
+
+impl Default for SkinLook {
+    fn default() -> Self {
+        Self {
+            brow: String::new(),
+            brow_paint: SkinPaint {
+                color: [0.11, 0.07, 0.05],
+                strength: 1.0,
+            },
+            hair_style: String::new(),
+            hair: SkinPaint {
+                color: [0.42, 0.25, 0.16],
+                strength: 1.0,
+            },
+            eyeshadow: SkinPaint::unworn([0.36, 0.25, 0.24]),
+            liner: SkinPaint::unworn([0.05, 0.035, 0.03]),
+            blush: SkinPaint::unworn([0.86, 0.50, 0.48]),
+            lipstick: SkinPaint::unworn([0.58, 0.14, 0.18]),
+        }
+    }
+}
+
+/// A character's face: each face slider's value by its label, and what its skin paints. Sliders it
+/// leaves out stay at 0; values are held to each slider's range.
 #[derive(Component, Clone, Debug, Default, PartialEq)]
 pub struct CharacterAppearance {
     pub sliders: BTreeMap<String, f32>,
+    pub look: SkinLook,
 }
 
 /// A face as a file keeps it.
@@ -25,6 +81,7 @@ pub struct CharacterAppearance {
 struct FaceFile {
     version: u32,
     sliders: BTreeMap<String, f32>,
+    look: SkinLook,
 }
 
 impl CharacterAppearance {
@@ -44,6 +101,7 @@ impl CharacterAppearance {
 
         Ok(Self {
             sliders: file.sliders,
+            look: file.look,
         })
     }
 
@@ -57,6 +115,7 @@ impl CharacterAppearance {
                 .filter(|(_, value)| **value != 0.0)
                 .map(|(label, value)| (label.clone(), *value))
                 .collect(),
+            look: self.look.clone(),
         };
         ron::ser::to_string_pretty(&file, ron::ser::PrettyConfig::default())
             .expect("a face serialises")
@@ -119,10 +178,15 @@ mod tests {
     fn faces_read_back_as_written_without_their_zero_sliders() {
         let face = CharacterAppearance {
             sliders: [("lift".to_string(), 0.25), ("point".to_string(), 0.0)].into(),
+            look: SkinLook {
+                brow: "Full arch".into(),
+                ..default()
+            },
         };
         let read = CharacterAppearance::from_ron(&face.to_ron()).expect("a written face reads");
         assert_eq!(read.sliders, [("lift".to_string(), 0.25)].into());
-        assert!(CharacterAppearance::from_ron("(version: 2, sliders: {})").is_err());
+        assert_eq!(read.look, face.look);
+        assert!(CharacterAppearance::from_ron("(version: 4, sliders: {})").is_err());
     }
 
     #[test]

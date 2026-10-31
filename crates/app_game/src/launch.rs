@@ -47,6 +47,8 @@ pub(crate) struct LaunchOptions {
     pub character_probe: Option<String>,
     /// The kept face the probe wears.
     pub character_face: Option<String>,
+    /// Where the probe's portrait goes.
+    pub character_portrait: Option<std::path::PathBuf>,
     pub look_capture: Option<crate::dev::look_capture::LookCaptureOptions>,
 }
 
@@ -223,6 +225,7 @@ impl LaunchOptions {
             lod_lab: LodLabOptions::parse(&args)?,
             character_probe: args.value("--character-probe")?.map(str::to_owned),
             character_face: args.value("--character-face")?.map(str::to_owned),
+            character_portrait: args.value("--character-portrait")?.map(Into::into),
             look_capture: look_capture(&args)?,
         })
     }

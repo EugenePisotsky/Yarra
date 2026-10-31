@@ -48,7 +48,7 @@ import package::shaders::lighting::forest_shadow::{forest_transmittance, forest_
 import package::shaders::lighting::terrain_shadow::{terrain_sunlight, terrain_sky_visibility};
 import package::shaders::lighting::ground::ground_below;
 import package::shaders::lighting::gbuffer::{
-    MODEL_BARK, MODEL_CROWN, MODEL_CROWN_SKY, MODEL_IMPOSTOR, MODEL_TERRAIN, SHADED_MODEL,
+    MODEL_BARK, MODEL_CROWN, MODEL_CROWN_SKY, MODEL_IMPOSTOR, MODEL_SKIN, MODEL_TERRAIN, SHADED_MODEL,
 };
 
 // Yarra: the lighting model of the surface being lit (lighting/gbuffer.wesl), which picks the
@@ -70,6 +70,17 @@ fn lit_model_is(model: u32) -> bool {
         return SHADED_MODEL == model;
     }
 }
+
+// Yarra: light scatters under skin, red furthest. A pixel's direct diffuse light takes these shares of
+// the mesh's own smooth normal over the bumpy one, per channel, so pores show less in red, and wraps
+// past the terminator by these amounts of N.L. In shade its shadow's edge reddens by these powers, and
+// the sky's light meets an albedo and occlusion deepened by these powers, the colour light takes after
+// bouncing around under the skin.
+const SKIN_SOFT_NORMAL: vec3<f32> = vec3(0.8, 0.4, 0.15);
+const SKIN_WRAP: vec3<f32> = vec3(0.24, 0.1, 0.05);
+const SKIN_SHADOW_EDGE: vec3<f32> = vec3(0.6, 1.0, 1.3);
+const SKIN_AMBIENT_ALBEDO: vec3<f32> = vec3(0.92, 1.0, 1.05);
+const SKIN_AMBIENT_OCCLUSION: vec3<f32> = vec3(0.6, 1.0, 1.25);
 
 fn lit_crown() -> bool {
     return lit_model_is(MODEL_CROWN) || lit_crown_sky();
@@ -586,6 +597,17 @@ fn apply_pbr_lighting(
                 * through_atmosphere(in.world_position.xyz, i);
         }
 
+        if lit_model_is(MODEL_SKIN) {
+            let to_light = (*light).direction_to_light;
+            let beam = diffuse_color * (1.0 / PI) * (*light).color.rgb
+                * through_atmosphere(in.world_position.xyz, i);
+            let bumpy = dot(in.N, to_light);
+            let soft = mix(vec3(bumpy), vec3(dot(in.world_normal, to_light)), SKIN_SOFT_NORMAL);
+            let wrapped = saturate((soft + SKIN_WRAP) / (1.0 + SKIN_WRAP));
+            light_contrib += beam * (wrapped - max(bumpy, 0.0));
+            direct_light += beam * wrapped * (pow(vec3(saturate(shadow)), SKIN_SHADOW_EDGE) - saturate(shadow));
+        }
+
         @if(DIRECTIONAL_LIGHT_SHADOW_MAP_DEBUG_CASCADES)
         light_contrib = shadows::cascade_debug_visualization(light_contrib, i, view_z);
         direct_light += light_contrib * shadow;
@@ -756,8 +778,14 @@ fn apply_pbr_lighting(
             let canopy = forest_sky_light(in.world_position.xyz);
             sky_facing *= canopy * terrain_sky;
             ground *= canopy;
-            indirect_light += ambient::ambient_light(in.world_position, in.N, in.V, NdotV, diffuse_color, F0, perceptual_roughness, diffuse_occlusion * sky_facing);
-            indirect_light += diffuse_color * ground * below * diffuse_occlusion;
+            var ambient_albedo = diffuse_color;
+            var ambient_occlusion = diffuse_occlusion;
+            if lit_model_is(MODEL_SKIN) {
+                ambient_albedo = pow(diffuse_color, SKIN_AMBIENT_ALBEDO);
+                ambient_occlusion = pow(diffuse_occlusion, SKIN_AMBIENT_OCCLUSION);
+            }
+            indirect_light += ambient::ambient_light(in.world_position, in.N, in.V, NdotV, ambient_albedo, F0, perceptual_roughness, ambient_occlusion * sky_facing);
+            indirect_light += ambient_albedo * ground * below * ambient_occlusion;
         }
     }
 

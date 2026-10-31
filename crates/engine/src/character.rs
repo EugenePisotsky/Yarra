@@ -207,6 +207,7 @@ pub struct CharacterPresentationPreview {
     playing: bool,
     speed: f32,
     restart_generation: u64,
+    seek_seconds: f32,
 }
 
 impl CharacterPresentationPreview {
@@ -217,6 +218,7 @@ impl CharacterPresentationPreview {
             playing: false,
             speed: 1.0,
             restart_generation: 0,
+            seek_seconds: 0.0,
         }
     }
 
@@ -242,8 +244,21 @@ impl CharacterPresentationPreview {
     }
 
     pub fn restart(&mut self) {
+        self.seek(0.0);
+    }
+
+    /// Plays the clip on from this time.
+    pub fn seek(&mut self, seconds: f32) {
+        self.seek_seconds = seconds;
         self.restart_generation = self.restart_generation.wrapping_add(1).max(1);
     }
+}
+
+/// Where a preview actor's clip is, and how long it is.
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq)]
+pub struct CharacterPreviewPlayhead {
+    pub seconds: f32,
+    pub duration: f32,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -267,6 +282,7 @@ impl Plugin for CharacterPresentationPreviewPlugin {
             (
                 apply_character_preview.before(CharacterPresentationResolveSet),
                 restart_character_preview.after(drive_character_animation),
+                report_preview_playhead.after(restart_character_preview),
             ),
         );
     }
@@ -352,9 +368,41 @@ fn restart_character_preview(
         transitions
             .play(&mut player, animations.nodes.get(visual), Duration::ZERO)
             .set_speed(if preview.playing { preview.speed } else { 0.0 })
-            .set_seek_time(0.0)
+            .set_seek_time(preview.seek_seconds)
             .repeat();
         restart_state.0 = preview.restart_generation;
+    }
+}
+
+fn report_preview_playhead(
+    mut commands: Commands,
+    assets: Res<CharacterAssetCache>,
+    clips: Res<Assets<AnimationClip>>,
+    previews: Query<(), With<CharacterPresentationPreview>>,
+    players: Query<(&AnimationPlayer, &CharacterAnimator)>,
+) {
+    for (player, animator) in &players {
+        if !previews.contains(animator.actor) {
+            continue;
+        }
+
+        let Some(animations) = assets.prepared_movement_set(&animator.movement_set_id) else {
+            continue;
+        };
+        let Some(active) = player.animation(animations.nodes.get(animator.visual)) else {
+            continue;
+        };
+        let duration = clips
+            .get(animations.clips.get(animator.visual))
+            .map_or(0.0, AnimationClip::duration);
+        let seconds = if duration > 0.0 {
+            active.seek_time().rem_euclid(duration)
+        } else {
+            0.0
+        };
+        commands
+            .entity(animator.actor)
+            .insert(CharacterPreviewPlayhead { seconds, duration });
     }
 }
 

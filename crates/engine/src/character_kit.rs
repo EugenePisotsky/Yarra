@@ -12,15 +12,20 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use bevy::{
     asset::{AssetLoader, LoadContext, io::Reader},
-    gltf::GltfMeshName,
+    gltf::{GltfMaterialName, GltfMeshName},
+    light::NotShadowCaster,
     mesh::{MeshVertexAttribute, VertexAttributeValues, VertexFormat},
     prelude::*,
 };
 use serde::Deserialize;
 
-use crate::character_face::CharacterAppearance;
+use crate::{
+    character_face::CharacterAppearance,
+    character_hair::{HairStyle, HairStyleLoader, wear_hair},
+    character_skin::CharacterSkinPlugin,
+};
 
-const VERSION: u32 = 1;
+const VERSION: u32 = 4;
 
 /// Each exported vertex's base-mesh or part vertex. The files name it `_SOURCE_VERTEX`.
 pub(crate) const SOURCE_VERTEX: MeshVertexAttribute = MeshVertexAttribute::new(
@@ -29,15 +34,44 @@ pub(crate) const SOURCE_VERTEX: MeshVertexAttribute = MeshVertexAttribute::new(
     VertexFormat::Float32,
 );
 
+/// The material of the eye's wet layer (`content/characters/scripts/fit_parts.py`).
+const EYE_WET_MATERIAL: &str = "eye_wet";
+
+/// Blended materials, which cast no shadow: the wet layer, and the lashes, too fine for shadow maps.
+const UNSHADOWING_MATERIALS: [&str; 2] = [EYE_WET_MATERIAL, "eye_lash"];
+
+/// From a lash strand's middle to this vertex's edge (`shaders/lighting/lash_strand.wesl`).
+pub(crate) const STRAND_ACROSS: MeshVertexAttribute = MeshVertexAttribute::new(
+    "Strand_Across",
+    0x5952_5241_4348_0002,
+    VertexFormat::Float32x3,
+);
+
+/// The parts made of lash strands: pairs of source vertices across each strand.
+const STRAND_PARTS: &str = "eyelashes/";
+
 pub(crate) struct CharacterKitPlugin;
 
 impl Plugin for CharacterKitPlugin {
     fn build(&self, app: &mut App) {
-        app.init_asset::<CharacterKit>()
+        app.add_plugins(CharacterSkinPlugin)
+            .init_asset::<CharacterKit>()
             .init_asset_loader::<CharacterKitLoader>()
+            .init_asset::<HairStyle>()
+            .init_asset_loader::<HairStyleLoader>()
             .add_systems(
                 Update,
-                (bind_kit_meshes, mark_changed_appearances, build_kit_meshes).chain(),
+                (
+                    bind_kit_meshes,
+                    wear_hair,
+                    mark_changed_appearances,
+                    build_kit_meshes,
+                )
+                    .chain(),
+            )
+            .add_systems(
+                PostUpdate,
+                prepare_eye_wet_layers.before(atmosphere::environment::EnvironmentMaterialSystems),
             );
     }
 }
@@ -65,12 +99,12 @@ struct SliderEnd {
 
 /// How a part follows the base mesh, per part vertex (MakeHuman's MHCLO fitting).
 #[derive(Clone, Debug, Deserialize)]
-struct PartFitting {
-    vertices: Vec<[u32; 3]>,
-    weights: Vec<[f32; 3]>,
-    offsets: Vec<[f32; 3]>,
+pub(crate) struct PartFitting {
+    pub(crate) vertices: Vec<[u32; 3]>,
+    pub(crate) weights: Vec<[f32; 3]>,
+    pub(crate) offsets: Vec<[f32; 3]>,
     /// Per axis, two base-mesh vertices and the distance between them the offsets were made at.
-    scales: [(u32, u32, f32); 3],
+    pub(crate) scales: [(u32, u32, f32); 3],
 }
 
 impl PartFitting {
@@ -97,18 +131,58 @@ impl PartFitting {
     }
 }
 
-/// A character's kit: its base mesh as exported, its face sliders and its parts' fittings.
+/// A brow its skin can paint.
+#[derive(Clone, Debug, Deserialize)]
+pub struct BrowShape {
+    pub label: String,
+    pub(crate) mask: String,
+}
+
+/// A hair style it can wear: its label and folder from the asset root (`character_hair`).
+#[derive(Clone, Debug, Deserialize)]
+pub struct HairShape {
+    pub label: String,
+    pub(crate) folder: String,
+}
+
+impl HairShape {
+    pub(crate) fn hairline_path(&self) -> String {
+        format!("{}/hairline.ktx2", self.folder)
+    }
+}
+
+/// The masks a character's skin paints with (`character_skin`), by their paths from the asset root.
+#[derive(Clone, Debug, Deserialize)]
+pub struct SkinLayers {
+    /// The part of the head's texture the brow masks cover: its corner and size in UVs.
+    pub(crate) brow_rect: [f32; 4],
+    pub brows: Vec<BrowShape>,
+    pub(crate) makeup: String,
+    pub hairs: Vec<HairShape>,
+}
+
+/// A character's kit: its base mesh as exported, its face sliders, its parts' fittings and its
+/// skin's masks.
 #[derive(Asset, TypePath, Debug)]
 pub struct CharacterKit {
     body: String,
     base: Vec<Vec3>,
     parts: BTreeMap<String, PartFitting>,
     sliders: Vec<FaceSlider>,
+    skin_layers: Option<SkinLayers>,
 }
 
 impl CharacterKit {
     pub fn sliders(&self) -> &[FaceSlider] {
         &self.sliders
+    }
+
+    pub(crate) fn base_len(&self) -> usize {
+        self.base.len()
+    }
+
+    pub fn skin_layers(&self) -> Option<&SkinLayers> {
+        self.skin_layers.as_ref()
     }
 
     /// The top of the base mesh's head over its feet, metres.
@@ -159,6 +233,7 @@ struct KitFile {
     base: Vec<[f32; 3]>,
     parts: BTreeMap<String, PartFitting>,
     sliders: Vec<SliderFile>,
+    skin_layers: Option<SkinLayers>,
 }
 
 #[derive(Deserialize)]
@@ -227,10 +302,11 @@ fn parse_kit(bytes: &[u8]) -> Result<CharacterKit, String> {
         base,
         parts: file.parts,
         sliders,
+        skin_layers: file.skin_layers,
     })
 }
 
-fn validate_part(part: &PartFitting, count: usize) -> Result<(), String> {
+pub(crate) fn validate_part(part: &PartFitting, count: usize) -> Result<(), String> {
     let vertices = part.vertices.len();
 
     if part.weights.len() != vertices || part.offsets.len() != vertices {
@@ -325,34 +401,71 @@ impl CharacterKitRef {
     }
 }
 
-/// A mesh of a kit-built visual: its name in the kit, the exported mesh, the one built from it.
-#[derive(Component)]
-struct KitMesh {
-    visual: Entity,
-    name: String,
-    template: Handle<Mesh>,
-    built: Option<Handle<Mesh>>,
+/// What a kit mesh is built from.
+pub(crate) enum KitMeshSource {
+    /// A part of the glb: the mesh as exported, fitted by the kit.
+    Part(Handle<Mesh>),
+    /// A hair style, which holds its own cards and fit.
+    Hair(Handle<HairStyle>),
 }
+
+/// A mesh of a kit-built visual: its name in the kit, what it is built from, the one built from it.
+#[derive(Component)]
+pub(crate) struct KitMesh {
+    pub(crate) visual: Entity,
+    pub(crate) name: String,
+    pub(crate) source: KitMeshSource,
+    pub(crate) built: Option<Handle<Mesh>>,
+}
+
+/// On a kit-built visual: the slider values its meshes were built for. Colours and paint change no
+/// mesh, so they do not rebuild one.
+#[derive(Component)]
+struct BuiltSliders(BTreeMap<String, f32>);
 
 /// On a kit-built visual whose meshes are to be built again.
 #[derive(Component)]
-struct KitStale;
+pub(crate) struct KitStale;
+
+/// The wet layer shades what is behind it by its alpha and adds its reflections at full strength.
+/// glTF's blending would scale them by the alpha, so there would be no highlight where it is clear:
+/// over the iris. Runs before materials are converted for the deferred lighting, which keep this.
+fn prepare_eye_wet_layers(
+    layers: Query<(&GltfMaterialName, &MeshMaterial3d<StandardMaterial>), Added<GltfMaterialName>>,
+    materials: Option<ResMut<Assets<StandardMaterial>>>,
+) {
+    let Some(mut materials) = materials else {
+        return;
+    };
+
+    for (name, material) in &layers {
+        if name.0 == EYE_WET_MATERIAL
+            && let Some(mut material) = materials.get_mut(&material.0)
+        {
+            material.alpha_mode = AlphaMode::Premultiplied;
+        }
+    }
+}
 
 fn bind_kit_meshes(
     mut commands: Commands,
-    meshes: Query<(Entity, &GltfMeshName, &Mesh3d), Added<GltfMeshName>>,
+    meshes: Query<(Entity, &GltfMeshName, &Mesh3d, Option<&GltfMaterialName>), Added<GltfMeshName>>,
     parents: Query<&ChildOf>,
     visuals: Query<(), With<CharacterKitRef>>,
 ) {
-    for (entity, name, mesh) in &meshes {
+    for (entity, name, mesh, material) in &meshes {
         let Some(visual) = kit_visual(entity, &parents, &visuals) else {
             continue;
         };
 
+        if material.is_some_and(|material| UNSHADOWING_MATERIALS.contains(&material.0.as_str())) {
+            commands.entity(entity).insert(NotShadowCaster);
+        }
+
         commands.entity(entity).insert(KitMesh {
             visual,
             name: name.0.clone(),
-            template: mesh.0.clone(),
+            source: KitMeshSource::Part(mesh.0.clone()),
             built: None,
         });
         commands.entity(visual).insert(KitStale);
@@ -375,12 +488,12 @@ fn kit_visual(
 
 fn mark_changed_appearances(
     mut commands: Commands,
-    actors: Query<Entity, Changed<CharacterAppearance>>,
-    visuals: Query<(Entity, &ChildOf), With<CharacterKitRef>>,
+    actors: Query<(Entity, &CharacterAppearance), Changed<CharacterAppearance>>,
+    visuals: Query<(Entity, &ChildOf, Option<&BuiltSliders>), With<CharacterKitRef>>,
 ) {
-    for actor in &actors {
-        for (visual, parent) in &visuals {
-            if parent.parent() == actor {
+    for (actor, appearance) in &actors {
+        for (visual, parent, built) in &visuals {
+            if parent.parent() == actor && built.is_none_or(|b| b.0 != appearance.sliders) {
                 commands.entity(visual).insert(KitStale);
             }
         }
@@ -393,6 +506,7 @@ fn build_kit_meshes(
     stale: Query<(Entity, &CharacterKitRef, &ChildOf), With<KitStale>>,
     appearances: Query<&CharacterAppearance>,
     kits: Res<Assets<CharacterKit>>,
+    styles: Res<Assets<HairStyle>>,
     If(mut meshes): If<ResMut<Assets<Mesh>>>,
     mut kit_meshes: Query<(&mut KitMesh, &mut Mesh3d)>,
 ) {
@@ -413,15 +527,34 @@ fn build_kit_meshes(
                 continue;
             }
 
-            let Some(template) = meshes.get(&kit_mesh.template) else {
-                pending = true;
-                continue;
+            let (template, sources) = match &kit_mesh.source {
+                KitMeshSource::Part(template) => {
+                    let Some(template) = meshes.get(template) else {
+                        pending = true;
+                        continue;
+                    };
+                    let Some(sources) = kit.sources(&kit_mesh.name, &shaped) else {
+                        warn_once!("character kit has no mesh {:?}", kit_mesh.name);
+                        continue;
+                    };
+                    (template, sources)
+                }
+                KitMeshSource::Hair(style) => {
+                    let Some(style) = styles.get(style) else {
+                        pending = true;
+                        continue;
+                    };
+                    (&style.template, style.fit.fit(&shaped))
+                }
             };
-            let Some(sources) = kit.sources(&kit_mesh.name, &shaped) else {
-                warn_once!("character kit has no mesh {:?}", kit_mesh.name);
-                continue;
-            };
-            let reshaped = match reshape(template, &sources) {
+            let shaped_mesh = reshape(template, &sources).and_then(|mut mesh| {
+                if kit_mesh.name.starts_with(STRAND_PARTS) {
+                    add_strand_attributes(&mut mesh, &sources)?;
+                }
+
+                Ok(mesh)
+            });
+            let reshaped = match shaped_mesh {
                 Ok(reshaped) => reshaped,
                 Err(error) => {
                     error!("character mesh {:?}: {error}", kit_mesh.name);
@@ -447,7 +580,10 @@ fn build_kit_meshes(
 
         if !pending {
             debug!("built {built} meshes of character visual {visual} from its kit");
-            commands.entity(visual).remove::<KitStale>();
+            commands
+                .entity(visual)
+                .remove::<KitStale>()
+                .insert(BuiltSliders(values));
         }
     }
 }
@@ -502,16 +638,59 @@ fn reshape(template: &Mesh, sources: &[Vec3]) -> Result<Mesh, String> {
         }
     }
 
+    let normals = mesh
+        .attribute(Mesh::ATTRIBUTE_NORMAL)
+        .and_then(VertexAttributeValues::as_float3)
+        .map(<[_]>::to_vec);
+
     if let Some(VertexAttributeValues::Float32x4(tangents)) =
         mesh.attribute_mut(Mesh::ATTRIBUTE_TANGENT)
     {
-        for (tangent, &s) in tangents.iter_mut().zip(&source) {
+        for (index, (tangent, &s)) in tangents.iter_mut().zip(&source).enumerate() {
             let turned = turns[s] * Vec3::new(tangent[0], tangent[1], tangent[2]);
-            *tangent = turned.extend(tangent[3]).to_array();
+            let normal = normals
+                .as_ref()
+                .map_or(Vec3::Z, |n| Vec3::from_array(n[index]));
+            *tangent = usable_tangent(turned, normal).extend(tangent[3]).to_array();
         }
     }
 
     Ok(mesh)
+}
+
+/// A vertex whose UV triangles have no area (a face layout folds the lids' and lips' insides away)
+/// gets no tangent from the mesh's tangent space, and a normal map's shader would divide by its
+/// zero length: any direction across the normal serves there, with nothing to show.
+fn usable_tangent(tangent: Vec3, normal: Vec3) -> Vec3 {
+    if tangent.is_finite() && tangent.length_squared() > 1e-8 {
+        tangent
+    } else {
+        normal.any_orthonormal_vector()
+    }
+}
+
+/// What a strand's vertex shader reads: each vertex's way across its strand, its source's partner
+/// being the other edge, and a colour for the shader to fade it by.
+fn add_strand_attributes(mesh: &mut Mesh, sources: &[Vec3]) -> Result<(), String> {
+    let VertexAttributeValues::Float32(source) =
+        mesh.attribute(SOURCE_VERTEX).ok_or("no source vertices")?
+    else {
+        return Err("source vertices are not floats".into());
+    };
+    let across = source
+        .iter()
+        .map(|&s| {
+            let s = s as usize;
+            let partner = sources
+                .get(s ^ 1)
+                .ok_or("a strand vertex without its partner")?;
+            Ok(((sources[s] - *partner) / 2.0).to_array())
+        })
+        .collect::<Result<Vec<_>, &str>>()?;
+    let count = across.len();
+    mesh.insert_attribute(STRAND_ACROSS, across);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![[1.0f32; 4]; count]);
+    Ok(())
 }
 
 /// Per source vertex, the turn from its smooth normal before to its smooth normal after: area
@@ -559,7 +738,7 @@ mod tests {
     };
 
     const KIT: &str = r#"{
-        "version": 1,
+        "version": 4,
         "body": "body",
         "base": [[0,0,0], [1,0,0], [0,1,0], [0,0,1]],
         "parts": {"hat": {
@@ -633,7 +812,7 @@ mod tests {
         let no_low = KIT.replace(r#""low": {"vertices": [2], "offsets": [[0,-1,0]]},"#, "");
         assert!(parse_kit(no_low.as_bytes()).is_err());
 
-        let version = KIT.replace(r#""version": 1"#, r#""version": 2"#);
+        let version = KIT.replace(r#""version": 4"#, r#""version": 3"#);
         assert!(parse_kit(version.as_bytes()).is_err());
     }
 
@@ -675,6 +854,25 @@ mod tests {
             .and_then(VertexAttributeValues::as_float3)
             .expect("normals");
         assert!(normals.iter().all(|n| *n == [0.0, 0.0, 1.0]));
+    }
+
+    #[test]
+    fn a_strands_vertices_point_away_from_each_other() {
+        let mut mesh = template();
+        let sources = [Vec3::ZERO, Vec3::new(1.0, 0.0, 0.0), Vec3::Y, Vec3::Y];
+        add_strand_attributes(&mut mesh, &sources).expect("the strands have partners");
+        let Some(VertexAttributeValues::Float32x3(across)) = mesh.attribute(STRAND_ACROSS) else {
+            panic!("no way across");
+        };
+        assert_eq!(across[0], [-0.5, 0.0, 0.0]);
+        assert_eq!(across[1], [0.5, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn a_vertex_without_a_tangent_gets_one_across_its_normal() {
+        let made = usable_tangent(Vec3::ZERO, Vec3::Y);
+        assert!((made.length() - 1.0).abs() < 1e-5 && made.dot(Vec3::Y).abs() < 1e-5);
+        assert_eq!(usable_tangent(Vec3::X, Vec3::Y), Vec3::X);
     }
 
     #[test]

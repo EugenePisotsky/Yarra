@@ -25,10 +25,14 @@ const MODEL_BARK: u32 = 6u;
 // Impostors (crates/engine/src/trees/impostor.rs): lit as `crown_v2` foliage, with their own
 // self-shadow, at their crown's surface behind or before the quad.
 const MODEL_IMPOSTOR: u32 = 7u;
+// Characters' skin (crates/engine/src/character_skin.rs): the standard surface, its light scattering
+// under the skin (pbr_lighting.wesl).
+const MODEL_SKIN: u32 = 8u;
 
 // The model of the surface a material's pipeline shades, by the definitions that select its
 // branches of the shared lighting.
-@if(TERRAIN_SURFACE) const SHADED_MODEL: u32 = MODEL_TERRAIN;
+@if(SKIN_LIGHTING) const SHADED_MODEL: u32 = MODEL_SKIN;
+@elif(TERRAIN_SURFACE) const SHADED_MODEL: u32 = MODEL_TERRAIN;
 @elif(IMPOSTOR_SELF_SHADOW) const SHADED_MODEL: u32 = MODEL_IMPOSTOR;
 @elif(TREE_CROWN_SKY) const SHADED_MODEL: u32 = MODEL_CROWN_SKY;
 @elif(TREE_CROWN_SHADING) const SHADED_MODEL: u32 = MODEL_CROWN;
@@ -36,7 +40,7 @@ const MODEL_IMPOSTOR: u32 = 7u;
 @else const SHADED_MODEL: u32 = MODEL_STANDARD;
 
 fn shared_lighting(model: u32) -> bool {
-    return model == MODEL_TERRAIN || (model >= MODEL_STANDARD && model <= MODEL_IMPOSTOR);
+    return model == MODEL_TERRAIN || (model >= MODEL_STANDARD && model <= MODEL_SKIN);
 }
 
 struct Surface {

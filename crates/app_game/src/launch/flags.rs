@@ -119,6 +119,12 @@ const FLAGS: &[Flag] = &[
         "The probe wears a kept face (assets/characters/faces/NAME.face.ron)",
     ),
     flag(
+        "--character-portrait",
+        "DIR",
+        Scene,
+        "Screenshots of the probe from fixed views into DIR, then exits",
+    ),
+    flag(
         "--fps",
         "0|15..240",
         Scene,
